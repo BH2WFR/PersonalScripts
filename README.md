@@ -4,3 +4,4 @@
 
 入口：`run-scripts.ps1` `run-scripts.sh`
 
+test
