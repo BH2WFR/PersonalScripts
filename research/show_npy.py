@@ -284,15 +284,15 @@ def _prompt_choice(
     allow_custom: bool = False,
     default: str | None = None,
 ) -> str:
-    print(title)
+    print(f"{FLYellow}{title}{CRst}")
     for index, choice in enumerate(choices, start=1):
-        default_mark = " (默认)" if choice == default else ""
-        print(f"  {index}. {choice}{default_mark}")
+        default_mark = f"{FLYellow} (默认){CRst}" if choice == default else ""
+        print(f"  {FLGreen}{index}{CRst}. {FLCyan}{choice}{CRst}{default_mark}")
     if allow_custom:
-        print("  others. 输入自定义值")
+        print(f"  {FLGreen}others. 输入自定义值{CRst}")
     
     while True:
-        default_hint = f"，直接回车使用默认值 {default}" if default is not None else ""
+        default_hint = f"，直接回车使用默认值 {FLCyan}{default}{CRst}" if default is not None else ""
         value = input(f"请选择序号或输入值{default_hint}: ").strip()
         if not value:
             if default is not None:
@@ -318,7 +318,7 @@ def _prompt_choice(
 
 def _prompt_bool(title: str) -> bool:
     while True:
-        value = input(f"{title} [y/n]: ").strip().lower()
+        value = input(f"{FLYellow}{title}{CRst} [y/n]: ").strip().lower()
         if value in ("y", "yes", "1", "true", "t"):
             return True
         if value in ("n", "no", "0", "false", "f"):
@@ -327,12 +327,12 @@ def _prompt_bool(title: str) -> bool:
 
 
 def _prompt_max_display_size(default: int | None = None) -> int | None:
-    print("max-display-size 说明:")
-    print("  直接回车或输入 all: 显示所有数据点")
-    print("  输入正整数: 长度超过该值时按步长抽样显示，可避免大数组绘图过慢")
+    print(f"{FLGreen}max-display-size{CRst} 说明:")
+    print(f"  直接{FLCyan}回车{CRst}或输入 {FLCyan}all{CRst}: 显示所有数据点")
+    print(f"  输入{FLCyan}正整数{CRst}: 长度超过该值时按步长抽样显示，可避免大数组绘图过慢")
     default_text = "all" if default is None else str(default)
     while True:
-        value = input(f"请选择显示方式 [all/<int>]，直接回车使用默认值 {default_text}: ").strip().lower()
+        value = input(f"请选择显示方式 [{FLCyan}all{CRst}/{FLCyan}<int>{CRst}]，直接{FLCyan}回车{CRst}使用默认值 {default_text}: ").strip().lower()
         if not value:
             return default
         if value in ("all", "none", "no"):
@@ -441,11 +441,11 @@ def _interactive_2d_options(args) -> dict[str, typing.Any]:
         print("2D 显示方式说明:")
         print("  2d: 以图像/热力图方式查看数值分布")
         print("  3d: 以曲面方式查看数值起伏")
-        view_mode = _prompt_choice("请选择 2D 显示方式:", ["2d", "3d"], default="2d")
+        view_mode = _prompt_choice(f"请选择 2D 显示方式:", ["2d", "3d"], default="2d")
     
     color_scale = args.color_scale
     if color_scale is None:
-        print("color-scale 说明: gray 为灰度，viridis/plasma/inferno/magma/cividis 为常用色彩映射。")
+        print(f"{FLGreen}color-scale{CRst} 说明: {FLCyan}gray{CRst} 为灰度，{FLCyan}viridis{CRst}/{FLCyan}plasma{CRst}/{FLCyan}inferno{CRst}/{FLCyan}magma{CRst}/{FLCyan}cividis{CRst} 为常用色彩映射。")
         color_scale = _prompt_choice(
             "请选择颜色映射:",
             DEFAULT_COLOR_SCALES,
@@ -485,7 +485,7 @@ def _print_npz_arrays(npz_data: np.lib.npyio.NpzFile) -> list[str]:
     print("NPZ 文件包含以下数组:")
     for index, name in enumerate(names, start=1):
         array = npz_data[name]
-        print(f"  {index}. {name} shape={array.shape} dtype={array.dtype}")
+        print(f"  {FLYellow}{index}{CRst}. {FLCyan}{name}{CRst} shape={array.shape} dtype={array.dtype}")
     return names
 
 
@@ -497,7 +497,7 @@ def _show_npz_interactive(file_path: str, args) -> None:
             return
         
         while True:
-            print("请输入数组编号，例如 1,2,3 或 1,2,3-5；输入 all 打开全部；输入 exit 退出。")
+            print(f"{FLYellow}请输入数组编号{CRst}，例如 {FLCyan}1,2,3{CRst} 或 {FLCyan}1,2,3-5{CRst}；输入 {FLCyan}all{CRst} 打开全部；输入 {FLCyan}exit{CRst} 退出。")
             selection = input("选择: ").strip()
             try:
                 indexes = _parse_array_selection(selection, len(names))
@@ -568,7 +568,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     file_path = args.npy_file_path
     if not file_path:
-        file_path = input(f"{FLCyan}请输入 .npy/.npz 文件路径: {CRst}").strip().strip('"')
+        file_path = input(f"{FLYellow}请输入 .npy/.npz 文件路径: {CRst}").strip().strip('"')
         if not file_path:
             print(f"{FLRed}ERROR{CRst}: 未输入文件路径")
             return 1
@@ -594,4 +594,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    
+    raise sys.exit(main())
