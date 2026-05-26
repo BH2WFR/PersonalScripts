@@ -101,21 +101,29 @@ for filepath in valid_paths:
     if os.path.isdir(filepath):
         if is_recursive:
             # 递归：xattr -cr 清除目录及所有子文件/子目录
-            ret = os.system(f'xattr -cr "{filepath}" 2>/dev/null')
-            if ret == 0:
+            result = subprocess.run(["xattr", "-cr", filepath], capture_output=True, text=True)
+            if result.returncode == 0:
                 print(f"  {FLGreen}OK (recursive): {filepath}{CRst}")
                 succeed_count += 1
             else:
+                err = result.stderr.strip()
                 print(f"  {FLRed}FAIL (recursive): {filepath}{CRst}")
+                if err:
+                    print(f"    {FLRed}{err}{CRst}")
                 fail_count += 1
         else:
             # 非递归：xattr -c 清除目录自身 + 遍历一级文件
-            os.system(f'xattr -c "{filepath}" 2>/dev/null')
+            result = subprocess.run(["xattr", "-c", filepath], capture_output=True, text=True)
+            if result.returncode != 0:
+                err = result.stderr.strip()
+                if err:
+                    print(f"  {FLYellow}  xattr -c failed: {err}{CRst}")
             try:
                 for entry in os.listdir(filepath):
                     entry_path = os.path.join(filepath, entry)
                     if os.path.isfile(entry_path) and not os.path.islink(entry_path):
-                        os.system(f'xattr -d com.apple.quarantine "{entry_path}" 2>/dev/null')
+                        subprocess.run(["xattr", "-d", "com.apple.quarantine", entry_path],
+                                    capture_output=True, text=True)
                 print(f"  {FLGreen}OK (non-recursive): {filepath}{CRst}")
                 succeed_count += 1
             except Exception as e:
@@ -123,13 +131,16 @@ for filepath in valid_paths:
                 fail_count += 1
     else:
         # 文件：直接移除
-        ret = os.system(f'xattr -d com.apple.quarantine "{filepath}" 2>/dev/null')
-        if ret == 0:
+        result = subprocess.run(["xattr", "-d", "com.apple.quarantine", filepath],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
             print(f"  {FLGreen}OK: {filepath}{CRst}")
             succeed_count += 1
         else:
+            err = result.stderr.strip()
             print(f"  {FLYellow}  [WARNING]: xattr -d failed (maybe no quarantine attribute){CRst}")
-            # 文件没有 quarantine 不算失败
-            succeed_count += 1
+            if err:
+                print(f"    {FGray}{err}{CRst}")
+            succeed_count += 1  # 文件没有 quarantine 不算失败
 
 print(f"\n{FLGreen}Done. Succeed: {succeed_count}{CRst}, {FLRed}Failed: {fail_count}{CRst}, {FLYellow}Total: {succeed_count + fail_count}{CRst}\n")
