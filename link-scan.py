@@ -4,21 +4,42 @@ import stat
 # 扫描某个路径下所有的符号链接、Junction 和 Hard Link 文件，并打印出来，同时还会识别是否指向一个无效地址。
 # 列举后，可自动删除所有指向地址无效的链接
 # 列举后，Windows 下，可将指向文件夹的错误 symlink 修复成 symlinkd
+#
 
 
-#* 交互输入
-print(f"{FLYellow}=========== SYMLINK SCANNING TOOL ==========={CRst}")
-ROOT = "/volumeUSB1/usbshare1-2"   # ← 改成要检查的目录
-ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
+#* 交互输入或 argv[1] 读取
+print(f"{FLYellow}=========== LINK SCANNING TOOL ==========={CRst}")
+
+script_name = os.path.basename(sys.argv[0])
+
+if "--help" in sys.argv or "-h" in sys.argv:
+    print(f"""
+LINK SCANNING TOOL
+==================
+
+Usage:
+  python {script_name} <path>       指定路径，跳过交互
+  python {script_name}              无参数，进入交互输入模式
+  python {script_name} --help       显示此帮助
+
+功能：
+  递归扫描目录，列出所有符号链接(symlink)、目录符号链接(symlinkd)、
+  Junction 和硬链接(HardLink)。识别损坏的链接和 Windows 下指向目录的错误 symlink。
+  可选自动删除损坏链接，或转换错误 symlink 为 symlinkd。
+""")
+    sys.exit(0)
+
+IS_SCAN_JUNCTION = os.name == "nt"  # Windows 默认启用 Junction 扫描
+
+if len(sys.argv) > 1:
+    ROOT = sys.argv[1]
+else:
+    ROOT = "/volumeUSB1/usbshare1-2"   # ← 改成要检查的目录
+    ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
+
 if not os.path.exists(ROOT):
-	print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
-	sys.exit(1)
-
-IS_SCAN_JUNCTION = False
-if(os.name == "nt"):
-	resp = input(f"{FLCyan}Scan for Junctions as well? (y/n, default n): {CRst}") or "n"
-	if(resp.strip().lower() == 'y'):
-		IS_SCAN_JUNCTION = True
+    print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
+    sys.exit(1)
 
 # enum
 class EType(enum.Enum):
@@ -162,9 +183,16 @@ for dirpath, dirnames, filenames in os.walk(ROOT):
 
 # 输出结果
 if len(infos) == 0:
-	print(f"{FLGreen}No symlinks/junctions/hardlinks found under the specified path.{CRst}\n")
+	if os.name == "nt":
+		print(f"{FLGreen}No symlinks/junctions/hardlinks found under the specified path.{CRst}\n")
+	else:
+		print(f"{FLGreen}No symlinks/hardlinks found under the specified path.{CRst}\n")
 else:
-	print(f"{FLYellow}Found {len(infos)} symlinks(L)/symlinkd(D)/junctions(J)/hardlinks(H):{CRst}\n")
+	if os.name == "nt":
+		print(f"{FLYellow}Found{CRst} {FLGreen}{len(infos)}{CRst} {FLYellow}symlinks(S)/symlinkd(D)/junctions(J)/hardlinks(H):{CRst}\n")
+	else:
+		print(f"{FLYellow}Found{CRst} {FLGreen}{len(infos)}{CRst} {FLYellow}symlinks(S)/hardlinks(H):{CRst}\n")
+	
 	for info in infos:
 		is_broken_str = f" {FLRed}[BROKEN]{CRst}" if info.is_broken else ""
 		if info.type == EType.SYMLINK:

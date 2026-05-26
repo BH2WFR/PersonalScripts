@@ -5,34 +5,80 @@ import os, sys
 # 如在群晖的加密文件夹中, 文件名长度限制为 143 字节 (UTF-8), 此工具可检查并截断超长的文件名 (保留扩展名)
 # 如截断后有重名, 则会在扩展名前加入 "_1" 等数字后缀
 
-
 #* 交互输入
 print(f"{FLYellow}=========== FILENAME LENGTH CHECKING AND TRUNCATING TOOL ==========={CRst}")
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+FILENAME LENGTH CHECKING AND TRUNCATING TOOL
+============================================
+
+Usage:
+  python {script_name} <path>        指定路径，limit/encoding 交互输入
+  python {script_name} --limit=143 --encoding=utf-8
+  python {script_name} <path> --limit=143 --encoding=utf-8
+  python {script_name}                无参数，进入交互输入模式
+  python {script_name} --help         显示此帮助
+
+参数说明：
+  <path>              要扫描的目录路径
+  --limit=N           文件名 UTF-8 字节长度限制（默认 `143`）
+  --encoding=ENC      编码方式（默认 `utf-8`）
+
+功能：
+  递归扫描目录，找出文件名 UTF-8 字节长度超过限制的文件，并提供截断/重命名选项。
+  常用于 NAS 设备（如群晖加密文件夹）的文件名长度限制检查。
+""")
+    sys.exit(0)
+
 ROOT = "/volumeUSB1/usbshare1-2"   # ← 改成要检查的目录
-ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
-if not os.path.exists(ROOT):
-	print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
-	sys.exit(1)
-
 LIMIT = 143
-limitStr = input(f"{FLCyan}Enter byte length limit (default: {LIMIT}): {CRst}") or str(LIMIT)
-try:
-	LIMIT = int(limitStr)
-except ValueError:
-	print(f"{FLRed}Invalid limit value. EXIT...{CRst}\n")
-	sys.exit(1)
-if(LIMIT <= 32):
-	print(f"{FLRed}Limit value too small. EXIT...{CRst}\n")
-	sys.exit(1)
-
 ENCODING = "utf-8"
-ENCODING = input(f"{FLCyan}Enter encoding (default: {ENCODING}): {CRst}") or ENCODING
+
+# 解析命令行参数
+_arg_path: str | None = None
+_arg_limit: int | None = None
+_arg_encoding: str | None = None
+for i in range(1, len(sys.argv)):
+    arg = sys.argv[i]
+    if arg.startswith("--limit="):
+        _arg_limit = int(arg.split("=", 1)[1])
+    elif arg.startswith("--encoding="):
+        _arg_encoding = arg.split("=", 1)[1]
+    elif not arg.startswith("--"):
+        _arg_path = arg
+
+if _arg_path:
+    ROOT = _arg_path
+else:
+    ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
+if not os.path.exists(ROOT):
+    print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
+    sys.exit(1)
+
+if _arg_limit is not None:
+    LIMIT = _arg_limit
+else:
+    limitStr = input(f"{FLCyan}Enter byte length limit (default: {LIMIT}): {CRst}") or str(LIMIT)
+    try:
+        LIMIT = int(limitStr)
+    except ValueError:
+        print(f"{FLRed}Invalid limit value. EXIT...{CRst}\n")
+        sys.exit(1)
+if LIMIT <= 32:
+    print(f"{FLRed}Limit value too small. EXIT...{CRst}\n")
+    sys.exit(1)
+
+if _arg_encoding is not None:
+    ENCODING = _arg_encoding
+else:
+    ENCODING = input(f"{FLCyan}Enter encoding (default: {ENCODING}): {CRst}") or ENCODING
 try:
-	''.encode(ENCODING)
+    ''.encode(ENCODING)
 except LookupError:
-	print(f"{FLRed}Invalid encoding. EXIT...{CRst}\n")
-	sys.exit(1)
+    print(f"{FLRed}Invalid encoding. EXIT...{CRst}\n")
+    sys.exit(1)
 
 
 

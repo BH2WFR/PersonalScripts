@@ -18,6 +18,23 @@ FLBlue      = "\033[34m"
 CRst        = "\033[0m"
 print(f"{FLYellow}======== FILE TIME MODIFICATION TOOL ======={CRst}")
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+FILE TIME MODIFICATION TOOL
+===========================
+
+Usage:
+  python {script_name}            进入交互输入模式
+  python {script_name} --help     显示此帮助
+
+功能：
+  修改文件/文件夹的创建时间、修改时间和访问时间。
+  支持随机抖动（+Ns/-Ns/Ns 格式，以秒为单位）。
+  支持备份和恢复原始时间戳（JSON 格式）。
+""")
+    sys.exit(0)
+
 
 
 

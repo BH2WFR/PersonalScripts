@@ -2,26 +2,52 @@ from my_utils import *
 # 基于 ffmpeg 的视频裁剪工具
 # 需要先安装 ffmpeg，推荐使用 `scoop install ffmpeg` 安装
 
-print(f"{FLYellow}=========== BBDOWN TOOL ==========={CRst}")
+print(f"{FLYellow}=========== FFMPEG VIDEO CROP TOOL ==========={CRst}")
+
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+FFMPEG VIDEO CROP TOOL
+======================
+
+Usage:
+  python {script_name} <video1> <video2> ...    直接传入视频路径，跳过交互
+  python {script_name}                          无参数，进入交互输入模式
+  python {script_name} --help                   显示此帮助
+
+功能：
+  基于 ffmpeg 的视频裁剪工具（时间截取，非画面裁剪）。
+  需要安装 ffmpeg（scoop install ffmpeg）。
+""")
+    sys.exit(0)
+
 Utils.console_command_required("ffmpeg")
 
-# FFMPEG_PATH = "ffmpeg.exe" if os.name == 'nt' else "ffmpeg"
-
-#* 要裁剪哪个文件？ （多行）
-print(f"{FLYellow}Enter video file paths for cropping... (one per line){CRst}")
-print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
-INPUT_PATHS_STR = sys.stdin.read().strip()
-if(not INPUT_PATHS_STR):
-	print(f"{FLRed}No paths provided. EXIT...{CRst}\n")
-	sys.exit(1)
-INPUT_PATHS : list = []
-for line in INPUT_PATHS_STR.splitlines():
-	line = line.strip()
-	if(line):
-		if(not os.path.exists(line)):
-			print(f"{FLRed}Input file{CRst} \"{line}\" {FLRed}does not exist: {line}. EXIT...{CRst}\n")
-			sys.exit(1)
-		INPUT_PATHS.append(line)
+#* 要裁剪哪个文件？
+if len(sys.argv) > 1:
+    INPUT_PATHS: list = []
+    for i in range(1, len(sys.argv)):
+        p = sys.argv[i].strip()
+        if not p.startswith("-") and p:
+            if not os.path.exists(p):
+                print(f"{FLRed}Input file does not exist: {p}. EXIT...{CRst}\n")
+                sys.exit(1)
+            INPUT_PATHS.append(p)
+else:
+    print(f"{FLYellow}Enter video file paths for cropping... (one per line){CRst}")
+    print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
+    INPUT_PATHS_STR = sys.stdin.read().strip()
+    if not INPUT_PATHS_STR:
+        print(f"{FLRed}No paths provided. EXIT...{CRst}\n")
+        sys.exit(1)
+    INPUT_PATHS = []
+    for line in INPUT_PATHS_STR.splitlines():
+        line = line.strip()
+        if line:
+            if not os.path.exists(line):
+                print(f"{FLRed}Input file does not exist: {line}. EXIT...{CRst}\n")
+                sys.exit(1)
+            INPUT_PATHS.append(line)
 
 #* 输出到哪里？
 output_dir = input(f"{FLYellow}Enter output video file dir: {CRst}").strip()

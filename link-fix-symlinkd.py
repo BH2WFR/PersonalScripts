@@ -1,16 +1,40 @@
-# Windows 下，将指向目录的 symlink 转换为 symlinkd
+# Windows 下，将指向目录的 symlink 转换为 symlinkd （为了修复某些工具将文件夹链接成了 symlink 导致链接失效的问题）
+#
+
+#
 from my_utils import *
 
 
 #* 交互输入
 print(f"{FLYellow}========= SYMLINK TO SYMLINKD CONVERTING TOOL ========={CRst}")
+
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+SYMLINK TO SYMLINKD CONVERTING TOOL
+====================================
+
+Usage:
+  python {script_name} <path>    指定路径，跳过交互
+  python {script_name}           无参数，进入交互输入模式
+  python {script_name} --help    显示此帮助
+
+功能：
+  Windows 专用。扫描指定目录，将指向目录的 symlink 转换为 symlinkd，
+  用于修复某些工具错误地将文件夹创建为文件软链接导致链接失效的问题。
+""")
+    sys.exit(0)
+
 if(os.name != "nt"):
 	print(f"{FLRed}This tool only works on Windows systems. EXIT...{CRst}\n")
 	sys.exit(1)
 
 
 ROOT = "D:/test"   # ← 改成要检查的目录
-ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
+if len(sys.argv) > 1:
+    ROOT = sys.argv[1]
+else:
+    ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
 if not os.path.exists(ROOT):
 	print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
 	sys.exit(1)

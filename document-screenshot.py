@@ -14,6 +14,26 @@ from pynput import mouse
 from PIL import Image # pip install Pillow
 
 
+print(f"{FLYellow}======= Automatic Screen Capturing Tool for Document ======={CRst}")
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+AUTOMATIC SCREEN CAPTURING TOOL FOR DOCUMENT
+============================================
+
+Usage:
+  python {script_name}                进入交互
+  python {script_name} --help         显示此帮助
+
+
+功能：
+  可用于对有 DRM 保护（或加密 U 盘）中的 PDF 文档进行自动截图。
+  原理：通过发送 `PgDn` 键翻页，配合鼠标点击激活窗口，自动截图并保存到指定文件夹。
+  依赖库： mss、pynput、Pillow
+""")
+    sys.exit(0)
+
+
 class ImageCompressMode(enum.Enum):
     none = 0
     grayscale = 1
@@ -101,7 +121,7 @@ def get_click_pos(capture_key: keyboard.Key = keyboard.Key.f8):
     return result["pos"]
 
 
-print(f"{FLYellow}======== Screen Capture Tool ========{CRst}")
+
 
 # print(f"{FLCyan}Select monitor index (default: {Config.monitor_index}, 0 is virtual screen (stitched all screens), 1 is the primary monitor, 2 is the secondary monitor, etc...): {CRst}", end="")
 # Config.monitor_index = int(input() or Config.monitor_index)

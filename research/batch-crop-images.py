@@ -14,6 +14,23 @@ from typing import Any, cast
 
 print(f"{FLYellow}=========== BATCH IMAGE CROPPING TOOL ==========={CRst}")
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+BATCH IMAGE CROPPING TOOL
+=========================
+
+Usage:
+  python {script_name} <dir1> <dir2> ...    直接传入目录路径，跳过交互
+  python {script_name}                      无参数，进入交互输入模式
+  python {script_name} --help               显示此帮助
+
+功能：
+  批量裁剪图片工具。基于 OpenCV (cv2)。
+  交互选择输入/输出目录和裁剪区域后，批量裁剪图片。
+""")
+    sys.exit(0)
+
 ImageArray = npt.NDArray[Any]
 
 @dataclass
@@ -47,7 +64,10 @@ crop_rectangle : Region = Region(564, 960, 1533, 1743)   # x, y, w, h
 images : list[Image] = []
 
 #============ 用户交互 ===========
-input_directory = input(f"Enter input directory path (default: {input_directory}): ") or input_directory
+if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+    input_directory = sys.argv[1]
+else:
+    input_directory = input(f"Enter input directory path (default: {input_directory}): ") or input_directory
 if(not input_directory or os.path.exists(input_directory) == False):
 	print(f"{FLRed}Invalid input directory path. EXIT...{CRst}\n")
 	sys.exit(1)
