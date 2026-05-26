@@ -15,15 +15,15 @@ REMOVE QUARANTINE ATTRIBUTE TOOL
 ================================
 
 Usage:
-  python {script_name} <path1> <path2> ...    指定多个路径，跳过交互
-  python {script_name} <path> -r              指定路径，目录递归处理
-  python {script_name}                          无参数，进入交互输入模式
-  python {script_name} --help                   显示此帮助
+  python {script_name} <path1> <path2> ...    specify multiple paths, skip interaction
+  python {script_name} <path> -r              specify path, recursive for directories
+  python {script_name}                        no arguments, interactive mode
+  python {script_name} --help                 show this help
 
-功能：
-  macOS 专用。移除文件/文件夹上的 quarantine（隔离）属性，
-  解决"无法打开，因为它来自身份不明的开发者"问题。
-  对于目录，可选择是否递归处理内部所有文件。
+{FLYellow}Description:{CRst}
+  macOS only. Remove quarantine attribute from files/folders to
+  bypass "unidentified developer cannot be opened" warning.
+  For directories, supports recursive or non-recursive processing.
 """)
     sys.exit(0)
 

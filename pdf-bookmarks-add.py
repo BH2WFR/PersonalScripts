@@ -15,17 +15,17 @@ PDF BOOKMARK INSERTING TOOL
 ===========================
 
 Usage:
-  python {script_name} <input.pdf>                     指定输入 PDF，输出交互
-  python {script_name} <input.pdf> -o <output.pdf>     指定输入和输出
-  python {script_name} --help                          显示此帮助
+  python {script_name} <input.pdf>                     specify input PDF, output interactive
+  python {script_name} <input.pdf> -o <output.pdf>     specify both input and output
+  python {script_name} --help                          show this help
 
-参数说明：
-  <input.pdf>          输入的 PDF 文件路径
-  -o, --output <path>  输出的 PDF 文件路径
+{FLYellow}Arguments:{CRst}
+  <input.pdf>          input PDF file path
+  -o, --output <path>  output PDF file path
 
-功能：
-  给 PDF 书籍添加目录书签（Bookmark/Outline）。
-  从大模型获取目录 JSON（page/level/index/title 格式）后，写入到 PDF 中。
+{FLYellow}Description:{CRst}
+  Add table-of-contents bookmarks to PDF books.
+  Reads JSON outline (page/level/index/title format) from an LLM and writes it into the PDF.
 """)
     sys.exit(0)
 

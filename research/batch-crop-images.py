@@ -21,13 +21,14 @@ BATCH IMAGE CROPPING TOOL
 =========================
 
 Usage:
-  python {script_name} <dir1> <dir2> ...    直接传入目录路径，跳过交互
-  python {script_name}                      无参数，进入交互输入模式
-  python {script_name} --help               显示此帮助
+  python {script_name} <dir1> <dir2> ...    specify directory paths, skip interaction
+  python {script_name}                      no arguments, interactive mode
+  python {script_name} --help               show this help
 
-功能：
-  批量裁剪图片工具。基于 OpenCV (cv2)。
-  交互选择输入/输出目录和裁剪区域后，批量裁剪图片。
+{FLYellow}Description:{CRst}
+  Batch image cropping tool. Based on OpenCV (cv2).
+  Interactively select input/output directories and crop region,
+  then batch-crop all images.
 """)
     sys.exit(0)
 

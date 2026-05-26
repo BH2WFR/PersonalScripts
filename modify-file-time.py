@@ -5,17 +5,6 @@ from typing import Final
 
 
 # 文件/文件夹 时间修改器，支持加抖动
-
-
-
-BLYellow    = "\033[103m"
-FLGreen     = "\033[32m"
-FLCyan      = "\033[36m"
-FLRed       = "\033[31m"
-FLYellow    = "\033[33m"
-FLMagenta   = "\033[35m"
-FLBlue      = "\033[34m"
-CRst        = "\033[0m"
 print(f"{FLYellow}======== FILE TIME MODIFICATION TOOL ======={CRst}")
 
 if "--help" in sys.argv or "-h" in sys.argv:
@@ -25,13 +14,13 @@ FILE TIME MODIFICATION TOOL
 ===========================
 
 Usage:
-  python {script_name}            进入交互输入模式
-  python {script_name} --help     显示此帮助
+  python {script_name}            enter interactive mode
+  python {script_name} --help     show this help
 
-功能：
-  修改文件/文件夹的创建时间、修改时间和访问时间。
-  支持随机抖动（+Ns/-Ns/Ns 格式，以秒为单位）。
-  支持备份和恢复原始时间戳（JSON 格式）。
+{FLYellow}Description:{CRst}
+  Modify file/folder timestamps (created, modified, accessed).
+  Supports random jitter (+Ns/-Ns/Ns format, in seconds).
+  Supports backup and restore of original timestamps (JSON format).
 """)
     sys.exit(0)
 

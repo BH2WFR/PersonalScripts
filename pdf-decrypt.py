@@ -15,17 +15,18 @@ PDF DECRYPTING TOOL
 ===================
 
 Usage:
-  python {script_name} <input.pdf>                     指定输入 PDF，输出交互
-  python {script_name} <input.pdf> -o <output.pdf>     指定输入和输出
-  python {script_name} --help                          显示此帮助
+  python {script_name} <input.pdf>                     specify input PDF, output interactive
+  python {script_name} <input.pdf> -o <output.pdf>     specify both input and output
+  python {script_name} --help                          show this help
 
-参数说明：
-  <input.pdf>          输入的 PDF 文件路径
-  -o, --output <path>  输出的 PDF 文件路径
+{FLYellow}Arguments:{CRst}
+  <input.pdf>          input PDF file path
+  -o, --output <path>  output PDF file path
 
-功能：
-  对有密码保护的 PDF 进行解密，含能打开但不能编辑/打印的权限保护。
-  克隆整个文档结构（页面、书签、命名目标等），输出完全解密的 PDF。
+{FLYellow}Description:{CRst}
+  Decrypt password-protected PDFs (including permission-only protection).
+  Clones the full document structure (pages, bookmarks, named destinations)
+  and outputs a completely decrypted PDF.
 """)
     sys.exit(0)
 

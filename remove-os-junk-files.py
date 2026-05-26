@@ -14,12 +14,12 @@ OS JUNK FILE REMOVAL TOOL
 =========================
 
 Usage:
-  python {script_name} <path>       指定路径，跳过交互
-  python {script_name}              无参数，进入交互输入模式
-  python {script_name} --help       显示此帮助
+  python {script_name} <path>       specify path, skip interaction
+  python {script_name}              no arguments, interactive mode
+  python {script_name} --help       show this help
 
-功能：
-  递归删除指定路径下所有操作系统生成的垃圾文件：
+{FLYellow}Description:{CRst}
+  Recursively remove all OS-generated junk files from a directory:
     .DS_Store, __MACOSX__, Thumbs.db, .AppleDouble,
     .Spotlight-V100, .Trashes, desktop.ini
 """)

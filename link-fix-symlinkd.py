@@ -15,13 +15,14 @@ SYMLINK TO SYMLINKD CONVERTING TOOL
 ====================================
 
 Usage:
-  python {script_name} <path>    指定路径，跳过交互
-  python {script_name}           无参数，进入交互输入模式
-  python {script_name} --help    显示此帮助
+  python {script_name} <path>    specify path, skip interaction
+  python {script_name}           no arguments, interactive mode
+  python {script_name} --help    show this help
 
-功能：
-  Windows 专用。扫描指定目录，将指向目录的 symlink 转换为 symlinkd，
-  用于修复某些工具错误地将文件夹创建为文件软链接导致链接失效的问题。
+{FLYellow}Description:{CRst}
+  Windows only. Scan a directory and convert file symlinks pointing to directories
+  into symlinkd, fixing broken directory links caused by tools that incorrectly
+  create file symlinks for folders.
 """)
     sys.exit(0)
 

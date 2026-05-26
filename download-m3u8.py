@@ -12,16 +12,17 @@ M3U8 DOWNLOAD TOOL - m3u8 Stream Downloader
 ============================================
 
 Usage:
-  python {script_name} <url1> <url2> ...    直接传入 m3u8 链接，跳过链接输入
-  python {script_name}                      无参数，进入交互输入模式
-  python {script_name} --help               显示此帮助
+  python {script_name} <url1> <url2> ...    specify URLs, skip URL input
+  python {script_name}                       no arguments, interactive mode
+  python {script_name} --help                show this help
 
-功能：
-  基于 yt-dlp 的 m3u8 流媒体视频下载器。
-  需要安装：yt-dlp, ffmpeg。
+{FLYellow}Description:{CRst}
+  yt-dlp-based m3u8/HLS stream video downloader.
+  Requires: yt-dlp, ffmpeg.
 
-交互选项：
-  输出目录、m3u8 链接（多行 EOF 输入）、输出文件名模板。
+{FLYellow}Interactive Options:{CRst}
+  Output directory, m3u8 URLs (multi-line EOF input), output filename template,
+  custom referer/header.
 """)
     sys.exit(0)
 

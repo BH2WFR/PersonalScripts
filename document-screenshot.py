@@ -22,14 +22,14 @@ AUTOMATIC SCREEN CAPTURING TOOL FOR DOCUMENT
 ============================================
 
 Usage:
-  python {script_name}                进入交互
-  python {script_name} --help         显示此帮助
+  python {script_name}                enter interactive mode
+  python {script_name} --help         show this help
 
-
-功能：
-  可用于对有 DRM 保护（或加密 U 盘）中的 PDF 文档进行自动截图。
-  原理：通过发送 `PgDn` 键翻页，配合鼠标点击激活窗口，自动截图并保存到指定文件夹。
-  依赖库： mss、pynput、Pillow
+{FLYellow}Description:{CRst}
+  Auto-capture screenshots of DRM-protected or encrypted-USB PDF documents.
+  Works by sending PgDn key to flip pages, clicking to activate the window,
+  and auto-saving screenshots to a folder.
+  Dependencies: mss, pynput, Pillow
 """)
     sys.exit(0)
 

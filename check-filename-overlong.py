@@ -15,20 +15,21 @@ FILENAME LENGTH CHECKING AND TRUNCATING TOOL
 ============================================
 
 Usage:
-  python {script_name} <path>        指定路径，limit/encoding 交互输入
+  python {script_name} <path>        specify path, limit/encoding interactive
   python {script_name} --limit=143 --encoding=utf-8
   python {script_name} <path> --limit=143 --encoding=utf-8
-  python {script_name}                无参数，进入交互输入模式
-  python {script_name} --help         显示此帮助
+  python {script_name}                no arguments, interactive mode
+  python {script_name} --help         show this help
 
-参数说明：
-  <path>              要扫描的目录路径
-  --limit=N           文件名 UTF-8 字节长度限制（默认 `143`）
-  --encoding=ENC      编码方式（默认 `utf-8`）
+{FLYellow}Arguments:{CRst}
+  <path>              directory path to scan
+  --limit=N           filename UTF-8 byte length limit (default: 143)
+  --encoding=ENC      encoding (default: utf-8)
 
-功能：
-  递归扫描目录，找出文件名 UTF-8 字节长度超过限制的文件，并提供截断/重命名选项。
-  常用于 NAS 设备（如群晖加密文件夹）的文件名长度限制检查。
+{FLYellow}Description:{CRst}
+  Recursively scan directory, find filenames exceeding the byte length limit,
+  and provide truncation/rename options. Commonly used for NAS devices
+  (e.g., Synology encrypted shared folder with 143-byte filename limit).
 """)
     sys.exit(0)
 

@@ -12,34 +12,35 @@ import enum
 import typing
 
 
-help_message = '''
------------------- npy/npz 文件交互式显示工具 ------------------
-参数说明：
-    （自动判断 npy/npz 文件中是 1D 还是 2D 数组，并根据数组维度选择显示方式）
-    如为 npz 文件，则显示其中所有数组的名称，并提示用户选择要显示的数组
-        无限循环交互，
-        输入 `1,2,3` 则打开 第 1,2,3 个数组的显示界面（如果存在）
-        输入 `1,2,3-5` 则打开 第 1,2,3,4,5 个数组的显示界面（如果存在）
-        输入 `all` 则打开所有数组的显示界面
-        输入 `exit` 则退出程序
-    打开后，通过死循环再次打印出上述提示，直到用户输入 `exit` 退出程序
-    
-1D array
-        show_npy.py <npy_file_path> [--color <color_name>] [--mode <line|points|line+points>] [--line-shape <linear|spline>] [--max-display-size <int>] [--force-plt | --force-matplotlib]
-    如未指定 --color, 默认在控制台输出所有支持的显示模式，并提示用户选择，默认值为 royalblue
-    如未指定 --mode, 默认在控制台输出所有支持的显示模式，并提示用户选择，默认值为 line
-    如未指定 --line-shape, 默认在控制台输出所有支持的线条形状，并提示用户选择，默认值为 linear
-    如未指定 --max-display-size, 默认在控制台输出两种显示方式的说明，并提示用户选择是否打印出所有数据点，还是抽样显示
-    如未指定 --force-plt 或 --force-matplotlib, 默认优先使用 plotly 显示，如果失败则回退到 matplotlib.pyplot
-    
-2D array
-        show_npy.py <npy_file_path> [--3d | --2d] [--color-scale <color_scale_name>] [--max-display-size <int>] [--force-plt | --force-matplotlib]
-    如未指定 --3d 或 --2d, 默认在控制台输出两种显示方式的说明，并提示用户选择，默认值为 2d
-    如未指定 --color-scale,默认在控制台输出两种显示方式的说明，并提示用户选择，默认值为 cividis
-    如未指定 --max-display-size, 默认在控制台输出两种显示方式的说明，并提示用户选择是否打印出所有数据点，还是抽样显示，默认值为 all
-    如未指定 --force-plt 或 --force-matplotlib, 默认优先使用 plotly 显示，如果失败则回退到 matplotlib.pyplot
-    
-    
+help_message = f'''
+{FLYellow}------------------ npy/npz Interactive File Viewer ------------------{CRst}
+{FLYellow}Arguments:{CRst}
+    Auto-detects 1D/2D arrays in npy/npz files and chooses display mode accordingly.
+    For npz files, lists all array names and prompts to select which to display.
+    Interactive loop:
+        Enter `1,2,3` to open arrays at index 1, 2, 3
+        Enter `1,2,3-5` to open arrays at index 1, 2, 3, 4, 5
+        Enter `all` to open all arrays
+        Enter `exit` to quit
+    After opening, re-print the prompt until `exit` is entered.
+
+{FLYellow}1D array{CRst}
+    show_npy.py <npy_file_path> [--color <color_name>] [--mode <line|points|line+points>]
+        [--line-shape <linear|spline>] [--max-display-size <int>]
+        [--force-plt | --force-matplotlib]
+    If --color is not specified, default: royalblue
+    If --mode is not specified, default: line
+    If --line-shape is not specified, default: linear
+    If --max-display-size is not specified, prompts to show all data or sampled
+    If --force-plt/--force-matplotlib not specified, defaults to plotly, falls back to matplotlib
+
+{FLYellow}2D array{CRst}
+    show_npy.py <npy_file_path> [--3d | --2d] [--color-scale <name>]
+        [--max-display-size <int>] [--force-plt | --force-matplotlib]
+    If --3d/--2d is not specified, default: 2d
+    If --color-scale is not specified, default: cividis
+    If --max-display-size is not specified, default: all
+    If --force-plt/--force-matplotlib not specified, defaults to plotly, falls back to matplotlib
 '''
 
 class DisplayMode(enum.Enum):

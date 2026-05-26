@@ -11,13 +11,13 @@ FFMPEG VIDEO CROP TOOL
 ======================
 
 Usage:
-  python {script_name} <video1> <video2> ...    直接传入视频路径，跳过交互
-  python {script_name}                          无参数，进入交互输入模式
-  python {script_name} --help                   显示此帮助
+  python {script_name} <video1> <video2> ...    specify video paths, skip interaction
+  python {script_name}                          no arguments, interactive mode
+  python {script_name} --help                   show this help
 
-功能：
-  基于 ffmpeg 的视频裁剪工具（时间截取，非画面裁剪）。
-  需要安装 ffmpeg（scoop install ffmpeg）。
+{FLYellow}Description:{CRst}
+  ffmpeg-based video time-cropping tool (time trimming, not frame cropping).
+  Requires ffmpeg (scoop install ffmpeg).
 """)
     sys.exit(0)
 

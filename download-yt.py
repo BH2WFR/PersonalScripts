@@ -12,16 +12,17 @@ YT-DLP TOOL - YouTube Video Downloader
 =======================================
 
 Usage:
-  python {script_name} <url1> <url2> ...    直接传入视频链接，跳过链接输入
-  python {script_name}                      无参数，进入交互输入模式
-  python {script_name} --help               显示此帮助
+  python {script_name} <url1> <url2> ...    specify URLs, skip URL input
+  python {script_name}                       no arguments, interactive mode
+  python {script_name} --help                show this help
 
-功能：
-  基于 yt-dlp 的 YouTube 视频下载器。
-  需要安装：yt-dlp, ffmpeg（deno 可选）。
+{FLYellow}Description:{CRst}
+  yt-dlp-based YouTube video downloader.
+  Requires: yt-dlp, ffmpeg (deno optional).
 
-交互选项：
-  输出目录、视频链接（多行 EOF 输入）、下载模式（画质/仅音频/仅字幕）。
+{FLYellow}Interactive Options:{CRst}
+  Output directory, video URLs (multi-line EOF input), download mode
+  (quality/audio-only/subtitles only).
 """)
     sys.exit(0)
 

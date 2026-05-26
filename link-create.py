@@ -13,32 +13,33 @@ print(f"{FLYellow}=========== LINK CREATION TOOL ==========={CRst}")
 if "--help" in sys.argv or "-h" in sys.argv:
     script_name = os.path.basename(sys.argv[0])
     print(f"""
+{FLYellow}LINK CREATION TOOL{CRst}
 ==================
 
 Usage:
-  python {script_name} <path1> <path2> ...   直接传入路径，跳过交互
-  python {script_name}                        无参数，进入交互输入模式
-  python {script_name} --help                 显示此帮助
+  python {script_name} <path1> <path2> ...   specify paths, skip interaction
+  python {script_name}                        no arguments, interactive mode
+  python {script_name} --help                 show this help
 
-支持的链接类型：
+{FLYellow}Supported Link Types:{CRst}
   Windows:
-    文件    - Symlink (软链接，支持相对路径) / Hardlink (硬链接)
-    目录    - SymlinkD (目录软链接，支持相对路径) / Junction (不支持相对路径)
+    Files   - Symlink (soft link, relative paths supported) / Hardlink
+    Dirs    - SymlinkD (directory soft link, relative paths) / Junction (no relative paths)
   Linux/macOS:
-    文件    - Symlink / Hardlink
-    目录    - Symlink
+    Files   - Symlink / Hardlink
+    Dirs    - Symlink
 
-单目录特殊模式（仅输入一个目录时触发）：
-  0  链接目录本身
-  1  展平链接目录内的一级内容（文件/子目录）
-  2  递归镜像目录结构（子目录创建为真实目录，文件创建为链接）
+{FLYellow}Single Directory Mode{CRst} (when only one directory is provided):
+  0  Link the directory itself
+  1  Flat-link contents inside the directory (files/subdirs, same level)
+  2  Recursively mirror directory structure (real dirs, linked files)
 
-交互流程：
-  1. 输入源路径（多个路径用 Ctrl+Z/Ctrl+D 结束多行输入）
-  2. 选择链接类型（文件/目录分别选择）
-  3. 输入目标目录
-  4. 选择是否使用相对路径
-  5. 确认后执行，遇到冲突可 skip/skip all/overwrite/overwrite all
+{FLYellow}Interactive Workflow:{CRst}
+  1. Enter source paths (multi-line, Ctrl+Z/Ctrl+D to end)
+  2. Choose link type (separately for files and directories)
+  3. Enter target directory
+  4. Choose relative or absolute paths
+  5. Confirm and execute; conflicts can be skip/skip all/overwrite/overwrite all
 """)
     sys.exit(0)
 

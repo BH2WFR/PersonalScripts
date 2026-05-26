@@ -13,17 +13,18 @@ BBDOWN TOOL - Bilibili Video Downloader
 ========================================
 
 Usage:
-  python {script_name} <url1> <url2> ...    直接传入视频链接，跳过链接输入
-  python {script_name}                      无参数，进入交互输入模式
-  python {script_name} --help               显示此帮助
+  python {script_name} <url1> <url2> ...    specify URLs, skip URL input
+  python {script_name}                       no arguments, interactive mode
+  python {script_name} --help                show this help
 
-功能：
-  基于 BBDown 的 Bilibili 视频下载器。
-  需要安装：BBDown, ffmpeg（aria2 可选，用于加速下载）。
+{FLYellow}Description:{CRst}
+  BBDown-based Bilibili video downloader.
+  Requires: BBDown, ffmpeg (aria2 optional for faster downloads).
 
-交互选项：
-  输出目录、视频链接（多行 EOF 输入）、下载模式（画质/仅音频/字幕/弹幕）、
-  分P选择、API 类型（默认/TV/APP/国际版）
+{FLYellow}Interactive Options:{CRst}
+  Output directory, video URLs (multi-line EOF input), download mode
+  (quality/audio-only/subtitles/danmaku), part selection, API type
+  (default/TV/APP/international).
 """)
     sys.exit(0)
 

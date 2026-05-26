@@ -18,14 +18,14 @@ LINK SCANNING TOOL
 ==================
 
 Usage:
-  python {script_name} <path>       指定路径，跳过交互
-  python {script_name}              无参数，进入交互输入模式
-  python {script_name} --help       显示此帮助
+  python {script_name} <path>       specify path, skip interaction
+  python {script_name}              no arguments, interactive mode
+  python {script_name} --help       show this help
 
-功能：
-  递归扫描目录，列出所有符号链接(symlink)、目录符号链接(symlinkd)、
-  Junction 和硬链接(HardLink)。识别损坏的链接和 Windows 下指向目录的错误 symlink。
-  可选自动删除损坏链接，或转换错误 symlink 为 symlinkd。
+{FLYellow}Description:{CRst}
+  Recursively scan directories, list all symlinks, symlinkd, Junctions and hardlinks.
+  Detect broken links and Windows symlinks incorrectly pointing to directories.
+  Optionally auto-delete broken links or convert incorrect symlinks to symlinkd.
 """)
     sys.exit(0)
 
