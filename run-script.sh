@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -eo pipefail
 
 esc=$'\033'
 FLYellow="${esc}[33m"
