@@ -5,6 +5,26 @@ from my_utils import *
 
 print(f"{FLYellow}=========== YT-DLP TOOL ==========={CRst}")
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+YT-DLP TOOL - YouTube Video Downloader
+=======================================
+
+Usage:
+  python {script_name} <url1> <url2> ...    直接传入视频链接，跳过链接输入
+  python {script_name}                      无参数，进入交互输入模式
+  python {script_name} --help               显示此帮助
+
+功能：
+  基于 yt-dlp 的 YouTube 视频下载器。
+  需要安装：yt-dlp, ffmpeg（deno 可选）。
+
+交互选项：
+  输出目录、视频链接（多行 EOF 输入）、下载模式（画质/仅音频/仅字幕）。
+""")
+    sys.exit(0)
+
 
 Utils.console_command_required("yt-dlp")
 Utils.console_command_required("ffmpeg")
@@ -21,19 +41,29 @@ if(not os.path.exists(OUTPUT_DIR)):
 	sys.exit(1)
 
 
-#* 链接（多行）
-print(f"{FLYellow}Enter YouTube video URLs (one per line).{CRst}")
-print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
-URLS_INPUT = sys.stdin.read().strip()
+#* 链接
+if len(sys.argv) > 1:
+    URLS = []
+    for i in range(1, len(sys.argv)):
+        u = sys.argv[i].strip()
+        if not u.startswith("-") and u:
+            URLS.append(u)
+else:
+    print(f"{FLYellow}Enter YouTube video URLs (one per line).{CRst}")
+    print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
+    URLS_INPUT = sys.stdin.read().strip()
+    if not URLS_INPUT:
+        print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
+        sys.exit(1)
+    URLS = []
+    for line in URLS_INPUT.splitlines():
+        line = line.strip()
+        if line:
+            URLS.append(line)
 
-if(not URLS_INPUT):
-	print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
-	sys.exit(1)
-URLS = []
-for line in URLS_INPUT.splitlines():
-	line = line.strip()
-	if(line):
-		URLS.append(line)
+if not URLS:
+    print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
+    sys.exit(1)
 
 #* 码率、仅下载音频、仅下载字幕、仅下载弹幕
 class E_DOWNLOAD_TYPE(enum.Enum):
