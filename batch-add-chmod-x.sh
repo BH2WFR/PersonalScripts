@@ -1,6 +1,6 @@
 
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+set -eu
 
 FLYellow="\033[33m"
 FLCyan="\033[36m"
@@ -12,7 +12,7 @@ CRst="\033[0m"
 
 #============ root 权限检查 ===========
 if [ "$(id -u)" -ne 0 ]; then
-    echo "${FLRed}ERROR: This script must be run as root. Use ${CRst}${FLYellow}sudo${CRst}."
+    printf "${FLRed}ERROR: This script must be run as root. Use ${CRst}${FLYellow}sudo${CRst}.\n"
     exit 1
 fi
 
@@ -20,27 +20,30 @@ fi
 if [ -n "${1:-}" ]; then
     TARGET="$1"
 else
-    read -rp "${FLYellow}Enter file or directory path${CRst}: " TARGET
+    printf "${FLYellow}Enter file or directory path (default: .)${CRst}: "
+    read -r TARGET
 fi
 
-if [ -z "$TARGET" ] || [ ! -e "$TARGET" ]; then
-    echo -e "${FLRed}ERROR: Invalid or non-existent path${CRst}: ${TARGET:-"(empty)"}"
+TARGET="${TARGET:-.}"
+
+if [ ! -e "$TARGET" ]; then
+    printf "${FLRed}ERROR: Invalid or non-existent path${CRst}: ${FLYellow}%s${CRst}\n" "$TARGET"
     exit 1
 fi
 
 TARGET="$(realpath "$TARGET")"
-echo -e "  -> ${FLCyan}target${CRst}: ${FLYellow}$TARGET${CRst}"
+printf "  -> ${FLCyan}target${CRst}: ${FLYellow}%s${CRst}\n" "$TARGET"
 
 #============ 代码主体部分 ===========
 if [ -f "$TARGET" ]; then
-    echo -e "  -> adding +x to file: ${FLYellow}$TARGET${CRst}"
+    printf "  -> adding +x to file: ${FLYellow}%s${CRst}\n" "$TARGET"
     chmod +x "$TARGET"
-    echo -e "${FLGreen}Done. +x added to${CRst} ${FLYellow}$TARGET${CRst}"
+    printf "${FLGreen}Done. +x added to${CRst} ${FLYellow}%s${CRst}\n" "$TARGET"
 elif [ -d "$TARGET" ]; then
-    echo -e "  -> adding +x to .py and .sh files recursively in ${FLYellow}$TARGET${CRst}..."
+    printf "  -> adding +x to .py and .sh files recursively in ${FLYellow}%s${CRst}...\n" "$TARGET"
     find "$TARGET" -type f \( -name "*.py" -o -name "*.sh" \) -print -exec chmod +x {} \;
-    echo -e "${FLGreen}Done.${CRst}"
+    printf "${FLGreen}Done.${CRst}\n"
 else
-    echo -e "${FLRed}ERROR: Unknown path type${CRst}: ${FLYellow}$TARGET${CRst}"
+    printf "${FLRed}ERROR: Unknown path type${CRst}: ${FLYellow}%s${CRst}\n" "$TARGET"
     exit 1
 fi
