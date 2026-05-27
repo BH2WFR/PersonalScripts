@@ -190,7 +190,7 @@ if [[ ! -f "$script_path" ]]; then
     exit 1
 fi
 
-printf '%bResolved script path:%b %b%s%b\n\n' "$FLYellow" "$CRst" "$FLGreen" "$script_path" "$CRst"
+printf '%bResolved script path:%b %b%s%b\n' "$FLYellow" "$CRst" "$FLGreen" "$script_path" "$CRst"
 
 ext="${script_path##*.}"
 if [[ "$ext" == "py" ]]; then
@@ -226,6 +226,8 @@ if [[ "$ext" == "py" ]]; then
     "$python_cmd" "$python_script_path" "${remaining_args[@]}"
     exit $?
 fi
+
+printf '\n'
 
 if [[ "$ext" == "sh" ]]; then
     bash_exe="${BASH:-bash}"
