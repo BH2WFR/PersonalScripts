@@ -7,10 +7,24 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 ## Quick Start
 
 ```bash
-# Run any script via the launcher (resolves Python environment automatically)
-./run-script.sh <script_name> [args...]      # Linux/macOS
-.\run-script.ps1 <script_name> [args...]     # Windows
+# Interactive mode: lists supported scripts, select by number
+./run-script.sh                                # Linux/macOS
+.\run-script.ps1                               # Windows
+
+# Run a specific script directly
+./run-script.sh <script_name> [args...]        # Linux/macOS
+.\run-script.ps1 <script_name> [args...]       # Windows
+
+# List available scripts without running
+./run-script.sh --list                         # Linux/macOS
+.\run-script.ps1 --list                        # Windows
 ```
+
+**Launcher Features:**
+- Interactive script selection by number (root scripts first, then subfolders)
+- Platform-aware filtering: Linux/macOS launcher hides `windows/` scripts; Windows launcher hides `linux/` and `macos/` scripts
+- Auto-detects Python: prefers miniconda/anaconda, falls back to `python3`
+- On Linux without conda, auto-creates `.venv` to bypass PEP 668 restrictions
 
 ---
 
@@ -65,6 +79,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 | Script | Description |
 |--------|-------------|
+| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters |
 | `research/show_npy.py` | Interactive viewer for `.npy`/`.npz` files with line chart rendering |
 | `research/open-npy-viewer.bat` | Batch launcher for npy viewer (drag-and-drop support) |
 | `run-script.sh` | Bash launcher for running any script in the repo |
@@ -84,10 +99,21 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 Core utility module: `my_utils/` — provides ANSI color codes, logging helpers, and platform utilities.
 
-Each script declares its own dependencies at the top. Install with:
+### Python Environment
+
+**Windows / macOS with miniconda:** the launcher auto-detects conda Python.
+
+**Ubuntu / Debian (PEP 668):** the launcher auto-creates `.venv` on first run. Install packages into it:
 
 ```bash
-pip install pypdf boto3 opencv-python mss pynput Pillow
+./run-script.sh                      # creates .venv automatically
+.venv/bin/pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib
+```
+
+**Manual pip install** (if using system Python directly):
+
+```bash
+pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy unicodedata
 ```
 
 External tools (via package manager):
@@ -101,7 +127,9 @@ apt install ffmpeg yt-dlp                    # Linux
 
 ## Conventions
 
-- All Python scripts support `--help` / `-h` for usage info
+- All Python scripts support `--help` / `-h` for usage info (English, with color)
 - Command-line arguments suppress interactive prompts (batch-friendly)
 - Multi-line input uses EOF (`Ctrl+Z` on Windows, `Ctrl+D` on Linux/macOS)
 - Color output via `my_utils` ANSI codes (`FLYellow`, `FLGreen`, `FLRed`, etc.)
+- Platform-specific scripts are in `windows/`, `linux/`, `macos/` subdirectories
+- The `parse-unicode-string.py` script displays Unicode character info with color-coded control/whitespace/normal characters

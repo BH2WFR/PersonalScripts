@@ -221,7 +221,18 @@ if [[ "$ext" == "py" ]]; then
         printf '%bCannot find python (miniconda/anaconda/python3)%b\n' "$FLRed" "$CRst" >&2
         exit 1
     fi
-    
+
+    # If using system python3 (not conda), auto-create .venv for isolated packages
+    if [[ "$python_cmd" == "python3" ]]; then
+        VENV_DIR="$script_dir/.venv"
+        if [[ ! -f "$VENV_DIR/bin/python" ]]; then
+            printf '%bCreating virtual environment at: %s%b\n' "$FLYellow" "$VENV_DIR" "$CRst"
+            python3 -m venv "$VENV_DIR"
+        fi
+        python_cmd="$VENV_DIR/bin/python"
+        export PYTHONPATH="$script_dir${PYTHONPATH:+:$PYTHONPATH}"
+    fi
+
     "$python_cmd" "$python_script_path" "${remaining_args[@]}"
     exit $?
 fi
