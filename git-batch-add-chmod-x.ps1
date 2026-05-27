@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 #* 给本仓库所有 .sh .py 文件（递归查找），通过 git update-index 添加 chmod +x 权限，方便在 linux 下拉取时自带 +x 权限
 # 参数：
 #   argv[1] 目录路径（可选，默认当前目录）

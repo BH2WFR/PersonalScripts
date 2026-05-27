@@ -1,4 +1,4 @@
-$TypeName = "ScreenInfo20260502.Native"
+﻿$TypeName = "ScreenInfo20260502.Native"
 
 if (-not ($TypeName -as [type])) {
 Add-Type @"
