@@ -106,8 +106,14 @@ Core utility module: `my_utils/` — provides ANSI color codes, logging helpers,
 **Ubuntu / Debian (PEP 668):** the launcher auto-creates `.venv` on first run. Install packages into it:
 
 ```bash
-./run-script.sh                      # creates .venv automatically
-.venv/bin/pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib
+./run-script.sh                                      # creates .venv automatically
+.venv/bin/python -m pip install pypdf boto3 ...      # install dependencies
+```
+
+If pip is missing in `.venv`, install system packages first:
+
+```bash
+sudo apt install python3-venv python3-pip
 ```
 
 **Manual pip install** (if using system Python directly):
