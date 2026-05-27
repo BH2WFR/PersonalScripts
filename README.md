@@ -101,26 +101,13 @@ Core utility module: `my_utils/` — provides ANSI color codes, logging helpers,
 
 ### Python Environment
 
-**Windows / macOS with miniconda:** the launcher auto-detects conda Python.
-
-**Ubuntu / Debian (PEP 668):** the launcher auto-creates `.venv` on first run. Install packages into it:
+**Windows / macOS / Linux:** install [Miniconda](https://docs.conda.io/en/latest/miniconda.html), then install packages into the base environment:
 
 ```bash
-./run-script.sh                                      # creates .venv automatically
-.venv/bin/python -m pip install pypdf boto3 ...      # install dependencies
+pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy
 ```
 
-If pip is missing in `.venv`, install system packages first:
-
-```bash
-sudo apt install python3-venv python3-pip
-```
-
-**Manual pip install** (if using system Python directly):
-
-```bash
-pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy unicodedata
-```
+The launcher auto-detects conda Python at `~/miniconda3/bin/python`.
 
 External tools (via package manager):
 ```bash

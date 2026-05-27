@@ -170,6 +170,16 @@ Write-Host ("${FLYellow}Resolved script path:${CRst} ${FLGreen}$scriptPath${CRst
 $ext = [System.IO.Path]::GetExtension($scriptPath)
 if ($ext -ieq ".py") {
     $env:PYTHONPATH = $scriptDirectory
+    $pythonCmd = & {
+        if (Get-Command python -ErrorAction SilentlyContinue) { return (Get-Command python).Source }
+        if (Get-Command python3 -ErrorAction SilentlyContinue) { return (Get-Command python3).Source }
+        return $null
+    }
+    if (-not $pythonCmd) {
+        Write-Error "Cannot find python/python3"
+        exit 1
+    }
+    Write-Host ("${FLYellow}Resolved Python path:${CRst} ${FLGreen}$pythonCmd${CRst}`n")
     & python $scriptPath @RemainingArgs
     exit $LASTEXITCODE
 }

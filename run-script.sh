@@ -218,30 +218,11 @@ if [[ "$ext" == "py" ]]; then
         fi
     done
     if [[ -z "$python_cmd" ]]; then
-        printf '%bCannot find python (miniconda/anaconda/python3)%b\n' "$FLRed" "$CRst" >&2
+        printf '%bCannot find python (miniconda/anaconda/python3). Install miniconda: https://docs.conda.io/en/latest/miniconda.html%b\n' "$FLRed" "$CRst" >&2
         exit 1
     fi
 
-    # If using system python3 (not conda), auto-create .venv for isolated packages
-    if [[ "$python_cmd" == "python3" ]]; then
-        VENV_DIR="$script_dir/.venv"
-        if [[ ! -f "$VENV_DIR/bin/python" ]]; then
-            printf '%bCreating virtual environment at: %s%b\n' "$FLYellow" "$VENV_DIR" "$CRst"
-            python3 -m venv "$VENV_DIR" 2>/dev/null || {
-                # If venv fails (missing python3-venv), try without pip and bootstrap
-                python3 -m venv --without-pip "$VENV_DIR"
-                "$VENV_DIR/bin/python" -m ensurepip --upgrade 2>/dev/null || true
-            }
-            if [[ ! -f "$VENV_DIR/bin/pip" && ! -f "$VENV_DIR/bin/pip3" ]]; then
-                printf '%bCannot install pip in venv. Run: sudo apt install python3-venv python3-pip%b\n' "$FLRed" "$CRst" >&2
-                rm -rf "$VENV_DIR"
-                exit 1
-            fi
-        fi
-        python_cmd="$VENV_DIR/bin/python"
-        export PYTHONPATH="$script_dir${PYTHONPATH:+:$PYTHONPATH}"
-    fi
-
+    printf '%bResolved Python path:%b %b%s%b\n' "$FLYellow" "$CRst" "$FLGreen" "$python_cmd" "$CRst"
     "$python_cmd" "$python_script_path" "${remaining_args[@]}"
     exit $?
 fi
