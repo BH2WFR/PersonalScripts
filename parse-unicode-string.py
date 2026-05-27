@@ -113,7 +113,7 @@ print(f"{FLYellow}Input string: {CRst}{FLCyan}{repr(text)}{CRst}\n")
 
 #============ 打印表头 ===========
 print(f"┌───────┬────────────────────┬──────────┬───────────┬──────────────────────────────────┐")
-print(f"│ {FLYellow}Index{CRst} │ {FLYellow}Char              {CRst} │   {FLYellow}Hex   {CRst} │    {FLYellow}Dec   {CRst} │ {FLYellow}Description                     {CRst} │")
+print(f"│ Index │ Char               │   Hex    │    Dec    │ Description                      │")
 print(f"├───────┼────────────────────┼──────────┼───────────┼──────────────────────────────────┤")
 
 
@@ -144,5 +144,8 @@ for idx, ch in enumerate(text):
 
     print(f"│ {FLGreen}{idx:>5}{CRst} │ {char_color}{char_str}{CRst} │ {FLBlue}{hex_str:<8}{CRst} │ {FLMagenta}{cp:>9}{CRst} │ {desc_color}{desc_display:<32}{CRst} │")
 
-print(f"└───────┴────────────────────┴──────────┴───────────┴──────────────────────────────────┘")
-print(f"\n{FLYellow}Total: {text_len} character(s){CRst}\n")
+
+total = f"Total: {text_len} character(s)"
+print(f"├───────┴────────────────────┴──────────┴───────────┴──────────────────────────────────┤")
+print(f"│     {FLYellow}{total:<80}{CRst} │")
+print(f"└──────────────────────────────────────────────────────────────────────────────────────┘\n")

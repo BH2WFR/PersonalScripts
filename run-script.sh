@@ -54,36 +54,66 @@ show_supported_scripts() {
         find "$script_dir" -type f \( -name '*.py' -o -name '*.sh' \) \
             ! -name '__init__.py' \
             ! -path "$script_self" \
+            ! -path "*/windows/*" \
             | sort
     )
 
     if [[ "${#scripts[@]}" -eq 0 ]]; then
         printf 'No Python/Shell scripts found in: `%s`:\n' "$script_dir"
-        return
+        return 1
     fi
+
+    # Separate root-level and subfolder scripts
+    local root_scripts=()
+    local sub_scripts=()
+    for full_path in "${scripts[@]}"; do
+        local rel_dir
+        rel_dir="$(dirname -- "$full_path")"
+        if [[ "$rel_dir" == "$script_dir" ]]; then
+            root_scripts+=("$full_path")
+        else
+            sub_scripts+=("$full_path")
+        fi
+    done
 
     printf 'Supported scripts in: `%s`:\n' "$script_dir"
 
     local cnt=0
-    local full_path relative_path file_name relative_directory color
-    for full_path in "${scripts[@]}"; do
+    local full_path relative_path file_name color
+
+    for full_path in "${root_scripts[@]}"; do
         relative_path="$(get_relative_script_path "$full_path")"
         file_name="$(basename -- "$relative_path")"
-        relative_directory="$(dirname -- "$relative_path")"
-        if [[ "$relative_directory" == "." ]]; then
-            relative_directory=""
-        else
-            relative_directory="${FLYellow}${relative_directory}${CRst}/"
-        fi
-
         if [[ "$full_path" =~ \.py$ ]]; then
             color="$FLCyan"
         else
             color="$FLGreen"
         fi
-        printf '  %b[%d]%b: %b%b%b\n' "$FGray" "$cnt" "$CRst" "$relative_directory" "$color" "$file_name$CRst"
+        printf '  %b[%d]%b: %b%s%b\n' "$FGray" "$cnt" "$CRst" "$color" "$file_name$CRst"
         cnt=$((cnt + 1))
     done
+
+    if [[ "${#sub_scripts[@]}" -gt 0 ]]; then
+        printf '\n'
+        printf '  %b--- Subfolders ---%b\n' "$FLYellow" "$CRst"
+        for full_path in "${sub_scripts[@]}"; do
+            relative_path="$(get_relative_script_path "$full_path")"
+            file_name="$(basename -- "$relative_path")"
+            local relative_directory
+            relative_directory="$(dirname -- "$relative_path")"
+            if [[ "$full_path" =~ \.py$ ]]; then
+                color="$FLCyan"
+            else
+                color="$FLGreen"
+            fi
+            printf '  %b[%d]%b: %b%s%b/%b%s%b\n' "$FGray" "$cnt" "$CRst" "$FLYellow" "$relative_directory" "$CRst" "$color" "$file_name$CRst"
+            cnt=$((cnt + 1))
+        done
+    fi
+
+    # Return all scripts as a combined array via a global variable
+    ALL_SCRIPTS=("${root_scripts[@]}" "${sub_scripts[@]}")
+    return 0
 }
 
 script_name="${1-}"
@@ -104,12 +134,42 @@ else
     done
 fi
 
+ALL_SCRIPTS=()
+
 if [[ "$show_list" == true ]]; then
     show_supported_scripts
-    exit 0
+    ret=$?
+    if [[ "$script_name" == "--list" ]]; then
+        exit 0
+    fi
+    for arg in "${remaining_args[@]}"; do
+        if [[ "$arg" == "--list" ]]; then
+            exit 0
+        fi
+    done
+
+    if [[ $ret -ne 0 ]]; then
+        exit 0
+    fi
+
+    printf '\n%bEnter number to execute (or Enter to exit):%b ' "$FLYellow" "$CRst"
+    read -r choice
+    if [[ -z "$choice" ]]; then
+        exit 0
+    fi
+    if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -ge "${#ALL_SCRIPTS[@]}" ]]; then
+        printf '%bInvalid selection: %s%b\n' "$FLRed" "$choice" "$CRst" >&2
+        exit 1
+    fi
+    script_name="${ALL_SCRIPTS[$choice]}"
+    remaining_args=()
 fi
 
-script_path="$(resolve_script_path "$script_name")"
+if [[ -f "$script_name" ]]; then
+    script_path="$script_name"
+else
+    script_path="$(resolve_script_path "$script_name")"
+fi
 
 if [[ "$script_path" == "$script_self" ]]; then
     printf '%bRefusing to run itself: `%s`%b\n' "$FLRed" "$script_path" "$CRst" >&2
@@ -130,7 +190,7 @@ if [[ ! -f "$script_path" ]]; then
     exit 1
 fi
 
-printf '%bResolved script path:%b %b%s%b\n' "$FLYellow" "$CRst" "$FLGreen" "$script_path" "$CRst"
+printf '%bResolved script path:%b %b%s%b\n\n' "$FLYellow" "$CRst" "$FLGreen" "$script_path" "$CRst"
 
 ext="${script_path##*.}"
 if [[ "$ext" == "py" ]]; then

@@ -77,44 +77,74 @@ function Show-SupportedScripts {
         Where-Object {
             ($_.Extension -ieq ".py" -or $_.Extension -ieq ".ps1") -and
             ($_.Name -ne "__init__.py") -and
-            (-not $selfPath -or $_.FullName -ne $selfPath)
-        } |
-        Sort-Object FullName
+            (-not $selfPath -or $_.FullName -ne $selfPath) -and
+            ($_.DirectoryName -notmatch '[\\/](linux|macos)([\\/]|$)')
+        } | Sort-Object FullName
 
-    if (-not $scripts) {
+    # Separate root-level and subfolder scripts
+    $rootScripts = @($scripts | Where-Object { $_.DirectoryName -eq $scriptDirectory })
+    $subScripts = @($scripts | Where-Object { $_.DirectoryName -ne $scriptDirectory })
+
+    if (-not $rootScripts -and -not $subScripts) {
         Write-Host "No Python/PowerShell scripts found in: ``$scriptDirectory``:"
-        return
+        return $null
     }
 
     Write-Host "Supported scripts in: ``$scriptDirectory``:"
     $cnt = 0
-    foreach ($script in $scripts) {
+    $allScripts = @()
+
+    foreach ($script in $rootScripts) {
         $relativePath = Get-RelativeScriptPath -FullPath $script.FullName
         $fileName = [System.IO.Path]::GetFileName($relativePath)
-        $relativeDirectory = [System.IO.Path]::GetDirectoryName($relativePath)
-        if ([string]::IsNullOrEmpty($relativeDirectory)) {
-            $relativeDirectory = ""
-        } else {
-            $relativeDirectory = "${FLYellow}${relativeDirectory}${CRst}/"
-        }
-        if ($script.Extension -ieq ".py") {
-            $color = $FLCyan
-        } else {
-            $color = $FLGreen
-        }
-        Write-Host ("  ${FGray}[${cnt}]${CRst}: ${relativeDirectory}${color}${fileName}${CRst}")
+        $color = if ($script.Extension -ieq ".py") { $FLCyan } else { $FLGreen }
+        Write-Host ("  ${FGray}[${cnt}]${CRst}: ${color}${fileName}${CRst}")
+        $allScripts += $script
         $cnt++
     }
+
+    if ($subScripts.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  ${FLYellow}--- Subfolders ---${CRst}"
+        foreach ($script in $subScripts) {
+            $relativePath = Get-RelativeScriptPath -FullPath $script.FullName
+            $fileName = [System.IO.Path]::GetFileName($relativePath)
+            $relativeDirectory = [System.IO.Path]::GetDirectoryName($relativePath)
+            $color = if ($script.Extension -ieq ".py") { $FLCyan } else { $FLGreen }
+            Write-Host ("  ${FGray}[${cnt}]${CRst}: ${FLYellow}${relativeDirectory}${CRst}/${color}${fileName}${CRst}")
+            $allScripts += $script
+            $cnt++
+        }
+    }
+
+    return $allScripts
 }
 
 $showList = [string]::IsNullOrWhiteSpace($ScriptName) -or $ScriptName -eq "--list" -or $RemainingArgs -contains "--list"
 if ($showList) {
-    Show-SupportedScripts
-    exit 0
+    $allScripts = Show-SupportedScripts
+    if (-not $allScripts) { exit 0 }
+
+    if ($ScriptName -eq "--list" -or $RemainingArgs -contains "--list") {
+        exit 0
+    }
+
+    Write-Host ""
+    $choice = Read-Host -Prompt "${FLYellow}Enter number to execute (or Enter to exit)${CRst}"
+    if ([string]::IsNullOrWhiteSpace($choice)) {
+        exit 0
+    }
+    $idx = [int]$choice
+    if ($idx -lt 0 -or $idx -ge $allScripts.Count) {
+        Write-Error "Invalid selection: $idx"
+        exit 1
+    }
+    $ScriptName = $allScripts[$idx].FullName
+    $RemainingArgs = @()
 }
 
 
-$scriptPath = Resolve-ScriptPath -RequestedScriptName $ScriptName
+$scriptPath = if (Test-Path -LiteralPath $ScriptName -PathType Leaf) { $ScriptName } else { Resolve-ScriptPath -RequestedScriptName $ScriptName }
 if ($PSCommandPath -and ($scriptPath -eq $PSCommandPath)) {
     Write-Error "Refusing to run itself: ``$scriptPath``"
     exit 1
@@ -136,7 +166,7 @@ if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
     exit 1
 }
 
-Write-Host ("${FLYellow}Resolved script path:${CRst} ${FLGreen}$scriptPath${CRst}")
+Write-Host ("${FLYellow}Resolved script path:${CRst} ${FLGreen}$scriptPath${CRst}`n")
 $ext = [System.IO.Path]::GetExtension($scriptPath)
 if ($ext -ieq ".py") {
     $env:PYTHONPATH = $scriptDirectory
