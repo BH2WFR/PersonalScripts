@@ -204,7 +204,25 @@ if [[ "$ext" == "py" ]]; then
         python_script_path="$script_path"
     fi
 
-    python "$python_script_path" "${remaining_args[@]}"
+    # Find python command: prefer miniconda/anaconda, then python3
+    python_cmd=""
+    for candidate in \
+        "$HOME/miniconda3/bin/python" \
+        "$HOME/anaconda3/bin/python" \
+        "/opt/miniconda3/bin/python" \
+        "/opt/anaconda3/bin/python" \
+        python3; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            python_cmd="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$python_cmd" ]]; then
+        printf '%bCannot find python (miniconda/anaconda/python3)%b\n' "$FLRed" "$CRst" >&2
+        exit 1
+    fi
+    
+    "$python_cmd" "$python_script_path" "${remaining_args[@]}"
     exit $?
 fi
 
