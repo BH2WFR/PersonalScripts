@@ -227,11 +227,14 @@ if [[ "$ext" == "py" ]]; then
         VENV_DIR="$script_dir/.venv"
         if [[ ! -f "$VENV_DIR/bin/python" ]]; then
             printf '%bCreating virtual environment at: %s%b\n' "$FLYellow" "$VENV_DIR" "$CRst"
-            python3 -m venv --without-pip "$VENV_DIR"
-            # Bootstrap pip via ensurepip
-            "$VENV_DIR/bin/python" -m ensurepip --upgrade 2>/dev/null || true
-            if [[ ! -f "$VENV_DIR/bin/pip" ]]; then
+            python3 -m venv "$VENV_DIR" 2>/dev/null || {
+                # If venv fails (missing python3-venv), try without pip and bootstrap
+                python3 -m venv --without-pip "$VENV_DIR"
+                "$VENV_DIR/bin/python" -m ensurepip --upgrade 2>/dev/null || true
+            }
+            if [[ ! -f "$VENV_DIR/bin/pip" && ! -f "$VENV_DIR/bin/pip3" ]]; then
                 printf '%bCannot install pip in venv. Run: sudo apt install python3-venv python3-pip%b\n' "$FLRed" "$CRst" >&2
+                rm -rf "$VENV_DIR"
                 exit 1
             fi
         fi
