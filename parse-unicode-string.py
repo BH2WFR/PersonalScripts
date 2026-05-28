@@ -14,22 +14,24 @@ REPLACE_MAP = {
     "\x1c":"[FS]",   "\x1d":"[GS]",   "\x1e":"[RS]",   "\x1f":"[US]",
     " ":   "[sp]",   "\x7f":"[DEL]",
 
-    "\u3000": "[ideographic sp]",   "\u2002": "[en sp]",
-    "\u2003": "[em sp]",            "\u2007": "[figure sp]",
-    "\u2008": "[punct sp]",         "\u2009": "[thin sp]",
-    "\u200A": "[hair sp]",          "\u200D": "[ZWJ]",
-    "\uFFF9": "[interlinear]",     "\uFFFA": "[annot sep]",
+    "\u3000": "[ideo sp]",     "\u2002": "[en sp]",
+    "\u2003": "[em sp]",       "\u2007": "[fig sp]",
+    "\u2008": "[punct sp]",    "\u2009": "[thin sp]",
+    "\u200A": "[hair sp]",     "\u200D": "[ZWJ]",
+    "\uFFF9": "[interlinear]",   "\uFFFA": "[annot sep]",
     "\uFFFB": "[annot end]",
-    "\u00A0":"[no-break sp] ",      "\u2000":"[en quad]",
-    "\u2001":"[em quad]",           "\u2004":"[1/3em sp]",
-    "\u2005":"[1/4em sp]",          "\u2006":"[1/6em sp]",
-    "\u200B":"[ZWSP] ",             "\u200C":"[ZWNJ] ",
-    "\u200E":"[LRM] ",              "\u200F":"[RLM] ",
-    "\u202A":"[LRE]",               "\u202B":"[RLE]",
-    "\u202C":"[PDF]",               "\u202D":"[LRO]",
-    "\u202E":"[RLO]",               "\u202F":"[narrow NBSP]",
-    "\u2028":"[LSEP]",              "\u2029":"[PSEP]",
-    "\u205F":"[med math sp] ",      "\u2060":"[WJ] ",
+    "\uFFFC":"[obj rep]",      "\uFFFD":"[rep chr]",
+    "\uFFFE":"[not char]",     "\uFFFF":"[not char]",
+    "\u00A0":"[nbrk sp] ",     "\u2000":"[en quad]",
+    "\u2001":"[em quad]",      "\u2004":"[1/3em sp]",
+    "\u2005":"[1/4em sp]",     "\u2006":"[1/6em sp]",
+    "\u200B":"[ZWSP] ",        "\u200C":"[ZWNJ] ",
+    "\u200E":"[LRM] ",         "\u200F":"[RLM] ",
+    "\u202A":"[LRE]",          "\u202B":"[RLE]",
+    "\u202C":"[PDF]",          "\u202D":"[LRO]",
+    "\u202E":"[RLO]",          "\u202F":"[narrow NBSP]",
+    "\u2028":"[LSEP]",         "\u2029":"[PSEP]",
+    "\u205F":"[med math sp] ",     "\u2060":"[WJ] ",
     "\uFEFF":"[ZWNBSP]",
 }
 
@@ -53,6 +55,13 @@ DESC_CONTROL = {
     0x7F: "DELETE",
 }
 
+DESC_SPECIAL = {
+    0xFFFC: "OBJECT REPLACEMENT CHARACTER",
+    0xFFFD: "REPLACEMENT CHARACTER",
+    0xFFFE: "NOT A CHARACTER",
+    0xFFFF: "NOT A CHARACTER",
+}
+
 def display_width(s: str) -> int:
     """Calculate the display width of a string in a terminal (CJK chars = 2 columns)."""
     w = 0
@@ -63,8 +72,14 @@ def display_width(s: str) -> int:
 
 
 def pad_to_width(s: str, target_width: int) -> str:
-    """Pad a string to a fixed display width, accounting for CJK wide characters."""
+    """Pad a string to a fixed display width. Truncates if too long."""
     current = display_width(s)
+    if current > target_width:
+        # Truncate character by character until it fits, add "…"
+        while current > target_width - 1 and len(s) > 0:
+            s = s[:-1]
+            current = display_width(s)
+        return s + "…"
     return s + " " * (target_width - current)
 
 
@@ -112,9 +127,21 @@ print(f"{FLYellow}Input string: {CRst}{FLCyan}{repr(text)}{CRst}\n")
 
 
 #============ 打印表头 ===========
-print(f"┌───────┬────────────────────┬──────────┬───────────┬──────────────────────────────────┐")
-print(f"│ Index │ Char               │   Hex    │    Dec    │ Description                      │")
-print(f"├───────┼────────────────────┼──────────┼───────────┼──────────────────────────────────┤")
+term_width = os.get_terminal_size().columns - 1
+desc_width = max(20, term_width - 46)  # 46 = Index(7) + Char(13) + Hex(10) + Dec(9) + 7 separators
+HEX_COL = 23    # 1-based cursor column where Hex starts
+DEC_COL = 34    # 1-based cursor column where Dec starts
+DESC_COL = 44   # 1-based cursor column where Description starts
+
+sep1 = "─" * 7
+sep2 = "─" * 13
+sep3 = "─" * 10
+sep4 = "─" * 9
+sep5 = "─" * (desc_width + 2)
+
+print(f"┌{sep1}┬{sep2}┬{sep3}┬{sep4}┬{sep5}┐")
+print(f"│ Index │     Char    │   Hex    │   Dec   │ {'Description':<{desc_width}} │")
+print(f"├{sep1}┼{sep2}┼{sep3}┼{sep4}┼{sep5}┤")
 
 
 #============ 解析 ===========
@@ -129,6 +156,10 @@ for idx, ch in enumerate(text):
         desc = DESC_CONTROL[cp]
         char_color = FLRed
         desc_color = FLRed
+    elif cp in DESC_SPECIAL:
+        desc = DESC_SPECIAL[cp]
+        char_color = FLCyan
+        desc_color = FGray
     else:
         try:
             desc = unicodedata.name(ch)
@@ -138,14 +169,19 @@ for idx, ch in enumerate(text):
         desc_color = FGray
 
     hex_str = f"0x{cp:04X}" if cp <= 0xFFFF else f"0x{cp:06X}"
-    desc_display = desc if len(desc) <= 32 else desc[:29] + "..."
+    desc_display = pad_to_width(desc, desc_width)
 
-    char_str = pad_to_width(display_char, 18)
+    # Print Index + Char first (the variable-width part)
+    char_str = pad_to_width(display_char, 12)
+    sys.stdout.write(f"│ {FLGreen}{idx:>5}{CRst} │ {char_color}{char_str}{CRst} ")
 
-    print(f"│ {FLGreen}{idx:>5}{CRst} │ {char_color}{char_str}{CRst} │ {FLBlue}{hex_str:<8}{CRst} │ {FLMagenta}{cp:>9}{CRst} │ {desc_color}{desc_display:<32}{CRst} │")
-
+    # Jump to absolute columns for the remaining fixed-width columns
+    sys.stdout.write(f"\033[{HEX_COL}G│ {FLBlue}{hex_str:<8}{CRst} ")
+    sys.stdout.write(f"\033[{DEC_COL}G│ {FLMagenta}{cp:>7}{CRst} ")
+    sys.stdout.write(f"\033[{DESC_COL}G│ {desc_color}{desc_display}{CRst} │\n")
 
 total = f"Total: {text_len} character(s)"
-print(f"├───────┴────────────────────┴──────────┴───────────┴──────────────────────────────────┤")
-print(f"│     {FLYellow}{total:<80}{CRst} │")
-print(f"└──────────────────────────────────────────────────────────────────────────────────────┘\n")
+print(f"├{sep1}┴{sep2}┴{sep3}┴{sep4}┴{sep5}┤")
+total_width = desc_width + 48  # 48 = index(7) + char(13) + hex(10) + dec(9) + 9 separators
+print(f"│     {FLYellow}{total}{CRst}{' ' * (total_width - 9 - len(total))} │")
+print(f"└{'─' * (total_width - 3)}┘\n")

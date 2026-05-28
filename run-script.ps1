@@ -164,7 +164,7 @@ if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         Write-Error "Cannot find script: ``$scriptPath``"
     }
     exit 1
-}\
+}
 
 Write-Host ("${FLYellow}Resolved script path:${CRst} ${FLGreen}$scriptPath${CRst}`n")
 $ext = [System.IO.Path]::GetExtension($scriptPath)
