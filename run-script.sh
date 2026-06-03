@@ -62,9 +62,9 @@ show_supported_scripts() {
         find "$script_dir" -type f \( -name '*.py' -o -name '*.sh' \) \
             ! -name '__init__.py' \
             ! -path "$script_self" \
-            ! -path "*/windows/*" \
-            ! -path "*/utils/*" \
-            ${_exclude_platform:+! -path "*/${_exclude_platform}/*"} \
+            ! -path "${script_dir}/windows/*" \
+            ! -path "${script_dir}/utils/*" \
+            ${_exclude_platform:+! -path "${script_dir}/${_exclude_platform}/*"} \
             | sort
     )
 

@@ -77,8 +77,12 @@ function Show-SupportedScripts {
         Where-Object {
             ($_.Extension -ieq ".py" -or $_.Extension -ieq ".ps1") -and
             ($_.Name -ne "__init__.py") -and
-            (-not $selfPath -or $_.FullName -ne $selfPath) -and
-            ($_.DirectoryName -notmatch '[\\/](linux|macos|utils)([\\/]|$)')
+            (-not $selfPath -or $_.FullName -ne $selfPath)
+        } | Where-Object {
+            # Exclude platform/utils subdirectories that are direct children of scriptDirectory
+            $rel = $_.FullName.Substring($scriptDirectory.Length).TrimStart([System.IO.Path]::DirectorySeparatorChar)
+            $topDir = $rel.Split([System.IO.Path]::DirectorySeparatorChar)[0]
+            $topDir -notin @("windows", "linux", "macos", "utils")
         } | Sort-Object FullName
 
     # If a .py and .ps1 exist at the same path with the same name, keep only the .py
