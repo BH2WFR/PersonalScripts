@@ -12,7 +12,10 @@ CRst="\033[0m"
 
 #============ root 权限检查 ===========
 if [ "$(id -u)" -ne 0 ]; then
-    printf "${FLRed}ERROR: This script must be run as root. Use ${CRst}${FLYellow}sudo${CRst}.\n"
+    printf "${FLYellow}Not running as root, re-launching with sudo...${CRst}\n"
+    exec sudo bash "$0" "$@"
+    # exec replaces the current process; if we reach here, sudo failed
+    printf "${FLRed}ERROR: Failed to elevate privileges. Please run manually with sudo.${CRst}\n"
     exit 1
 fi
 

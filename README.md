@@ -77,6 +77,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables | `boto3` |
 | `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | `ntfs-3g` |
 | `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display | — |
+| `macos/power-current.py` | macOS-only: Live charger wattage and system power monitor (via `ioreg`) | — |
 | `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (batch support) | — |
 | `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | — |
 | `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
