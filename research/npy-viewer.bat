@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM ============================================
 REM  npy/npz file viewer launcher
 REM  Usage: double-click a .npy/.npz file, or

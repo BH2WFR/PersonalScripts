@@ -1,4 +1,38 @@
-﻿$TypeName = "ScreenInfo20260502.Native"
+﻿param(
+	# Show help message and exit.
+	[switch]$Help
+)
+
+if ($Help) {
+	$scriptName = [System.IO.Path]::GetFileName($PSCommandPath)
+	Write-Host @"
+
+SHOW SCREEN RESOLUTION
+======================
+
+Usage:
+  .\$scriptName
+  .\$scriptName -Help
+
+Description:
+  Displays detailed information about all connected monitors:
+    - Actual (physical pixel) resolution via EnumDisplaySettings
+    - DPI scale ratio and percentage
+    - Effective resolution (actual / scale)
+    - Monitor device name and primary status
+
+  Uses Windows native APIs (EnumDisplayMonitors, GetMonitorInfo,
+  EnumDisplaySettings, GetDpiForMonitor) to report accurate values
+  regardless of DPI virtualization.
+
+Options:
+  -Help    Show this help message
+
+"@ -ForegroundColor Yellow
+	exit 0
+}
+
+$TypeName = "ScreenInfo20260502.Native"
 
 if (-not ($TypeName -as [type])) {
 Add-Type @"

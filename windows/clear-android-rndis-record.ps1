@@ -3,18 +3,61 @@ param(
 	# Registry root where network profiles are stored.
 	[string]$ProfilesKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles',
 
-	# Regex used to match Android RNDIS / USB tethering related profiles.
-	[string]$Match = 'RNDIS|Android|Remote\s+NDIS|USB\s*Tether|Tether|USB\s*Ethernet',
+	# Regex used to match Android USB tethering profiles.
+	# Android USB tethering creates profiles named "Network", "Network 1", "Network 2", etc.
+	# Also matches localized versions: 网络, 網路, 네트워크, ネットワーク
+	[string]$Match = '^(Network|网络|網路|네트워크|ネットワーク)( )?([0-9]*)$',
 
 	# Delete without prompting.
 	[switch]$Force,
 
-	# Danger: delete ALL GUID-named subkeys (ignores -Match).
-	[switch]$AllGuids
+	# Show help message and exit.
+	[switch]$Help
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($Help) {
+	$scriptName = [System.IO.Path]::GetFileName($PSCommandPath)
+	Write-Host @"
+
+CLEAR ANDROID RNDIS NETWORK RECORDS
+====================================
+
+Usage:
+  .\$scriptName [-Match <regex>] [-Force] [-Help]
+  .\$scriptName -Help
+
+Description:
+  Android USB tethering creates a new network profile (e.g. "Network",
+  "Network 1", "网络 2") every time you connect. Over time this clutters
+  the registry and the network list. This script removes those entries
+  from the Windows registry.
+
+  Requires Administrator privileges (HKLM write access).
+
+Options:
+  -ProfilesKey  Registry path to scan
+                (default: HKLM:\...\NetworkList\Profiles)
+  -Match        Regex to match profile names
+                (default: Network/网络/網路/네트워크/ネットワーク + optional number)
+  -Force        Delete without confirmation prompt
+  -Help         Show this help message
+
+Examples:
+  .\$scriptName
+      Scan and prompt for each matching profile.
+
+  .\$scriptName -Force
+      Scan and delete without prompting.
+
+  .\$scriptName -Match 'Ethernet|Local Area'
+      Use a custom regex to match profile names.
+
+"@ -ForegroundColor Yellow
+	exit 0
+}
 
 function Test-IsWindows {
 	return [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
@@ -88,12 +131,8 @@ $profiles = foreach ($k in $subKeys) {
 	}
 
 	$isTarget = $false
-	if ($AllGuids) {
+	if ($profileName -match $Match) {
 		$isTarget = $true
-	} else {
-		if (($profileName -match $Match) -or ($description -match $Match)) {
-			$isTarget = $true
-		}
 	}
 
 	[pscustomobject]@{
@@ -111,15 +150,10 @@ $profiles = foreach ($k in $subKeys) {
 $targets = @($profiles | Where-Object { $_.IsTarget })
 
 Write-Host "Registry: $ProfilesKey"
-if ($AllGuids) {
-	Write-Host "Mode: -AllGuids (DANGEROUS)"
-} else {
-	Write-Host "Match regex: $Match"
-}
+Write-Host "Match regex: $Match"
 
 if ($targets.Count -eq 0) {
 	Write-Host 'No matching profiles found.'
-	Write-Host "Tip: run with -Match '<your regex>' or -AllGuids (dangerous)."
 	exit 0
 }
 
