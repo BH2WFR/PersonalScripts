@@ -79,7 +79,9 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display | — |
 | `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (batch support) | — |
 | `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | — |
+| `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
 | `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | — |
+| `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
 
 ### Utilities
 

@@ -80,7 +80,9 @@
 | `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、亮度（内建 + DDC/CI）、切换内建显示器 | — |
 | `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持批量） | — |
 | `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置 | — |
+| `windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负，作者不对系统损坏或数据丢失承担任何责任。** | — |
 | `windows/show-screen-resolution.ps1` | 通过 Windows API 显示显示器分辨率和屏幕信息 | — |
+| `macos/clear-privacy.py` | 清除 macOS 隐私痕迹（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。**免责声明：使用风险自负，作者不对系统损坏或数据丢失承担任何责任。** | — |
 
 ### 实用工具
 

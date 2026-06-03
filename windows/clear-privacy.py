@@ -49,6 +49,11 @@ Notes:
   - Elevation order: sudo -> gsudo -> continue without elevation.
   - Each enabled section asks for confirmation unless --force is used.
   - Browser cleanup is a separate confirmation inside the additional section.
+
+Disclaimer:
+  This script clears system and application usage traces. The author
+  assumes no responsibility for any system damage, data loss, or
+  application malfunction resulting from its use. Use at your own risk.
 """
     )
 

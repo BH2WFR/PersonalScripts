@@ -48,6 +48,11 @@ Notes:
   - Root is only needed for some system-level cleanup.
   - Elevation order: sudo -> continue without elevation.
   - Each enabled section asks for confirmation unless --force is used.
+
+Disclaimer:
+  This script clears system and application usage traces. The author
+  assumes no responsibility for any system damage, data loss, or
+  application malfunction resulting from its use. Use at your own risk.
 """
     )
 

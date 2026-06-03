@@ -1,4 +1,5 @@
 __pycache__/**
+__pycache__
 *.pyc
 *.pyo
 *.pyd
@@ -7,3 +8,8 @@ __pycache__/**
 *.log
 *.7z
 .venv/
+.venv
+
+*.tmp
+*.log
+*.bak
