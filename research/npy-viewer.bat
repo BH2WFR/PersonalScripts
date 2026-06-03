@@ -12,7 +12,7 @@ REM 加载 conda 环境（需确保已执行过 conda init cmd.exe）
 call conda activate base
 
 set "SCRIPT_DIR=%~dp0"
-set "SHOW_SCRIPT=%SCRIPT_DIR%show_npy.py"
+set "SHOW_SCRIPT=%SCRIPT_DIR%npy-viewer.py"
 
 REM 获取传入的文件路径（支持拖放和双击关联）
 set "FILE_PATH=%~1"

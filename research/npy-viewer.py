@@ -568,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     file_path = args.npy_file_path
+    print(f"{FLYellow}================== NPY/NPZ Interactive Viewer =================={CRst}")
     if not file_path:
         file_path = input(f"{FLYellow}请输入 .npy/.npz 文件路径: {CRst}").strip().strip('"')
         if not file_path:
