@@ -107,7 +107,7 @@
 
 ## 依赖
 
-核心工具模块：`my_utils/` — 提供 ANSI 颜色代码、日志助手和平台工具函数。
+核心工具模块：`utils/` — 提供 ANSI 颜色代码、日志助手和平台工具函数。
 
 ### Python 环境
 
@@ -133,5 +133,5 @@ apt install ffmpeg yt-dlp                    # Linux
 - 所有 Python 脚本支持 `--help` / `-h` 查看用法（英文，带颜色）
 - 命令行参数传入时跳过交互提示（适合批处理）
 - 多行输入使用 EOF（Windows: `Ctrl+Z`，Linux/macOS: `Ctrl+D`）
-- 通过 `my_utils` ANSI 代码实现彩色输出（`FLYellow`、`FLGreen`、`FLRed` 等）
+- 通过 `utils` ANSI 代码实现彩色输出（`FLYellow`、`FLGreen`、`FLRed` 等）
 - 平台相关脚本放在 `windows/`、`linux/`、`macos/` 子目录中

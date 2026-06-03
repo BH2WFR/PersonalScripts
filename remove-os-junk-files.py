@@ -1,5 +1,5 @@
 # 递归删除操作系统生成的垃圾文件（.DS_Store / __MACOSX__ / Thumbs.db 等）
-from my_utils import *
+from utils import *
 
 # OS junk files to remove
 JUNK_NAMES = {".DS_Store", "__MACOSX__", "Thumbs.db", ".AppleDouble", ".Spotlight-V100", ".Trashes", "desktop.ini"}

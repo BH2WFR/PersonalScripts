@@ -1,4 +1,4 @@
-from my_utils import *
+from utils import *
 
 # 基于 BBDown 的 Bilibili 视频下载器
 # 要求先使用 scoop 安装 BBDown, aria2 和 ffmpeg 三个包

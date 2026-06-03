@@ -1,4 +1,4 @@
-from my_utils import *
+from utils import *
 import stat
 
 # 扫描某个路径下所有的符号链接、Junction 和 Hard Link 文件，并打印出来，同时还会识别是否指向一个无效地址。

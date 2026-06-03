@@ -4,7 +4,7 @@ import socket
 import subprocess
 import platform
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from my_utils import *
+from utils import *
 from datetime import datetime
 
 # pip install boto3

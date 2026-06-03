@@ -2,7 +2,7 @@
 #
 
 #
-from my_utils import *
+from utils import *
 
 #* Windows only
 if(os.name != "nt"):

@@ -3,7 +3,7 @@ import os
 import ctypes
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from my_utils import *
+from utils import *
 
 # macOS 显示器工具：旋转 / 亮度 / toggle 内建显示器
 

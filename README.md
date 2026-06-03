@@ -106,7 +106,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 ## Dependencies
 
-Core utility module: `my_utils/` — provides ANSI color codes, logging helpers, and platform utilities.
+Core utility module: `utils/` — provides ANSI color codes, logging helpers, and platform utilities.
 
 ### Python Environment
 
@@ -132,6 +132,6 @@ apt install ffmpeg yt-dlp                    # Linux
 - All Python scripts support `--help` / `-h` for usage info (English, with color)
 - Command-line arguments suppress interactive prompts (batch-friendly)
 - Multi-line input uses EOF (`Ctrl+Z` on Windows, `Ctrl+D` on Linux/macOS)
-- Color output via `my_utils` ANSI codes (`FLYellow`, `FLGreen`, `FLRed`, etc.)
+- Color output via `utils` ANSI codes (`FLYellow`, `FLGreen`, `FLRed`, etc.)
 - Platform-specific scripts are in `windows/`, `linux/`, `macos/` subdirectories
 - The `parse-unicode-string.py` script displays Unicode character info with color-coded control/whitespace/normal characters

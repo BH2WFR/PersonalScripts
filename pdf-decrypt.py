@@ -1,5 +1,5 @@
 # 对有密码保护的 PDF 进行解密，含能打开但不能编辑/打印的权限保护
-from my_utils import *
+from utils import *
 import pypdf # pip install pypdf
 
 # 对有密码保护的 PDF 进行解密，含能打开但不能编辑/打印的权限保护
