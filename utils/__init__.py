@@ -70,6 +70,25 @@ FDefault    = "\033[39m"
 BDefault    = "\033[49m"
 CRst        = "\033[0m"
 
+# Cursor / screen control
+CCursorHome             = f"\033[H"
+CCursorSave             = "\0337"
+CCursorRestore          = "\0338"
+CCursorHide             = f"\033[?25l"
+CCursorShow             = f"\033[?25h"
+
+CEraseDisplay           = f"\033[2J"
+CEraseDisplayToEnd      = f"\033[J"
+CEraseDisplayToStart    = f"\033[1J"
+CEraseDisplayAllScroll  = f"\033[3J"
+
+CEraseLine              = f"\033[2K"
+CEraseLineToEnd         = f"\033[K"
+CEraseLineToStart       = f"\033[1K"
+
+
+
+
 
 #* 轮子
 class Utils:
@@ -135,3 +154,53 @@ class Utils:
             user32.SetProcessDPIAware()
         except Exception:
             pass
+
+
+class Cursor:
+    @staticmethod
+    def up(count: int = 1) -> str:
+        return f"\033[{max(1, count)}A"
+
+    @staticmethod
+    def down(count: int = 1) -> str:
+        return f"\033[{max(1, count)}B"
+        
+    @staticmethod
+    def forward(count: int = 1) -> str:
+        return f"\033[{max(1, count)}C"
+        
+    @staticmethod
+    def back(count: int = 1) -> str:
+        return f"\033[{max(1, count)}D"
+        
+    @staticmethod
+    def next_line(count: int = 1) -> str:
+        return f"\033[{max(1, count)}E"
+        
+    @staticmethod
+    def prev_line(count: int = 1) -> str:
+        return f"\033[{max(1, count)}F"
+        
+    @staticmethod
+    def column(column: int = 1) -> str:
+        return f"\033[{max(1, column)}G"
+        
+    @staticmethod
+    def position(row: int = 1, column: int = 1) -> str:
+        return f"\033[{max(1, row)};{max(1, column)}H"
+        
+    @staticmethod
+    def erase_display(mode: int = 2) -> str:
+        return f"\033[{mode}J"
+        
+    @staticmethod
+    def erase_line(mode: int = 2) -> str:
+        return f"\033[{mode}K"
+        
+    @staticmethod
+    def scroll_up(count: int = 1) -> str:
+        return f"\033[{max(1, count)}S"
+        
+    @staticmethod
+    def scroll_down(count: int = 1) -> str:
+        return f"\033[{max(1, count)}T"

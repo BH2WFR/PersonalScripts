@@ -77,10 +77,10 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables | `boto3` |
 | `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | `ntfs-3g` |
 | `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display | — |
-| `macos/power-current.py` | macOS-only: Live charger wattage and system power monitor (via `ioreg`) | — |
+| `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI battery classes; Linux uses `/sys/class/power_supply`. On some Windows devices, charger wattage and live power fields may be unavailable if the firmware/driver does not expose them. | — |
 | `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (batch support) | — |
 | `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | — |
-| `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
+| `windows/clear-privacy..py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation and helper-based elevation fallback (`sudo` -> `gsudo`). **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
 | `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | — |
 | `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
 
@@ -107,7 +107,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 ## Dependencies
 
-Core utility module: `utils/` — provides ANSI color codes, logging helpers, and platform utilities.
+Core utility module: `utils/` — provides ANSI color codes, cursor/screen control sequences, logging helpers, and platform utilities.
 
 ### Python Environment
 

@@ -8,7 +8,6 @@ Supported platforms:
 """
 
 from __future__ import annotations
-
 import json
 import os
 import plistlib
@@ -16,9 +15,7 @@ import select
 import shutil
 import subprocess
 import sys
-import termios
 import time
-import tty
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +112,10 @@ def format_percent(value: float | None) -> str:
     return f"{FGray}N/A{CRst}" if value is None else f"{value:.0f}%"
 
 
+def format_wh(value: float | None) -> str:
+    return f"{FGray}N/A{CRst}" if value is None else f"{value / 1000.0:.2f} Wh"
+
+
 def power_record(
     *,
     platform_name: str,
@@ -126,6 +127,8 @@ def power_record(
     system_load_w: float | None = None,
     battery_power_w: float | None = None,
     battery_percent: float | None = None,
+    battery_design_capacity_mwh: float | None = None,
+    battery_full_charge_capacity_mwh: float | None = None,
     details: list[tuple[str, Any]] | None = None,
     sources: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
@@ -139,6 +142,8 @@ def power_record(
         "system_load_w": system_load_w,
         "battery_power_w": battery_power_w,
         "battery_percent": battery_percent,
+        "battery_design_capacity_mwh": battery_design_capacity_mwh,
+        "battery_full_charge_capacity_mwh": battery_full_charge_capacity_mwh,
         "details": details or [],
         "sources": sources or [],
     }
@@ -202,6 +207,11 @@ def macos_collect() -> dict[str, Any]:
         system_load_w=abs(system_load_w) if system_load_w is not None else None,
         battery_power_w=battery_power_w,
         battery_percent=first_number(battery.get("CurrentCapacity")),
+        battery_design_capacity_mwh=first_number(battery.get("DesignCapacity")),
+        battery_full_charge_capacity_mwh=first_number(
+            battery.get("AppleRawMaxCapacity"),
+            battery.get("MaxCapacity"),
+        ),
         details=[
             ("Adapter name", adapter.get("Name", "N/A")),
             ("Adapter maker", adapter.get("Manufacturer", "N/A")),
@@ -250,7 +260,29 @@ def ps_json(script: str) -> Any:
     return json.loads(text) if text else None
 
 
+def ps_available_class(class_name: str, namespace: str = "root/cimv2") -> bool:
+    script = (
+        f"if (Get-CimClass -Namespace '{namespace}' -ClassName '{class_name}' "
+        "{ -ErrorAction SilentlyContinue }) { 'true' } else { 'false' }"
+    )
+    result = subprocess.run(
+        [
+            powershell_path(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip().lower() == "true"
+
+
 def windows_collect() -> dict[str, Any]:
+    has_power_supply_class = ps_available_class("Win32_PowerSupply")
     script = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 $batteryStatus = Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus |
@@ -259,8 +291,11 @@ $batteryFull = Get-CimInstance -Namespace root\wmi -ClassName BatteryFullCharged
     Select-Object FullChargedCapacity
 $win32Battery = Get-CimInstance -ClassName Win32_Battery |
     Select-Object EstimatedChargeRemaining,BatteryStatus,Status,DesignCapacity,FullChargeCapacity
-$powerSupply = Get-CimInstance -ClassName Win32_PowerSupply |
-    Select-Object Name,DeviceID,Status,TotalOutputPower,MaxOutputPower
+$powerSupply = $null
+if (Get-CimClass -ClassName Win32_PowerSupply -ErrorAction SilentlyContinue) {
+  $powerSupply = Get-CimInstance -ClassName Win32_PowerSupply |
+      Select-Object Name,DeviceID,Status,TotalOutputPower,MaxOutputPower
+}
 [pscustomobject]@{
   BatteryStatus = $batteryStatus
   BatteryFull = $batteryFull
@@ -280,6 +315,9 @@ $powerSupply = Get-CimInstance -ClassName Win32_PowerSupply |
     status = statuses[0] if statuses else {}
     win_battery = batteries[0] if batteries else {}
     full_cap = full_caps[0] if full_caps else {}
+    connected = first_bool(status.get("PowerOnline"))
+    charging = first_bool(status.get("Charging"))
+    discharging = first_bool(status.get("Discharging"))
 
     charger_w = None
     supply_name = "N/A"
@@ -289,6 +327,8 @@ $powerSupply = Get-CimInstance -ClassName Win32_PowerSupply |
             charger_w = value
             supply_name = str(item.get("Name") or item.get("DeviceID") or "PowerSupply")
             break
+    if not has_power_supply_class:
+        supply_name = "Class unavailable"
 
     discharge = first_number(status.get("DischargeRate"))
     charge = first_number(status.get("ChargeRate"))
@@ -300,6 +340,8 @@ $powerSupply = Get-CimInstance -ClassName Win32_PowerSupply |
         battery_power_w = charge / 1000.0
     elif rate is not None and rate != 0:
         battery_power_w = abs(rate) / 1000.0
+    elif discharge == 0 or charge == 0 or rate == 0:
+        battery_power_w = 0.0
 
     percent = first_number(win_battery.get("EstimatedChargeRemaining"))
     remaining = first_number(status.get("RemainingCapacity"))
@@ -309,12 +351,14 @@ $powerSupply = Get-CimInstance -ClassName Win32_PowerSupply |
 
     return power_record(
         platform_name="Windows",
-        connected=first_bool(status.get("PowerOnline")),
-        charging=first_bool(status.get("Charging")),
-        discharging=first_bool(status.get("Discharging")),
+        connected=connected,
+        charging=charging,
+        discharging=discharging,
         charger_power_w=charger_w,
         battery_power_w=battery_power_w,
         battery_percent=percent,
+        battery_design_capacity_mwh=first_number(win_battery.get("DesignCapacity")),
+        battery_full_charge_capacity_mwh=full,
         details=[
             ("Power supply", supply_name),
             ("Battery voltage", format_mv(first_number(status.get("Voltage")))),
@@ -415,6 +459,12 @@ def linux_collect() -> dict[str, Any]:
         system_load_w=battery_power_w,
         battery_power_w=battery_power_w,
         battery_percent=percent,
+        battery_design_capacity_mwh=read_sysfs_number(
+            battery, "energy_full_design", "charge_full_design"
+        ) if battery else None,
+        battery_full_charge_capacity_mwh=read_sysfs_number(
+            battery, "energy_full", "charge_full"
+        ) if battery else None,
         details=[
             ("Power supply", supply_name),
             ("Battery device", battery_name),
@@ -454,10 +504,13 @@ def build_report(verbose: bool) -> tuple[int, str]:
     adapter_input_w = record.get("adapter_input_w")
     system_load_w = record.get("system_load_w")
     battery_power_w = record.get("battery_power_w")
+    design_capacity_mwh = record.get("battery_design_capacity_mwh")
+    full_charge_capacity_mwh = record.get("battery_full_charge_capacity_mwh")
 
+    separator = f"{FLCyan}{'-' * 48}{CRst}"
     lines = [
         f"{FLYellow}=========== POWER CURRENT - {record['platform']} ==========={CRst}",
-        f"{FLCyan}{'─' * 48}{CRst}",
+        separator,
         f"  Charger connected : {yes_no_text(record.get('connected'))}",
         f"  Charger power     : {FLGreen}{format_watts(record.get('charger_power_w'))}{CRst}" if record.get("charger_power_w") is not None else f"  Charger power     : {format_watts(None)}",
         f"  Adapter input     : {FLMagenta}{format_watts(adapter_input_w)}{CRst}" if adapter_input_w is not None else f"  Adapter input     : {format_watts(None)}",
@@ -467,13 +520,18 @@ def build_report(verbose: bool) -> tuple[int, str]:
         f"  Charging          : {yes_no_text(record.get('charging'))}",
         f"  Discharging       : {yes_no_text(record.get('discharging'), FLYellow)}",
     ]
+    if design_capacity_mwh is not None or full_charge_capacity_mwh is not None:
+        lines.extend([
+            f"  Design capacity   : {format_wh(design_capacity_mwh)}",
+            f"  Full charge cap   : {format_wh(full_charge_capacity_mwh)}",
+        ])
 
     if verbose:
-        lines.extend(["", f"{FLYellow}Details{CRst}", f"{FLCyan}{'─' * 48}{CRst}"])
+        lines.extend(["", f"{FLYellow}Details{CRst}", separator])
         for key, value in record.get("details", []):
             lines.append(f"  {key:<17}: {FLCyan}{value}{CRst}")
         if record.get("sources"):
-            lines.extend(["", f"{FLYellow}Sources{CRst}", f"{FLCyan}{'─' * 48}{CRst}"])
+            lines.extend(["", f"{FLYellow}Sources{CRst}", separator])
             for key, value in record.get("sources", []):
                 lines.append(f"  {key:<17}: {FGray}{value}{CRst}")
 
@@ -508,6 +566,8 @@ def live_report(verbose: bool, interval: float) -> int:
         except ImportError:
             pass
     else:
+        import termios
+        import tty
         old_settings = termios.tcgetattr(sys.stdin.fileno())
         tty.setcbreak(sys.stdin.fileno())
 
@@ -517,7 +577,7 @@ def live_report(verbose: bool, interval: float) -> int:
             exit_code = code
             output = f"{report}\n\n{FGray}Press any key to exit. Refresh interval: {interval:g}s{CRst}"
             if previous_lines:
-                print(f"\033[{previous_lines}F\033[J", end="")
+                print(f"{Cursor.prev_line(previous_lines)}{CEraseDisplayToEnd}", end="")
             print(output)
             previous_lines = output.count("\n") + 1
             sys.stdout.flush()
@@ -537,7 +597,8 @@ def live_report(verbose: bool, interval: float) -> int:
         print()
         return exit_code
     finally:
-        if old_settings is not None:
+        if os.name != "nt" and old_settings is not None:
+            import termios
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
 
 

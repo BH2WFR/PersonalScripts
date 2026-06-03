@@ -78,10 +78,10 @@
 | `upload-ipaddress.py` | 收集网络信息并上传至腾讯云 COS S3 方便远程访问。凭据来自环境变量 | `boto3` |
 | `macos/ntfs-3g-utils.py` | macOS 专用：通过 ntfs-3g（macFUSE）挂载 NTFS 磁盘，支持读写。挂载/系统挂载/弹出 | `ntfs-3g` |
 | `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、亮度（内建 + DDC/CI）、切换内建显示器 | — |
-| `macos/power-current.py` | macOS 专用：实时充电器功率和系统功耗监控（通过 `ioreg`） | — |
+| `power-current.py` | 跨平台充电器与电池遥测查看器。macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI 电池类，Linux 使用 `/sys/class/power_supply`。部分 Windows 设备若固件或驱动未暴露相关字段，则可能无法获取充电器瓦数或实时功率。 | — |
 | `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持批量） | — |
 | `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置 | — |
-| `windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负，作者不对系统损坏或数据丢失承担任何责任。** | — |
+| `windows/clear-privacy..py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认，并带有基于辅助工具的提权回退（`sudo` -> `gsudo`）。**免责声明：使用风险自负，作者不对系统损坏或数据丢失承担任何责任。** | — |
 | `windows/show-screen-resolution.ps1` | 通过 Windows API 显示显示器分辨率和屏幕信息 | — |
 | `macos/clear-privacy.py` | 清除 macOS 隐私痕迹（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。**免责声明：使用风险自负，作者不对系统损坏或数据丢失承担任何责任。** | — |
 
@@ -108,7 +108,7 @@
 
 ## 依赖
 
-核心工具模块：`utils/` — 提供 ANSI 颜色代码、日志助手和平台工具函数。
+核心工具模块：`utils/` — 提供 ANSI 颜色代码、光标/清屏控制序列、日志助手和平台工具函数。
 
 ### Python 环境
 
