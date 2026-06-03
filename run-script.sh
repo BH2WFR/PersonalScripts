@@ -13,6 +13,14 @@ CRst="${esc}[0m"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 script_self="$script_dir/$(basename -- "${BASH_SOURCE[0]}")"
 
+# Detect OS to exclude non-applicable platform scripts
+_os_name="$(uname -s)"
+case "$_os_name" in
+    Linux)  _exclude_platform="macos" ;;
+    Darwin) _exclude_platform="linux" ;;
+    *)      _exclude_platform="" ;;
+esac
+
 get_relative_script_path() {
     local full_path="$1"
     local relative_path="${full_path#"$script_dir"/}"
@@ -55,8 +63,22 @@ show_supported_scripts() {
             ! -name '__init__.py' \
             ! -path "$script_self" \
             ! -path "*/windows/*" \
+            ${_exclude_platform:+! -path "*/${_exclude_platform}/*"} \
             | sort
     )
+
+    # If a .py and .sh exist at the same path with the same name, keep only the .py
+    local filtered_scripts=()
+    for full_path in "${scripts[@]}"; do
+        if [[ "$full_path" =~ \.sh$ ]]; then
+            local py_path="${full_path%.sh}.py"
+            if [[ -f "$py_path" ]]; then
+                continue
+            fi
+        fi
+        filtered_scripts+=("$full_path")
+    done
+    scripts=("${filtered_scripts[@]}")
 
     if [[ "${#scripts[@]}" -eq 0 ]]; then
         printf 'No Python/Shell scripts found in: `%s`:\n' "$script_dir"

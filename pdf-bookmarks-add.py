@@ -38,11 +38,11 @@ Usage:
 
 ```json
 [
-	{"page": 1, "level": 1, "index": "", "title": "前言"},
-	{"page": 3, "level": 1, "index": "第一章", "title": "学科概述"},
-	{"page": 3, "level": 2, "index": "1.1", "title": "发展历史"},
-	{"page": 3, "level": 3, "index": "1.1.1", "title": "1920-1950: 萌芽期"},
-	{"page": 7, "level": 3, "index": "1.1.2", "title": "1950-2000: 成长期"},
+	{"page": 1, "level": 1, "index": "", "title": "Preface"},
+	{"page": 3, "level": 1, "index": "Chapter 1", "title": "Subject Overview"},
+	{"page": 3, "level": 2, "index": "1.1", "title": "History"},
+	{"page": 3, "level": 3, "index": "1.1.1", "title": "1920-1950: Early Period"},
+	{"page": 7, "level": 3, "index": "1.1.2", "title": "1950-2000: Growth Period"},
 	{"page": 8, "level": 3, "index": "1.1.3", "title": "2000-至今: 成熟期"},
 	{"page": 10, "level": 2, "index": "1.2", "title": "基本概念"},
 	{"page": 10, "level": 3, "index": "1.2.1", "title": "政治"},
@@ -51,8 +51,8 @@ Usage:
 	{"page": 16, "level": 2, "index": "1.3", "title": "研究方法"},
 	{"page": 16, "level": 3, "index": "1.3.1", "title": "定性分析"},
 	{"page": 18, "level": 3, "index": "1.3.2", "title": "定量分析"},
-	{"page": 20, "level": 1, "index": "第二章", "title": "相机标定参数及相机成像模型"},
-	{"page": 20, "level": 2, "index": "2.1", "title": "相机标定参数"},
+	{"page": 20, "level": 1, "index": "Chapter 2", "title": "Camera Calibration and Imaging Model"},
+	{"page": 20, "level": 2, "index": "2.1", "title": "Calibration Parameters"},
 	{"page": 20, "level": 3, "index": "2.1.1", "title": "内参"},
 	{"page": 22, "level": 3, "index": "2.1.2", "title": "外参"},
 	{"page": 24, "level": 2, "index": "2.2", "title": "相机成像模型"},
@@ -62,7 +62,7 @@ Usage:
 	{"page": 30, "level": 1, "index": "第三章", "title": "图像处理基础"},
 	{"_以下省略": "使用标准 json 格式。page 为页码，level 为层级，index和title共同构成目录项标题"},
 	{"page": 100, "level": 1, "index": "", "title": "后记"},
-	{"page": 102, "level": 1, "index": "", "title": "参考文献"},
+	{"page": 102, "level": 1, "index": "", "title": "References"},
 ]
 ```
 
@@ -128,14 +128,14 @@ except ValueError:
 # 多行文本的输入
 text_prompt = """
 [
-	{"page": 1, "level": 1, "index": "", "title": "前言"},
-	{"page": 3, "level": 1, "index": "第一章", "title": "学科概述"},
-	{"page": 3, "level": 2, "index": "1.1", "title": "发展历史"},
-	{"page": 3, "level": 3, "index": "1.1.1", "title": "1920-1950: 萌芽期"},
-	{"page": 7, "level": 3, "index": "1.1.2", "title": "1950-2000: 成长期"},
-	{"page": 20, "level": 1, "index": "第二章", "title": "相机标定参数及相机成像模型"},
-	{"page": 20, "level": 2, "index": "2.1", "title": "相机标定参数"},
-	{"page": 102, "level": 1, "index": "", "title": "参考文献"},
+	{"page": 1, "level": 1, "index": "", "title": "Preface"},
+	{"page": 3, "level": 1, "index": "Chapter 1", "title": "Subject Overview"},
+	{"page": 3, "level": 2, "index": "1.1", "title": "History"},
+	{"page": 3, "level": 3, "index": "1.1.1", "title": "1920-1950: Early Period"},
+	{"page": 7, "level": 3, "index": "1.1.2", "title": "1950-2000: Growth Period"},
+	{"page": 20, "level": 1, "index": "Chapter 2", "title": "Camera Calibration and Imaging Model"},
+	{"page": 20, "level": 2, "index": "2.1", "title": "Calibration Parameters"},
+	{"page": 102, "level": 1, "index": "", "title": "References"},
 ]
 """
 print(f"{FLYellow}Enter bookmarks text in Json. {CRst}")
@@ -154,7 +154,7 @@ print(f"{FLYellow}  -> start parsing...")
 def parse_bookmark_line(bookmarkObj: typing.Any) -> typing.Optional[typing.Tuple[int, int, str]]:
 	"""
 	解析一行：
-	例：'{"page": 1, "level": 1, "index": "", "title": "前言"},'
+	例：'{"page": 1, "level": 1, "index": "", "title": "Preface"},'
 	返回: (page, level, title)
 	注意：输入项目中，`index` 是可选的，经过字符串拼接 `index + " " + title` 形成目录项标题, 作为返回 tuple 中的 title 部分。
 	"""
@@ -162,7 +162,7 @@ def parse_bookmark_line(bookmarkObj: typing.Any) -> typing.Optional[typing.Tuple
 		return None
 	if not isinstance(bookmarkObj, dict):
 		return None
-	# 例如：{"page": 3, "level": 2, "index": "1.1", "title": "发展历史"},
+	# 例如：{"page": 3, "level": 2, "index": "1.1", "title": "History"},
 	
 	try:
 		logical_page_raw = bookmarkObj.get('page')

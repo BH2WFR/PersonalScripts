@@ -81,6 +81,17 @@ function Show-SupportedScripts {
             ($_.DirectoryName -notmatch '[\\/](linux|macos)([\\/]|$)')
         } | Sort-Object FullName
 
+    # If a .py and .ps1 exist at the same path with the same name, keep only the .py
+    $scripts = $scripts | Where-Object {
+        if ($_.Extension -ieq ".ps1") {
+            $pyPath = [System.IO.Path]::ChangeExtension($_.FullName, ".py")
+            if (Test-Path -LiteralPath $pyPath -PathType Leaf) {
+                return $false
+            }
+        }
+        return $true
+    }
+
     # Separate root-level and subfolder scripts
     $rootScripts = @($scripts | Where-Object { $_.DirectoryName -eq $scriptDirectory })
     $subScripts = @($scripts | Where-Object { $_.DirectoryName -ne $scriptDirectory })

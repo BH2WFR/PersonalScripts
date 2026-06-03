@@ -19,6 +19,31 @@ if shutil.which("ntfs-3g") is None:
     print(f"{FLRed}ERROR: ntfs-3g not found. Install with: {CRst}{FGray}brew install ntfs-3g{CRst}\n")
     sys.exit(1)
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+{FLYellow}NTFS-3G UTILS{CRst}
+==============
+
+Usage:
+  python {script_name}                interactive NTFS mount manager
+  python {script_name} --help         show this help
+
+{FLYellow}Description:{CRst}
+  macOS NTFS disk manager for mounting NTFS partitions with
+  read-write support via ntfs-3g (macFUSE).
+
+  Menu options:
+    [N] Mount by ntfs-3g    — mount NTFS partition with read-write support
+    [S] Mount by system     — mount with macOS built-in read-only driver
+    [E] Eject disk          — safely eject the entire disk
+
+{FLYellow}Requirements:{CRst}
+  ntfs-3g (brew install ntfs-3g)
+  macFUSE
+""")
+    sys.exit(0)
+
 
 # ============ helpers ============
 def _run(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess:

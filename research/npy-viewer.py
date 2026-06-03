@@ -287,14 +287,14 @@ def _prompt_choice(
 ) -> str:
     print(f"{FLYellow}{title}{CRst}")
     for index, choice in enumerate(choices, start=1):
-        default_mark = f"{FLYellow} (默认){CRst}" if choice == default else ""
+        default_mark = f"{FLYellow} (default){CRst}" if choice == default else ""
         print(f"  {FLGreen}{index}{CRst}. {FLCyan}{choice}{CRst}{default_mark}")
     if allow_custom:
-        print(f"  {FLGreen}others. 输入自定义值{CRst}")
+        print(f"  {FLGreen}others. Enter custom value{CRst}")
     
     while True:
-        default_hint = f"，直接回车使用默认值 {FLCyan}{default}{CRst}" if default is not None else ""
-        value = input(f"请选择序号或输入值{default_hint}: ").strip()
+        default_hint = f", Enter for default {FLCyan}{default}{CRst}" if default is not None else ""
+        value = input(f"Select by number or enter value{default_hint}: ").strip()
         if not value:
             if default is not None:
                 return default
@@ -303,18 +303,18 @@ def _prompt_choice(
             selected_index = int(value) - 1
             if 0 <= selected_index < len(choices):
                 return choices[selected_index]
-            print(f"{FLRed}ERROR{CRst}: 序号超出范围")
+            print(f"{FLRed}ERROR{CRst}: Index out of range")
             continue
         if value in choices:
             return value
         if allow_custom:
             if value.lower() == "others":
-                custom = input("请输入自定义值: ").strip()
+                custom = input("Enter custom value: ").strip()
                 if custom:
                     return custom
             else:
                 return value
-        print(f"{FLRed}ERROR{CRst}: 无效输入")
+        print(f"{FLRed}ERROR{CRst}: Invalid input")
 
 
 def _prompt_bool(title: str) -> bool:
@@ -324,16 +324,16 @@ def _prompt_bool(title: str) -> bool:
             return True
         if value in ("n", "no", "0", "false", "f"):
             return False
-        print(f"{FLRed}ERROR{CRst}: 请输入 y 或 n")
+        print(f"{FLRed}ERROR{CRst}: Enter y or n")
 
 
 def _prompt_max_display_size(default: int | None = None) -> int | None:
-    print(f"{FLGreen}max-display-size{CRst} 说明:")
-    print(f"  直接{FLCyan}回车{CRst}或输入 {FLCyan}all{CRst}: 显示所有数据点")
-    print(f"  输入{FLCyan}正整数{CRst}: 长度超过该值时按步长抽样显示，可避免大数组绘图过慢")
+    print(f"{FLGreen}max-display-size{CRst} help:")
+    print(f"  Press {FLCyan}Enter{CRst} or type {FLCyan}all{CRst}: show all data points")
+    print(f"  Type {FLCyan}a positive integer{CRst}: when array length exceeds this value, step-sampling is used to avoid slow plotting")
     default_text = "all" if default is None else str(default)
     while True:
-        value = input(f"请选择显示方式 [{FLCyan}all{CRst}/{FLCyan}<int>{CRst}]，直接{FLCyan}回车{CRst}使用默认值 {default_text}: ").strip().lower()
+        value = input(f"Select display mode [{FLCyan}all{CRst}/{FLCyan}<int>{CRst}]，Press {FLCyan}Enter{CRst}for default {default_text}: ").strip().lower()
         if not value:
             return default
         if value in ("all", "none", "no"):
@@ -341,11 +341,11 @@ def _prompt_max_display_size(default: int | None = None) -> int | None:
         try:
             max_display_size = int(value)
         except ValueError:
-            print(f"{FLRed}ERROR{CRst}: 请输入正整数或 all")
+            print(f"{FLRed}ERROR{CRst}: Enter a positive integer or `all`")
             continue
         if max_display_size > 0:
             return max_display_size
-        print(f"{FLRed}ERROR{CRst}: max-display-size 必须大于 0")
+        print(f"{FLRed}ERROR{CRst}: max-display-size must be > 0")
 
 
 def _parse_max_display_size(value: str | None) -> int | None:
@@ -401,7 +401,7 @@ def _interactive_1d_options(args) -> dict[str, typing.Any]:
     color = args.color
     if color is None:
         color = _prompt_choice(
-            "请选择 1D 数组颜色:",
+            "Select 1D array color:",
             [item.value for item in LineColor if item != LineColor.OTHERS],
             allow_custom=True,
             default=LineColor.ROYALBLUE.value,
@@ -410,7 +410,7 @@ def _interactive_1d_options(args) -> dict[str, typing.Any]:
     mode = args.mode
     if mode is None:
         mode = _prompt_choice(
-            "请选择 1D 显示模式:",
+            "Select 1D display mode:",
             [item.value for item in DisplayMode],
             default=DisplayMode.LINE.value,
         )
@@ -418,7 +418,7 @@ def _interactive_1d_options(args) -> dict[str, typing.Any]:
     line_shape = args.line_shape
     if line_shape is None:
         line_shape = _prompt_choice(
-            "请选择线条形状:",
+            "Select line shape:",
             [item.value for item in LineShape],
             default=LineShape.LINEAR.value,
         )
@@ -439,16 +439,16 @@ def _interactive_1d_options(args) -> dict[str, typing.Any]:
 def _interactive_2d_options(args) -> dict[str, typing.Any]:
     view_mode = args.view_mode
     if view_mode is None:
-        print("2D 显示方式说明:")
-        print("  2d: 以图像/热力图方式查看数值分布")
-        print("  3d: 以曲面方式查看数值起伏")
-        view_mode = _prompt_choice(f"请选择 2D 显示方式:", ["2d", "3d"], default="2d")
+        print("2D display mode help:")
+        print("  2d: view as image/heatmap")
+        print("  3d: view as 3D surface")
+        view_mode = _prompt_choice(f"Select 2D display mode:", ["2d", "3d"], default="2d")
     
     color_scale = args.color_scale
     if color_scale is None:
-        print(f"{FLGreen}color-scale{CRst} 说明: {FLCyan}gray{CRst} 为灰度，{FLCyan}viridis{CRst}/{FLCyan}plasma{CRst}/{FLCyan}inferno{CRst}/{FLCyan}magma{CRst}/{FLCyan}cividis{CRst} 为常用色彩映射。")
+        print(f"{FLGreen}color-scale{CRst} help: {FLCyan}gray{CRst} for grayscale, {FLCyan}viridis{CRst}/{FLCyan}plasma{CRst}/{FLCyan}inferno{CRst}/{FLCyan}magma{CRst}/{FLCyan}cividis{CRst} are common colormaps.")
         color_scale = _prompt_choice(
-            "请选择颜色映射:",
+            "Select colormap:",
             DEFAULT_COLOR_SCALES,
             allow_custom=True,
             default="cividis",
@@ -483,7 +483,7 @@ def _show_array(array: np.ndarray, title: str, args) -> None:
 
 def _print_npz_arrays(npz_data: np.lib.npyio.NpzFile) -> list[str]:
     names = list(npz_data.files)
-    print("NPZ 文件包含以下数组:")
+    print("NPZ file contains the following arrays:")
     for index, name in enumerate(names, start=1):
         array = npz_data[name]
         print(f"  {FLYellow}{index}{CRst}. {FLCyan}{name}{CRst} shape={array.shape} dtype={array.dtype}")
@@ -494,12 +494,12 @@ def _show_npz_interactive(file_path: str, args) -> None:
     with np.load(file_path, allow_pickle=False) as npz_data:
         names = _print_npz_arrays(npz_data)
         if not names:
-            print(f"{FLYellow}WARNING{CRst}: NPZ 文件中没有数组")
+            print(f"{FLYellow}WARNING{CRst}: No arrays found in NPZ file")
             return
         
         while True:
-            print(f"{FLYellow}请输入数组编号{CRst}，例如 {FLCyan}1,2,3{CRst} 或 {FLCyan}1,2,3-5{CRst}；输入 {FLCyan}all{CRst} 打开全部；输入 {FLCyan}exit{CRst} 退出。")
-            selection = input("选择: ").strip()
+            print(f"{FLYellow}Enter array number(s){CRst}, e.g. {FLCyan}1,2,3{CRst} or {FLCyan}1,2,3-5{CRst}; type {FLCyan}all{CRst} show all; type {FLCyan}exit{CRst} to quit.")
+            selection = input("Select: ").strip()
             try:
                 indexes = _parse_array_selection(selection, len(names))
             except ValueError as e:
@@ -509,7 +509,7 @@ def _show_npz_interactive(file_path: str, args) -> None:
             if indexes is None:
                 return
             if not indexes:
-                print(f"{FLYellow}WARNING{CRst}: 没有匹配到可显示的数组")
+                print(f"{FLYellow}WARNING{CRst}: No displayable arrays matched")
                 continue
             
             for index in indexes:
@@ -517,7 +517,7 @@ def _show_npz_interactive(file_path: str, args) -> None:
                 try:
                     _show_array(npz_data[name], title=f"{os.path.basename(file_path)}:{name}", args=args)
                 except Exception as e:
-                    print(f"{FLRed}ERROR{CRst}: 显示数组 {name} 失败: {e}")
+                    print(f"{FLRed}ERROR{CRst}: Display array {name} failed: {e}")
 
 
 def _build_arg_parser():
@@ -570,13 +570,13 @@ def main(argv: list[str] | None = None) -> int:
     file_path = args.npy_file_path
     print(f"{FLYellow}================== NPY/NPZ Interactive Viewer =================={CRst}")
     if not file_path:
-        file_path = input(f"{FLYellow}请输入 .npy/.npz 文件路径: {CRst}").strip().strip('"')
+        file_path = input(f"{FLYellow}Enter .npy/.npz file path: {CRst}").strip().strip('"')
         if not file_path:
-            print(f"{FLRed}ERROR{CRst}: 未输入文件路径")
+            print(f"{FLRed}ERROR{CRst}: No file path entered")
             return 1
     
     if not os.path.isfile(file_path):
-        print(f"{FLRed}ERROR{CRst}: 文件不存在: {file_path}")
+        print(f"{FLRed}ERROR{CRst}: File not found: {file_path}")
         return 1
     
     ext = os.path.splitext(file_path)[1].lower()
@@ -587,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
             array = np.load(file_path, allow_pickle=False)
             _show_array(array, title=os.path.basename(file_path), args=args)
         else:
-            print(f"{FLRed}ERROR{CRst}: 仅支持 .npy 或 .npz 文件")
+            print(f"{FLRed}ERROR{CRst}: Only .npy or .npz files supported")
             return 1
     except Exception as e:
         print(f"{FLRed}ERROR{CRst}: {e}")

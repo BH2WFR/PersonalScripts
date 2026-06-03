@@ -12,23 +12,32 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError, NoCredentialsError
 
-#* 地址信息
-BUCKET_NAME = os.getenv("ZL-IP-ADDRESS-S3-BUCKET") or "ip-address-1316772733"
-ENDPOINT_URL = os.getenv("ZL-IP-ADDRESS-S3-ENDPOINT") or "https://cos.ap-beijing.myqcloud.com"
-ACCESS_ID = os.getenv("ZL-IP-ADDRESS-S3-ID") or "AKIDQxbDgyMfolZCwc6QgzDNZeWEl5C6nGVX"
-ACCESS_KEY = os.getenv("ZL-IP-ADDRESS-S3-SECRET") or "taBpJnAMMCwiM1fFfFhx0rVv761iDVaS"
+#* env var names
+_ENV_BUCKET  = "ZL-IP-ADDRESS-S3-BUCKET"
+_ENV_ENDPOINT = "ZL-IP-ADDRESS-S3-ENDPOINT"
+_ENV_ID      = "ZL-IP-ADDRESS-S3-ID"
+_ENV_SECRET  = "ZL-IP-ADDRESS-S3-SECRET"
+
+BUCKET_NAME  = os.getenv(_ENV_BUCKET)
+ENDPOINT_URL = os.getenv(_ENV_ENDPOINT)
+ACCESS_ID    = os.getenv(_ENV_ID)
+ACCESS_KEY   = os.getenv(_ENV_SECRET)
 
 
 print(f"{FLYellow}=========== UPLOAD IP ADDRESS INFO TO S3 BUCKET ==========={CRst}")
 
 
 #============ 环境变量检查 ===========
-if not ACCESS_ID:
-    print(f"{FLRed}ERROR: Environment variable 'ZL-IP-ADDRESS-S3-ID' not set. EXIT...{CRst}\n")
-    sys.exit(1)
-if not ACCESS_KEY:
-    print(f"{FLRed}ERROR: Environment variable 'ZL-IP-ADDRESS-S3-SECRET' not set. EXIT...{CRst}\n")
-    sys.exit(1)
+_required = [
+    (_ENV_BUCKET, BUCKET_NAME),
+    (_ENV_ENDPOINT, ENDPOINT_URL),
+    (_ENV_ID, ACCESS_ID),
+    (_ENV_SECRET, ACCESS_KEY),
+]
+for _name, _val in _required:
+    if not _val:
+        print(f"{FLRed}ERROR: Environment variable '{_name}' not set. EXIT...{CRst}\n")
+        sys.exit(1)
 
 
 #============ 获取计算机网络信息 ===========
@@ -88,7 +97,7 @@ try:
     )
     print(f"{FLGreen}Upload SUCCESS{CRst}: {FGray}{ENDPOINT_URL}/{BUCKET_NAME}/{s3_key}{CRst}\n")
 except NoCredentialsError:
-    print(f"{FLRed}ERROR: Invalid credentials. Check ZL-IP-ADDRESS-S3-ID and ZL-IP-ADDRESS-S3-SECRET. EXIT...{CRst}\n")
+    print(f"{FLRed}ERROR: Invalid credentials. Check {_ENV_ID} and {_ENV_SECRET}. EXIT...{CRst}\n")
     sys.exit(1)
 except ClientError as e:
     print(f"{FLRed}ERROR: Upload failed: {e}{CRst}\n")

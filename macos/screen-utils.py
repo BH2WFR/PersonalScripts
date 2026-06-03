@@ -17,6 +17,33 @@ if os.uname().machine != "arm64":
     print(f"{FLRed}       Current architecture: {os.uname().machine}{CRst}\n")
     sys.exit(1)
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+{FLYellow}SCREEN UTILS{CRst}
+============
+
+Usage:
+  python {script_name}                interactive display manager
+  python {script_name} --help         show this help
+
+{FLYellow}Description:{CRst}
+  macOS display management tool for Apple Silicon.
+  Supports screen rotation, brightness control (built-in via
+  DisplayServices, external via DDC/CI), and toggling the
+  built-in display on/off.
+
+  Menu options:
+    [R] Rotation       — rotate screen (0, 90, 180, 270)
+    [B] Brightness     — set brightness for built-in or external displays
+    [S] Toggle built-in — turn internal display on/off
+    [I] DDC/CI info    — show DDC/CI capabilities for external displays
+
+{FLYellow}Requirements:{CRst}
+  macOS on Apple Silicon
+""")
+    sys.exit(0)
+
 #============ 加载 API ===========
 libc = ctypes.CDLL('/usr/lib/libSystem.dylib')
 libc.dlopen.argtypes = [ctypes.c_char_p, ctypes.c_int]

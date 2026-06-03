@@ -1,5 +1,7 @@
 # Personal Scripts
 
+[中文版 (Chinese)](./README_zh.md)
+
 A collection of cross-platform utility scripts for daily tasks — PDF processing, file linking, video downloading, system utilities, and more.
 
 Most scripts support both interactive mode and command-line arguments. Use `python <script>.py --help` for usage details.
@@ -68,20 +70,25 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 ### System & Network
 
-| Script | Description |
-|--------|-------------|
-| `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables |
-| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (batch support) |
-| `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry |
-| `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API |
+| Script | Description | Requires |
+|--------|-------------|----------|
+| `disk-smart-info.py` | Cross-platform SMART disk health viewer. Lists SMART-capable disks and displays detailed attributes | `smartmontools` |
+| `tailscale-restart-accept-routes.py` | Restart Tailscale subnet routes by toggling `--accept-routes` off/on | `tailscale` |
+| `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables | `boto3` |
+| `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | `ntfs-3g` |
+| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display | — |
+| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (batch support) | — |
+| `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | — |
+| `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | — |
 
 ### Utilities
 
 | Script | Description |
 |--------|-------------|
 | `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters |
-| `research/show_npy.py` | Interactive viewer for `.npy`/`.npz` files with line chart rendering |
-| `research/open-npy-viewer.bat` | Batch launcher for npy viewer (drag-and-drop support) |
+| `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) |
+| `research/npy-viewer.bat` | Windows: double-click/drag-and-drop launcher for npy viewer |
+| `research/npy-viewer.sh` | Linux/macOS: double-click launcher for npy viewer |
 | `run-script.sh` | Bash launcher for running any script in the repo |
 | `run-script.ps1` | PowerShell launcher for running any script in the repo |
 

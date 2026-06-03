@@ -93,7 +93,6 @@ if reader.is_encrypted:
 			if res == 0:
 				print(f"{FLRed}Incorrect password. pls input again.{CRst}")
 				continue
-				需要我把
 			else:
 				print(f"{FLGreen}PDF decrypted successfully.{CRst}\n")
 				break

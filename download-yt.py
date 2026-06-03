@@ -78,7 +78,7 @@ class E_DOWNLOAD_TYPE(enum.Enum):
 
 for item in E_DOWNLOAD_TYPE:
 	print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-BITRATE_NUM = input(f"{FLYellow}请根据上述数字输入下载模式 (默认 0)：{CRst}").strip() or "0"
+BITRATE_NUM = input(f"{FLYellow}Select download mode by number (default 0): {CRst}").strip() or "0"
 try:
 	BITRATE = E_DOWNLOAD_TYPE(int(BITRATE_NUM))
 except ValueError:
@@ -102,7 +102,7 @@ elif(BITRATE == E_DOWNLOAD_TYPE.SUBTITLE_ONLY):
 
 
 #* 分P
-PART_INPUT = input(f"{FLYellow}分 P，如 `1` `1,2` 或范围 `[START]:[STOP][:STEP]` (负数值代表倒数), 样例: `1:3,7,-5::2` (default: 空-ALL): {CRst}").strip().upper() or ""
+PART_INPUT = input(f"{FLYellow}Parts, e.g. `1` `1,2` or range `[START]:[STOP][:STEP]` (negative = from end), example: `1:3,7,-5::2` (default: ALL): {CRst}").strip().upper() or ""
 
 #* 字幕
 # 默认 --write-subs --write-auto-subs --sub-langs en,zh-Hans,zh-Hant,ko --embed-subs --merge-output-format mkv

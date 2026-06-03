@@ -21,6 +21,29 @@ if shutil.which("smartctl") is None:
     print(f"{FLRed}ERROR: smartctl not found. Install with: {CRst}{FGray}{hint}{CRst}\n")
     sys.exit(1)
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+{FLYellow}SMART DISK INFO{CRst}
+===============
+
+Usage:
+  python {script_name}                list SMART-capable disks and view details
+  python {script_name} --help         show this help
+
+{FLYellow}Description:{CRst}
+  Cross-platform SMART disk health viewer using smartmontools.
+  Lists all SMART-capable physical disks and displays detailed
+  SMART attributes for the selected disk.
+
+{FLYellow}Requirements:{CRst}
+  smartmontools (smartctl)
+    - macOS:   brew install smartmontools
+    - Linux:   sudo apt install smartmontools
+    - Windows: scoop install smartmontools
+""")
+    sys.exit(0)
+
 
 # ============ helpers ============
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:

@@ -82,7 +82,7 @@ class E_DOWNLOAD_TYPE(enum.Enum):
 
 for item in E_DOWNLOAD_TYPE:
 	print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-BITRATE_NUM = input(f"{FLYellow}请根据上述数字输入下载模式 (默认 0)：{CRst}").strip() or "0"
+BITRATE_NUM = input(f"{FLYellow}Select download mode by number (default 0): {CRst}").strip() or "0"
 try:
 	BITRATE = E_DOWNLOAD_TYPE(int(BITRATE_NUM))
 except ValueError:
@@ -91,7 +91,7 @@ except ValueError:
 
 
 #* 分P
-PART_INPUT = input(f"{FLYellow}分P，如 `CURRENT` `1,2` `1,2-5` `3,LATEST` `LAST` (default: ALL): {CRst}").strip().upper() or "ALL"
+PART_INPUT = input(f"{FLYellow}Part, e.g. `CURRENT` `1,2` `1,2-5` `3,LATEST` `LAST` (default: ALL): {CRst}").strip().upper() or "ALL"
 
 
 #* 解析
@@ -102,7 +102,7 @@ class E_API_TYPE(enum.Enum):
 	INTL = 3 # 国际版
 for item in E_API_TYPE:
 	print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-API_TYPE_INPUT = input(f"{FLYellow}请根据上述数字输出解析模式: (默认 0): {CRst}").strip() or "0"
+API_TYPE_INPUT = input(f"{FLYellow}Select API type by number (default 0): {CRst}").strip() or "0"
 try:
 	API_TYPE = E_API_TYPE(int(API_TYPE_INPUT))
 except ValueError:
@@ -139,13 +139,13 @@ for(idx, url) in enumerate(URLS):
 		cmd += ' --sub-only'
 	else: # 下载的是正常的视频
 		if(BITRATE == E_DOWNLOAD_TYPE.VIDEO_1080P): #* 视频的清晰度
-			bitrate_arg = '1080P 高清'
+			bitrate_arg = '1080P HD'
 		elif(BITRATE == E_DOWNLOAD_TYPE.VIDEO_720P):
-			bitrate_arg = '720P 高清'
+			bitrate_arg = '720P HD'
 		elif(BITRATE == E_DOWNLOAD_TYPE.VIDEO_480P):
-			bitrate_arg = '480P 清晰'
+			bitrate_arg = '480P SD'
 		elif(BITRATE == E_DOWNLOAD_TYPE.VIDEO_360P):
-			bitrate_arg = '360P 流畅'
+			bitrate_arg = '360P Low'
 		else:
 			print(f"{FLRed}Invalid bitrate option. EXIT...{CRst}\n")
 			sys.exit(1)
