@@ -113,7 +113,27 @@ def format_percent(value: float | None) -> str:
 
 
 def format_wh(value: float | None) -> str:
-    return f"{FGray}N/A{CRst}" if value is None else f"{value / 1000.0:.2f} Wh"
+    return f"{FGray}N/A{CRst}" if value is None else f"{value:.2f} Wh"
+
+
+def mah_mv_to_wh(capacity_mah: float | None, voltage_mv: float | None) -> float | None:
+    if capacity_mah is None or voltage_mv is None:
+        return None
+    return capacity_mah * voltage_mv / 1_000_000.0
+
+
+def mwh_to_wh(value_mwh: float | None) -> float | None:
+    return None if value_mwh is None else value_mwh / 1000.0
+
+
+def uwh_to_wh(value_uwh: float | None) -> float | None:
+    return None if value_uwh is None else value_uwh / 1_000_000.0
+
+
+def uah_uv_to_wh(capacity_uah: float | None, voltage_uv: float | None) -> float | None:
+    if capacity_uah is None or voltage_uv is None:
+        return None
+    return capacity_uah * voltage_uv / 1_000_000_000_000.0
 
 
 def power_record(
@@ -127,8 +147,8 @@ def power_record(
     system_load_w: float | None = None,
     battery_power_w: float | None = None,
     battery_percent: float | None = None,
-    battery_design_capacity_mwh: float | None = None,
-    battery_full_charge_capacity_mwh: float | None = None,
+    battery_design_capacity_wh: float | None = None,
+    battery_full_charge_capacity_wh: float | None = None,
     details: list[tuple[str, Any]] | None = None,
     sources: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
@@ -142,8 +162,8 @@ def power_record(
         "system_load_w": system_load_w,
         "battery_power_w": battery_power_w,
         "battery_percent": battery_percent,
-        "battery_design_capacity_mwh": battery_design_capacity_mwh,
-        "battery_full_charge_capacity_mwh": battery_full_charge_capacity_mwh,
+        "battery_design_capacity_wh": battery_design_capacity_wh,
+        "battery_full_charge_capacity_wh": battery_full_charge_capacity_wh,
         "details": details or [],
         "sources": sources or [],
     }
@@ -196,6 +216,11 @@ def macos_collect() -> dict[str, Any]:
 
     connected = bool(battery.get("ExternalConnected") or battery.get("AppleRawExternalConnected") or adapter)
     charging = bool(battery.get("IsCharging"))
+    design_capacity_mah = first_number(battery.get("DesignCapacity"))
+    full_charge_capacity_mah = first_number(
+        battery.get("AppleRawMaxCapacity"),
+        battery.get("NominalChargeCapacity"),
+    )
 
     return power_record(
         platform_name="macOS",
@@ -207,11 +232,8 @@ def macos_collect() -> dict[str, Any]:
         system_load_w=abs(system_load_w) if system_load_w is not None else None,
         battery_power_w=battery_power_w,
         battery_percent=first_number(battery.get("CurrentCapacity")),
-        battery_design_capacity_mwh=first_number(battery.get("DesignCapacity")),
-        battery_full_charge_capacity_mwh=first_number(
-            battery.get("AppleRawMaxCapacity"),
-            battery.get("MaxCapacity"),
-        ),
+        battery_design_capacity_wh=mah_mv_to_wh(design_capacity_mah, voltage_mv),
+        battery_full_charge_capacity_wh=mah_mv_to_wh(full_charge_capacity_mah, voltage_mv),
         details=[
             ("Adapter name", adapter.get("Name", "N/A")),
             ("Adapter maker", adapter.get("Manufacturer", "N/A")),
@@ -221,6 +243,8 @@ def macos_collect() -> dict[str, Any]:
             ("System current in", format_ma(first_number(telemetry.get("SystemCurrentIn")))),
             ("Battery voltage", format_mv(voltage_mv)),
             ("Battery current", format_ma(current_ma)),
+            ("Design capacity", f"{design_capacity_mah:g} mAh" if design_capacity_mah is not None else "N/A"),
+            ("Full charge cap", f"{full_charge_capacity_mah:g} mAh" if full_charge_capacity_mah is not None else "N/A"),
         ],
         sources=[
             ("Charger power", "AdapterDetails.Watts"),
@@ -357,8 +381,8 @@ if (Get-CimClass -ClassName Win32_PowerSupply -ErrorAction SilentlyContinue) {
         charger_power_w=charger_w,
         battery_power_w=battery_power_w,
         battery_percent=percent,
-        battery_design_capacity_mwh=first_number(win_battery.get("DesignCapacity")),
-        battery_full_charge_capacity_mwh=full,
+        battery_design_capacity_wh=mwh_to_wh(first_number(win_battery.get("DesignCapacity"))),
+        battery_full_charge_capacity_wh=mwh_to_wh(full),
         details=[
             ("Power supply", supply_name),
             ("Battery voltage", format_mv(first_number(status.get("Voltage")))),
@@ -388,6 +412,14 @@ def read_sysfs_number(device: Path, *names: str) -> float | None:
         if value is not None:
             return value
     return None
+
+
+def linux_battery_capacity_wh(device: Path, energy_name: str, charge_name: str, voltage_uv: float | None) -> float | None:
+    energy_uwh = read_sysfs_number(device, energy_name)
+    if energy_uwh is not None:
+        return uwh_to_wh(energy_uwh)
+    charge_uah = read_sysfs_number(device, charge_name)
+    return uah_uv_to_wh(charge_uah, voltage_uv)
 
 
 def linux_collect() -> dict[str, Any]:
@@ -443,6 +475,8 @@ def linux_collect() -> dict[str, Any]:
         percent = read_sysfs_number(battery, "capacity")
         power_uw = read_sysfs_number(battery, "power_now")
         voltage_uv = read_sysfs_number(battery, "voltage_now")
+        if voltage_uv is None:
+            voltage_uv = read_sysfs_number(battery, "voltage_avg", "voltage_min_design")
         current_ua = read_sysfs_number(battery, "current_now")
         if power_uw is not None:
             battery_power_w = abs(power_uw) / 1_000_000.0
@@ -459,11 +493,11 @@ def linux_collect() -> dict[str, Any]:
         system_load_w=battery_power_w,
         battery_power_w=battery_power_w,
         battery_percent=percent,
-        battery_design_capacity_mwh=read_sysfs_number(
-            battery, "energy_full_design", "charge_full_design"
+        battery_design_capacity_wh=linux_battery_capacity_wh(
+            battery, "energy_full_design", "charge_full_design", voltage_uv
         ) if battery else None,
-        battery_full_charge_capacity_mwh=read_sysfs_number(
-            battery, "energy_full", "charge_full"
+        battery_full_charge_capacity_wh=linux_battery_capacity_wh(
+            battery, "energy_full", "charge_full", voltage_uv
         ) if battery else None,
         details=[
             ("Power supply", supply_name),
@@ -489,23 +523,42 @@ def collect_power() -> dict[str, Any]:
     raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
 
+FROZEN_CAPACITY_FIELDS: dict[str, float] = {}
+
+
+def freeze_capacity_fields(record: dict[str, Any]) -> None:
+    platform_name = str(record.get("platform") or "")
+    for field in ("battery_design_capacity_wh", "battery_full_charge_capacity_wh"):
+        cache_key = f"{platform_name}:{field}"
+        if cache_key in FROZEN_CAPACITY_FIELDS:
+            record[field] = FROZEN_CAPACITY_FIELDS[cache_key]
+            continue
+
+        value = first_number(record.get(field))
+        if value is not None:
+            FROZEN_CAPACITY_FIELDS[cache_key] = value
+
+
 def yes_no_text(value: bool | None, yes_color: str = FLGreen) -> str:
     if value is None:
         return f"{FGray}N/A{CRst}"
     return f"{yes_color}yes{CRst}" if value else f"{FGray}no{CRst}"
 
 
-def build_report(verbose: bool) -> tuple[int, str]:
+def build_report(verbose: bool, freeze_capacity: bool = False) -> tuple[int, str]:
     try:
         record = collect_power()
     except Exception as exc:
         return 1, f"{FLRed}ERROR: {exc}{CRst}"
 
+    if freeze_capacity:
+        freeze_capacity_fields(record)
+
     adapter_input_w = record.get("adapter_input_w")
     system_load_w = record.get("system_load_w")
     battery_power_w = record.get("battery_power_w")
-    design_capacity_mwh = record.get("battery_design_capacity_mwh")
-    full_charge_capacity_mwh = record.get("battery_full_charge_capacity_mwh")
+    design_capacity_wh = record.get("battery_design_capacity_wh")
+    full_charge_capacity_wh = record.get("battery_full_charge_capacity_wh")
 
     separator = f"{FLCyan}{'-' * 48}{CRst}"
     lines = [
@@ -520,10 +573,10 @@ def build_report(verbose: bool) -> tuple[int, str]:
         f"  Charging          : {yes_no_text(record.get('charging'))}",
         f"  Discharging       : {yes_no_text(record.get('discharging'), FLYellow)}",
     ]
-    if design_capacity_mwh is not None or full_charge_capacity_mwh is not None:
+    if design_capacity_wh is not None or full_charge_capacity_wh is not None:
         lines.extend([
-            f"  Design capacity   : {format_wh(design_capacity_mwh)}",
-            f"  Full charge cap   : {format_wh(full_charge_capacity_mwh)}",
+            f"  Design capacity   : {format_wh(design_capacity_wh)}",
+            f"  Full charge cap   : {format_wh(full_charge_capacity_wh)}",
         ])
 
     if verbose:
@@ -573,7 +626,7 @@ def live_report(verbose: bool, interval: float) -> int:
 
     try:
         while True:
-            code, report = build_report(verbose)
+            code, report = build_report(verbose, freeze_capacity=True)
             exit_code = code
             output = f"{report}\n\n{FGray}Press any key to exit. Refresh interval: {interval:g}s{CRst}"
             if previous_lines:
