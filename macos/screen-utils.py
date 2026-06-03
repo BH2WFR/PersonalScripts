@@ -734,7 +734,9 @@ def get_display_info(did: int) -> dict:
 
     brightness_str = "N/A"
     try:
-        if is_builtin:
+        if not is_active:
+            brightness_str = "inactive"
+        elif is_builtin:
             b = ctypes.c_float(-1)
             err = DSGetDisplayBrightness(did, ctypes.byref(b))
             if err == 0 and b.value >= 0:
@@ -772,22 +774,25 @@ def print_display_list(displays: list[int]):
     if not displays:
         print(f"  {FGray}(no displays found){CRst}")
         return
-
+    
+    print(f"{FLCyan}────────────────────────────────────────────────────{CRst}")
     print(f"\n{FLYellow}  All displays ({len(displays)} total, {len(active_set)} active):{CRst}\n")
 
     for idx, did in enumerate(displays):
         info = get_display_info(did)
-        status = f"{FLGreen}ACTIVE{CRst}" if info['is_active'] else f"{FGray}inactive{CRst}"
+        is_active = info["is_active"]
+        status = f"{FLGreen}ACTIVE{CRst}" if is_active else f"{FGray}inactive{CRst}"
         tags = []
         if info['is_builtin']:
             tags.append(f"{FLGreen}[BUILT-IN]{CRst}")
         elif info['is_sidecar']:
-            tags.append(f"{FLBlue}[SIDECAR]{CRst}")
+            tags.append(f"{FLMagenta}[SIDECAR]{CRst}")
         else:
             tags.append(f"{FLCyan}[EXTERNAL]{CRst}")
         tag_str = " " + " ".join(tags)
-
-        print(f"  {FLYellow}[{idx}]{CRst} Display ID: {FLYellow}{info['id']}{CRst}{tag_str}  {status}")
+        
+        idx_str = f"{FLYellow if is_active else FGray}[{idx}]{CRst}"
+        print(f"  {idx_str} Display ID: {FLYellow}{info['id']}{CRst}{tag_str}  {status}")
         if info['product_name']:
             print(f"      Name       : {FLGreen}{info['product_name']}{CRst}")
         print(f"      CGDisplay  : {FLCyan}{info['width']} x {info['height']}{CRst}  @ {FLCyan}{info['refresh']}{CRst}")
@@ -1022,6 +1027,15 @@ def set_rotation(displays: list[int]) -> bool:
 
     did = displays[idx]
     info = get_display_info(did)
+
+    if not info['is_active']:
+        print(f"{FLRed}  Display is inactive. Cannot rotate an inactive display.{CRst}\n")
+        return False
+
+    if info.get('is_sidecar'):
+        print(f"{FLRed}  Rotation is not supported for Sidecar/iPad displays.{CRst}\n")
+        return False
+
     current_rot = info['rotation']
 
     print(f"\n{FLYellow}  Displayed rotation: {FLMagenta}{current_rot}°{CRst} {FGray}(may not reflect actual rotation on Apple Silicon){CRst}")
@@ -1192,6 +1206,11 @@ def set_resolution(displays: list[int]) -> bool:
 
     did = displays[idx]
     info = get_display_info(did)
+
+    if not info['is_active']:
+        print(f"{FLRed}  Display is inactive. Cannot set resolution on an inactive display.{CRst}\n")
+        return False
+
     print(f"\n{FLYellow}  Display: {info['product_name'] or f'Display {did}'}{CRst}")
     print(f"  Current: {FLCyan}{info['width']}x{info['height']}{CRst} @ {FLCyan}{info['refresh']}{CRst}")
     print(f"{FGray}  Note: modes are for the current rotation; rotate first if needed.{CRst}")
@@ -1279,6 +1298,10 @@ def adjust_brightness(displays: list[int]) -> bool:
     did = displays[idx]
     info = get_display_info(did)
 
+    if not info['is_active']:
+        print(f"{FLRed}  Display is inactive. Cannot adjust brightness on an inactive display.{CRst}\n")
+        return False
+
     if info['is_builtin']:
         print(f"{FLYellow}  Built-in display brightness:{CRst}")
         br = _brightness_get_builtin(did)
@@ -1352,6 +1375,13 @@ def adjust_brightness(displays: list[int]) -> bool:
 
 
 #============ 入口 ===========
+def _pause():
+    try:
+        input(f"{FGray}  Press Enter to continue...{CRst}")
+    except (EOFError, KeyboardInterrupt):
+        print()
+
+
 def main():
     print(f"{FLYellow}=========== SCREEN UTILS TOOL ==========={CRst}")
 
@@ -1368,6 +1398,7 @@ def main():
         return
 
     # 交互模式：先打印屏幕信息，再进入菜单
+    print(f"{FLCyan}{'─' * 52}{CRst}")
     print_display_list(displays)
 
     while True:
@@ -1388,25 +1419,31 @@ def main():
             break
 
         if not choice:
-            continue
+            print(f"{FLGreen}Bye.{CRst}")
+            break
 
         if choice == 'L':
             print_display_list(displays)
 
         elif choice == 'R':
-            set_rotation(displays)
+            if set_rotation(displays) is False:
+                _pause()
 
         elif choice == 'S':
-            set_resolution(displays)
+            if set_resolution(displays) is False:
+                _pause()
 
         elif choice == 'B':
-            adjust_brightness(displays)
+            if adjust_brightness(displays) is False:
+                _pause()
 
         elif choice == 'D':
-            print_ddc_info(displays)
+            if print_ddc_info(displays) is False:
+                _pause()
 
         elif choice == 'T':
-            toggle_builtin_display(displays)
+            if toggle_builtin_display(displays) is False:
+                _pause()
 
         elif choice == 'Q':
             print(f"{FLGreen}Bye.{CRst}")

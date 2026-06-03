@@ -4,6 +4,10 @@
 #
 from my_utils import *
 
+#* Windows only
+if(os.name != "nt"):
+	print(f"{FLRed}ERROR: This script only runs on Windows. Current platform: {sys.platform}{CRst}\n")
+	sys.exit(1)
 
 #* 交互输入
 print(f"{FLYellow}========= SYMLINK TO SYMLINKD CONVERTING TOOL ========={CRst}")
@@ -25,10 +29,6 @@ Usage:
   create file symlinks for folders.
 """)
     sys.exit(0)
-
-if(os.name != "nt"):
-	print(f"{FLRed}This tool only works on Windows systems. EXIT...{CRst}\n")
-	sys.exit(1)
 
 
 ROOT = "D:/test"   # ← 改成要检查的目录
