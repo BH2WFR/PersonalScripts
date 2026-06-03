@@ -90,7 +90,8 @@ function Show-SupportedScripts {
         return $null
     }
 
-    Write-Host "Supported scripts in: ``$scriptDirectory``:"
+    Write-Host "${FLYellow}================== PERSONAL SCRIPTS ====================${CRst}"
+    Write-Host "  Available ${FLGreen}PowerShell${CRst} and ${FLCyan}Python${CRst} scripts in ``${FGray}$scriptDirectory${CRst}``:`n"
     $cnt = 0
     $allScripts = @()
 
@@ -179,7 +180,7 @@ if ($ext -ieq ".py") {
         Write-Error "Cannot find python/python3"
         exit 1
     }
-    Write-Host ("${FLYellow}Resolved Python path:${CRst} ${FLGreen}$pythonCmd${CRst}`n")
+    Write-Host ("${FLYellow}Resolved Python path:${CRst} ${FLGreen}$pythonCmd${CRst}`n`n")
     & python $scriptPath @RemainingArgs
     exit $LASTEXITCODE
 }

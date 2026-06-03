@@ -75,8 +75,9 @@ show_supported_scripts() {
             sub_scripts+=("$full_path")
         fi
     done
-
-    printf 'Supported scripts in: `%s`:\n' "$script_dir"
+    
+    printf '%b================== PERSONAL SCRIPTS ====================%b\n' "$FLYellow" "$CRst"
+    printf '  Available %bbash%b and %bpython%b scripts in `%b%s%b`:\n\n' "$FLGreen" "$CRst" "$FLCyan" "$CRst" "$FGray" "$script_dir" "$CRst"
 
     local cnt=0
     local full_path relative_path file_name color
@@ -222,7 +223,7 @@ if [[ "$ext" == "py" ]]; then
         exit 1
     fi
 
-    printf '%bResolved Python path:%b %b%s%b\n' "$FLYellow" "$CRst" "$FLGreen" "$python_cmd" "$CRst"
+    printf '%bResolved Python path:%b %b%s%b\n\n' "$FLYellow" "$CRst" "$FLGreen" "$python_cmd" "$CRst"
     "$python_cmd" "$python_script_path" "${remaining_args[@]}"
     exit $?
 fi
