@@ -1,4 +1,4 @@
-from my_utils import *
+from utils import *
 # 基于 ffmpeg 的视频裁剪工具
 # 需要先安装 ffmpeg，推荐使用 `scoop install ffmpeg` 安装
 

@@ -78,7 +78,7 @@ function Show-SupportedScripts {
             ($_.Extension -ieq ".py" -or $_.Extension -ieq ".ps1") -and
             ($_.Name -ne "__init__.py") -and
             (-not $selfPath -or $_.FullName -ne $selfPath) -and
-            ($_.DirectoryName -notmatch '[\\/](linux|macos)([\\/]|$)')
+            ($_.DirectoryName -notmatch '[\\/](linux|macos|utils)([\\/]|$)')
         } | Sort-Object FullName
 
     # If a .py and .ps1 exist at the same path with the same name, keep only the .py

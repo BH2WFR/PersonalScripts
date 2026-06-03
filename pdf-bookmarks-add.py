@@ -2,7 +2,7 @@
 # 从大模型获取目录 JSON 后，写入到 PDF 中
 #
 #
-from my_utils import *
+from utils import *
 import pypdf # pip install pypdf
 
 

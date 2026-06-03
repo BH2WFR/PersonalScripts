@@ -1,5 +1,5 @@
 # Parse and display Unicode character info for each character in the input string
-from my_utils import *
+from utils import *
 import unicodedata
 
 # Character display names for special/whitespace/control characters

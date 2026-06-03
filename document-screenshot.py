@@ -2,7 +2,7 @@
 # 原理：通过发送 `PgDn` 键翻页，配合鼠标点击激活窗口，自动截图并保存到指定文件夹。
 # 依赖库：mss、pynput、Pillow
 
-from my_utils import *
+from utils import *
 import threading
 import platform
 

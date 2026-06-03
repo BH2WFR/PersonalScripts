@@ -63,6 +63,7 @@ show_supported_scripts() {
             ! -name '__init__.py' \
             ! -path "$script_self" \
             ! -path "*/windows/*" \
+            ! -path "*/utils/*" \
             ${_exclude_platform:+! -path "*/${_exclude_platform}/*"} \
             | sort
     )
@@ -97,7 +98,7 @@ show_supported_scripts() {
             sub_scripts+=("$full_path")
         fi
     done
-    
+
     printf '%b================== PERSONAL SCRIPTS ====================%b\n' "$FLYellow" "$CRst"
     printf '  Available %bbash%b and %bpython%b scripts in `%b%s%b`:\n\n' "$FLGreen" "$CRst" "$FLCyan" "$CRst" "$FGray" "$script_dir" "$CRst"
 

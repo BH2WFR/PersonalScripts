@@ -3,7 +3,7 @@
 # Windows 中，使用 mklink 命令创建符号链接或硬链接；如目标为文件夹，则支持 symlinkd 和 junction
 # 如果输入的路径中只有一个目录，则会提供额外选项：链接目录本身，还是链接目录内的内容（展平或递归镜像）
 
-from my_utils import *
+from utils import *
 
 import enum
 

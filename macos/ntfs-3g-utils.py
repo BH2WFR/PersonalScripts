@@ -7,7 +7,7 @@ import subprocess
 import shutil
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from my_utils import *  # noqa: E402
+from utils import *  # noqa: E402
 
 
 # ============ system checks ============
