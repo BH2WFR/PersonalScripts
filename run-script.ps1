@@ -20,11 +20,17 @@ $CRst = "$esc[0m"
 
 $scriptDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
-# Platform-aware filtering (use built-in $IsWindows/$IsMacOS/$IsLinux from PS Core)
+# Platform-aware filtering. $IsWindows/$IsMacOS/$IsLinux only exist in PS Core 6+.
+# Fall back to Environment::OSVersion for Windows PowerShell 5.1.
 $platformExclude = @("utils")
-if ($IsWindows) { $platformExclude += @("linux", "macos") }
-if ($IsMacOS)   { $platformExclude += @("linux", "windows") }
-if ($IsLinux)   { $platformExclude += @("macos", "windows") }
+if ($PSVersionTable.PSVersion.Major -ge 6) {
+    if ($IsWindows) { $platformExclude += @("linux", "macos") }
+    elseif ($IsMacOS) { $platformExclude += @("linux", "windows") }
+    elseif ($IsLinux) { $platformExclude += @("macos", "windows") }
+} else {
+    # Windows PowerShell 5.1 — always Windows
+    $platformExclude += @("linux", "macos")
+}
 
 function Get-RelativePythonScriptPath {
     param(

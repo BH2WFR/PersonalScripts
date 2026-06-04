@@ -16,10 +16,10 @@ script_self="$script_dir/$(basename -- "${BASH_SOURCE[0]}")"
 # Detect OS to exclude non-applicable platform scripts
 _os_name="$(uname -s)"
 case "$_os_name" in
-    Linux)                      _exclude_platform="macos" ; _is_windows=false ;;
-    Darwin)                     _exclude_platform="linux" ; _is_windows=false ;;
-    MINGW*|MSYS*|CYGWIN*)      _exclude_platform=""      ; _is_windows=true  ;;
-    *)                          _exclude_platform=""      ; _is_windows=false ;;
+    Linux)                      _is_windows=false ; _is_macos=false ; _is_linux=true  ;;
+    Darwin)                     _is_windows=false ; _is_macos=true  ; _is_linux=false ;;
+    MINGW*|MSYS*|CYGWIN*)      _is_windows=true  ; _is_macos=false ; _is_linux=false ;;
+    *)                          _is_windows=false ; _is_macos=false ; _is_linux=false ;;
 esac
 
 get_relative_script_path() {
@@ -57,15 +57,27 @@ resolve_script_path() {
 show_supported_scripts() {
     local scripts=()
     local line
+    # Build platform exclusion patterns as an array (no embedded quotes)
+    _find_excludes=(
+        ! -name '__init__.py'
+        ! -path "$script_self"
+        ! -path "${script_dir}/utils/*"
+    )
+    if [[ "$_is_windows" != "true" ]]; then
+        _find_excludes+=(! -path "${script_dir}/windows/*")
+    fi
+    if [[ "$_is_macos" != "true" ]]; then
+        _find_excludes+=(! -path "${script_dir}/macos/*")
+    fi
+    if [[ "$_is_linux" != "true" ]]; then
+        _find_excludes+=(! -path "${script_dir}/linux/*")
+    fi
+
     while IFS= read -r line; do
         scripts+=("$line")
     done < <(
         find "$script_dir" -type f \( -name '*.py' -o -name '*.sh' \) \
-            ! -name '__init__.py' \
-            ! -path "$script_self" \
-            ! -path "${script_dir}/utils/*" \
-            $(if [[ "$_is_windows" != "true" ]]; then printf '! -path "%s/windows/*"' "$script_dir"; fi) \
-            ${_exclude_platform:+! -path "${script_dir}/${_exclude_platform}/*"} \
+            "${_find_excludes[@]}" \
             | sort
     )
 
