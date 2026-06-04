@@ -36,6 +36,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 | Script | Description | Requires |
 |--------|-------------|----------|
+| `pdf-compress.py` | PDF compression with Ebook (standard) and Custom (DPI/quality) modes | `ghostscript` |
 | `pdf-decrypt.py` | Decrypt password-protected PDFs (including permission-only protection), preserving full document structure | `pypdf` |
 | `pdf-bookmarks-add.py` | Add table-of-contents bookmarks to PDFs from LLM-generated JSON (page/level/index/title) | `pypdf` |
 | `document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks) | `mss`, `pynput`, `Pillow` |
@@ -78,7 +79,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | `ntfs-3g` |
 | `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display. CLI: `--list`, `--toggle`, `--ddc-ci-info`, `--help` |
 | `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI battery classes; Linux uses `/sys/class/power_supply`. On some Windows devices, charger wattage and live power fields may be unavailable if the firmware/driver does not expose them. | — |
-| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (batch support) | — |
+| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | — |
 | `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | — |
 | `windows/clear-privacy..py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation and helper-based elevation fallback (`sudo` -> `gsudo`). **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
 | `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | — |
