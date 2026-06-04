@@ -1,6 +1,7 @@
 # Parse and display Unicode character info for each character in the input string
 from utils import *
 import unicodedata
+import subprocess
 
 # Character display names for special/whitespace/control characters
 REPLACE_MAP = {
@@ -85,6 +86,12 @@ def pad_to_width(s: str, target_width: int) -> str:
 
 print(f"{FLYellow}=========== UNICODE STRING PARSER ==========={CRst}")
 
+CLIP_FLAGS = {"--clip", "--from-clipboard"}
+from_clipboard = bool(CLIP_FLAGS & set(sys.argv))
+do_pause = "--pause" in sys.argv
+# Remove custom flags so they don't interfere with positional arg parsing
+sys.argv = [a for a in sys.argv if a not in CLIP_FLAGS and a != "--pause"]
+
 if "--help" in sys.argv or "-h" in sys.argv:
     script_name = os.path.basename(sys.argv[0])
     print(f"""
@@ -92,9 +99,12 @@ if "--help" in sys.argv or "-h" in sys.argv:
 =====================
 
 Usage:
-  python {script_name} <string>       parse the given string
-  python {script_name}                no arguments, interactive multi-line input
-  python {script_name} --help         show this help
+  python {script_name} <string>        parse the given string
+  python {script_name}                 no arguments, interactive multi-line input
+  python {script_name} --clip          read text from clipboard
+  python {script_name} --from-clipboard  same as --clip
+  python {script_name} --pause           wait for Enter before exiting
+  python {script_name} --help            show this help
 
 {FLYellow}Description:{CRst}
   Print each character's Unicode info: index, char, hex, decimal, and description.
@@ -104,9 +114,30 @@ Usage:
 
 
 #============ 用户交互 ===========
-if len(sys.argv) > 1:
+if from_clipboard:
+    input_source = "clipboard"
+    try:
+        if sys.platform == "darwin":
+            text = subprocess.check_output(["pbpaste"], text=True)
+        elif sys.platform == "win32":
+            text = subprocess.check_output(["powershell", "-command", "Get-Clipboard"], text=True)
+        else:
+            # Linux: try wl-paste (Wayland) then xclip (X11)
+            try:
+                text = subprocess.check_output(["wl-paste"], text=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                text = subprocess.check_output(["xclip", "-selection", "clipboard", "-o"], text=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print(f"{FLRed}Failed to read clipboard.{CRst}", file=sys.stderr)
+        sys.exit(1)
+    if not text.strip():
+        print(f"{FLRed}Clipboard is empty. EXIT...{CRst}")
+        sys.exit(1)
+elif len(sys.argv) > 1:
+    input_source = "argument"
     text = " ".join(sys.argv[1:])
 else:
+    input_source = "interaction"
     print(f"{FLYellow}Enter text to parse (one or more lines).{CRst}")
     print(f"{FLCyan}End with {FLYellow}Ctrl+Z then Enter (Windows) or Ctrl+D (Linux/macOS){FLCyan}:{CRst}")
     lines = []
@@ -122,12 +153,16 @@ else:
         sys.exit(1)
 
 text_len = len(text)
-print(f"\n{FLYellow}Input length: {text_len} character(s){CRst}")
+print(f"\n{FLYellow}Input source: {FLGreen}{input_source}{CRst}")
+print(f"{FLYellow}Input length: {text_len} character(s){CRst}")
 print(f"{FLYellow}Input string: {CRst}{FLCyan}{repr(text)}{CRst}\n")
 
 
 #============ 打印表头 ===========
-term_width = os.get_terminal_size().columns - 1
+try:
+    term_width = os.get_terminal_size().columns - 1
+except OSError:
+    term_width = 119  # default 120-column terminal
 desc_width = max(20, term_width - 46)  # 46 = Index(7) + Char(13) + Hex(10) + Dec(9) + 7 separators
 HEX_COL = 23    # 1-based cursor column where Hex starts
 DEC_COL = 34    # 1-based cursor column where Dec starts
@@ -185,3 +220,9 @@ print(f"├{sep1}┴{sep2}┴{sep3}┴{sep4}┴{sep5}┤")
 total_width = desc_width + 48  # 48 = index(7) + char(13) + hex(10) + dec(9) + 9 separators
 print(f"│     {FLYellow}{total}{CRst}{' ' * (total_width - 9 - len(total))} │")
 print(f"└{'─' * (total_width - 3)}┘\n")
+
+if do_pause:
+    try:
+        input(f"{FGray}Press Enter to exit...{CRst}")
+    except (EOFError, KeyboardInterrupt):
+        print()

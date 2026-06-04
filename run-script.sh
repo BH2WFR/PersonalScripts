@@ -16,9 +16,10 @@ script_self="$script_dir/$(basename -- "${BASH_SOURCE[0]}")"
 # Detect OS to exclude non-applicable platform scripts
 _os_name="$(uname -s)"
 case "$_os_name" in
-    Linux)  _exclude_platform="macos" ;;
-    Darwin) _exclude_platform="linux" ;;
-    *)      _exclude_platform="" ;;
+    Linux)                      _exclude_platform="macos" ; _is_windows=false ;;
+    Darwin)                     _exclude_platform="linux" ; _is_windows=false ;;
+    MINGW*|MSYS*|CYGWIN*)      _exclude_platform=""      ; _is_windows=true  ;;
+    *)                          _exclude_platform=""      ; _is_windows=false ;;
 esac
 
 get_relative_script_path() {
@@ -62,8 +63,8 @@ show_supported_scripts() {
         find "$script_dir" -type f \( -name '*.py' -o -name '*.sh' \) \
             ! -name '__init__.py' \
             ! -path "$script_self" \
-            ! -path "${script_dir}/windows/*" \
             ! -path "${script_dir}/utils/*" \
+            $(if [[ "$_is_windows" != "true" ]]; then printf '! -path "%s/windows/*"' "$script_dir"; fi) \
             ${_exclude_platform:+! -path "${script_dir}/${_exclude_platform}/*"} \
             | sort
     )
@@ -149,13 +150,6 @@ remaining_args=("$@")
 show_list=false
 if [[ -z "$script_name" || "$script_name" == "--list" ]]; then
     show_list=true
-else
-    for arg in "${remaining_args[@]}"; do
-        if [[ "$arg" == "--list" ]]; then
-            show_list=true
-            break
-        fi
-    done
 fi
 
 ALL_SCRIPTS=()
@@ -228,14 +222,25 @@ if [[ "$ext" == "py" ]]; then
         python_script_path="$script_path"
     fi
 
-    # Find python command: prefer miniconda/anaconda, then python3
+    # Find python command: prefer conda, then python3/python
+    local python_candidates=(
+        "$HOME/miniconda3/bin/python"
+        "$HOME/anaconda3/bin/python"
+        "/opt/miniconda3/bin/python"
+        "/opt/anaconda3/bin/python"
+    )
+    if [[ "$_is_windows" == "true" ]]; then
+        python_candidates+=(
+            "${USERPROFILE:-$HOME}/miniconda3/python.exe"
+            "${USERPROFILE:-$HOME}/anaconda3/python.exe"
+            "${PROGRAMDATA:-}/miniconda3/python.exe"
+            "${PROGRAMDATA:-}/anaconda3/python.exe"
+        )
+    fi
+    python_candidates+=(python3 python)
+
     python_cmd=""
-    for candidate in \
-        "$HOME/miniconda3/bin/python" \
-        "$HOME/anaconda3/bin/python" \
-        "/opt/miniconda3/bin/python" \
-        "/opt/anaconda3/bin/python" \
-        python3; do
+    for candidate in "${python_candidates[@]}"; do
         if command -v "$candidate" >/dev/null 2>&1; then
             python_cmd="$candidate"
             break

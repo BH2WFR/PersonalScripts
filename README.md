@@ -76,7 +76,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `tailscale-restart-accept-routes.py` | Restart Tailscale subnet routes by toggling `--accept-routes` off/on | `tailscale` |
 | `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables | `boto3` |
 | `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | `ntfs-3g` |
-| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display | — |
+| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display. CLI: `--list`, `--toggle`, `--ddc-ci-info`, `--help` |
 | `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI battery classes; Linux uses `/sys/class/power_supply`. On some Windows devices, charger wattage and live power fields may be unavailable if the firmware/driver does not expose them. | — |
 | `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (batch support) | — |
 | `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | — |
@@ -88,7 +88,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 | Script | Description |
 |--------|-------------|
-| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters |
+| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` |
 | `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) |
 | `research/npy-viewer.bat` | Windows: double-click/drag-and-drop launcher for npy viewer |
 | `research/npy-viewer.sh` | Linux/macOS: double-click launcher for npy viewer |

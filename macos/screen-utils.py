@@ -24,20 +24,29 @@ if "--help" in sys.argv or "-h" in sys.argv:
 ============
 
 Usage:
-  python {script_name}                interactive display manager
-  python {script_name} --help         show this help
+  python {script_name}                    interactive display manager
+  python {script_name} --list             list displays and exit
+  python {script_name} --ddc-ci-info      show DDC/CI info and exit
+  python {script_name} --toggle-built-in  toggle built-in display and exit
+  python {script_name} --help             show this help
 
 {FLYellow}Description:{CRst}
   macOS display management tool for Apple Silicon.
   Supports screen rotation, brightness control (built-in via
-  DisplayServices, external via DDC/CI), and toggling the
-  built-in display on/off.
+  DisplayServices, external via DDC/CI), resolution switching,
+  and toggling the built-in display on/off.
 
-  Menu options:
-    [R] Rotation       — rotate screen (0, 90, 180, 270)
-    [B] Brightness     — set brightness for built-in or external displays
-    [S] Toggle built-in — turn internal display on/off
-    [I] DDC/CI info    — show DDC/CI capabilities for external displays
+{FLYellow}CLI options:{CRst}
+  --list, --list-only       print display list and exit
+  --info, --ddc-ci-info     dump DDC/CI capabilities and exit
+  --toggle, --toggle-built-in
+                            toggle built-in display on/off and exit
+
+{FLYellow}Interactive menu:{CRst}
+  [L] List displays    [R] Rotate (0/90/180/270)
+  [S] Set resolution   [B] Brightness
+  [D] DDC/CI info      [T] Toggle built-in
+  [Q] Quit
 
 {FLYellow}Requirements:{CRst}
   macOS on Apple Silicon
@@ -619,29 +628,6 @@ CGDisplayModeGetIODisplayModeID = ctypes.CFUNCTYPE(
     ctypes.c_int32, ctypes.c_void_p,
 )(_lookup('CGDisplayModeGetIODisplayModeID'))
 
-#============ 帮助信息 ===========
-HELP_TEXT = f"""
-SCREEN UTILS TOOL
-=================
-
-Usage:
-  python {{script}}                 interactive menu mode
-  python {{script}} --toggle-builtin  direct toggle built-in display
-  python {{script}} --help           show this help
-
-{FLYellow}Features:{CRst}
-  macOS only. Interactive display management tool.
-  - Rotate display (0°, 90°, 180°, 270°)
-  - Set resolution                         — choose from CoreGraphics modes
-  - Adjust brightness                       — built-in + DDC/CI external displays
-  - Dump DDC/CI diagnostic information
-  - Toggle built-in display on/off
-"""
-
-if "--help" in sys.argv or "-h" in sys.argv:
-    print(HELP_TEXT.format(script=os.path.basename(sys.argv[0])))
-    sys.exit(0)
-
 #============ 数据获取 ===========
 MAX_DISPLAYS = 64
 
@@ -938,7 +924,7 @@ def print_ddc_info(displays: list[int]) -> bool:
 
 
 #============ 功能：toggle 内建显示器 ===========
-def toggle_builtin_display(displays: list[int]) -> bool:
+def toggle_builtin_display(displays: list[int], skip_confirm: bool = False) -> bool:
     """返回 True 表示执行了变更"""
     active_set = get_active_displays()
     builtin_id = find_builtin_display(displays)
@@ -967,16 +953,17 @@ def toggle_builtin_display(displays: list[int]) -> bool:
         target = True
 
     # 确认交互
-    print(f"\n{FLYellow}  About to {action.lower()} the built-in display.{CRst}")
-    print(f"  Active external displays: {FLYellow}{external_active_count}{CRst}")
-    try:
-        confirm = input(f"  {FLYellow}Confirm? (y/N, default y): {CRst}").strip().lower() or "y"
-    except (EOFError, KeyboardInterrupt):
-        print(f"{FGray}  Canceled.{CRst}\n")
-        return False
-    if confirm != 'y' and confirm != 'yes':
-        print(f"{FGray}  Canceled.{CRst}\n")
-        return False
+    if not skip_confirm:
+        print(f"\n{FLYellow}  About to {action.lower()} the built-in display.{CRst}")
+        print(f"  Active external displays: {FLYellow}{external_active_count}{CRst}")
+        try:
+            confirm = input(f"  {FLYellow}Confirm? (y/N, default y): {CRst}").strip().lower() or "y"
+        except (EOFError, KeyboardInterrupt):
+            print(f"{FGray}  Canceled.{CRst}\n")
+            return False
+        if confirm != 'y' and confirm != 'yes':
+            print(f"{FGray}  Canceled.{CRst}\n")
+            return False
 
     print(f"{FLYellow}  -> {action} built-in display...{CRst}")
     config = ctypes.c_void_p(0)
@@ -1417,14 +1404,21 @@ def main():
         print(f"{FLRed}ERROR: No displays found.{CRst}\n")
         sys.exit(1)
 
-    # --toggle-builtin: 直接进入 toggle 确认流程
-    if "--toggle-builtin" in sys.argv:
+    # --list / --list-only: print display list and exit
+    if "--list" in sys.argv or "--list-only" in sys.argv:
         print_display_list(displays)
-        toggle_builtin_display(displays)
-        print_display_list(get_all_displays())
         return
 
-    # 交互模式：先打印屏幕信息，再进入菜单
+    # --info / --ddc-ci-info: dump DDC/CI info and exit
+    if "--info" in sys.argv or "--ddc-ci-info" in sys.argv:
+        print_display_list(displays)
+        print_ddc_info(displays)
+        return
+
+    # --toggle / --toggle-built-in: toggle built-in display and exit (no listing)
+    if "--toggle" in sys.argv or "--toggle-built-in" in sys.argv:
+        toggle_builtin_display(displays, skip_confirm=True)
+        return
     print(f"{FLCyan}{'─' * 52}{CRst}")
     print_display_list(displays)
 

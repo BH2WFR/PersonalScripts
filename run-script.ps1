@@ -20,6 +20,12 @@ $CRst = "$esc[0m"
 
 $scriptDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
+# Platform-aware filtering (use built-in $IsWindows/$IsMacOS/$IsLinux from PS Core)
+$platformExclude = @("utils")
+if ($IsWindows) { $platformExclude += @("linux", "macos") }
+if ($IsMacOS)   { $platformExclude += @("linux", "windows") }
+if ($IsLinux)   { $platformExclude += @("macos", "windows") }
+
 function Get-RelativePythonScriptPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -79,10 +85,10 @@ function Show-SupportedScripts {
             ($_.Name -ne "__init__.py") -and
             (-not $selfPath -or $_.FullName -ne $selfPath)
         } | Where-Object {
-            # Exclude platform/utils subdirectories that are direct children of scriptDirectory
+            # Exclude platform subdirectories that don't match the current OS
             $rel = $_.FullName.Substring($scriptDirectory.Length).TrimStart([System.IO.Path]::DirectorySeparatorChar)
             $topDir = $rel.Split([System.IO.Path]::DirectorySeparatorChar)[0]
-            $topDir -notin @("windows", "linux", "macos", "utils")
+            $topDir -notin $platformExclude
         } | Sort-Object FullName
 
     # If a .py and .ps1 exist at the same path with the same name, keep only the .py
@@ -136,7 +142,7 @@ function Show-SupportedScripts {
     return $allScripts
 }
 
-$showList = [string]::IsNullOrWhiteSpace($ScriptName) -or $ScriptName -eq "--list" -or $RemainingArgs -contains "--list"
+$showList = [string]::IsNullOrWhiteSpace($ScriptName) -or $ScriptName -eq "--list"
 if ($showList) {
     $allScripts = Show-SupportedScripts
     if (-not $allScripts) { exit 0 }
@@ -187,6 +193,16 @@ $ext = [System.IO.Path]::GetExtension($scriptPath)
 if ($ext -ieq ".py") {
     $env:PYTHONPATH = $scriptDirectory
     $pythonCmd = & {
+        # Unix-style conda paths (macOS/Linux)
+        $unixCandidates = @(
+            "$env:HOME/miniconda3/bin/python",
+            "$env:HOME/anaconda3/bin/python",
+            "/opt/miniconda3/bin/python",
+            "/opt/anaconda3/bin/python"
+        )
+        foreach ($c in $unixCandidates) {
+            if (Test-Path -LiteralPath $c -PathType Leaf) { return $c }
+        }
         if (Get-Command python -ErrorAction SilentlyContinue) { return (Get-Command python).Source }
         if (Get-Command python3 -ErrorAction SilentlyContinue) { return (Get-Command python3).Source }
         return $null

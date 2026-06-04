@@ -77,7 +77,7 @@
 | `tailscale-restart-accept-routes.py` | 通过切换 `--accept-routes` 开关重启 Tailscale 子网路由 | `tailscale` |
 | `upload-ipaddress.py` | 收集网络信息并上传至腾讯云 COS S3 方便远程访问。凭据来自环境变量 | `boto3` |
 | `macos/ntfs-3g-utils.py` | macOS 专用：通过 ntfs-3g（macFUSE）挂载 NTFS 磁盘，支持读写。挂载/系统挂载/弹出 | `ntfs-3g` |
-| `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、亮度（内建 + DDC/CI）、切换内建显示器 | — |
+| `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、亮度（内建 + DDC/CI）、切换内建显示器。CLI：`--list`、`--toggle`、`--ddc-ci-info`、`--help` |
 | `power-current.py` | 跨平台充电器与电池遥测查看器。macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI 电池类，Linux 使用 `/sys/class/power_supply`。部分 Windows 设备若固件或驱动未暴露相关字段，则可能无法获取充电器瓦数或实时功率。 | — |
 | `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持批量） | — |
 | `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置 | — |
@@ -89,7 +89,7 @@
 
 | 脚本 | 描述 |
 |------|------|
-| `parse-unicode-string.py` | 解析并显示 Unicode 字符信息（序号、字符、十六进制、十进制、说明），特殊字符彩色标注 |
+| `parse-unicode-string.py` | 解析并显示 Unicode 字符信息（序号、字符、十六进制、十进制、说明），特殊字符彩色标注。支持 `--clip`（剪贴板读取）、`--pause`（回车后退出）、`--help` |
 | `research/npy-viewer.py` | `.npy`/`.npz` 文件交互式查看器（1D 折线/柱状/散点图，2D 热力图/曲面图） |
 | `research/npy-viewer.bat` | Windows：npy 查看器的双击/拖拽启动器 |
 | `research/npy-viewer.sh` | Linux/macOS：npy 查看器的双击启动器 |
