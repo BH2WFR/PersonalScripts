@@ -654,11 +654,14 @@ def get_active_displays() -> set[int]:
     CGGetActiveDisplayList(MAX_DISPLAYS, ids, ctypes.byref(count))
     return {ids[i] for i in range(count.value)}
 
-def find_builtin_display(displays: list[int]) -> int | None:
+def find_builtin_display(displays: list[int]) -> int:
+    # Method 1: scan given list (usually from CGSGetDisplayList)
     for did in displays:
         if CGDisplayIsBuiltin(did):
             return did
-    return None
+
+    # Method 2: Apple Silicon built-in display ID is always 1
+    return 1
 
 def _is_sidecar_display(product_name: str, display_location: str) -> bool:
     text = f"{product_name} {display_location}".lower()
@@ -928,11 +931,6 @@ def toggle_builtin_display(displays: list[int], skip_confirm: bool = False) -> b
     """返回 True 表示执行了变更"""
     active_set = get_active_displays()
     builtin_id = find_builtin_display(displays)
-
-    if builtin_id is None:
-        print(f"{FLRed}ERROR: No built-in display found.{CRst}")
-        print(f"{FLRed}       Current device appears to be a headless Mac.{CRst}\n")
-        return False
 
     builtin_active = builtin_id in active_set
     external_active_count = sum(
@@ -1463,7 +1461,7 @@ def main():
                 _pause()
 
         elif choice == 'T':
-            if toggle_builtin_display(displays) is False:
+            if toggle_builtin_display(displays, skip_confirm=True) is False:
                 _pause()
 
         elif choice == 'Q':
