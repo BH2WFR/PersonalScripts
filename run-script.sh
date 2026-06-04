@@ -223,7 +223,7 @@ if [[ "$ext" == "py" ]]; then
     fi
 
     # Find python command: prefer conda, then python3/python
-    local python_candidates=(
+    python_candidates=(
         "$HOME/miniconda3/bin/python"
         "$HOME/anaconda3/bin/python"
         "/opt/miniconda3/bin/python"
