@@ -27,6 +27,9 @@ Usage:
   Decrypt password-protected PDFs (including permission-only protection).
   Clones the full document structure (pages, bookmarks, named destinations)
   and outputs a completely decrypted PDF.
+
+{FLYellow}Requirements:{CRst}
+  Python: {FGray}pip install pypdf{CRst}
 """)
     sys.exit(0)
 
@@ -46,30 +49,33 @@ while i < len(sys.argv):
     i += 1
 
 
+#============ 默认路径 (OS-aware) ===========
+if sys.platform == "win32":
+    DEFAULT_INPUT = "D:/input.pdf"
+else:
+    DEFAULT_INPUT = os.path.expanduser("~/input.pdf")
+
+
 #============ 用户交互 ===========
-filepath = "D:/input.pdf"
-output_path = "D:/input_bookmarked.pdf"
+filepath = _arg_path if _arg_path else Utils.resolve_input_path(
+    DEFAULT_INPUT,
+    prompt="Enter input PDF file path",
+    path_type="file",
+)
 
-if _arg_path:
-    filepath = _arg_path
-else:
-    filepath = input(f"{FLYellow}Enter input PDF file path (default: {filepath}): {CRst}") or filepath
+if not filepath or not os.path.exists(filepath):
+    print(f"{FLRed}Invalid input file path. EXIT...{CRst}\n")
+    sys.exit(1)
 
-if not filepath or os.path.exists(filepath) == False:
-	print(f"{FLRed}Invalid input file path. EXIT...{CRst}\n")
-	sys.exit(1)
+# 默认输出路径：输入文件名 + _decrypted 后缀
+_stem, _ext = os.path.splitext(os.path.basename(filepath))
+_default_output = os.path.join(os.path.dirname(filepath) or ".", f"{_stem}_decrypted{_ext or '.pdf'}")
 
-if _arg_output:
-    output_path = _arg_output
-else:
-    output_path = input(f"{FLYellow}Enter output PDF file path (default: {output_path}): {CRst}") or output_path
-out_dir = os.path.dirname(output_path) or "."
-if(not output_path or os.path.exists(out_dir) == False):
-	print(f"{FLRed}Invalid or unexisting output file path. EXIT...{CRst}\n")
-	sys.exit(1)
-if(os.path.exists(output_path)):
-	print(f"{FLRed}Output file already exists. EXIT...{CRst}\n")
-	sys.exit(1)
+output_path = Utils.resolve_output_path(
+    _arg_output if _arg_output else _default_output,
+    prompt="Enter output PDF file path",
+    path_type="file",
+)
 
 print(f"{FLYellow}  -> start parsing...")
 

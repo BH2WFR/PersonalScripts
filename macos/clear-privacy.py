@@ -53,6 +53,10 @@ Disclaimer:
   This script clears system and application usage traces. The author
   assumes no responsibility for any system damage, data loss, or
   application malfunction resulting from its use. Use at your own risk.
+
+{FLYellow}Requirements:{CRst}
+  macOS only. All tools are built-in (defaults, killall, qlmanage, dscacheutil, etc.).
+  Optional: {FGray}brew install trash{CRst} (for Trash emptying)
 """
     )
 

@@ -36,95 +36,101 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `pdf-compress.py` | PDF compression with Ebook (standard) and Custom (DPI/quality) modes | `ghostscript` |
-| `pdf-decrypt.py` | Decrypt password-protected PDFs (including permission-only protection), preserving full document structure | `pypdf` |
-| `pdf-bookmarks-add.py` | Add table-of-contents bookmarks to PDFs from LLM-generated JSON (page/level/index/title) | `pypdf` |
-| `document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks) | `mss`, `pynput`, `Pillow` |
+| `pdf-compress.py` | PDF compression with Ebook (standard) and Custom (DPI/quality) modes | Cross-platform. `ghostscript` |
+| `pdf-decrypt.py` | Decrypt password-protected PDFs (including permission-only protection), preserving full document structure | Cross-platform. `pip install pypdf` |
+| `pdf-bookmarks-add.py` | Add table-of-contents bookmarks to PDFs from LLM-generated JSON (page/level/index/title) | Cross-platform. `pip install pypdf` |
+| `document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks) | macOS only. `pip install mss pynput Pillow` |
 
 ### Video Downloaders
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API) | `BBDown`, `ffmpeg`, `aria2` (optional) |
-| `download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist) | `yt-dlp`, `ffmpeg` |
-| `download-m3u8.py` | m3u8/HLS stream downloader with custom headers support | `yt-dlp`, `ffmpeg` |
+| `download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API) | Cross-platform. `BBDown`, `ffmpeg`, `aria2` (optional) |
+| `download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist) | Cross-platform. `yt-dlp`, `ffmpeg`, `deno` (optional) |
+| `download-m3u8.py` | m3u8/HLS stream downloader with custom headers support | Cross-platform. `yt-dlp`, `ffmpeg` |
 
 ### Video / Image Editing
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `ffmpeg-crop-video.py` | Trim/cut videos by time range (not frame cropping) | `ffmpeg` |
-| `research/batch-crop-images.py` | Batch crop images with interactive ROI selection | `cv2` |
+| `ffmpeg-crop-video.py` | Trim/cut videos by time range (not frame cropping) | Cross-platform. `ffmpeg` |
+| `research/batch-crop-images.py` | Batch crop images with interactive ROI selection | Cross-platform. `pip install opencv-python numpy` |
 
 ### File System & Links
 
-| Script | Description |
-|--------|-------------|
-| `link-create.py` | Cross-platform symlink/hardlink creation (Windows: SymlinkD, Junction; Linux/macOS: Symlink, Hardlink). Supports relative paths, mirror modes, conflict handling |
-| `link-scan.py` | Recursively scan directories for symlinks, Junctions, hardlinks. Detect broken links, auto-fix or delete |
-| `link-fix-symlinkd.py` | Windows-only: Convert broken directory symlinks to symlinkd |
-| `check-filename-overlong.py` | Check and truncate overlong filenames by UTF-8 byte limit (e.g., Synology NAS 143-byte limit) |
-| `remove-os-junk-files.py` | Recursively remove OS-generated junk files (`.DS_Store`, `__MACOSX__`, `Thumbs.db`, etc.) |
-| `modify-file-time.py` | Modify file/folder timestamps (created, modified, accessed) with optional random jitter |
-| `batch-add-chmod-x.sh` | Recursively add `chmod +x` to `.py`/`.sh` files via git (requires sudo) |
-| `git-batch-add-chmod-x.ps1` | PowerShell version: mark `.py`/`.sh` files as executable in git index |
+| Script | Description | Requirements |
+|--------|-------------|--------------|
+| `link-create.py` | Cross-platform symlink/hardlink creation (Windows: SymlinkD, Junction; Linux/macOS: Symlink, Hardlink). Supports relative paths, mirror modes, conflict handling | Cross-platform. No external deps |
+| `link-scan.py` | Recursively scan directories for symlinks, Junctions, hardlinks. Detect broken links, auto-fix or delete | Cross-platform. No external deps |
+| `link-fix-symlinkd.py` | Windows-only: Convert broken directory symlinks to symlinkd | Windows only. No external deps |
+| `check-filename-overlong.py` | Check and truncate overlong filenames by UTF-8 byte limit (e.g., Synology NAS 143-byte limit) | Cross-platform. No external deps |
+| `remove-os-junk-files.py` | Recursively remove OS-generated junk files (`.DS_Store`, `__MACOSX__`, `Thumbs.db`, etc.) | Cross-platform. No external deps |
+| `modify-file-time.py` | Modify file/folder timestamps (created, modified, accessed) with optional random jitter | Cross-platform. No external deps |
+| `batch-add-chmod-x.sh` | Recursively add `chmod +x` to `.py`/`.sh` files via git (requires sudo) | Linux/macOS. `git`, `sudo` (built-in) |
+| `git-batch-add-chmod-x.ps1` | PowerShell version: mark `.py`/`.sh` files as executable in git index | Windows. `PowerShell`, `git` |
 
 ### System & Network
 
-| Script | Description | Requires |
-|--------|-------------|----------|
-| `disk-smart-info.py` | Cross-platform SMART disk health viewer. Lists SMART-capable disks and displays detailed attributes | `smartmontools` |
-| `tailscale-restart-accept-routes.py` | Restart Tailscale subnet routes by toggling `--accept-routes` off/on | `tailscale` |
-| `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables | `boto3` |
-| `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | `ntfs-3g` |
-| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display. CLI: `--list`, `--toggle`, `--ddc-ci-info`, `--help` |
-| `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI battery classes; Linux uses `/sys/class/power_supply`. On some Windows devices, charger wattage and live power fields may be unavailable if the firmware/driver does not expose them. | — |
-| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | — |
-| `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | — |
-| `windows/clear-privacy..py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation and helper-based elevation fallback (`sudo` -> `gsudo`). **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
-| `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | — |
-| `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk. The author assumes no responsibility for system damage or data loss.** | — |
+| Script | Description | Requirements |
+|--------|-------------|--------------|
+| `disk-smart-info.py` | Cross-platform SMART disk health viewer. Lists SMART-capable disks and displays detailed attributes | Cross-platform. `smartmontools` |
+| `tailscale-restart-accept-routes.py` | Restart Tailscale subnet routes by toggling `--accept-routes` off/on | Cross-platform. `tailscale` |
+| `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables | Cross-platform. `pip install boto3` |
+| `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | macOS only. `brew install ntfs-3g macfuse` |
+| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display. CLI: `--list`, `--toggle`, `--ddc-ci-info`, `--help` | macOS only (Apple Silicon). No external deps; optional `pip install pyobjc` |
+| `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI; Linux uses `/sys/class/power_supply`. Some fields unavailable if firmware/driver does not expose them. | Cross-platform. No external deps |
+| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | macOS only. Uses `xattr` (built-in) |
+| `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | Windows only. PowerShell (built-in) |
+| `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | Windows only. Built-in tools; optional `scoop install sudo gsudo` |
+| `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | Windows only. PowerShell (built-in) |
+| `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | macOS only. Built-in tools; optional `brew install trash` |
 
 ### Utilities
 
-| Script | Description |
-|--------|-------------|
-| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` |
-| `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) |
-| `research/npy-viewer.bat` | Windows: double-click/drag-and-drop launcher for npy viewer |
-| `research/npy-viewer.sh` | Linux/macOS: double-click launcher for npy viewer |
-| `run-script.sh` | Bash launcher for running any script in the repo |
-| `run-script.ps1` | PowerShell launcher for running any script in the repo |
+| Script | Description | Requirements |
+|--------|-------------|--------------|
+| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` | Cross-platform. No external deps; Linux clipboard needs `wl-paste` or `xclip` |
+| `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) | Cross-platform. `pip install numpy matplotlib plotly` |
+| `research/npy-viewer.bat` | Windows: double-click/drag-and-drop launcher for npy viewer | Windows. Requires `npy-viewer.py` deps |
+| `research/npy-viewer.sh` | Linux/macOS: double-click launcher for npy viewer | Linux/macOS. Requires `npy-viewer.py` deps |
+| `run-script.sh` | Bash launcher for running any script in the repo | Linux/macOS. `bash`, `python3` |
+| `run-script.ps1` | PowerShell launcher for running any script in the repo | Windows. `PowerShell`, `python` |
 
 ### Test Helpers
 
-| Script | Description |
-|--------|-------------|
-| `test/print-argv.py` | Print all command-line arguments |
-| `test/print-argv.ps1` | PowerShell: print all arguments with color |
-| `test/print-argv.sh` | Bash: print all arguments with color |
+| Script | Description | Requirements |
+|--------|-------------|--------------|
+| `test/print-argv.py` | Print all command-line arguments | Cross-platform. No external deps |
+| `test/print-argv.ps1` | PowerShell: print all arguments with color | Windows. PowerShell (built-in) |
+| `test/print-argv.sh` | Bash: print all arguments with color | Linux/macOS. `bash` (built-in) |
 
 ---
 
 ## Dependencies
 
-Core utility module: `utils/` — provides ANSI color codes, cursor/screen control sequences, logging helpers, and platform utilities.
+Core utility module: `utils/` — provides ANSI color codes, cursor/screen control sequences, and platform utilities.
 
 ### Python Environment
 
 **Windows / macOS / Linux:** install [Miniconda](https://docs.conda.io/en/latest/miniconda.html), then install packages into the base environment:
 
 ```bash
-pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy
+pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy plotly
 ```
 
 The launcher auto-detects conda Python at `~/miniconda3/bin/python`.
 
-External tools (via package manager):
+### External Tools
+
 ```bash
-scoop install ffmpeg yt-dlp aria2 BBDown    # Windows
-brew install ffmpeg yt-dlp aria2             # macOS
-apt install ffmpeg yt-dlp                    # Linux
+# Windows (scoop)
+scoop install ffmpeg yt-dlp aria2 BBDown smartmontools ghostscript tailscale
+
+# macOS (brew)
+brew install ffmpeg yt-dlp aria2 smartmontools ghostscript tailscale ntfs-3g macfuse
+
+# Linux (apt)
+sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 ```
 
 ---

@@ -37,10 +37,9 @@ Usage:
   SMART attributes for the selected disk.
 
 {FLYellow}Requirements:{CRst}
-  smartmontools (smartctl)
-    - macOS:   brew install smartmontools
-    - Linux:   sudo apt install smartmontools
-    - Windows: scoop install smartmontools
+  Windows (scoop):  {FGray}scoop install smartmontools{CRst}
+  Linux (apt):      {FGray}sudo apt install smartmontools{CRst}
+  macOS (brew):     {FGray}brew install smartmontools{CRst}
 """)
     sys.exit(0)
 

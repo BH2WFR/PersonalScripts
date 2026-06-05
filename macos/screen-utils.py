@@ -49,7 +49,8 @@ Usage:
   [Q] Quit
 
 {FLYellow}Requirements:{CRst}
-  macOS on Apple Silicon
+  macOS on Apple Silicon. Uses CoreGraphics / DisplayServices / IOKit (built-in).
+  Optional PyObjC for NSScreen info: {FGray}pip install pyobjc{CRst}
 """)
     sys.exit(0)
 

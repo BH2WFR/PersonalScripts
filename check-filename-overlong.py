@@ -30,6 +30,9 @@ Usage:
   Recursively scan directory, find filenames exceeding the byte length limit,
   and provide truncation/rename options. Commonly used for NAS devices
   (e.g., Synology encrypted shared folder with 143-byte filename limit).
+
+{FLYellow}Requirements:{CRst}
+  No external dependencies.
 """)
     sys.exit(0)
 
@@ -53,10 +56,7 @@ for i in range(1, len(sys.argv)):
 if _arg_path:
     ROOT = _arg_path
 else:
-    ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
-if not os.path.exists(ROOT):
-    print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
-    sys.exit(1)
+    ROOT = Utils.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
 
 if _arg_limit is not None:
     LIMIT = _arg_limit

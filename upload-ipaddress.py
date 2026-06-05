@@ -24,6 +24,30 @@ ACCESS_ID    = os.getenv(_ENV_ID)
 ACCESS_KEY   = os.getenv(_ENV_SECRET)
 
 
+if "--help" in sys.argv or "-h" in sys.argv:
+    script_name = os.path.basename(sys.argv[0])
+    print(f"""
+{FLYellow}UPLOAD IP ADDRESS INFO TO S3 BUCKET{CRst}
+========================================
+
+Usage:
+  python {script_name}          upload current network info to S3
+  python {script_name} --help   show this help
+
+{FLYellow}Description:{CRst}
+  Collect network info (ipconfig / ip addr / ifconfig) and upload to an
+  S3-compatible bucket. Requires environment variables:
+    {FLCyan}ZL-IP-ADDRESS-S3-BUCKET{CRst}     S3 bucket name
+    {FLCyan}ZL-IP-ADDRESS-S3-ENDPOINT{CRst}    S3 endpoint URL
+    {FLCyan}ZL-IP-ADDRESS-S3-ID{CRst}          access key ID
+    {FLCyan}ZL-IP-ADDRESS-S3-SECRET{CRst}      secret access key
+
+{FLYellow}Requirements:{CRst}
+  Python: {FGray}pip install boto3{CRst}
+  All other tools (ipconfig / ip / ifconfig) are platform built-ins.
+""")
+    sys.exit(0)
+
 print(f"{FLYellow}=========== UPLOAD IP ADDRESS INFO TO S3 BUCKET ==========={CRst}")
 
 

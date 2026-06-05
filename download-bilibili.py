@@ -19,7 +19,12 @@ Usage:
 
 {FLYellow}Description:{CRst}
   BBDown-based Bilibili video downloader.
-  Requires: BBDown, ffmpeg (aria2 optional for faster downloads).
+
+{FLYellow}Requirements:{CRst}
+  Windows (scoop):  {FGray}scoop install BBDown ffmpeg aria2{CRst}
+  Linux (apt):      {FGray}sudo apt install ffmpeg aria2{CRst}
+  macOS (brew):     {FGray}brew install ffmpeg aria2{CRst}
+  (BBDown must be installed manually from GitHub on Linux/macOS; aria2 is optional for faster downloads)
 
 {FLYellow}Interactive Options:{CRst}
   Output directory, video URLs (multi-line EOF input), download mode
@@ -39,10 +44,7 @@ if(shutil.which("aria2c") is None):
 	USE_ARIA2C = False
 
 #* 下载到哪里？
-OUTPUT_DIR = input(f"{FLYellow}Enter output directory (default: ./downloads): {CRst}") or "./downloads"
-if(not os.path.exists(OUTPUT_DIR)):
-	print(f"{FLRed}Output directory{CRst} {OUTPUT_DIR} {FLRed}does not exist. EXIT...{CRst}\n")
-	sys.exit(1)
+OUTPUT_DIR = Utils.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
 
 #* 链接
@@ -53,17 +55,7 @@ if len(sys.argv) > 1:
         if not u.startswith("-") and u:
             URLS.append(u)
 else:
-    print(f"{FLYellow}Enter Bilibili video URLs (one per line).{CRst}")
-    print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
-    URLS_INPUT = sys.stdin.read().strip()
-    if not URLS_INPUT:
-        print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
-        sys.exit(1)
-    URLS = []
-    for line in URLS_INPUT.splitlines():
-        line = line.strip()
-        if line:
-            URLS.append(line)
+    URLS = Utils.read_stdin_multiline(prompt_text="Enter Bilibili video URLs (one per line).")
 
 if not URLS:
     print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")

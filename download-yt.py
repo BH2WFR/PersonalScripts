@@ -18,7 +18,12 @@ Usage:
 
 {FLYellow}Description:{CRst}
   yt-dlp-based YouTube video downloader.
-  Requires: yt-dlp, ffmpeg (deno optional).
+
+{FLYellow}Requirements:{CRst}
+  Windows (scoop):  {FGray}scoop install yt-dlp ffmpeg deno{CRst}
+  Linux (apt):      {FGray}sudo apt install yt-dlp ffmpeg{CRst}
+  macOS (brew):     {FGray}brew install yt-dlp ffmpeg{CRst}
+  (deno is optional)
 
 {FLYellow}Interactive Options:{CRst}
   Output directory, video URLs (multi-line EOF input), download mode
@@ -36,10 +41,7 @@ FFMPEG_PATH = "ffmpeg.exe" if os.name == 'nt' else "ffmpeg"
 # ARIA2C_PATH = "aria2c.exe" if os.name == 'nt' else "aria2c"
 
 #* 下载到哪里？
-OUTPUT_DIR = input(f"{FLYellow}Enter output directory (default: ./downloads): {CRst}") or "./downloads"
-if(not os.path.exists(OUTPUT_DIR)):
-	print(f"{FLRed}Output directory does not exist. EXIT...{CRst}\n")
-	sys.exit(1)
+OUTPUT_DIR = Utils.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
 
 #* 链接
@@ -50,17 +52,7 @@ if len(sys.argv) > 1:
         if not u.startswith("-") and u:
             URLS.append(u)
 else:
-    print(f"{FLYellow}Enter YouTube video URLs (one per line).{CRst}")
-    print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
-    URLS_INPUT = sys.stdin.read().strip()
-    if not URLS_INPUT:
-        print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
-        sys.exit(1)
-    URLS = []
-    for line in URLS_INPUT.splitlines():
-        line = line.strip()
-        if line:
-            URLS.append(line)
+    URLS = Utils.read_stdin_multiline(prompt_text="Enter YouTube video URLs (one per line).")
 
 if not URLS:
     print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")

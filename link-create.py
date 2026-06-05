@@ -40,6 +40,9 @@ Usage:
   3. Enter target directory
   4. Choose relative or absolute paths
   5. Confirm and execute; conflicts can be skip/skip all/overwrite/overwrite all
+
+{FLYellow}Requirements:{CRst}
+  No external dependencies. Uses built-in os.symlink/os.link; Windows uses mklink (cmd built-in).
 """)
     sys.exit(0)
 
@@ -56,20 +59,10 @@ if len(sys.argv) > 1:
         if p:
             paths.append(p)
 else:
-    print(f"{FLYellow}Enter source paths (one per line).{CRst}")
-    print(f"{FLCyan}End with {FLYellow}Ctrl+Z (Windows) or Ctrl+D (Linux/macOS){FLCyan}:{CRst}")
-    input_text = sys.stdin.read().strip()
-    if not input_text:
-        print(f"{FLRed}No paths provided. EXIT...{CRst}\n")
-        sys.exit(1)
-    for line in input_text.splitlines():
-        line = line.strip()
-        if line:
-            paths.append(line)
-
-if not paths:
-    print(f"{FLRed}No paths provided. EXIT...{CRst}\n")
-    sys.exit(1)
+    paths = Utils.resolve_input_paths_multi(
+        prompt_text="Enter source paths (one per line)",
+        path_type="any",
+    )
 
 #============ 分类路径 ===========
 class PathCategory(enum.Enum):
@@ -82,9 +75,6 @@ dirs: list[str] = []
 others: list[str] = []
 
 for p in paths:
-    if not os.path.exists(p) and not os.path.lexists(p):
-        print(f"{FLRed}Path does not exist: {p}{CRst}")
-        continue
     if os.path.islink(p):
         others.append(p)
     elif os.path.isfile(p):

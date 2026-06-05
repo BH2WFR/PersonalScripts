@@ -26,6 +26,9 @@ Usage:
   macOS only. Remove quarantine attribute from files/folders to
   bypass "unidentified developer cannot be opened" warning.
   For directories, supports recursive or non-recursive processing.
+
+{FLYellow}Requirements:{CRst}
+  macOS only. Uses xattr (built-in). No external dependencies.
 """)
     sys.exit(0)
 
@@ -44,35 +47,14 @@ if len(sys.argv) > 1:
         if not p.startswith("-") and p:
             filepaths.append(p)
 else:
-    print(f"{FLYellow}Enter file or directory paths (one per line).{CRst}")
-    print(f"{FLCyan}End with {FLYellow}Ctrl+Z (Windows) or Ctrl+D (Linux/macOS){FLCyan}:{CRst}")
-    input_text = sys.stdin.read().strip()
-    if not input_text:
-        print(f"{FLRed}No paths provided. EXIT...{CRst}\n")
-        sys.exit(1)
-    for line in input_text.splitlines():
-        line = line.strip()
-        if line:
-            filepaths.append(line)
+    filepaths = Utils.resolve_input_paths_multi(
+        prompt_text="Enter file or directory paths (one per line)",
+        path_type="any",
+    )
 
-if not filepaths:
-    print(f"{FLRed}No paths provided. EXIT...{CRst}\n")
-    sys.exit(1)
-
-# dedup and validate
-filepaths = list(dict.fromkeys(filepaths))
-valid_paths: list[str] = []
-for fp in filepaths:
-    if not os.path.exists(fp):
-        print(f"{FLRed}Path does not exist, skipped: {fp}{CRst}")
-        continue
-    valid_paths.append(os.path.abspath(fp))
-
-if not valid_paths:
-    print(f"{FLRed}No valid paths to process. EXIT...{CRst}\n")
-    sys.exit(1)
-
-print(f"{FLYellow}  -> {len(valid_paths)} path(s) to process{CRst}")
+# dedup (CLI args may have duplicates) and resolve paths
+valid_paths = list(dict.fromkeys(filepaths))
+valid_paths = [os.path.abspath(os.path.expanduser(p)) for p in valid_paths]
 
 
 #============ directory processing mode ===========

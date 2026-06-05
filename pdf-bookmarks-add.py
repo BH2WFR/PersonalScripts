@@ -26,6 +26,9 @@ Usage:
 {FLYellow}Description:{CRst}
   Add table-of-contents bookmarks to PDF books.
   Reads JSON outline (page/level/index/title format) from an LLM and writes it into the PDF.
+
+{FLYellow}Requirements:{CRst}
+  Python: {FGray}pip install pypdf{CRst}
 """)
     sys.exit(0)
 
@@ -90,32 +93,36 @@ while i < len(sys.argv):
     i += 1
 
 
+#============ 默认路径 (OS-aware) ===========
+if sys.platform == "win32":
+    DEFAULT_INPUT = "D:/input.pdf"
+else:
+    DEFAULT_INPUT = os.path.expanduser("~/input.pdf")
+
+
 #============ 用户交互 ===========
-filepath = "D:/input.pdf"
-output_path = "D:/input_bookmarked.pdf"
+filepath = _arg_path if _arg_path else Utils.resolve_input_path(
+    DEFAULT_INPUT,
+    prompt="Enter input PDF file path",
+    path_type="file",
+)
 
-if _arg_path:
-    filepath = _arg_path
-else:
-    filepath = input(f"{FLYellow}Enter input PDF file path (default: {filepath}): {CRst}") or filepath
-if(not filepath or os.path.exists(filepath) == False):
-	print(f"{FLRed}Invalid input file path. EXIT...{CRst}\n")
-	sys.exit(1)
+if not filepath or not os.path.exists(filepath):
+    print(f"{FLRed}Invalid input file path. EXIT...{CRst}\n")
+    sys.exit(1)
 
-if _arg_output:
-    output_path = _arg_output
-else:
-    output_path = input(f"{FLYellow}Enter output PDF file path (default: {output_path}): {CRst}") or output_path
+# 默认输出路径：输入文件名 + _bookmarked 后缀
+_stem, _ext = os.path.splitext(os.path.basename(filepath))
+_default_output = os.path.join(os.path.dirname(filepath) or ".", f"{_stem}_bookmarked{_ext or '.pdf'}")
+
+output_path = Utils.resolve_output_path(
+    _arg_output if _arg_output else _default_output,
+    prompt="Enter output PDF file path",
+    path_type="file",
+)
 
 page_offset = 10 # pdf 第十页是 书的 第一页, 则写为 10
 bookmarks_text = "" # 按行分隔，格式见上方提示词
-out_dir = os.path.dirname(output_path) or "."
-if(not output_path or os.path.exists(out_dir) == False):
-	print(f"{FLRed}Invalid or unexisting output file path. EXIT...{CRst}\n")
-	sys.exit(1)
-if(os.path.exists(output_path)):
-	print(f"{FLRed}Output file already exists. EXIT...{CRst}\n")
-	sys.exit(1)
 page_offset_str = input(f"{FLYellow}Enter page offset (default: {page_offset}): {FLCyan}(it means page N of the pdf is the first page of the book) {CRst}\n") or str(page_offset)
 try:
 	page_offset = int(page_offset_str)
@@ -139,12 +146,11 @@ text_prompt = """
 ]
 """
 print(f"{FLYellow}Enter bookmarks text in Json. {CRst}")
-print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
 print(f"{FLCyan}Example format:{CRst}\n{FLMagenta}{text_prompt}{CRst}\n")
-bookmarks_text = sys.stdin.read()
-if(not bookmarks_text.strip()):
-	print(f"{FLRed}No bookmarks text provided. EXIT...{CRst}\n")
-	sys.exit(1)
+bookmarks_text = Utils.read_stdin_multiline(
+	prompt_text="Paste the JSON bookmark data",
+	split_lines=False,
+)
 
 print(f"{FLYellow}  -> start parsing...")
 

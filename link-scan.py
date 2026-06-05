@@ -26,6 +26,9 @@ Usage:
   Recursively scan directories, list all symlinks, symlinkd, Junctions and hardlinks.
   Detect broken links and Windows symlinks incorrectly pointing to directories.
   Optionally auto-delete broken links or convert incorrect symlinks to symlinkd.
+
+{FLYellow}Requirements:{CRst}
+  No external dependencies. On Windows uses ctypes for reparse-point detection.
 """)
     sys.exit(0)
 
@@ -35,11 +38,7 @@ if len(sys.argv) > 1:
     ROOT = sys.argv[1]
 else:
     ROOT = "/volumeUSB1/usbshare1-2"   # ← 改成要检查的目录
-    ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
-
-if not os.path.exists(ROOT):
-    print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
-    sys.exit(1)
+    ROOT = Utils.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
 
 # enum
 class EType(enum.Enum):

@@ -41,6 +41,10 @@ help_message = f'''
     If --color-scale is not specified, default: cividis
     If --max-display-size is not specified, default: all
     If --force-plt/--force-matplotlib not specified, defaults to plotly, falls back to matplotlib
+
+{FLYellow}Requirements:{CRst}
+  Python: {FGray}pip install numpy matplotlib plotly{CRst}
+  (plotly is optional; falls back to matplotlib if not installed)
 '''
 
 class DisplayMode(enum.Enum):

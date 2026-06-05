@@ -18,7 +18,11 @@ Usage:
 
 {FLYellow}Description:{CRst}
   yt-dlp-based m3u8/HLS stream video downloader.
-  Requires: yt-dlp, ffmpeg.
+
+{FLYellow}Requirements:{CRst}
+  Windows (scoop):  {FGray}scoop install yt-dlp ffmpeg{CRst}
+  Linux (apt):      {FGray}sudo apt install yt-dlp ffmpeg{CRst}
+  macOS (brew):     {FGray}brew install yt-dlp ffmpeg{CRst}
 
 {FLYellow}Interactive Options:{CRst}
   Output directory, m3u8 URLs (multi-line EOF input), output filename template,
@@ -32,10 +36,7 @@ Utils.console_command_required("ffmpeg")
 
 
 #* 下载到哪里？
-OUTPUT_DIR = input(f"{FLYellow}Enter output directory (default: ./downloads): {CRst}") or "./downloads"
-if not os.path.exists(OUTPUT_DIR):
-    print(f"{FLRed}Output directory does not exist. EXIT...{CRst}\n")
-    sys.exit(1)
+OUTPUT_DIR = Utils.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
 
 #* 链接
@@ -46,17 +47,7 @@ if len(sys.argv) > 1:
         if not u.startswith("-") and u:
             URLS.append(u)
 else:
-    print(f"{FLYellow}Enter m3u8 URLs (one per line).{CRst}")
-    print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
-    URLS_INPUT = sys.stdin.read().strip()
-    if not URLS_INPUT:
-        print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
-        sys.exit(1)
-    URLS = []
-    for line in URLS_INPUT.splitlines():
-        line = line.strip()
-        if line:
-            URLS.append(line)
+    URLS = Utils.read_stdin_multiline(prompt_text="Enter m3u8 URLs (one per line).")
 
 if not URLS:
     print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")

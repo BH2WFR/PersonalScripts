@@ -159,7 +159,10 @@ Usage:
   Auto-capture screenshots of DRM-protected or encrypted-USB PDF documents.
   Works by sending PgDn key to flip pages, clicking to activate the window,
   and auto-saving screenshots to a folder.
-  Dependencies: mss, pynput, Pillow
+
+{FLYellow}Requirements:{CRst}
+  macOS only (uses osascript for window activation).
+  Python: {FGray}pip install mss pynput Pillow{CRst}
 """)
     sys.exit(0)
 
@@ -263,26 +266,11 @@ print(f"{FLCyan}Enter capturing interval in seconds (default: {FLYellow}{Config.
 Config.capture_interval_s = float(safe_input() or Config.capture_interval_s)
 print(f"{FLCyan}Enter capturing count (default: {FLYellow}{Config.capture_count}{FLCyan}): {CRst}", end="")
 Config.capture_count = int(safe_input() or Config.capture_count)
-print(f"{FLCyan}Enter Output Directory (default: {FLYellow}{Config.output_dir}{FLCyan}): {CRst}", end="")
-Config.output_dir = safe_input() or Config.output_dir
-# Expand ~ to home directory on Unix-like systems
-Config.output_dir = os.path.expanduser(Config.output_dir)
-if not os.path.isdir(Config.output_dir):
-    Config.output_dir = os.path.abspath(Config.output_dir)
-    print(f"{FLRed}Output directory does not exist: {FLYellow}{Config.output_dir}{FLCyan}, create folder?{CRst}")
-    confirm = input(f"{FLYellow}Confirm to create folder? (y/n, default: y): {CRst}") or "y"
-    if confirm.lower() == "y":
-        try:
-            os.makedirs(Config.output_dir, exist_ok=True)
-            print(f"{FLGreen}Folder created: {FLYellow}{Config.output_dir}{CRst}")
-        except Exception as e:
-            print(f"{FLRed}Failed to create folder: {e}{CRst}")
-            exit(1)
-    else:
-        print(f"{FLRed}Output directory is required. Exiting.{CRst}")
-        exit(1)
-else:
-    Config.output_dir = os.path.abspath(Config.output_dir)
+Config.output_dir = Utils.resolve_output_path(
+    os.path.abspath(Config.output_dir),
+    prompt="Enter Output Directory",
+    path_type="dir",
+)
 
 # 鼠标点击位置，左键、右键、中键都可以，分别对应不同的功能：
 print(f"{FLGreen}Move mouse to top-left corner, then press F8 to capture (Esc to cancel)...{CRst}")

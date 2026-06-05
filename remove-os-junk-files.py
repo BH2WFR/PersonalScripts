@@ -22,6 +22,9 @@ Usage:
   Recursively remove all OS-generated junk files from a directory:
     .DS_Store, __MACOSX__, Thumbs.db, .AppleDouble,
     .Spotlight-V100, .Trashes, desktop.ini
+
+{FLYellow}Requirements:{CRst}
+  No external dependencies.
 """)
     sys.exit(0)
 
@@ -30,13 +33,7 @@ Usage:
 if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
     root = sys.argv[1]
 else:
-    root = input(f"{FLYellow}Enter path to clean (default: .): {CRst}") or "."
-
-if not os.path.exists(root):
-    print(f"{FLRed}Path does not exist: {root}. EXIT...{CRst}\n")
-    sys.exit(1)
-
-root = os.path.abspath(root)
+    root = Utils.resolve_input_path(".", prompt="Enter path to clean", path_type="dir")
 print(f"{FLYellow}  -> target: {root}{CRst}")
 
 

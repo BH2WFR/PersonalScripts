@@ -21,6 +21,9 @@ Usage:
   Modify file/folder timestamps (created, modified, accessed).
   Supports random jitter (+Ns/-Ns/Ns format, in seconds).
   Supports backup and restore of original timestamps (JSON format).
+
+{FLYellow}Requirements:{CRst}
+  No external dependencies. Uses ctypes for Windows file-time APIs.
 """)
     sys.exit(0)
 
@@ -402,10 +405,7 @@ except ValueError:
 	sys.exit(1)
 
 if(g_feature == Feature.MODIFY_TIMES) or g_feature == Feature.BACKUP_TIMES:
-	g_path = input(f"{FLYellow}Enter file/directory path to modify time: {CRst}")
-	if not g_path or os.path.exists(g_path) == False:
-		print(f"{FLRed}Invalid file/directory path. EXIT...{CRst}\n")
-		sys.exit(1)
+	g_path = Utils.resolve_input_path(".", prompt="Enter file/directory path to modify time", path_type="any")
 	if(os.path.isdir(g_path)):
 		isRecursiveStr = input(f"{FLCyan}The specified path is a directory. Modify time for files in subdirectories as well? (y/n, default y): {CRst}") or "y"
 		g_isRecursive = isRecursiveStr.strip().lower() == 'y'
@@ -461,27 +461,16 @@ if(g_feature == Feature.MODIFY_TIMES):
 			sys.exit(1)
 	
 elif g_feature == Feature.BACKUP_TIMES:
-	g_backupPath = input(f"{FLYellow}Enter backup JSON file path to save times: {CRst}")
-	if not g_backupPath:
-		print(f"{FLRed}Invalid backup file path. EXIT...{CRst}\n")
-		sys.exit(1)
-	elif os.path.exists(g_backupPath):
-		isOverwriteBackup = input(f"{FLYellow}Backup file already exists. Overwrite? (y/n){CRst}") or "n"
-		if isOverwriteBackup.strip().lower() != 'y':
-			print(f"{FLRed}Backup file already exists and overwrite not confirmed. EXIT...{CRst}\n")
-			sys.exit(1)
-	
+	_default_backup = os.path.join(os.path.dirname(g_path) or ".", "backup_times.json")
+	g_backupPath = Utils.resolve_output_path(_default_backup, prompt="Enter backup JSON file path", path_type="file")
 elif g_feature == Feature.RESTORE_TIMES:
-	g_restorePath = input(f"{FLYellow}Enter backup JSON file path to restore times: {CRst}")
-	if not g_restorePath or os.path.exists(g_restorePath) == False:
-		print(f"{FLRed}Invalid or non-existing backup file path. EXIT...{CRst}\n")
-		sys.exit(1)
-
+	g_restorePath = Utils.resolve_input_path(
+		"backup_times.json",
+		prompt="Enter backup JSON file path to restore times",
+		path_type="file",
+	)
 elif g_feature == Feature.SHOW_TIMES:
-	g_path = input(f"{FLYellow}Enter file/directory path to show time: {CRst}")
-	if not g_path or os.path.exists(g_path) == False:
-		print(f"{FLRed}Invalid file/directory path. EXIT...{CRst}\n")
-		sys.exit(1)
+	g_path = Utils.resolve_input_path(".", prompt="Enter file/directory path to show time", path_type="any")
 	
 	node = FileNode(g_path)
 	if(os.path.isdir(g_path)):

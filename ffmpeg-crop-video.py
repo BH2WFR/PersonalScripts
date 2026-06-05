@@ -2,6 +2,12 @@ from utils import *
 # 基于 ffmpeg 的视频裁剪工具
 # 需要先安装 ffmpeg，推荐使用 `scoop install ffmpeg` 安装
 
+#============ 默认路径 (OS-aware) ===========
+if sys.platform == "win32":
+    DEFAULT_OUTPUT_DIR = os.path.join(os.environ.get("USERPROFILE", "C:\\"), "Videos", "cropped")
+else:
+    DEFAULT_OUTPUT_DIR = os.path.expanduser("~/Videos/cropped")
+
 print(f"{FLYellow}=========== FFMPEG VIDEO CROP TOOL ==========={CRst}")
 
 if "--help" in sys.argv or "-h" in sys.argv:
@@ -17,7 +23,11 @@ Usage:
 
 {FLYellow}Description:{CRst}
   ffmpeg-based video time-cropping tool (time trimming, not frame cropping).
-  Requires ffmpeg (scoop install ffmpeg).
+
+{FLYellow}Requirements:{CRst}
+  Windows (scoop):  {FGray}scoop install ffmpeg{CRst}
+  Linux (apt):      {FGray}sudo apt install ffmpeg{CRst}
+  macOS (brew):     {FGray}brew install ffmpeg{CRst}
 """)
     sys.exit(0)
 
@@ -34,26 +44,13 @@ if len(sys.argv) > 1:
                 sys.exit(1)
             INPUT_PATHS.append(p)
 else:
-    print(f"{FLYellow}Enter video file paths for cropping... (one per line){CRst}")
-    print(f"{FLCyan}End with a `EOF`, Windows: {FLYellow}Enter->Ctrl+Z{FLCyan}; Linux: {FLYellow}Enter->Ctrl+D{FLCyan}):{CRst}")
-    INPUT_PATHS_STR = sys.stdin.read().strip()
-    if not INPUT_PATHS_STR:
-        print(f"{FLRed}No paths provided. EXIT...{CRst}\n")
-        sys.exit(1)
-    INPUT_PATHS = []
-    for line in INPUT_PATHS_STR.splitlines():
-        line = line.strip()
-        if line:
-            if not os.path.exists(line):
-                print(f"{FLRed}Input file does not exist: {line}. EXIT...{CRst}\n")
-                sys.exit(1)
-            INPUT_PATHS.append(line)
+    INPUT_PATHS = Utils.resolve_input_paths_multi(
+        prompt_text="Enter video file paths for cropping... (one per line)",
+        path_type="file",
+    )
 
 #* 输出到哪里？
-output_dir = input(f"{FLYellow}Enter output video file dir: {CRst}").strip()
-if(not os.path.exists(output_dir) or not os.path.isdir(output_dir)):
-	print(f"{FLRed}Output directory {CRst} \"{line}\" {FLRed} does not exist. EXIT...{CRst}\n")
-	sys.exit(1)
+output_dir = Utils.resolve_output_path(DEFAULT_OUTPUT_DIR, prompt="Enter output video file dir", path_type="dir")
 	
 #* 编码是否变更？
 is_change_codec_str = input(f"{FLYellow}Change codec? (y/n, default n): {CRst}").strip().lower() or "n"

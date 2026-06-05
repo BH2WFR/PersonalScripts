@@ -39,8 +39,8 @@ Usage:
     [E] Eject disk          — safely eject the entire disk
 
 {FLYellow}Requirements:{CRst}
-  ntfs-3g (brew install ntfs-3g)
-  macFUSE
+  macOS only.
+  macOS (brew):     {FGray}brew install ntfs-3g macfuse{CRst}
 """)
     sys.exit(0)
 

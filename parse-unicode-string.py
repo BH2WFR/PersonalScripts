@@ -109,6 +109,12 @@ Usage:
 {FLYellow}Description:{CRst}
   Print each character's Unicode info: index, char, hex, decimal, and description.
   Special characters (spaces, control chars, zero-width chars) are shown in brackets.
+
+{FLYellow}Requirements:{CRst}
+  No external dependencies. Clipboard mode uses platform built-ins:
+    Windows — PowerShell Get-Clipboard (built-in)
+    macOS   — pbpaste (built-in)
+    Linux   — wl-paste (Wayland) or xclip (X11); {FGray}sudo apt install wl-clipboard xclip{CRst}
 """)
     sys.exit(0)
 

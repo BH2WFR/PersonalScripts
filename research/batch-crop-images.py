@@ -29,6 +29,9 @@ Usage:
   Batch image cropping tool. Based on OpenCV (cv2).
   Interactively select input/output directories and crop region,
   then batch-crop all images.
+
+{FLYellow}Requirements:{CRst}
+  Python: {FGray}pip install opencv-python numpy{CRst}
 """)
     sys.exit(0)
 

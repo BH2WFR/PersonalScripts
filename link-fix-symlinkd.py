@@ -27,6 +27,9 @@ Usage:
   Windows only. Scan a directory and convert file symlinks pointing to directories
   into symlinkd, fixing broken directory links caused by tools that incorrectly
   create file symlinks for folders.
+
+{FLYellow}Requirements:{CRst}
+  Windows only. No external dependencies. Uses ctypes for reparse-point detection.
 """)
     sys.exit(0)
 
@@ -35,10 +38,7 @@ ROOT = "D:/test"   # ← 改成要检查的目录
 if len(sys.argv) > 1:
     ROOT = sys.argv[1]
 else:
-    ROOT = input(f"{FLCyan}Enter path to check (default: {ROOT}): {CRst}") or ROOT
-if not os.path.exists(ROOT):
-	print(f"{FLRed}The specified root path does not exist. EXIT...{CRst}\n")
-	sys.exit(1)
+    ROOT = Utils.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
 
 # enum
 class EType(enum.Enum):

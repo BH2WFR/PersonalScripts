@@ -54,6 +54,10 @@ Disclaimer:
   This script clears system and application usage traces. The author
   assumes no responsibility for any system damage, data loss, or
   application malfunction resulting from its use. Use at your own risk.
+
+{FLYellow}Requirements:{CRst}
+  Windows only. All tools are built-in (reg, wevtutil, ipconfig, powershell, etc.).
+  Optional elevation helpers: {FGray}scoop install sudo gsudo{CRst}
 """
     )
 

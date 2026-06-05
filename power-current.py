@@ -54,6 +54,12 @@ Usage:
 {FLYellow}Notes:{CRst}
   Charger rated wattage is not exposed on all platforms/devices.
   Linux support depends on what the kernel driver exports under power_supply.
+
+{FLYellow}Requirements:{CRst}
+  No external dependencies. Uses platform built-ins:
+    Windows — PowerShell Get-CimInstance (built-in)
+    macOS   — ioreg (built-in)
+    Linux   — reads /sys/class/power_supply (kernel interface)
 """)
 
 
