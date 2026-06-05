@@ -3,7 +3,6 @@
 
 import subprocess
 import sys
-import shutil
 from utils import *
 
 if "--help" in sys.argv or "-h" in sys.argv:
@@ -27,8 +26,9 @@ Usage:
 """)
     sys.exit(0)
 
-if shutil.which("tailscale") is None:
-    print(f"{FLRed}ERROR{CRst}: tailscale command not found. Is Tailscale installed?")
+if not Utils.check_commands(CmdCheck("tailscale", hints={
+    "any": f"Is {FLYellow}Tailscale{CRst} installed?",
+})):
     sys.exit(1)
 
 print("Disabling accept-routes...")

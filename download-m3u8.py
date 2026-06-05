@@ -31,12 +31,23 @@ Usage:
     sys.exit(0)
 
 
-Utils.console_command_required("yt-dlp")
-Utils.console_command_required("ffmpeg")
+if not Utils.check_commands(
+    CmdCheck("yt-dlp", hints={
+        "windows": f"{FGray}scoop install yt-dlp{CRst}",
+        "macos": f"{FGray}brew install yt-dlp{CRst}",
+        "linux": f"{FGray}sudo apt install yt-dlp{CRst}",
+    }),
+    CmdCheck("ffmpeg", hints={
+        "windows": f"{FGray}scoop install ffmpeg{CRst}",
+        "macos": f"{FGray}brew install ffmpeg{CRst}",
+        "linux": f"{FGray}sudo apt install ffmpeg{CRst}",
+    }),
+):
+    sys.exit(1)
 
 
 #* 下载到哪里？
-OUTPUT_DIR = Utils.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
+OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
 
 #* 链接
@@ -47,7 +58,7 @@ if len(sys.argv) > 1:
         if not u.startswith("-") and u:
             URLS.append(u)
 else:
-    URLS = Utils.read_stdin_multiline(prompt_text="Enter m3u8 URLs (one per line).")
+    URLS = Input.read_stdin_multiline(prompt_text="Enter m3u8 URLs (one per line).")
 
 if not URLS:
     print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")

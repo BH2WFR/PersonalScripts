@@ -66,10 +66,16 @@ if dir_paths and not is_recursive:
         print(f"\n{FLYellow}{len(dir_paths)} directory path(s) detected:{CRst}")
         for d in dir_paths:
             print(f"    {FLCyan}{d}{CRst}")
-        print(f"  {FLMagenta}0{CRst}: {FLYellow}Non-recursive{CRst} (directory itself + files directly inside)")
-        print(f"  {FLMagenta}1{CRst}: {FLYellow}Recursive{CRst} (all files/folders inside)")
-        choice = input(f"{FLCyan}Choose (default 0): {CRst}").strip() or "0"
-        is_recursive = choice == "1"
+        is_recursive = Menu.select(
+            [
+                MenuOption(["0"], "Non-recursive (directory itself + files directly inside)"),
+                MenuOption(["1"], "Recursive (all files/folders inside)"),
+            ],
+            prompt="Choose", separator=False,
+        )
+        if is_recursive is None:
+            sys.exit(0)
+        is_recursive = (is_recursive == "1")
 
 #============ provenance confirmation ===========
 CLEAR_PROVENANCE = False

@@ -59,7 +59,7 @@ if len(sys.argv) > 1:
         if p:
             paths.append(p)
 else:
-    paths = Utils.resolve_input_paths_multi(
+    paths = Input.resolve_input_paths_multi(
         prompt_text="Enter source paths (one per line)",
         path_type="any",
     )
@@ -109,36 +109,43 @@ dir_link_type: LinkType | None = None
 
 def ask_file_link_type():
     """询问文件链接类型，返回 LinkType"""
-    print(f"  {FLMagenta}1{CRst}: {FLYellow}Symlink{CRst} (soft link{', supports relative paths' if IS_WIN else ''})")
-    print(f"  {FLMagenta}2{CRst}: {FLYellow}Hardlink{CRst} (hard link{'' if IS_WIN else ', supports relative paths'})")
-    choice = input(f"{FLCyan}Choose for files (default 1): {CRst}").strip() or "1"
-    return LinkType.SYMLINK if choice == "1" else LinkType.HARDLINK
+    return Menu.select(
+        [
+            MenuOption(["1"], f"Symlink (soft link{', supports relative paths' if IS_WIN else ''})", value=LinkType.SYMLINK),
+            MenuOption(["2"], f"Hardlink (hard link{'' if IS_WIN else ', supports relative paths'})", value=LinkType.HARDLINK),
+        ],
+        prompt="Choose for files", default_key="1",
+    )
 
 def ask_dir_link_type():
     """询问目录链接类型，返回 LinkType"""
     if IS_WIN:
-        print(f"  {FLMagenta}1{CRst}: {FLYellow}SymlinkD{CRst} (directory soft link, supports relative paths)")
-        print(f"  {FLMagenta}2{CRst}: {FLYellow}Junction{CRst} (directory junction, does NOT support relative paths)")
-        choice = input(f"{FLCyan}Choose for directories (default 1): {CRst}").strip() or "1"
-        return LinkType.SYMLINKD if choice == "1" else LinkType.JUNCTION
+        return Menu.select(
+            [
+                MenuOption(["1"], "SymlinkD (directory soft link, supports relative paths)", value=LinkType.SYMLINKD),
+                MenuOption(["2"], "Junction (directory junction, does NOT support relative paths)", value=LinkType.JUNCTION),
+            ],
+            prompt="Choose for directories", default_key="1",
+        )
     else:
-        print(f"  {FLMagenta}1{CRst}: {FLYellow}Symlink{CRst} (directory soft link, supports relative paths)")
-        choice = input(f"{FLCyan}Choose for directories (default 1): {CRst}").strip() or "1"
         return LinkType.SYMLINK
 
 
 #============ 单文件夹特殊处理 ===========
-mirror_mode: int = 0           # 0=直接链接, 1=展平内容, 2=递归镜像
+mirror_mode: int | None = 0      # 0=直接链接, 1=展平内容, 2=递归镜像
 mirror_source_dir: str = ""    # 仅 mirror_mode 1/2 使用，保存原始目录路径
 is_single_dir = len(dirs) == 1 and len(files) == 0
 
 if is_single_dir:
     print(f"\n{FLYellow}Only one directory detected. Additional options:{CRst}")
-    print(f"  {FLMagenta}0{CRst}: {FLYellow}Link the directory itself{CRst}")
-    print(f"  {FLMagenta}1{CRst}: {FLYellow}Link files/subdirs inside the directory (flat, same level){CRst}")
-    print(f"  {FLMagenta}2{CRst}: {FLYellow}Recursively mirror directory structure with links{CRst}")
-    choice = input(f"{FLCyan}Choose (default 0): {CRst}").strip() or "0"
-    mirror_mode = int(choice)
+    mirror_mode = Menu.select(
+        [
+            MenuOption(["0"], "Link the directory itself", value=0),
+            MenuOption(["1"], "Link files/subdirs inside the directory (flat, same level)", value=1),
+            MenuOption(["2"], "Recursively mirror directory structure with links", value=2),
+        ],
+        prompt="Choose", default_key="0", separator=False,
+    )
 
 if mirror_mode == 0:
     # 直接链接模式：根据现有分类询问链接类型
@@ -280,17 +287,23 @@ def handle_conflict(link_path: str) -> str:
         return "overwrite"
 
     print(f"\n{FLYellow}Conflict: {FLRed}{link_path}{FLYellow} already exists.{CRst}")
-    print(f"  {FLMagenta}s{CRst}: skip  |  {FLMagenta}sa{CRst}: skip all")
-    print(f"  {FLMagenta}o{CRst}: overwrite  |  {FLMagenta}oa{CRst}: overwrite all")
-    choice = input(f"{FLCyan}Choose: {CRst}").strip().lower()
-    if choice == "sa":
+    choice = Menu.select(
+        [
+            MenuOption(["S"], "skip", value="skip"),
+            MenuOption(["SA"], "skip all", value="skip_all"),
+            MenuOption(["O"], "overwrite", value="overwrite"),
+            MenuOption(["OA"], "overwrite all", value="overwrite_all"),
+        ],
+        prompt="Choose", default_key="S", inline=True, separator=False,
+    )
+    if choice == "skip_all":
         conflict_skip_all = True
         return "skip"
-    elif choice == "oa":
+    elif choice == "overwrite_all":
         conflict_overwrite_all = True
         os.unlink(link_path) if os.path.lexists(link_path) else None
         return "overwrite"
-    elif choice == "o":
+    elif choice == "overwrite":
         if os.path.lexists(link_path):
             os.unlink(link_path)
         return "overwrite"

@@ -4,30 +4,24 @@
 import os
 import sys
 import subprocess
-import shutil
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".")))
 from utils import *  # noqa: E402
 
 
 # ============ system checks ============
-GS_EXE = "gswin64c" if sys.platform == "win32" else "gs"
-GS_MISSING = shutil.which(GS_EXE) is None and shutil.which("gs") is None
-
-if GS_MISSING:
-    print(f"{FLRed}ERROR: Ghostscript not found in PATH.{CRst}\n")
-    print(f"{FGray}Installation guide:{CRst}")
-    if sys.platform == "darwin":
-        print(f"  {FLCyan}brew install ghostscript{CRst}")
-    elif sys.platform == "win32":
-        print(f"  {FLCyan}scoop install ghostscript{CRst}")
-        print(f"  {FGray}or download from: https://ghostscript.com/releases/gsdnld.html{CRst}")
-    else:
-        print(f"  {FLCyan}apt install ghostscript{CRst}")
-    print()
+_gs = CmdCheck(
+    ["gswin64c", "gs"] if sys.platform == "win32" else "gs",
+    hints={
+        "any": f"{FGray}Installation guide:{CRst}",
+        "windows": f"{FLCyan}  scoop install ghostscript{CRst}\n  {FGray}or download from: https://ghostscript.com/releases/gsdnld.html{CRst}",
+        "macos": f"{FLCyan}  brew install ghostscript{CRst}",
+        "linux": f"{FLCyan}  sudo apt install ghostscript{CRst}",
+    },
+)
+if not Utils.check_commands(_gs):
     sys.exit(1)
-
-GS_BIN = shutil.which(GS_EXE) or shutil.which("gs")
+GS_BIN = _gs.path
 
 
 # ============ help ============
@@ -87,7 +81,7 @@ def main():
 
     # 1. input file
     while True:
-        input_path = Utils.resolve_input_path(
+        input_path = Input.resolve_input_path(
             os.path.expanduser("~/input.pdf"),
             prompt="Input PDF path",
             path_type="file",
@@ -102,60 +96,59 @@ def main():
     # 2. output file
     _stem, _ext = os.path.splitext(os.path.basename(input_path))
     default_output = os.path.join(os.path.dirname(input_path), f"{_stem}_compressed{_ext or '.pdf'}")
-    output_path = Utils.resolve_output_path(default_output, prompt="Output path", path_type="file")
+    output_path = Input.resolve_output_path(default_output, prompt="Output path", path_type="file")
 
     print(f"{FGray}Output:{CRst} {FLGreen}{output_path}{CRst}\n")
 
     # 3. compression mode
     print(f"{FLYellow}Compression mode:{CRst}")
-    print(f"  {FLCyan}[E]{CRst} {FGray}Ebook{CRst}    — standard compression (gs -dPDFSETTINGS=/ebook)")
-    print(f"  {FLCyan}[C]{CRst} {FGray}Custom{CRst}   — control image DPI, quality, and downsampling\n")
+    choice = Menu.select(
+        [
+            MenuOption(["E", "EBOOK"], f"{FGray}Ebook{CRst}    — standard compression (gs -dPDFSETTINGS=/ebook)"),
+            MenuOption(["C", "CUSTOM"], f"{FGray}Custom{CRst}   — control image DPI, quality, and downsampling"),
+        ],
+        prompt="Select mode", separator=False,
+    )
+    if choice is None:
+        sys.exit(0)
+    print()
 
-    while True:
-        choice = input(f"{FLCyan}Select mode{CRst} {FGray}[E]{CRst}: ").strip().lower() or "e"
+    if choice == "E":
+        cmd = [
+            GS_BIN, "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.4",
+            "-dPDFSETTINGS=/ebook",
+            "-dNOPAUSE", "-dBATCH", "-dSAFER",
+            f"-sOutputFile={output_path}",
+            input_path,
+        ]
+    else:
+        print(f"\n{FLYellow}Image downsampling settings:{CRst}\n")
+        color_dpi    = _prompt_numeric("Color image DPI", 200, 36, 2400)
+        gray_dpi     = _prompt_numeric("Gray image DPI",  200, 36, 2400)
+        mono_dpi     = _prompt_numeric("Mono image DPI",  300, 36, 2400)
+        jpeg_quality = _prompt_numeric("JPEG quality (1–100)", 50, 1, 100)
+        print()
 
-        if choice in ("e", "ebook"):
-            cmd = [
-                GS_BIN, "-sDEVICE=pdfwrite",
-                "-dCompatibilityLevel=1.4",
-                "-dPDFSETTINGS=/ebook",
-                "-dNOPAUSE", "-dBATCH", "-dSAFER",
-                f"-sOutputFile={output_path}",
-                input_path,
-            ]
-            break
-
-        elif choice in ("c", "custom"):
-            print(f"\n{FLYellow}Image downsampling settings:{CRst}\n")
-            color_dpi    = _prompt_numeric("Color image DPI", 200, 36, 2400)
-            gray_dpi     = _prompt_numeric("Gray image DPI",  200, 36, 2400)
-            mono_dpi     = _prompt_numeric("Mono image DPI",  300, 36, 2400)
-            jpeg_quality = _prompt_numeric("JPEG quality (1–100)", 50, 1, 100)
-            print()
-
-            cmd = [
-                GS_BIN, "-sDEVICE=pdfwrite",
-                "-dCompatibilityLevel=1.4",
-                "-dNOPAUSE", "-dBATCH", "-dSAFER",
-                "-dDetectDuplicateImages=true",
-                "-dCompressFonts=true",
-                "-dSubsetFonts=true",
-                "-dDownsampleColorImages=true",
-                "-dColorImageDownsampleType=/Bicubic",
-                f"-dColorImageResolution={color_dpi}",
-                "-dDownsampleGrayImages=true",
-                "-dGrayImageDownsampleType=/Bicubic",
-                f"-dGrayImageResolution={gray_dpi}",
-                "-dDownsampleMonoImages=true",
-                f"-dMonoImageResolution={mono_dpi}",
-                f"-dJPEGQ={jpeg_quality}",
-                f"-sOutputFile={output_path}",
-                input_path,
-            ]
-            break
-
-        else:
-            print(f"{FLRed}Invalid choice. Enter E or C.{CRst}")
+        cmd = [
+            GS_BIN, "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.4",
+            "-dNOPAUSE", "-dBATCH", "-dSAFER",
+            "-dDetectDuplicateImages=true",
+            "-dCompressFonts=true",
+            "-dSubsetFonts=true",
+            "-dDownsampleColorImages=true",
+            "-dColorImageDownsampleType=/Bicubic",
+            f"-dColorImageResolution={color_dpi}",
+            "-dDownsampleGrayImages=true",
+            "-dGrayImageDownsampleType=/Bicubic",
+            f"-dGrayImageResolution={gray_dpi}",
+            "-dDownsampleMonoImages=true",
+            f"-dMonoImageResolution={mono_dpi}",
+            f"-dJPEGQ={jpeg_quality}",
+            f"-sOutputFile={output_path}",
+            input_path,
+        ]
 
     print(f"\n{FGray}Running:{CRst} {' '.join(cmd)}\n")
     result = subprocess.run(cmd)

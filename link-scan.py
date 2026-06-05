@@ -38,7 +38,7 @@ if len(sys.argv) > 1:
     ROOT = sys.argv[1]
 else:
     ROOT = "/volumeUSB1/usbshare1-2"   # ← 改成要检查的目录
-    ROOT = Utils.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
+    ROOT = Input.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
 
 # enum
 class EType(enum.Enum):

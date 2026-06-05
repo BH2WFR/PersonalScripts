@@ -1421,24 +1421,19 @@ def main():
     print(f"{FLCyan}{'─' * 52}{CRst}")
     print_display_list(displays)
 
+    _MAIN_OPTIONS = [
+        MenuOption(["L"], "List displays"),
+        MenuOption(["R"], "Rotate display      (0°, 90°, 180°, 270°)"),
+        MenuOption(["S"], "Set resolution"),
+        MenuOption(["B"], "Adjust brightness"),
+        MenuOption(["D"], "Dump DDC info"),
+        MenuOption(["T"], "Toggle built-in display"),
+        MenuOption(["Q"], "Quit"),
+    ]
+
     while True:
-        print(f"{FLCyan}{'─' * 52}{CRst}")
-        print(f"  {FLYellow}[{FLGreen}L{FLYellow}]{CRst} List displays")
-        print(f"  {FLYellow}[{FLGreen}R{FLYellow}]{CRst} Rotate display      (0°, 90°, 180°, 270°)")
-        print(f"  {FLYellow}[{FLGreen}S{FLYellow}]{CRst} Set resolution")
-        print(f"  {FLYellow}[{FLGreen}B{FLYellow}]{CRst} Adjust brightness")
-        print(f"  {FLYellow}[{FLGreen}D{FLYellow}]{CRst} Dump DDC info")
-        print(f"  {FLYellow}[{FLGreen}T{FLYellow}]{CRst} Toggle built-in display")
-        print(f"  {FLYellow}[{FLGreen}Q{FLYellow}]{CRst} Quit")
-        print(f"{FLCyan}{'─' * 52}{CRst}")
-
-        try:
-            choice = input(f"{FLYellow}Choice > {CRst}").strip().upper()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        if not choice:
+        choice = Menu.select(_MAIN_OPTIONS, prompt="Choice")
+        if choice is None:
             print(f"{FLGreen}Bye.{CRst}")
             break
 
@@ -1468,10 +1463,6 @@ def main():
         elif choice == 'Q':
             print(f"{FLGreen}Bye.{CRst}")
             break
-
-        else:
-            print(f"{FLRed}Invalid choice. Try L, R, S, B, D, T, Q.{CRst}\n")
-            continue
 
         # 操作完成后重新打印屏幕信息
         if choice in ('R', 'S', 'B', 'T'):

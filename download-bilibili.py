@@ -33,18 +33,33 @@ Usage:
 """)
     sys.exit(0)
 
-Utils.console_command_required("BBDown")
-Utils.console_command_required("ffmpeg")
+_ffmpeg = CmdCheck("ffmpeg", hints={
+    "windows": f"{FGray}scoop install ffmpeg{CRst}",
+    "macos": f"{FGray}brew install ffmpeg{CRst}",
+    "linux": f"{FGray}sudo apt install ffmpeg{CRst}",
+})
+_aria2c = CmdCheck("aria2c", required=False, hints={
+    "windows": f"{FGray}scoop install aria2{CRst}",
+    "macos": f"{FGray}brew install aria2{CRst}",
+    "linux": f"{FGray}sudo apt install aria2{CRst}",
+})
+if not Utils.check_commands(
+    CmdCheck("BBDown", hints={
+        "windows": f"{FGray}scoop install BBDown{CRst}",
+        "macos": f"{FGray}Download from https://github.com/nilaoda/BBDown{CRst}",
+        "linux": f"{FGray}Download from https://github.com/nilaoda/BBDown{CRst}",
+    }),
+    _ffmpeg,
+    _aria2c,
+):
+    sys.exit(1)
 
-
-USE_ARIA2C = True
-FFMPEG_PATH = "ffmpeg.exe" if os.name == 'nt' else "ffmpeg"
-ARIA2C_PATH = "aria2c.exe" if os.name == 'nt' else "aria2c"
-if(shutil.which("aria2c") is None):
-	USE_ARIA2C = False
+USE_ARIA2C = _aria2c.path is not None
+FFMPEG_PATH = _ffmpeg.path
+ARIA2C_PATH = _aria2c.path
 
 #* 下载到哪里？
-OUTPUT_DIR = Utils.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
+OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
 
 #* 链接
@@ -55,7 +70,7 @@ if len(sys.argv) > 1:
         if not u.startswith("-") and u:
             URLS.append(u)
 else:
-    URLS = Utils.read_stdin_multiline(prompt_text="Enter Bilibili video URLs (one per line).")
+    URLS = Input.read_stdin_multiline(prompt_text="Enter Bilibili video URLs (one per line).")
 
 if not URLS:
     print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
@@ -74,12 +89,13 @@ class E_DOWNLOAD_TYPE(enum.Enum):
 
 for item in E_DOWNLOAD_TYPE:
 	print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-BITRATE_NUM = input(f"{FLYellow}Select download mode by number (default 0): {CRst}").strip() or "0"
-try:
-	BITRATE = E_DOWNLOAD_TYPE(int(BITRATE_NUM))
-except ValueError:
-	print(f"{FLRed}Invalid download mode. EXIT...{CRst}\n")
-	sys.exit(1)
+BITRATE = Menu.select(
+	Menu.from_enum(E_DOWNLOAD_TYPE),
+	prompt="Select download mode",
+)
+if BITRATE is None:
+	print(f"{FLGreen}Bye.{CRst}")
+	sys.exit(0)
 
 
 #* 分P
@@ -94,12 +110,13 @@ class E_API_TYPE(enum.Enum):
 	INTL = 3 # 国际版
 for item in E_API_TYPE:
 	print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-API_TYPE_INPUT = input(f"{FLYellow}Select API type by number (default 0): {CRst}").strip() or "0"
-try:
-	API_TYPE = E_API_TYPE(int(API_TYPE_INPUT))
-except ValueError:
-	print(f"{FLRed}Invalid API type. EXIT...{CRst}\n")
-	sys.exit(1)
+API_TYPE = Menu.select(
+	Menu.from_enum(E_API_TYPE),
+	prompt="Select API type",
+)
+if API_TYPE is None:
+	print(f"{FLGreen}Bye.{CRst}")
+	sys.exit(0)
 
 
 #* 下载

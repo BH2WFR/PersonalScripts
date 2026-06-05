@@ -266,7 +266,7 @@ print(f"{FLCyan}Enter capturing interval in seconds (default: {FLYellow}{Config.
 Config.capture_interval_s = float(safe_input() or Config.capture_interval_s)
 print(f"{FLCyan}Enter capturing count (default: {FLYellow}{Config.capture_count}{FLCyan}): {CRst}", end="")
 Config.capture_count = int(safe_input() or Config.capture_count)
-Config.output_dir = Utils.resolve_output_path(
+Config.output_dir = Input.resolve_output_path(
     os.path.abspath(Config.output_dir),
     prompt="Enter Output Directory",
     path_type="dir",

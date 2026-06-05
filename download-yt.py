@@ -32,16 +32,22 @@ Usage:
     sys.exit(0)
 
 
-Utils.console_command_required("yt-dlp")
-Utils.console_command_required("ffmpeg")
-
-
-
-FFMPEG_PATH = "ffmpeg.exe" if os.name == 'nt' else "ffmpeg"
-# ARIA2C_PATH = "aria2c.exe" if os.name == 'nt' else "aria2c"
+if not Utils.check_commands(
+    CmdCheck("yt-dlp", hints={
+        "windows": f"{FGray}scoop install yt-dlp{CRst}",
+        "macos": f"{FGray}brew install yt-dlp{CRst}",
+        "linux": f"{FGray}sudo apt install yt-dlp{CRst}",
+    }),
+    CmdCheck("ffmpeg", hints={
+        "windows": f"{FGray}scoop install ffmpeg{CRst}",
+        "macos": f"{FGray}brew install ffmpeg{CRst}",
+        "linux": f"{FGray}sudo apt install ffmpeg{CRst}",
+    }),
+):
+    sys.exit(1)
 
 #* 下载到哪里？
-OUTPUT_DIR = Utils.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
+OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
 
 #* 链接
@@ -52,7 +58,7 @@ if len(sys.argv) > 1:
         if not u.startswith("-") and u:
             URLS.append(u)
 else:
-    URLS = Utils.read_stdin_multiline(prompt_text="Enter YouTube video URLs (one per line).")
+    URLS = Input.read_stdin_multiline(prompt_text="Enter YouTube video URLs (one per line).")
 
 if not URLS:
     print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
@@ -70,12 +76,13 @@ class E_DOWNLOAD_TYPE(enum.Enum):
 
 for item in E_DOWNLOAD_TYPE:
 	print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-BITRATE_NUM = input(f"{FLYellow}Select download mode by number (default 0): {CRst}").strip() or "0"
-try:
-	BITRATE = E_DOWNLOAD_TYPE(int(BITRATE_NUM))
-except ValueError:
-	print(f"{FLRed}Invalid download mode. EXIT...{CRst}\n")
-	sys.exit(1)
+BITRATE = Menu.select(
+	Menu.from_enum(E_DOWNLOAD_TYPE),
+	prompt="Select download mode",
+)
+if BITRATE is None:
+	print(f"{FLGreen}Bye.{CRst}")
+	sys.exit(0)
 
 bitrate_option = []
 if(BITRATE == E_DOWNLOAD_TYPE.VIDEO_1080P):

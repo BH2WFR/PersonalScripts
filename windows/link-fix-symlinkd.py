@@ -2,7 +2,10 @@
 #
 
 #
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from utils import *
+
 
 #* Windows only
 if(os.name != "nt"):
@@ -38,7 +41,7 @@ ROOT = "D:/test"   # ← 改成要检查的目录
 if len(sys.argv) > 1:
     ROOT = sys.argv[1]
 else:
-    ROOT = Utils.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
+    ROOT = Input.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
 
 # enum
 class EType(enum.Enum):

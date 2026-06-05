@@ -126,7 +126,11 @@ show_supported_scripts() {
         else
             color="$FLGreen"
         fi
-        printf '  %b[%d]%b: %b%s%b\n' "$FGray" "$cnt" "$CRst" "$color" "$file_name$CRst"
+        if [[ $cnt -lt 10 ]]; then
+            printf '  %b[%d]%b:  %b%s%b\n' "$FGray" "$cnt" "$CRst" "$color" "$file_name$CRst"
+        else
+            printf '  %b[%d]%b: %b%s%b\n' "$FGray" "$cnt" "$CRst" "$color" "$file_name$CRst"
+        fi
         cnt=$((cnt + 1))
     done
 
@@ -143,7 +147,11 @@ show_supported_scripts() {
             else
                 color="$FLGreen"
             fi
-            printf '  %b[%d]%b: %b%s%b/%b%s%b\n' "$FGray" "$cnt" "$CRst" "$FLYellow" "$relative_directory" "$CRst" "$color" "$file_name$CRst"
+            if [[ $cnt -lt 10 ]]; then
+                printf '  %b[%d]%b:  %b%s%b/%b%s%b\n' "$FGray" "$cnt" "$CRst" "$FLYellow" "$relative_directory" "$CRst" "$color" "$file_name$CRst"
+            else
+                printf '  %b[%d]%b: %b%s%b/%b%s%b\n' "$FGray" "$cnt" "$CRst" "$FLYellow" "$relative_directory" "$CRst" "$color" "$file_name$CRst"
+            fi
             cnt=$((cnt + 1))
         done
     fi
@@ -182,7 +190,7 @@ if [[ "$show_list" == true ]]; then
         exit 0
     fi
 
-    printf '\n%bEnter number to execute (or Enter to exit):%b ' "$FLYellow" "$CRst"
+    printf '\n%bEnter number to execute%b (or %bEnter%b to exit): ' "$FLYellow" "$CRst" "$FLYellow" "$CRst"
     read -r choice
     if [[ -z "$choice" ]]; then
         exit 0

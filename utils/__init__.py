@@ -1,6 +1,7 @@
 import os
 import sys
 import typing
+import dataclasses
 import string
 import math
 import json
@@ -90,51 +91,107 @@ CEraseLineToStart       = f"\033[1K"
 
 # 注意：本文件中不应存在全局函数，应当全部包裹到类中。
 
+@dataclasses.dataclass
+class CmdCheck:
+    """Describes a command-line tool to check for in PATH.
+
+    Attributes:
+        cmd: Command name(s) to look up. A ``str`` for a single name, or
+            ``list[str]`` to try multiple names in order (first found wins).
+        required: If True, a missing command is an error; otherwise a warning.
+        hints: Platform-specific install hints. Keys: ``"any"`` (always shown),
+            ``"windows"``, ``"linux"``, ``"macos"``. Both ``"any"`` and the
+            current platform hint are printed if present.
+            Caller controls all color formatting inside hint strings.
+        path: Populated by :meth:`Utils.check_commands` — resolved executable
+            path, or ``None`` if not found.
+    """
+    cmd: str | list[str]
+    required: bool = True
+    hints: dict[str, str] | None = None
+    path: str | None = dataclasses.field(default=None, init=False)
+
+
 #* 轮子
 class Utils:
     @staticmethod
-    def get_time_str():
+    def get_time_str() -> str:
+        """Return current time as ``YYYY-MM-DD HH:MM:SS`` string."""
         return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     @staticmethod
-    def print_error_and_exit(msg, code=1):
+    def print_error_and_exit(msg: str, code: int = 1) -> None:
+        """Print a red error message and call ``exit(code)``."""
         print(f"{FLRed}Error: {msg}{CRst}")
         exit(code)
-    
+
     @staticmethod
-    def console_command_required(exe_name: str) -> str:
-        p = shutil.which(exe_name)
-        if not p:
-            print(f"{FLRed}ERROR: `{exe_name}` not found in PATH. {CRst}"
-                f"Please install it (scoop install {exe_name}) or add it to PATH.\033[0m")
-            sys.exit(1)
-        return p
-    
+    def check_commands(*checks: CmdCheck) -> bool:
+        """Verify all commands in *checks* exist in PATH.
+
+        Resolves ``.path`` on each :class:`CmdCheck` to the found executable,
+        or ``None`` if not found. Prints per-platform install hints for missing
+        commands. Required commands cause the check to fail; optional ones only
+        print a warning.
+
+        Returns True if all *required* commands are found, False otherwise.
+        Callers should ``sys.exit(1)`` when False.
+        """
+        all_ok = True
+        for c in checks:
+            # Resolve: list = try in order, str = single lookup
+            names = c.cmd if isinstance(c.cmd, list) else [c.cmd]
+            c.path = next((shutil.which(n) for n in names if shutil.which(n)), None)
+            if c.path is not None:
+                continue
+
+            # Build error/warning message
+            prefix = f"{FLRed}ERROR:{CRst}" if c.required else f"{FLYellow}WARNING:{CRst}"
+            label = " or ".join(names)
+            print(f"{prefix} `{label}` not found in PATH.")
+
+            # Print platform-specific hints
+            if c.hints:
+                platform = (
+                    "windows" if sys.platform == "win32"
+                    else "macos" if sys.platform == "darwin"
+                    else "linux"
+                )
+                for key in ("any", platform):
+                    if key in c.hints:
+                        print(f"  {c.hints[key]}")
+            print()
+
+            if c.required:
+                all_ok = False
+        return all_ok
+
     @staticmethod
-    def set_locale_utf8():
+    def set_locale_utf8() -> None:
+        """Set console to UTF-8 mode (Windows: chcp 65001 + en_US.UTF-8 locale)."""
         if os.name == 'nt':
-            os.system('chcp 65001')  #* Windows 上设置控制台为 UTF-8 编码
-            # Windows 上设置 UTF-8 locale (>= windows 10 1903)
+            os.system('chcp 65001')
             try:
                 import locale
                 locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
             except Exception as e:
-                print(f"{FLRed}Warning: Failed to set locale to UTF-8: {str(e)}{CRst}")
-    
+                print(f"{FLRed}Warning: Failed to set locale to UTF-8: {e}{CRst}")
+
     @staticmethod
-    def print_argv_list():
+    def print_argv_list() -> None:
+        """Print ``sys.argv`` with index and color formatting."""
         print(f"{FLYellow}Command line arguments:{CRst}")
         for i, arg in enumerate(sys.argv):
             print(f"  argv[{FLYellow}{i}{CRst}]: {FLCyan}{arg}{CRst}")
-    
-    
+
     @staticmethod
     def enable_dpi_awareness() -> None:
+        """Enable per-monitor DPI awareness on Windows (no-op on other platforms)."""
         if sys.platform != "win32":
             return
 
         user32 = ctypes.windll.user32
-        # Windows 10+ 推荐：Per Monitor V2
+        # Windows 10+ recommended: Per Monitor V2
         try:
             DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ctypes.c_void_p(-4)
             if user32.SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2):
@@ -142,20 +199,72 @@ class Utils:
         except Exception:
             pass
 
-        # Win8.1 回退
+        # Win8.1 fallback
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
             return
         except Exception:
             pass
 
-        # 更老系统回退
+        # Older systems fallback
         try:
             user32.SetProcessDPIAware()
         except Exception:
             pass
+
+    @staticmethod
+    def is_elevated() -> bool:
+        """Check if the current process has administrator/root privileges.
+
+        Returns True on Windows (admin), macOS/Linux (root), or if detection fails.
+        """
+        if sys.platform == "win32":
+            try:
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
+        else:
+            try:
+                return os.geteuid() == 0
+            except AttributeError:
+                return False
+
+    @staticmethod
+    def elevate() -> None:
+        """Re-execute the current script with administrator/root privileges.
+
+        If already elevated, returns immediately. Otherwise tries ``sudo``, then
+        ``gsudo`` (Windows only), then OS-specific elevation APIs. Does not return
+        if elevation succeeds — the current process is replaced.
+        """
+        if Utils.is_elevated():
+            return
+
+        script = os.path.abspath(sys.argv[0])
+        args = sys.argv[1:]
+
+        if sys.platform == "win32":
+            for tool in ("sudo", "gsudo"):
+                exe = shutil.which(tool)
+                if exe:
+                    os.execv(exe, [tool, sys.executable, script] + args)
+            # Fallback: ShellExecute with runas verb
+            params = subprocess.list2cmdline([script] + args)
+            ret = ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", sys.executable, params, None, 1,
+            )
+            if ret <= 32:
+                print(f"{FLRed}Elevation failed (ShellExecute error {ret}).{CRst}")
+                sys.exit(1)
+            sys.exit(0)
+        else:
+            if shutil.which("sudo"):
+                os.execv("/usr/bin/sudo", ["sudo", sys.executable, script] + args)
+            print(f"{FLRed}Cannot elevate: sudo not found in PATH.{CRst}")
+            sys.exit(1)
             
-            
+
+class Input:
     #* ============ 输出路径解析工具 ============
     @staticmethod
     def _find_available_path(base_path: str) -> str:
@@ -199,10 +308,10 @@ class Utils:
         action_label = "Replace" if path_type == "file" else "Still use"
 
         while True:
-            suggested = Utils._find_available_path(current_default)
+            suggested = Input._find_available_path(current_default)
 
             user_input = input(
-                f"{FLYellow}{prompt} {FGray}[{os.path.basename(suggested)}]{CRst}: "
+                f"{FLYellow}{prompt} {FGray}[{suggested}]{CRst}: "
             ).strip()
             if not user_input:
                 user_path = suggested
@@ -324,7 +433,7 @@ class Utils:
 
         while True:
             user_input = input(
-                f"{FLYellow}{prompt} {FGray}[{os.path.basename(current_default)}]{CRst}: "
+                f"{FLYellow}{prompt} {FGray}[{current_default}]{CRst}: "
             ).strip()
             if not user_input:
                 user_path = current_default
@@ -379,7 +488,7 @@ class Utils:
                     or "r"
                 )
                 if choice in ("r", "rename"):
-                    current_default = Utils._find_available_path(user_path)
+                    current_default = Input._find_available_path(user_path)
                     break
                 elif choice in ("f", "force"):
                     return user_path
@@ -401,8 +510,9 @@ class Utils:
         - Exits with ``sys.exit(1)`` if no paths remain
         - Returns list of absolute paths
         """
+        _eof_hint = "Ctrl+Z then Enter" if sys.platform == "win32" else "Ctrl+D"
         print(f"{FLYellow}{prompt_text}{CRst}")
-        print(f"{FLCyan}End with {FLYellow}Ctrl+Z (Windows) or Ctrl+D (Linux/macOS){FLCyan}:{CRst}")
+        print(f"{FLCyan}End with {FLYellow}{_eof_hint}{FLCyan}:{CRst}")
         raw = sys.stdin.read().strip()
         if not raw:
             print(f"{FLRed}No paths provided.{CRst}")
@@ -475,9 +585,11 @@ class Utils:
         prompt_text: str = "Enter text (one per line)",
         skip_empty: bool = True,
         trim_lines: bool = True,
+        strip_trailing_newline: bool = True,
         pattern: str | None = None,
         *,
         split_lines: typing.Literal[True] = True,
+        raw: typing.Literal[False] = False,
     ) -> list[str]: ...
     @typing.overload
     @staticmethod
@@ -485,17 +597,29 @@ class Utils:
         prompt_text: str = "Enter text (one per line)",
         skip_empty: bool = True,
         trim_lines: bool = True,
+        strip_trailing_newline: bool = True,
         pattern: str | None = None,
         *,
         split_lines: typing.Literal[False],
+        raw: typing.Literal[False] = False,
+    ) -> str: ...
+    @typing.overload
+    @staticmethod
+    def read_stdin_multiline(
+        prompt_text: str = "Enter text (one per line)",
+        *,
+        raw: typing.Literal[True],
+        strip_trailing_newline: bool = True,
     ) -> str: ...
     @staticmethod
     def read_stdin_multiline(
         prompt_text: str = "Enter text (one per line)",
         skip_empty: bool = True,
         trim_lines: bool = True,
+        strip_trailing_newline: bool = True,
         pattern: str | None = None,
         split_lines: bool = True,
+        raw: bool = False,
     ) -> list[str] | str:
         """Read multi-line text from stdin with EOF prompt.
 
@@ -503,37 +627,48 @@ class Utils:
             prompt_text: Description of what to enter.
             skip_empty: Whether to skip empty lines (only when *split_lines* is True).
             trim_lines: Whether to strip whitespace from each line (only when *split_lines* is True).
+            strip_trailing_newline: Whether to remove the trailing ``\\n`` from the result.
             pattern: Regex pattern for validation (reserved, not yet implemented).
             split_lines: If True, return list of lines; if False, return raw string.
+            raw: If True, return the raw input string as-is (only strips trailing ``\\n``
+                when *strip_trailing_newline* is True). Overrides all other processing options.
 
         Returns:
-            List of processed lines (``split_lines=True``) or raw string (``split_lines=False``).
-            Calls ``sys.exit(1)`` if input is empty.
+            List of processed lines or raw string. Returns empty list/string if input is empty.
         """
+        _eof_hint = "Ctrl+Z then Enter" if sys.platform == "win32" else "Ctrl+D"
         print(f"{FLYellow}{prompt_text}{CRst}")
-        print(f"{FLCyan}End with {FLYellow}Ctrl+Z (Windows) or Ctrl+D (Linux/macOS){FLCyan}:{CRst}")
-        raw = sys.stdin.read()
+        print(f"{FLCyan}End with {FLYellow}{_eof_hint}{FLCyan}:{CRst}")
+        text = sys.stdin.read()
+        if raw:
+            if not text.strip():
+                print(f"{FLRed}No input provided.{CRst}\n")
+                return ""
+            if strip_trailing_newline:
+                text = text.removesuffix("\n")
+            return text
         if split_lines:
-            raw_stripped = raw.strip()
-            if not raw_stripped:
-                print(f"{FLRed}No input provided. EXIT...{CRst}\n")
-                sys.exit(1)
+            if not text.strip():
+                print(f"{FLRed}No input provided.{CRst}\n")
+                return []
             lines: list[str] = []
-            for line in raw_stripped.splitlines():
+            for line in text.splitlines():
                 if trim_lines:
                     line = line.strip()
                 if skip_empty and not line:
                     continue
                 lines.append(line)
             if not lines:
-                print(f"{FLRed}No valid input provided. EXIT...{CRst}\n")
-                sys.exit(1)
+                print(f"{FLRed}No valid input provided.{CRst}\n")
+                return []
             return lines
         else:
-            if not raw.strip():
-                print(f"{FLRed}No input provided. EXIT...{CRst}\n")
-                sys.exit(1)
-            return raw
+            if not text.strip():
+                print(f"{FLRed}No input provided.{CRst}\n")
+                return ""
+            if strip_trailing_newline:
+                text = text.removesuffix("\n")
+            return text
 
 
 class Cursor:
@@ -584,3 +719,179 @@ class Cursor:
     @staticmethod
     def scroll_down(count: int = 1) -> str:
         return f"\033[{max(1, count)}T"
+
+
+# ============================================================
+# Interactive menu helpers
+# ============================================================
+
+class MenuOption:
+    """A single option in an interactive selection menu.
+
+    Attributes:
+        keys: Trigger keys, case-insensitive (e.g. ``["N"]`` or ``["1", "+"]``).
+        description: Human-readable label (may contain ANSI color codes).
+        value: Value returned when selected (defaults to *keys[0]* if ``None``).
+        desc_color: ANSI color to wrap *description* (empty → use *default_desc_color*).
+    """
+    __slots__ = ("keys", "description", "value", "desc_color")
+
+    def __init__(self, keys, description, value=None, desc_color=""):
+        self.keys = [k.upper() for k in keys]
+        self.description = description
+        self.value = value if value is not None else keys[0]
+        self.desc_color = desc_color
+
+
+class Menu:
+    """Interactive terminal menu helpers."""
+
+    @staticmethod
+    def select(
+        options: list[MenuOption],
+        *,
+        prompt: str = "Choice",
+        required: bool = False,
+        default_key: str | None = None,
+        inline: bool = False,
+        key_color: str = FLGreen,
+        default_desc_color: str = FLYellow,
+        separator: bool = True,
+        separator_char: str = "─",
+        separator_width: int = 44,
+        separator_color: str = FLCyan,
+        indent: str = "  ",
+        accept_custom_string: bool = False,
+    ) -> typing.Any | None:
+        """Display an interactive menu and return the selected value.
+
+        Prints a list of options (each prefixed with a ``[Key]`` bracket), prompts
+        the user for input, validates it, and returns the corresponding value.
+
+        Args:
+            options: MenuOption list to choose from.
+            prompt: Input prompt text (e.g. ``"Choice"`` → ``"Choice > "``).
+            required: If ``True``, empty input re-prompts. If ``False`` and
+                *default_key* is ``None``, empty input returns ``None``.
+            default_key: If set, empty input returns the value whose key matches.
+                Takes precedence over *required*.
+            inline: ``True`` → all options on one line; ``False`` → one per line.
+            key_color: ANSI color for the key character inside brackets.
+            default_desc_color: Fallback *desc_color* for options without one.
+            separator: Print separator lines before / after the options.
+            separator_char: Character for separator lines.
+            separator_width: Length of separator lines.
+            separator_color: ANSI color for separator lines.
+            indent: Leading whitespace for each option line.
+            accept_custom_string: If ``True``, non-empty input that does not match
+                any key is returned as-is instead of showing an error.
+
+        Returns:
+            The ``MenuOption.value`` corresponding to the chosen key, or the raw
+            input string when *accept_custom_string* is ``True`` and no key matches.
+
+        Raises:
+            ValueError: If *options* is empty or contains duplicate keys.
+        """
+        if not options:
+            raise ValueError("options must not be empty")
+
+        # Build key → option map (case-insensitive)
+        key_map: dict[str, MenuOption] = {}
+        for opt in options:
+            for k in opt.keys:
+                if k in key_map:
+                    raise ValueError(f"Duplicate key '{k}' in options")
+                key_map[k] = opt
+
+        all_keys = sorted(key_map.keys())
+        sep_line = f"{separator_color}{separator_char * separator_width}{CRst}"
+
+        while True:
+            if separator:
+                print(sep_line)
+
+            if inline:
+                parts = []
+                for opt in options:
+                    k = opt.keys[0]
+                    dc = opt.desc_color or default_desc_color
+                    parts.append(
+                        f"{indent}{FLYellow}[{key_color}{k}{FLYellow}]{CRst}"
+                        f" {dc}{opt.description}{CRst}"
+                    )
+                print("  ".join(parts))
+            else:
+                for opt in options:
+                    k = opt.keys[0]
+                    dc = opt.desc_color or default_desc_color
+                    print(
+                        f"{indent}{FLYellow}[{key_color}{k}{FLYellow}]{CRst}"
+                        f" {dc}{opt.description}{CRst}"
+                    )
+
+            if separator:
+                print(sep_line)
+
+            try:
+                if default_key is not None:
+                    prompt_line = f"{FLYellow}{prompt} {FGray}[{default_key}]{CRst}{FLYellow} > {CRst}"
+                else:
+                    prompt_line = f"{FLYellow}{prompt} > {CRst}"
+                raw_input = input(prompt_line).strip()
+                choice = raw_input.upper()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                sys.exit(0)
+
+            if not choice:
+                if default_key is not None:
+                    wanted = default_key.upper()
+                    if wanted in key_map:
+                        return key_map[wanted].value
+                if required:
+                    continue
+                return None
+
+            if choice in key_map:
+                return key_map[choice].value
+
+            if accept_custom_string and raw_input:
+                return raw_input
+
+            keys_hint = ", ".join(all_keys)
+            hint = (
+                f"{FLRed}Invalid choice. Try {FLYellow}{keys_hint}{FLRed}."
+                f" Press {FLCyan}Enter{FLRed} to {'retry' if required else 'exit'}.{CRst}\n"
+            )
+            print(hint)
+
+    @staticmethod
+    def from_enum(
+        enum_cls,
+        *,
+        name_transform=None,
+        desc_color: str = "",
+    ) -> list[MenuOption]:
+        """Build a MenuOption list from an :class:`~enum.Enum`.
+
+        Keys are ``str(member.value)``, descriptions derive from ``member.name``
+        (split on ``_`` and title-cased by default).
+
+        Args:
+            enum_cls: An :class:`~enum.Enum` subclass.
+            name_transform: Callable ``(name: str) -> str`` to convert member names
+                to display text. ``None`` → ``name.replace("_", " ").title()``.
+            desc_color: ANSI color applied to every option's description.
+        """
+        options = []
+        for item in enum_cls:
+            raw = item.name
+            label = name_transform(raw) if name_transform else raw.replace("_", " ").title()
+            options.append(MenuOption(
+                keys=[str(item.value)],
+                description=label,
+                value=item,
+                desc_color=desc_color,
+            ))
+        return options

@@ -4,7 +4,6 @@
 import os
 import sys
 import subprocess
-import shutil
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from utils import *  # noqa: E402
@@ -15,8 +14,9 @@ if sys.platform != "darwin":
     print(f"{FLRed}ERROR: This script only runs on macOS. Current platform: {sys.platform}{CRst}\n")
     sys.exit(1)
 
-if shutil.which("ntfs-3g") is None:
-    print(f"{FLRed}ERROR: ntfs-3g not found. Install with: {CRst}{FGray}brew install ntfs-3g{CRst}\n")
+if not Utils.check_commands(CmdCheck("ntfs-3g", hints={
+    "macos": f"{FGray}brew install ntfs-3g{CRst}",
+})):
     sys.exit(1)
 
 if "--help" in sys.argv or "-h" in sys.argv:
@@ -461,6 +461,14 @@ def do_eject(partitions: list[dict]) -> bool:
 
 
 # ============ main ============
+_MAIN_OPTIONS = [
+    MenuOption(["N"], f"Mount by {FLYellow}ntfs-3g{CRst} (read-write)"),
+    MenuOption(["S"], f"Mount by {FLCyan}system{CRst} (read-only)"),
+    MenuOption(["E"], "Eject disk"),
+    MenuOption(["Q"], "Quit"),
+]
+
+
 def _print_partitions(partitions: list[dict]):
     """Print NTFS partition list with mount status."""
     if not partitions:
@@ -482,21 +490,9 @@ def main():
 
         print(f"{FLCyan}{'─' * 44}{CRst}")
         _print_partitions(partitions)
-        print(f"{FLCyan}{'─' * 44}{CRst}")
 
-        print(f"  {FLYellow}[{FLGreen}N{FLYellow}]{CRst} Mount by {FLYellow}ntfs-3g{CRst} (read-write)")
-        print(f"  {FLYellow}[{FLGreen}S{FLYellow}]{CRst} Mount by {FLCyan}system{CRst} (read-only)")
-        print(f"  {FLYellow}[{FLGreen}E{FLYellow}]{CRst} Eject disk")
-        print(f"  {FLYellow}[{FLGreen}Q{FLYellow}]{CRst} Quit")
-        print(f"{FLCyan}{'─' * 44}{CRst}")
-
-        try:
-            choice = input(f"{FLYellow}Choice > {CRst}").strip().upper()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        if not choice:
+        choice = Menu.select(_MAIN_OPTIONS, prompt="Choice")
+        if choice is None:
             print(f"{FLGreen}Bye.{CRst}")
             break
 
@@ -515,8 +511,6 @@ def main():
         elif choice == "Q":
             print(f"{FLGreen}Bye.{CRst}")
             break
-        else:
-            print(f"{FLRed}Invalid choice. Try M, U, E, Q.{CRst}\n")
 
 
 def _pause():

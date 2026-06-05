@@ -139,7 +139,12 @@ function Show-SupportedScripts {
             $fileName = [System.IO.Path]::GetFileName($relativePath)
             $relativeDirectory = [System.IO.Path]::GetDirectoryName($relativePath)
             $color = if ($script.Extension -ieq ".py") { $FLCyan } else { $FLGreen }
-            Write-Host ("  ${FGray}[${cnt}]${CRst}: ${FLYellow}${relativeDirectory}${CRst}/${color}${fileName}${CRst}")
+            if ($cnt -lt 10) {
+                $indexStr = "${FGray}[${cnt}]${CRst}:  "
+            } else {
+                $indexStr = "${FGray}[${cnt}]${CRst}: "
+            }
+            Write-Host ("  ${indexStr}${FLYellow}${relativeDirectory}${CRst}/${color}${fileName}${CRst}")
             $allScripts += $script
             $cnt++
         }
@@ -158,7 +163,7 @@ if ($showList) {
     }
 
     Write-Host ""
-    $choice = Read-Host -Prompt "${FLYellow}Enter number to execute (or Enter to exit)${CRst}"
+    $choice = Read-Host -Prompt "${FLYellow}Enter number to execute${CRst} (or ${FLYellow}Enter${CRst} to exit):"
     if ([string]::IsNullOrWhiteSpace($choice)) {
         exit 0
     }

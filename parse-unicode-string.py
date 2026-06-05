@@ -144,18 +144,11 @@ elif len(sys.argv) > 1:
     text = " ".join(sys.argv[1:])
 else:
     input_source = "interaction"
-    print(f"{FLYellow}Enter text to parse (one or more lines).{CRst}")
-    print(f"{FLCyan}End with {FLYellow}Ctrl+Z then Enter (Windows) or Ctrl+D (Linux/macOS){FLCyan}:{CRst}")
-    lines = []
-    while True:
-        try:
-            line = input()
-            lines.append(line)
-        except EOFError:
-            break
-    text = "\n".join(lines)
+    text = Input.read_stdin_multiline(
+        prompt_text="Enter text to parse (one or more lines).",
+        raw=True,
+    )
     if not text:
-        print(f"{FLRed}No input provided. EXIT...{CRst}\n")
         sys.exit(1)
 
 text_len = len(text)

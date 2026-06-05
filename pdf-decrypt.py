@@ -57,7 +57,7 @@ else:
 
 
 #============ 用户交互 ===========
-filepath = _arg_path if _arg_path else Utils.resolve_input_path(
+filepath = _arg_path if _arg_path else Input.resolve_input_path(
     DEFAULT_INPUT,
     prompt="Enter input PDF file path",
     path_type="file",
@@ -71,7 +71,7 @@ if not filepath or not os.path.exists(filepath):
 _stem, _ext = os.path.splitext(os.path.basename(filepath))
 _default_output = os.path.join(os.path.dirname(filepath) or ".", f"{_stem}_decrypted{_ext or '.pdf'}")
 
-output_path = Utils.resolve_output_path(
+output_path = Input.resolve_output_path(
     _arg_output if _arg_output else _default_output,
     prompt="Enter output PDF file path",
     path_type="file",

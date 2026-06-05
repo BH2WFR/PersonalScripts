@@ -396,16 +396,22 @@ def restore_file_times(backupPath : str) -> int:
 
 #============ 用户交互 ===========
 
-featureStr = input(f"{FLYellow}Select feature: {CRst}[{FLCyan}1{CRst}. Modify times], [{FLCyan}2{CRst}. Backup times], [{FLCyan}3{CRst}. Restore times], [{FLCyan}4{CRst}. Show times] {FLYellow}(default: 1): {CRst}") or "1"
-try:
-	featureInt = int(featureStr)
-	g_feature = Feature(featureInt)
-except ValueError:
-	print(f"{FLRed}Invalid feature selection. EXIT...{CRst}\n")
-	sys.exit(1)
+featureInt = Menu.select(
+    [
+        MenuOption(["1"], "Modify times", value=1),
+        MenuOption(["2"], "Backup times", value=2),
+        MenuOption(["3"], "Restore times", value=3),
+        MenuOption(["4"], "Show times", value=4),
+    ],
+    prompt="Select feature",
+)
+if featureInt is None:
+    print(f"{FLGreen}Bye.{CRst}")
+    sys.exit(0)
+g_feature = Feature(featureInt)
 
 if(g_feature == Feature.MODIFY_TIMES) or g_feature == Feature.BACKUP_TIMES:
-	g_path = Utils.resolve_input_path(".", prompt="Enter file/directory path to modify time", path_type="any")
+	g_path = Input.resolve_input_path(".", prompt="Enter file/directory path to modify time", path_type="any")
 	if(os.path.isdir(g_path)):
 		isRecursiveStr = input(f"{FLCyan}The specified path is a directory. Modify time for files in subdirectories as well? (y/n, default y): {CRst}") or "y"
 		g_isRecursive = isRecursiveStr.strip().lower() == 'y'
@@ -462,15 +468,15 @@ if(g_feature == Feature.MODIFY_TIMES):
 	
 elif g_feature == Feature.BACKUP_TIMES:
 	_default_backup = os.path.join(os.path.dirname(g_path) or ".", "backup_times.json")
-	g_backupPath = Utils.resolve_output_path(_default_backup, prompt="Enter backup JSON file path", path_type="file")
+	g_backupPath = Input.resolve_output_path(_default_backup, prompt="Enter backup JSON file path", path_type="file")
 elif g_feature == Feature.RESTORE_TIMES:
-	g_restorePath = Utils.resolve_input_path(
+	g_restorePath = Input.resolve_input_path(
 		"backup_times.json",
 		prompt="Enter backup JSON file path to restore times",
 		path_type="file",
 	)
 elif g_feature == Feature.SHOW_TIMES:
-	g_path = Utils.resolve_input_path(".", prompt="Enter file/directory path to show time", path_type="any")
+	g_path = Input.resolve_input_path(".", prompt="Enter file/directory path to show time", path_type="any")
 	
 	node = FileNode(g_path)
 	if(os.path.isdir(g_path)):

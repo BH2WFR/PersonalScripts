@@ -33,7 +33,7 @@ Usage:
 if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
     root = sys.argv[1]
 else:
-    root = Utils.resolve_input_path(".", prompt="Enter path to clean", path_type="dir")
+    root = Input.resolve_input_path(".", prompt="Enter path to clean", path_type="dir")
 print(f"{FLYellow}  -> target: {root}{CRst}")
 
 

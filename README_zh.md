@@ -63,7 +63,7 @@
 |------|------|------|
 | `link-create.py` | 跨平台符号链接/硬链接创建（Windows: SymlinkD, Junction；Linux/macOS: Symlink, Hardlink）。支持相对路径、镜像模式、冲突处理 | 跨平台。无外部依赖 |
 | `link-scan.py` | 递归扫描目录中的符号链接、Junction、硬链接。检测死链，自动修复或删除 | 跨平台。无外部依赖 |
-| `link-fix-symlinkd.py` | Windows 专用：将损坏的目录符号链接转换为 SymlinkD | 仅 Windows。无外部依赖 |
+| `windows/link-fix-symlinkd.py` | Windows 专用：将损坏的目录符号链接转换为 SymlinkD | 仅 Windows。无外部依赖 |
 | `check-filename-overlong.py` | 检查并截断超出 UTF-8 字节限制的超长文件名（如群晖 NAS 143 字节限制） | 跨平台。无外部依赖 |
 | `remove-os-junk-files.py` | 递归删除系统生成的垃圾文件（`.DS_Store`、`__MACOSX__`、`Thumbs.db` 等） | 跨平台。无外部依赖 |
 | `modify-file-time.py` | 修改文件/文件夹时间戳（创建/修改/访问时间），支持随机抖动 | 跨平台。无外部依赖 |
@@ -85,6 +85,8 @@
 | `windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负。** | 仅 Windows。系统自带工具；可选 `scoop install sudo gsudo` |
 | `windows/show-screen-resolution.ps1` | 通过 Windows API 显示显示器分辨率和屏幕信息 | 仅 Windows。PowerShell（系统自带） |
 | `macos/clear-privacy.py` | 清除 macOS 隐私痕迹（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。**免责声明：使用风险自负。** | 仅 macOS。系统自带工具；可选 `brew install trash` |
+| `webserver-run.py` | 运行本地 HTTP 服务器以提供静态网页工具。支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`）。使用 Python 内置 `http.server`，支持多线程 | 跨平台。无外部依赖 |
+| `webserver-run.bat` | Windows：webserver-run 的双击启动器 | Windows。无外部依赖 |
 
 ### 实用工具
 
@@ -96,6 +98,7 @@
 | `research/npy-viewer.sh` | Linux/macOS：npy 查看器的双击启动器 | Linux/macOS。需 `npy-viewer.py` 依赖 |
 | `run-script.sh` | Bash 启动器，可运行仓库内任意脚本 | Linux/macOS。`bash`、`python3` |
 | `run-script.ps1` | PowerShell 启动器，可运行仓库内任意脚本 | Windows。`PowerShell`、`python` |
+| `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | 仅 macOS。无外部依赖 |
 
 ### 测试辅助
 

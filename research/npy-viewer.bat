@@ -20,16 +20,15 @@ for %%p in (
 if "%PYTHON%"=="" set "PYTHON=python"
 
 set "SCRIPT_DIR=%~dp0"
-set "FILE_PATH=%~1"
 
-if "%FILE_PATH%"=="" (
-    "%PYTHON%" "%SCRIPT_DIR%npy-viewer.py"
-) else (
-    "%PYTHON%" "%SCRIPT_DIR%npy-viewer.py" "%FILE_PATH%"
-)
-
-if ERRORLEVEL 1 (
-    echo.
-    echo Script exited with error code: %ERRORLEVEL%
+if "%~1"=="" (
+    "%PYTHON%" "%SCRIPT_DIR%npy-viewer.py" %*
     pause
+) else (
+    "%PYTHON%" "%SCRIPT_DIR%npy-viewer.py" %*
+    if ERRORLEVEL 1 (
+        echo.
+        echo Script exited with error code: %ERRORLEVEL%
+        pause
+    )
 )

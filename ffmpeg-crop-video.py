@@ -31,7 +31,12 @@ Usage:
 """)
     sys.exit(0)
 
-Utils.console_command_required("ffmpeg")
+if not Utils.check_commands(CmdCheck("ffmpeg", hints={
+    "windows": f"{FGray}scoop install ffmpeg{CRst}",
+    "macos": f"{FGray}brew install ffmpeg{CRst}",
+    "linux": f"{FGray}sudo apt install ffmpeg{CRst}",
+})):
+    sys.exit(1)
 
 #* 要裁剪哪个文件？
 if len(sys.argv) > 1:
@@ -44,13 +49,13 @@ if len(sys.argv) > 1:
                 sys.exit(1)
             INPUT_PATHS.append(p)
 else:
-    INPUT_PATHS = Utils.resolve_input_paths_multi(
+    INPUT_PATHS = Input.resolve_input_paths_multi(
         prompt_text="Enter video file paths for cropping... (one per line)",
         path_type="file",
     )
 
 #* 输出到哪里？
-output_dir = Utils.resolve_output_path(DEFAULT_OUTPUT_DIR, prompt="Enter output video file dir", path_type="dir")
+output_dir = Input.resolve_output_path(DEFAULT_OUTPUT_DIR, prompt="Enter output video file dir", path_type="dir")
 	
 #* 编码是否变更？
 is_change_codec_str = input(f"{FLYellow}Change codec? (y/n, default n): {CRst}").strip().lower() or "n"

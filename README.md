@@ -62,7 +62,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 |--------|-------------|--------------|
 | `link-create.py` | Cross-platform symlink/hardlink creation (Windows: SymlinkD, Junction; Linux/macOS: Symlink, Hardlink). Supports relative paths, mirror modes, conflict handling | Cross-platform. No external deps |
 | `link-scan.py` | Recursively scan directories for symlinks, Junctions, hardlinks. Detect broken links, auto-fix or delete | Cross-platform. No external deps |
-| `link-fix-symlinkd.py` | Windows-only: Convert broken directory symlinks to symlinkd | Windows only. No external deps |
+| `windows/link-fix-symlinkd.py` | Windows-only: Convert broken directory symlinks to symlinkd | Windows only. No external deps |
 | `check-filename-overlong.py` | Check and truncate overlong filenames by UTF-8 byte limit (e.g., Synology NAS 143-byte limit) | Cross-platform. No external deps |
 | `remove-os-junk-files.py` | Recursively remove OS-generated junk files (`.DS_Store`, `__MACOSX__`, `Thumbs.db`, etc.) | Cross-platform. No external deps |
 | `modify-file-time.py` | Modify file/folder timestamps (created, modified, accessed) with optional random jitter | Cross-platform. No external deps |
@@ -84,6 +84,8 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | Windows only. Built-in tools; optional `scoop install sudo gsudo` |
 | `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | Windows only. PowerShell (built-in) |
 | `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | macOS only. Built-in tools; optional `brew install trash` |
+| `webserver-run.py` | Run a local HTTP server for static web tools. Interactive (dir/bind/port) or CLI (`--dir`, `--bind`, `--port`). Uses Python built-in `http.server` with threading | Cross-platform. No external deps |
+| `webserver-run.bat` | Windows: double-click launcher for webserver-run | Windows. No external deps |
 
 ### Utilities
 
@@ -95,6 +97,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `research/npy-viewer.sh` | Linux/macOS: double-click launcher for npy viewer | Linux/macOS. Requires `npy-viewer.py` deps |
 | `run-script.sh` | Bash launcher for running any script in the repo | Linux/macOS. `bash`, `python3` |
 | `run-script.ps1` | PowerShell launcher for running any script in the repo | Windows. `PowerShell`, `python` |
+| `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | macOS only. No external deps |
 
 ### Test Helpers
 

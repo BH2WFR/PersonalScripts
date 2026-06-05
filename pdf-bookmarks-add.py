@@ -101,7 +101,7 @@ else:
 
 
 #============ 用户交互 ===========
-filepath = _arg_path if _arg_path else Utils.resolve_input_path(
+filepath = _arg_path if _arg_path else Input.resolve_input_path(
     DEFAULT_INPUT,
     prompt="Enter input PDF file path",
     path_type="file",
@@ -115,7 +115,7 @@ if not filepath or not os.path.exists(filepath):
 _stem, _ext = os.path.splitext(os.path.basename(filepath))
 _default_output = os.path.join(os.path.dirname(filepath) or ".", f"{_stem}_bookmarked{_ext or '.pdf'}")
 
-output_path = Utils.resolve_output_path(
+output_path = Input.resolve_output_path(
     _arg_output if _arg_output else _default_output,
     prompt="Enter output PDF file path",
     path_type="file",
@@ -147,10 +147,13 @@ text_prompt = """
 """
 print(f"{FLYellow}Enter bookmarks text in Json. {CRst}")
 print(f"{FLCyan}Example format:{CRst}\n{FLMagenta}{text_prompt}{CRst}\n")
-bookmarks_text = Utils.read_stdin_multiline(
+bookmarks_text = Input.read_stdin_multiline(
 	prompt_text="Paste the JSON bookmark data",
 	split_lines=False,
 )
+if not bookmarks_text:
+	print(f"{FLRed}No input provided. EXIT...{CRst}")
+	sys.exit(1)
 
 print(f"{FLYellow}  -> start parsing...")
 

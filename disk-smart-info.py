@@ -4,21 +4,17 @@
 import os
 import subprocess
 import sys
-import shutil
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from utils import *  # noqa: E402
 
 
 # ============ smartctl check ============
-if shutil.which("smartctl") is None:
-    if sys.platform == "win32":
-        hint = "scoop install smartmontools"
-    elif sys.platform == "darwin":
-        hint = "brew install smartmontools"
-    else:
-        hint = "sudo apt install smartmontools"
-    print(f"{FLRed}ERROR: smartctl not found. Install with: {CRst}{FGray}{hint}{CRst}\n")
+if not Utils.check_commands(CmdCheck("smartctl", hints={
+    "windows": f"{FGray}scoop install smartmontools{CRst}",
+    "macos": f"{FGray}brew install smartmontools{CRst}",
+    "linux": f"{FGray}sudo apt install smartmontools{CRst}",
+})):
     sys.exit(1)
 
 if "--help" in sys.argv or "-h" in sys.argv:
@@ -123,8 +119,9 @@ def main():
         print(f"{FLRed}  No SMART-capable devices found.{CRst}\n")
         sys.exit(1)
 
-    # List devices
+    # List and select device
     print(f"{FLYellow}  SMART-capable devices:{CRst}\n")
+    options = []
     for idx, d in enumerate(devices):
         parts = [f"{FLGreen}{d['dev']}{CRst}"]
         if d["model"]:
@@ -135,27 +132,12 @@ def main():
             parts.append(f"{FGray}S/N: {d['serial']}{CRst}")
         if d["firmware"]:
             parts.append(f"{FGray}FW: {d['firmware']}{CRst}")
-        print(f"    {FLYellow}[{idx}]{CRst} {'  '.join(parts)}")
+        options.append(MenuOption([str(idx)], "  ".join(parts), value=idx))
     print()
 
-    # Select device
-    try:
-        choice = input(f"{FLYellow}  Select disk number (Enter to cancel): {CRst}").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
+    idx = Menu.select(options, prompt="Select disk number", separator=False)
+    if idx is None:
         sys.exit(0)
-
-    if not choice:
-        sys.exit(0)
-
-    try:
-        idx = int(choice)
-        if idx < 0 or idx >= len(devices):
-            print(f"{FLRed}  Invalid selection.{CRst}\n")
-            sys.exit(1)
-    except ValueError:
-        print(f"{FLRed}  Invalid input. Enter a number.{CRst}\n")
-        sys.exit(1)
 
     selected = devices[idx]
     print(f"\n{FLCyan}{'─' * 60}{CRst}")

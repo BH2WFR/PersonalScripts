@@ -56,7 +56,7 @@ for i in range(1, len(sys.argv)):
 if _arg_path:
     ROOT = _arg_path
 else:
-    ROOT = Utils.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
+    ROOT = Input.resolve_input_path(ROOT, prompt="Enter path to check", path_type="dir")
 
 if _arg_limit is not None:
     LIMIT = _arg_limit
