@@ -19,7 +19,7 @@ REPLACE_MAP = {
     "\u2003": "[em sp]",       "\u2007": "[fig sp]",
     "\u2008": "[punct sp]",    "\u2009": "[thin sp]",
     "\u200A": "[hair sp]",     "\u200D": "[ZWJ]",
-    "\uFFF9": "[interlinear]",   "\uFFFA": "[annot sep]",
+    "\uFFF9": "[interlinear]", "\uFFFA": "[annot sep]",
     "\uFFFB": "[annot end]",
     "\uFFFC":"[obj rep]",      "\uFFFD":"[rep chr]",
     "\uFFFE":"[not char]",     "\uFFFF":"[not char]",
@@ -84,17 +84,18 @@ def pad_to_width(s: str, target_width: int) -> str:
     return s + " " * (target_width - current)
 
 
-print(f"{FLYellow}=========== UNICODE STRING PARSER ==========={CRst}")
+def main() -> int:
+    print(f"{FLYellow}=========== UNICODE STRING PARSER ==========={CRst}")
 
-CLIP_FLAGS = {"--clip", "--from-clipboard"}
-from_clipboard = bool(CLIP_FLAGS & set(sys.argv))
-do_pause = "--pause" in sys.argv
-# Remove custom flags so they don't interfere with positional arg parsing
-sys.argv = [a for a in sys.argv if a not in CLIP_FLAGS and a != "--pause"]
+    CLIP_FLAGS = {"--clip", "--from-clipboard"}
+    from_clipboard = bool(CLIP_FLAGS & set(sys.argv))
+    do_pause = "--pause" in sys.argv
+    # Remove custom flags so they don't interfere with positional arg parsing
+    sys.argv = [a for a in sys.argv if a not in CLIP_FLAGS and a != "--pause"]
 
-if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(f"""
+    if "--help" in sys.argv or "-h" in sys.argv:
+        script_name = os.path.basename(sys.argv[0])
+        print(f"""
 {FLYellow}UNICODE STRING PARSER{CRst}
 =====================
 
@@ -116,112 +117,118 @@ Usage:
     macOS   — pbpaste (built-in)
     Linux   — wl-paste (Wayland) or xclip (X11); {FGray}sudo apt install wl-clipboard xclip{CRst}
 """)
-    sys.exit(0)
+        return 0
 
 
-#============ 用户交互 ===========
-if from_clipboard:
-    input_source = "clipboard"
-    try:
-        if sys.platform == "darwin":
-            text = subprocess.check_output(["pbpaste"], text=True)
-        elif sys.platform == "win32":
-            text = subprocess.check_output(["powershell", "-command", "Get-Clipboard"], text=True)
-        else:
-            # Linux: try wl-paste (Wayland) then xclip (X11)
-            try:
-                text = subprocess.check_output(["wl-paste"], text=True)
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                text = subprocess.check_output(["xclip", "-selection", "clipboard", "-o"], text=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(f"{FLRed}Failed to read clipboard.{CRst}", file=sys.stderr)
-        sys.exit(1)
-    if not text.strip():
-        print(f"{FLRed}Clipboard is empty. EXIT...{CRst}")
-        sys.exit(1)
-elif len(sys.argv) > 1:
-    input_source = "argument"
-    text = " ".join(sys.argv[1:])
-else:
-    input_source = "interaction"
-    text = Input.read_stdin_multiline(
-        prompt_text="Enter text to parse (one or more lines).",
-        raw=True,
-    )
-    if not text:
-        sys.exit(1)
-
-text_len = len(text)
-print(f"\n{FLYellow}Input source: {FLGreen}{input_source}{CRst}")
-print(f"{FLYellow}Input length: {text_len} character(s){CRst}")
-print(f"{FLYellow}Input string: {CRst}{FLCyan}{repr(text)}{CRst}\n")
-
-
-#============ 打印表头 ===========
-try:
-    term_width = os.get_terminal_size().columns - 1
-except OSError:
-    term_width = 119  # default 120-column terminal
-desc_width = max(20, term_width - 46)  # 46 = Index(7) + Char(13) + Hex(10) + Dec(9) + 7 separators
-HEX_COL = 23    # 1-based cursor column where Hex starts
-DEC_COL = 34    # 1-based cursor column where Dec starts
-DESC_COL = 44   # 1-based cursor column where Description starts
-
-sep1 = "─" * 7
-sep2 = "─" * 13
-sep3 = "─" * 10
-sep4 = "─" * 9
-sep5 = "─" * (desc_width + 2)
-
-print(f"┌{sep1}┬{sep2}┬{sep3}┬{sep4}┬{sep5}┐")
-print(f"│ Index │     Char    │   Hex    │   Dec   │ {'Description':<{desc_width}} │")
-print(f"├{sep1}┼{sep2}┼{sep3}┼{sep4}┼{sep5}┤")
-
-
-#============ 解析 ===========
-for idx, ch in enumerate(text):
-    cp = ord(ch)
-
-    display_char = REPLACE_MAP.get(ch, ch)
-    is_special = ch in REPLACE_MAP
-    is_control = cp in DESC_CONTROL
-
-    if is_control:
-        desc = DESC_CONTROL[cp]
-        char_color = FLRed
-        desc_color = FLRed
-    elif cp in DESC_SPECIAL:
-        desc = DESC_SPECIAL[cp]
-        char_color = FLCyan
-        desc_color = FGray
-    else:
+    #============ 用户交互 ===========
+    if from_clipboard:
+        input_source = "clipboard"
         try:
-            desc = unicodedata.name(ch)
-        except ValueError:
-            desc = "<no name>"
-        char_color = FLCyan if is_special else FLYellow
-        desc_color = FGray
+            if sys.platform == "darwin":
+                text = subprocess.check_output(["pbpaste"], text=True)
+            elif sys.platform == "win32":
+                text = subprocess.check_output(["powershell", "-command", "Get-Clipboard"], text=True)
+            else:
+                # Linux: try wl-paste (Wayland) then xclip (X11)
+                try:
+                    text = subprocess.check_output(["wl-paste"], text=True)
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    text = subprocess.check_output(["xclip", "-selection", "clipboard", "-o"], text=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print(f"{FLRed}Failed to read clipboard.{CRst}", file=sys.stderr)
+            return 1
+        if not text.strip():
+            print(f"{FLRed}Clipboard is empty. EXIT...{CRst}")
+            return 1
+    elif len(sys.argv) > 1:
+        input_source = "argument"
+        text = " ".join(sys.argv[1:])
+    else:
+        input_source = "interaction"
+        text = Input.read_stdin_multiline(
+            prompt_text="Enter text to parse (one or more lines).",
+            raw=True,
+        )
+        if not text:
+            return 1
 
-    hex_str = f"0x{cp:04X}" if cp <= 0xFFFF else f"0x{cp:06X}"
-    desc_display = pad_to_width(desc, desc_width)
+    text_len = len(text)
+    print(f"\n{FLYellow}Input source: {FLGreen}{input_source}{CRst}")
+    print(f"{FLYellow}Input length: {text_len} character(s){CRst}")
+    print(f"{FLYellow}Input string: {CRst}{FLCyan}{repr(text)}{CRst}\n")
 
-    # Print Index + Char first (the variable-width part)
-    char_str = pad_to_width(display_char, 12)
-    sys.stdout.write(f"│ {FLGreen}{idx:>5}{CRst} │ {char_color}{char_str}{CRst} ")
 
-    # Jump to absolute columns for the remaining fixed-width columns
-    sys.stdout.write(f"\033[{HEX_COL}G│ {FLBlue}{hex_str:<8}{CRst} ")
-    sys.stdout.write(f"\033[{DEC_COL}G│ {FLMagenta}{cp:>7}{CRst} ")
-    sys.stdout.write(f"\033[{DESC_COL}G│ {desc_color}{desc_display}{CRst} │\n")
-
-total = f"Total: {text_len} character(s)"
-print(f"├{sep1}┴{sep2}┴{sep3}┴{sep4}┴{sep5}┤")
-total_width = desc_width + 48  # 48 = index(7) + char(13) + hex(10) + dec(9) + 9 separators
-print(f"│     {FLYellow}{total}{CRst}{' ' * (total_width - 9 - len(total))} │")
-print(f"└{'─' * (total_width - 3)}┘\n")
-
-if do_pause:
+    #============ 打印表头 ===========
     try:
-        input(f"{FGray}Press Enter to exit...{CRst}")
-    except (EOFError, KeyboardInterrupt):
-        print()
+        term_width = os.get_terminal_size().columns - 1
+    except OSError:
+        term_width = 119  # default 120-column terminal
+    desc_width = max(20, term_width - 46)  # 46 = Index(7) + Char(13) + Hex(10) + Dec(9) + 7 separators
+    HEX_COL = 23    # 1-based cursor column where Hex starts
+    DEC_COL = 34    # 1-based cursor column where Dec starts
+    DESC_COL = 44   # 1-based cursor column where Description starts
+
+    sep1 = "─" * 7
+    sep2 = "─" * 13
+    sep3 = "─" * 10
+    sep4 = "─" * 9
+    sep5 = "─" * (desc_width + 2)
+
+    print(f"┌{sep1}┬{sep2}┬{sep3}┬{sep4}┬{sep5}┐")
+    print(f"│ Index │     Char    │   Hex    │   Dec   │ {'Description':<{desc_width}} │")
+    print(f"├{sep1}┼{sep2}┼{sep3}┼{sep4}┼{sep5}┤")
+
+
+    #============ 解析 ===========
+    for idx, ch in enumerate(text):
+        cp = ord(ch)
+
+        display_char = REPLACE_MAP.get(ch, ch)
+        is_special = ch in REPLACE_MAP
+        is_control = cp in DESC_CONTROL
+
+        if is_control:
+            desc = DESC_CONTROL[cp]
+            char_color = FLRed
+            desc_color = FLRed
+        elif cp in DESC_SPECIAL:
+            desc = DESC_SPECIAL[cp]
+            char_color = FLCyan
+            desc_color = FGray
+        else:
+            try:
+                desc = unicodedata.name(ch)
+            except ValueError:
+                desc = "<no name>"
+            char_color = FLCyan if is_special else FLYellow
+            desc_color = FGray
+
+        hex_str = f"0x{cp:04X}" if cp <= 0xFFFF else f"0x{cp:06X}"
+        desc_display = pad_to_width(desc, desc_width)
+
+        # Print Index + Char first (the variable-width part)
+        char_str = pad_to_width(display_char, 12)
+        sys.stdout.write(f"│ {FLGreen}{idx:>5}{CRst} │ {char_color}{char_str}{CRst} ")
+
+        # Jump to absolute columns for the remaining fixed-width columns
+        sys.stdout.write(f"\033[{HEX_COL}G│ {FLBlue}{hex_str:<8}{CRst} ")
+        sys.stdout.write(f"\033[{DEC_COL}G│ {FLMagenta}{cp:>7}{CRst} ")
+        sys.stdout.write(f"\033[{DESC_COL}G│ {desc_color}{desc_display}{CRst} │\n")
+
+    total = f"Total: {text_len} character(s)"
+    print(f"├{sep1}┴{sep2}┴{sep3}┴{sep4}┴{sep5}┤")
+    total_width = desc_width + 48  # 48 = index(7) + char(13) + hex(10) + dec(9) + 9 separators
+    print(f"│     {FLYellow}{total}{CRst}{' ' * (total_width - 9 - len(total))} │")
+    print(f"└{'─' * (total_width - 3)}┘\n")
+
+    if do_pause:
+        try:
+            input(f"{FGray}Press Enter to exit...{CRst}")
+        except (EOFError, KeyboardInterrupt):
+            print()
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise sys.exit(main())

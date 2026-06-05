@@ -3,6 +3,7 @@
 # 依赖库：mss、pynput、Pillow
 
 from utils import *
+import sys
 import threading
 import platform
 
@@ -144,285 +145,291 @@ def _check_screen_recording_permission() -> bool:
         return False
 
 
-print(f"{FLYellow}======= Automatic Screen Capturing Tool for Document ======={CRst}")
-if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(f"""
-AUTOMATIC SCREEN CAPTURING TOOL FOR DOCUMENT
-============================================
 
-Usage:
-  python {script_name}                enter interactive mode
-  python {script_name} --help         show this help
+def main() -> int:
+    print(f"{FLYellow}======= Automatic Screen Capturing Tool for Document ======={CRst}")
+    if "--help" in sys.argv or "-h" in sys.argv:
+        script_name = os.path.basename(sys.argv[0])
+        print(f"""
+    AUTOMATIC SCREEN CAPTURING TOOL FOR DOCUMENT
+    ============================================
 
-{FLYellow}Description:{CRst}
-  Auto-capture screenshots of DRM-protected or encrypted-USB PDF documents.
-  Works by sending PgDn key to flip pages, clicking to activate the window,
-  and auto-saving screenshots to a folder.
+    Usage:
+      python {script_name}                enter interactive mode
+      python {script_name} --help         show this help
 
-{FLYellow}Requirements:{CRst}
-  macOS only (uses osascript for window activation).
-  Python: {FGray}pip install mss pynput Pillow{CRst}
-""")
-    sys.exit(0)
+    {FLYellow}Description:{CRst}
+      Auto-capture screenshots of DRM-protected or encrypted-USB PDF documents.
+      Works by sending PgDn key to flip pages, clicking to activate the window,
+      and auto-saving screenshots to a folder.
+
+    {FLYellow}Requirements:{CRst}
+      macOS only (uses osascript for window activation).
+      Python: {FGray}pip install mss pynput Pillow{CRst}
+    """)
+        return 0
 
 
-class ImageCompressMode(enum.Enum):
-    none = 0
-    grayscale = 1
-    binary = 2
+    class ImageCompressMode(enum.Enum):
+        none = 0
+        grayscale = 1
+        binary = 2
 
-class Region:
-    left: int = 15
-    top: int = 15
-    width: int = 300
-    height: int = 300
+    class Region:
+        left: int = 15
+        top: int = 15
+        width: int = 300
+        height: int = 300
     
-    center_x: int = 250
-    center_y: int = 250
+        center_x: int = 250
+        center_y: int = 250
 
-class Config:
-    # monitor_index: int = 1 # monitors[0] is the virtual screen, monitors[1] is the primary monitor, monitors[2] is the secondary monitor, etc.
-    capture_interval_s: float = 0.5 # seconds
-    capture_count: int = 10
-    output_dir: str = "./output"
-    sleep_time_ms: int = 200 # 鼠标激活窗口后按 PgDn 键的间隔时间，单位毫秒
-    compression_mode: ImageCompressMode = ImageCompressMode.none
-    compression_level: int = 9 # PIL compression level, 0-9, where 0 is no compression and 9 is maximum compression
-
-
-mouse_controller = mouse.Controller()
-keyboard_controller = keyboard.Controller()
-stop_event = threading.Event()
+    class Config:
+        # monitor_index: int = 1 # monitors[0] is the virtual screen, monitors[1] is the primary monitor, monitors[2] is the secondary monitor, etc.
+        capture_interval_s: float = 0.5 # seconds
+        capture_count: int = 10
+        output_dir: str = "./output"
+        sleep_time_ms: int = 200 # 鼠标激活窗口后按 PgDn 键的间隔时间，单位毫秒
+        compression_mode: ImageCompressMode = ImageCompressMode.none
+        compression_level: int = 9 # PIL compression level, 0-9, where 0 is no compression and 9 is maximum compression
 
 
-def start_stop_hotkey_listener(stop_key: keyboard.Key = keyboard.Key.f9) -> keyboard.Listener:
-    """Listen for a stop hotkey in the background and set a shared stop flag."""
-    listener: typing.Optional[keyboard.Listener] = None
+    mouse_controller = mouse.Controller()
+    keyboard_controller = keyboard.Controller()
+    stop_event = threading.Event()
 
-    def on_press(key: typing.Any) -> None:
-        nonlocal listener
-        if key == stop_key:
-            print(f"\n{FLRed}[STOP] F9 detected, stopping capture...{CRst}")
-            stop_event.set()
-            if listener is not None:
+
+    def start_stop_hotkey_listener(stop_key: keyboard.Key = keyboard.Key.f9) -> keyboard.Listener:
+        """Listen for a stop hotkey in the background and set a shared stop flag."""
+        listener: typing.Optional[keyboard.Listener] = None
+
+        def on_press(key: typing.Any) -> None:
+            nonlocal listener
+            if key == stop_key:
+                print(f"\n{FLRed}[STOP] F9 detected, stopping capture...{CRst}")
+                stop_event.set()
+                if listener is not None:
+                    listener.stop()
+
+        listener = keyboard.Listener(on_press=on_press, suppress=False)
+        listener.start()
+        return listener
+
+
+    def interrupted_sleep(total_s: float, step_s: float = 0.05) -> bool:
+        """Sleep in small chunks so F9 can interrupt long waits quickly."""
+        end_time = time.time() + max(0.0, total_s)
+        while time.time() < end_time:
+            if stop_event.is_set():
+                return False
+            time.sleep(min(step_s, max(0.0, end_time - time.time())))
+        return True
+
+    # 获取当前鼠标位置
+    def get_cursor_pos() -> typing.Optional[tuple[int, int]]:
+        try:
+            x, y = mouse_controller.position
+            return int(x), int(y)
+        except Exception:
+            return None
+
+    # DPI 适应（Windows）
+    Utils.enable_dpi_awareness()
+
+    # macOS: check both Accessibility and Screen Recording permissions
+    if not check_macos_permissions():
+        return 1
+
+    # 通过热键记录鼠标位置，避免真实点击触发下层窗口。
+    def get_click_pos(capture_key: keyboard.Key = keyboard.Key.f8):
+        result: dict[str, typing.Optional[tuple[int, int]]] = {"pos": None}
+        listener: typing.Optional[keyboard.Listener] = None
+
+        def on_press(key: typing.Any) -> None:
+            nonlocal listener
+            if key == capture_key:
+                result["pos"] = get_cursor_pos()
+                if listener is not None:
+                    listener.stop()
+                return
+            if key == keyboard.Key.esc and listener is not None:
                 listener.stop()
 
-    listener = keyboard.Listener(on_press=on_press, suppress=False)
-    listener.start()
-    return listener
+        with keyboard.Listener(on_press=on_press, suppress=True) as listener:
+            listener.join()
+
+        return result["pos"]
 
 
-def interrupted_sleep(total_s: float, step_s: float = 0.05) -> bool:
-    """Sleep in small chunks so F9 can interrupt long waits quickly."""
-    end_time = time.time() + max(0.0, total_s)
-    while time.time() < end_time:
+
+
+    # print(f"{FLCyan}Select monitor index (default: {Config.monitor_index}, 0 is virtual screen (stitched all screens), 1 is the primary monitor, 2 is the secondary monitor, etc...): {CRst}", end="")
+    # Config.monitor_index = int(input() or Config.monitor_index)
+    print(f"{FLCyan}Enter capturing interval in seconds (default: {FLYellow}{Config.capture_interval_s}{FLCyan}): {CRst}", end="")
+    Config.capture_interval_s = float(safe_input() or Config.capture_interval_s)
+    print(f"{FLCyan}Enter capturing count (default: {FLYellow}{Config.capture_count}{FLCyan}): {CRst}", end="")
+    Config.capture_count = int(safe_input() or Config.capture_count)
+    Config.output_dir = Input.resolve_output_path(
+        os.path.abspath(Config.output_dir),
+        prompt="Enter Output Directory",
+        path_type="dir",
+    )
+
+    # 鼠标点击位置，左键、右键、中键都可以，分别对应不同的功能：
+    print(f"{FLGreen}Move mouse to top-left corner, then press F8 to capture (Esc to cancel)...{CRst}")
+    click_pos = get_click_pos() # 左上角
+    if click_pos is not None:
+        Region.left, Region.top = click_pos
+        print(f"{FLBlue}  Selected region top-left corner: {click_pos}{CRst}")
+    else:
+        raise Exception("No click detected. Exiting.")
+    print(f"{FLGreen}Move mouse to bottom-right corner, then press F8 to capture (Esc to cancel)...{CRst}")
+    click_pos = get_click_pos() # 右下角
+    if click_pos is not None:
+        Region.width = click_pos[0] - Region.left
+        Region.height = click_pos[1] - Region.top
+        print(f"{FLBlue}  Selected region bottom-right corner: {click_pos}{CRst}")
+    else:
+        raise Exception("No click detected. Exiting.")
+    print(f"{FLGreen}Move mouse to center point, then press F8 to capture (Esc to cancel)...{CRst}")
+    click_pos = get_click_pos() # 键盘发送 PageDn 键时，激活窗口时点击的位置
+    if click_pos is not None:
+        Region.center_x, Region.center_y = click_pos
+        print(f"{FLBlue}  Selected region center point: {click_pos}{CRst}")
+
+    # 图像压缩模式选择：
+    print(f"{FLCyan}Select image compression mode (default: {FLYellow}{ImageCompressMode.none.name}{FLCyan}): {CRst}")
+    for mode in ImageCompressMode:
+        print(f"{FLMagenta}  {mode.value}. {mode.name}{CRst}")
+    mode_input = safe_input() or str(ImageCompressMode.none.value)
+    try:
+        mode_value = int(mode_input.strip())
+        image_compress_mode = ImageCompressMode(mode_value)
+    except (ValueError, KeyError):
+        print(f"{FLRed}Invalid input for image compression mode. Using default: {ImageCompressMode.none.name}{CRst}")
+        image_compress_mode = ImageCompressMode.none
+    Config.compression_mode = image_compress_mode
+
+    print(f"{FLCyan}Enter image compression level (0-9, default: {Config.compression_level}): {CRst}", end="")
+    compression_level_input = input() or str(Config.compression_level)
+    try:
+        compression_level = int(compression_level_input)
+        if 0 <= compression_level <= 9:
+            Config.compression_level = compression_level
+        else:
+            raise ValueError
+    except ValueError:
+        print(f"{FLRed}Invalid input for compression level. Using default: {Config.compression_level}{CRst}")
+
+    print(f"{FLYellow}WARNING: Please set the DPI scaling of the target monitor to 100% (96 DPI) to ensure correct capturing region. Current DPI scaling may cause incorrect capture results.{CRst}")
+
+    print(f"{FLCyan}Output Path: {CRst}{FLYellow}{Config.output_dir}{CRst}, "
+            # f"{FLCyan}monitor index: {CRst}{FLYellow}{Config.monitor_index}{CRst}, "
+            f"{FLCyan}capturing interval: {CRst}{FLYellow}{Config.capture_interval_s}s{CRst}, "
+            f"{FLCyan}capturing count: {CRst}{FLYellow}{Config.capture_count}{CRst}")
+    print(f"{FLCyan}Final capturing region: left={CRst}{FLYellow}{Region.left}{CRst}, {FLCyan}top={CRst}{FLYellow}{Region.top}{CRst}, "
+            f"{FLCyan}width={CRst}{FLYellow}{Region.width}{CRst}, {FLCyan}height={CRst}{FLYellow}{Region.height}{CRst}, "
+            f"{FLCyan}center={CRst}{FLYellow}({Region.center_x}, {Region.center_y}){CRst}")
+    print(f"{FLYellow}Confirm to start capturing? (y/n, default: y): {CRst}", end="")
+    confirm = input() or "y"
+    if confirm.lower() != "y":
+        print(f"{FLRed}Capture cancelled. Exiting.{CRst}")
+        return 0
+
+
+
+
+    def image_color_processing(image: Image.Image, mode: ImageCompressMode) -> Image.Image:
+        if mode == ImageCompressMode.grayscale:
+            image = image.convert("L")
+        elif mode == ImageCompressMode.binary:
+            # Use a LUT to avoid callable typing ambiguity in PIL.Image.point.
+            threshold_lut = [0 if i < 128 else 255 for i in range(256)]
+            image = image.convert("L").point(threshold_lut, mode="1")
+        else:
+            image = image.copy()
+        return image
+
+    def click_and_send_pagedown(x, y, sleep_time_s=0.05):
+        if stop_event.is_set():
+            return
+
+        # Move mouse to target and click to activate the window
+        mouse_controller.position = (x, y)
+        if not interrupted_sleep(0.05):
+            return
+        mouse_controller.click(mouse.Button.left, 1) # 点击窗口，激活窗口
+
+        # On macOS, the window activation may take a moment;
+        # give the system time to bring the window to front.
+        if not interrupted_sleep(max(sleep_time_s, 0.15)):
+            return
+
+        keyboard_controller.press(keyboard.Key.page_down)
+        keyboard_controller.release(keyboard.Key.page_down)
+        interrupted_sleep(sleep_time_s)
+
+
+    def activate_window_before_first_capture(x, y) -> bool:
+        """Click the target window to bring it to front before the first screenshot.
+        Returns True if the activation likely succeeded."""
         if stop_event.is_set():
             return False
-        time.sleep(min(step_s, max(0.0, end_time - time.time())))
-    return True
+        mouse_controller.position = (x, y)
+        interrupted_sleep(0.05)
+        mouse_controller.click(mouse.Button.left, 1)
+        # Wait longer for first activation — macOS may animate window transitions
+        return interrupted_sleep(0.3)
 
-# 获取当前鼠标位置
-def get_cursor_pos() -> typing.Optional[tuple[int, int]]:
+
+    print(f"{FLCyan}Hotkey enabled: press {FLYellow}F9{FLCyan} at any time to stop.{CRst}")
+    stop_listener = start_stop_hotkey_listener()
+
+    # Activate the target window before first capture
+    print(f"{FLCyan}Activating target window...{CRst}")
+    activate_window_before_first_capture(Region.center_x, Region.center_y)
+
+    captured_count = 0
     try:
-        x, y = mouse_controller.position
-        return int(x), int(y)
-    except Exception:
-        return None
-
-# DPI 适应（Windows）
-Utils.enable_dpi_awareness()
-
-# macOS: check both Accessibility and Screen Recording permissions
-if not check_macos_permissions():
-    sys.exit(1)
-
-# 通过热键记录鼠标位置，避免真实点击触发下层窗口。
-def get_click_pos(capture_key: keyboard.Key = keyboard.Key.f8):
-    result: dict[str, typing.Optional[tuple[int, int]]] = {"pos": None}
-    listener: typing.Optional[keyboard.Listener] = None
-
-    def on_press(key: typing.Any) -> None:
-        nonlocal listener
-        if key == capture_key:
-            result["pos"] = get_cursor_pos()
-            if listener is not None:
-                listener.stop()
-            return
-        if key == keyboard.Key.esc and listener is not None:
-            listener.stop()
-
-    with keyboard.Listener(on_press=on_press, suppress=True) as listener:
-        listener.join()
-
-    return result["pos"]
-
-
-
-
-# print(f"{FLCyan}Select monitor index (default: {Config.monitor_index}, 0 is virtual screen (stitched all screens), 1 is the primary monitor, 2 is the secondary monitor, etc...): {CRst}", end="")
-# Config.monitor_index = int(input() or Config.monitor_index)
-print(f"{FLCyan}Enter capturing interval in seconds (default: {FLYellow}{Config.capture_interval_s}{FLCyan}): {CRst}", end="")
-Config.capture_interval_s = float(safe_input() or Config.capture_interval_s)
-print(f"{FLCyan}Enter capturing count (default: {FLYellow}{Config.capture_count}{FLCyan}): {CRst}", end="")
-Config.capture_count = int(safe_input() or Config.capture_count)
-Config.output_dir = Input.resolve_output_path(
-    os.path.abspath(Config.output_dir),
-    prompt="Enter Output Directory",
-    path_type="dir",
-)
-
-# 鼠标点击位置，左键、右键、中键都可以，分别对应不同的功能：
-print(f"{FLGreen}Move mouse to top-left corner, then press F8 to capture (Esc to cancel)...{CRst}")
-click_pos = get_click_pos() # 左上角
-if click_pos is not None:
-    Region.left, Region.top = click_pos
-    print(f"{FLBlue}  Selected region top-left corner: {click_pos}{CRst}")
-else:
-    raise Exception("No click detected. Exiting.")
-print(f"{FLGreen}Move mouse to bottom-right corner, then press F8 to capture (Esc to cancel)...{CRst}")
-click_pos = get_click_pos() # 右下角
-if click_pos is not None:
-    Region.width = click_pos[0] - Region.left
-    Region.height = click_pos[1] - Region.top
-    print(f"{FLBlue}  Selected region bottom-right corner: {click_pos}{CRst}")
-else:
-    raise Exception("No click detected. Exiting.")
-print(f"{FLGreen}Move mouse to center point, then press F8 to capture (Esc to cancel)...{CRst}")
-click_pos = get_click_pos() # 键盘发送 PageDn 键时，激活窗口时点击的位置
-if click_pos is not None:
-    Region.center_x, Region.center_y = click_pos
-    print(f"{FLBlue}  Selected region center point: {click_pos}{CRst}")
-
-# 图像压缩模式选择：
-print(f"{FLCyan}Select image compression mode (default: {FLYellow}{ImageCompressMode.none.name}{FLCyan}): {CRst}")
-for mode in ImageCompressMode:
-    print(f"{FLMagenta}  {mode.value}. {mode.name}{CRst}")
-mode_input = safe_input() or str(ImageCompressMode.none.value)
-try:
-    mode_value = int(mode_input.strip())
-    image_compress_mode = ImageCompressMode(mode_value)
-except (ValueError, KeyError):
-    print(f"{FLRed}Invalid input for image compression mode. Using default: {ImageCompressMode.none.name}{CRst}")
-    image_compress_mode = ImageCompressMode.none
-Config.compression_mode = image_compress_mode
-
-print(f"{FLCyan}Enter image compression level (0-9, default: {Config.compression_level}): {CRst}", end="")
-compression_level_input = input() or str(Config.compression_level)
-try:
-    compression_level = int(compression_level_input)
-    if 0 <= compression_level <= 9:
-        Config.compression_level = compression_level
-    else:
-        raise ValueError
-except ValueError:
-    print(f"{FLRed}Invalid input for compression level. Using default: {Config.compression_level}{CRst}")
-
-print(f"{FLYellow}WARNING: Please set the DPI scaling of the target monitor to 100% (96 DPI) to ensure correct capturing region. Current DPI scaling may cause incorrect capture results.{CRst}")
-
-print(f"{FLCyan}Output Path: {CRst}{FLYellow}{Config.output_dir}{CRst}, "
-        # f"{FLCyan}monitor index: {CRst}{FLYellow}{Config.monitor_index}{CRst}, "
-        f"{FLCyan}capturing interval: {CRst}{FLYellow}{Config.capture_interval_s}s{CRst}, "
-        f"{FLCyan}capturing count: {CRst}{FLYellow}{Config.capture_count}{CRst}")
-print(f"{FLCyan}Final capturing region: left={CRst}{FLYellow}{Region.left}{CRst}, {FLCyan}top={CRst}{FLYellow}{Region.top}{CRst}, "
-        f"{FLCyan}width={CRst}{FLYellow}{Region.width}{CRst}, {FLCyan}height={CRst}{FLYellow}{Region.height}{CRst}, "
-        f"{FLCyan}center={CRst}{FLYellow}({Region.center_x}, {Region.center_y}){CRst}")
-print(f"{FLYellow}Confirm to start capturing? (y/n, default: y): {CRst}", end="")
-confirm = input() or "y"
-if confirm.lower() != "y":
-    print(f"{FLRed}Capture cancelled. Exiting.{CRst}")
-    exit()
-
-
-
-
-def image_color_processing(image: Image.Image, mode: ImageCompressMode) -> Image.Image:
-    if mode == ImageCompressMode.grayscale:
-        image = image.convert("L")
-    elif mode == ImageCompressMode.binary:
-        # Use a LUT to avoid callable typing ambiguity in PIL.Image.point.
-        threshold_lut = [0 if i < 128 else 255 for i in range(256)]
-        image = image.convert("L").point(threshold_lut, mode="1")
-    else:
-        image = image.copy()
-    return image
-
-def click_and_send_pagedown(x, y, sleep_time_s=0.05):
-    if stop_event.is_set():
-        return
-
-    # Move mouse to target and click to activate the window
-    mouse_controller.position = (x, y)
-    if not interrupted_sleep(0.05):
-        return
-    mouse_controller.click(mouse.Button.left, 1) # 点击窗口，激活窗口
-    
-    # On macOS, the window activation may take a moment;
-    # give the system time to bring the window to front.
-    if not interrupted_sleep(max(sleep_time_s, 0.15)):
-        return
-
-    keyboard_controller.press(keyboard.Key.page_down)
-    keyboard_controller.release(keyboard.Key.page_down)
-    interrupted_sleep(sleep_time_s)
-
-
-def activate_window_before_first_capture(x, y) -> bool:
-    """Click the target window to bring it to front before the first screenshot.
-    Returns True if the activation likely succeeded."""
-    if stop_event.is_set():
-        return False
-    mouse_controller.position = (x, y)
-    interrupted_sleep(0.05)
-    mouse_controller.click(mouse.Button.left, 1)
-    # Wait longer for first activation — macOS may animate window transitions
-    return interrupted_sleep(0.3)
-
-
-print(f"{FLCyan}Hotkey enabled: press {FLYellow}F9{FLCyan} at any time to stop.{CRst}")
-stop_listener = start_stop_hotkey_listener()
-
-# Activate the target window before first capture
-print(f"{FLCyan}Activating target window...{CRst}")
-activate_window_before_first_capture(Region.center_x, Region.center_y)
-
-captured_count = 0
-try:
-    for i in range(Config.capture_count):
-    # for i in range(1):
-        # start_time = time.time()
-        if stop_event.is_set():
-            break
-
-        with mss.MSS() as sct:
-            # monitor = sct.monitors[Config.monitor_index]
-            region = {
-                "left": Region.left,
-                "top": Region.top,
-                "width": Region.width,
-                "height": Region.height,
-            }
-            img = sct.grab(region)
-            path = os.path.join(Config.output_dir, f"screenshot_{i+1}.png")
-            img_pil = Image.frombytes("RGB", img.size, img.rgb)
-            img_processed = image_color_processing(img_pil, Config.compression_mode)
-            img_processed.save(path, optimize=True, compress_level=Config.compression_level)
-
-        captured_count += 1
-        print(f"  idx: {FLYellow}{i+1}{CRst}/{Config.capture_count}, saved to: {FLGreen}{path}{CRst}")
-
-        if i < (Config.capture_count - 1) and not stop_event.is_set():
-            if not interrupted_sleep(Config.capture_interval_s):
+        for i in range(Config.capture_count):
+        # for i in range(1):
+            # start_time = time.time()
+            if stop_event.is_set():
                 break
-            click_and_send_pagedown(Region.center_x, Region.center_y, Config.sleep_time_ms / 1000)
-finally:
-    stop_listener.stop()
-    
-    
+
+            with mss.MSS() as sct:
+                # monitor = sct.monitors[Config.monitor_index]
+                region = {
+                    "left": Region.left,
+                    "top": Region.top,
+                    "width": Region.width,
+                    "height": Region.height,
+                }
+                img = sct.grab(region)
+                path = os.path.join(Config.output_dir, f"screenshot_{i+1}.png")
+                img_pil = Image.frombytes("RGB", img.size, img.rgb)
+                img_processed = image_color_processing(img_pil, Config.compression_mode)
+                img_processed.save(path, optimize=True, compress_level=Config.compression_level)
+
+            captured_count += 1
+            print(f"  idx: {FLYellow}{i+1}{CRst}/{Config.capture_count}, saved to: {FLGreen}{path}{CRst}")
+
+            if i < (Config.capture_count - 1) and not stop_event.is_set():
+                if not interrupted_sleep(Config.capture_interval_s):
+                    break
+                click_and_send_pagedown(Region.center_x, Region.center_y, Config.sleep_time_ms / 1000)
+    finally:
+        stop_listener.stop()
 
 
 
-if stop_event.is_set():
-    print(f"{FLYellow}Capture stopped by user. Saved {captured_count} images to: {Config.output_dir}{CRst}")
-else:
-    print(f"{FLGreen}Capture completed. Total {FLYellow}{captured_count}{FLGreen} images saved to: {FLYellow}{Config.output_dir}{CRst}")
+
+
+    if stop_event.is_set():
+        print(f"{FLYellow}Capture stopped by user. Saved {captured_count} images to: {Config.output_dir}{CRst}")
+    else:
+        print(f"{FLGreen}Capture completed. Total {FLYellow}{captured_count}{FLGreen} images saved to: {FLYellow}{Config.output_dir}{CRst}")
+    return 0
+
+if __name__ == "__main__":
+    raise sys.exit(main())

@@ -1,13 +1,15 @@
+import sys
 from utils import *
 # 基于 yt-dlp 的 m3u8 流媒体视频下载器
 # 要求先使用 scoop 安装 yt-dlp, ffmpeg
 
 
-print(f"{FLYellow}=========== M3U8 DOWNLOAD TOOL ==========={CRst}")
+def main() -> int:
+    print(f"{FLYellow}=========== M3U8 DOWNLOAD TOOL ==========={CRst}")
 
-if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(f"""
+    if "--help" in sys.argv or "-h" in sys.argv:
+        script_name = os.path.basename(sys.argv[0])
+        print(f"""
 M3U8 DOWNLOAD TOOL - m3u8 Stream Downloader
 ============================================
 
@@ -28,82 +30,86 @@ Usage:
   Output directory, m3u8 URLs (multi-line EOF input), output filename template,
   custom referer/header.
 """)
-    sys.exit(0)
+        return 0
 
 
-if not Utils.check_commands(
-    CmdCheck("yt-dlp", hints={
-        "windows": f"{FGray}scoop install yt-dlp{CRst}",
-        "macos": f"{FGray}brew install yt-dlp{CRst}",
-        "linux": f"{FGray}sudo apt install yt-dlp{CRst}",
-    }),
-    CmdCheck("ffmpeg", hints={
-        "windows": f"{FGray}scoop install ffmpeg{CRst}",
-        "macos": f"{FGray}brew install ffmpeg{CRst}",
-        "linux": f"{FGray}sudo apt install ffmpeg{CRst}",
-    }),
-):
-    sys.exit(1)
+    if not Utils.check_commands(
+        CmdCheck("yt-dlp", hints={
+            "windows": f"{FGray}scoop install yt-dlp{CRst}",
+            "macos": f"{FGray}brew install yt-dlp{CRst}",
+            "linux": f"{FGray}sudo apt install yt-dlp{CRst}",
+        }),
+        CmdCheck("ffmpeg", hints={
+            "windows": f"{FGray}scoop install ffmpeg{CRst}",
+            "macos": f"{FGray}brew install ffmpeg{CRst}",
+            "linux": f"{FGray}sudo apt install ffmpeg{CRst}",
+        }),
+    ):
+        return 1
 
 
-#* 下载到哪里？
-OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
+    #* 下载到哪里？
+    OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
 
-#* 链接
-if len(sys.argv) > 1:
-    URLS = []
-    for i in range(1, len(sys.argv)):
-        u = sys.argv[i].strip()
-        if not u.startswith("-") and u:
-            URLS.append(u)
-else:
-    URLS = Input.read_stdin_multiline(prompt_text="Enter m3u8 URLs (one per line).")
-
-if not URLS:
-    print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
-    sys.exit(1)
-
-
-#* 文件名
-FILENAME_TEMPLATE_DEFAULT = "%(title)s.%(ext)s"
-FILENAME_TEMPLATE = input(f"{FLYellow}Enter output filename template (default: `{FILENAME_TEMPLATE_DEFAULT}`): {CRst}").strip() or FILENAME_TEMPLATE_DEFAULT
-if not FILENAME_TEMPLATE:
-    print(f"{FLRed}Invalid filename template. EXIT...{CRst}\n")
-    sys.exit(1)
-
-#* Referer / Headers（可选）
-CUSTOM_HEADER = input(f"{FLYellow}Enter custom Referer or Header (e.g. 'Referer:https://example.com') (default: none): {CRst}").strip() or ""
-
-
-#* 下载
-print(f"{FLGreen}Starting downloads...{CRst}\n")
-succeedCnt: int = 0
-failedCnt: int = 0
-
-for idx, url in enumerate(URLS):
-    current_output_path = os.path.join(OUTPUT_DIR, FILENAME_TEMPLATE)
-    args = [
-        "yt-dlp",
-        url,
-        "--output", current_output_path,
-        "--restrict-filenames",
-        "--retries", "3",
-        "--embed-metadata",
-    ]
-    if CUSTOM_HEADER:
-        args += ["--add-header", CUSTOM_HEADER]
-
-    print(f"{FLYellow}=====[ Downloading {idx + 1}/{len(URLS)} ]====={CRst}")
-    print(f"{FLYellow}Executing command:{CRst} {' '.join(args)}\n")
-    res = subprocess.run(args).returncode
-
-    if res != 0:
-        print(f"{FLRed}Download failed for URL: {url}{CRst}\n")
-        failedCnt += 1
+    #* 链接
+    if len(sys.argv) > 1:
+        URLS = []
+        for i in range(1, len(sys.argv)):
+            u = sys.argv[i].strip()
+            if not u.startswith("-") and u:
+                URLS.append(u)
     else:
-        print(f"{FLGreen}Download completed for URL: {url}{CRst}\n")
-        succeedCnt += 1
+        URLS = Input.read_stdin_multiline(prompt_text="Enter m3u8 URLs (one per line).")
 
-print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
-sys.exit(0 if failedCnt == 0 else 1)
+    if not URLS:
+        print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
+        return 1
+
+
+    #* 文件名
+    FILENAME_TEMPLATE_DEFAULT = "%(title)s.%(ext)s"
+    FILENAME_TEMPLATE = input(f"{FLYellow}Enter output filename template (default: `{FILENAME_TEMPLATE_DEFAULT}`): {CRst}").strip() or FILENAME_TEMPLATE_DEFAULT
+    if not FILENAME_TEMPLATE:
+        print(f"{FLRed}Invalid filename template. EXIT...{CRst}\n")
+        return 1
+
+    #* Referer / Headers（可选）
+    CUSTOM_HEADER = input(f"{FLYellow}Enter custom Referer or Header (e.g. 'Referer:https://example.com') (default: none): {CRst}").strip() or ""
+
+
+    #* 下载
+    print(f"{FLGreen}Starting downloads...{CRst}\n")
+    succeedCnt: int = 0
+    failedCnt: int = 0
+
+    for idx, url in enumerate(URLS):
+        current_output_path = os.path.join(OUTPUT_DIR, FILENAME_TEMPLATE)
+        args = [
+            "yt-dlp",
+            url,
+            "--output", current_output_path,
+            "--restrict-filenames",
+            "--retries", "3",
+            "--embed-metadata",
+        ]
+        if CUSTOM_HEADER:
+            args += ["--add-header", CUSTOM_HEADER]
+
+        print(f"{FLYellow}=====[ Downloading {idx + 1}/{len(URLS)} ]====={CRst}")
+        print(f"{FLYellow}Executing command:{CRst} {' '.join(args)}\n")
+        res = subprocess.run(args).returncode
+
+        if res != 0:
+            print(f"{FLRed}Download failed for URL: {url}{CRst}\n")
+            failedCnt += 1
+        else:
+            print(f"{FLGreen}Download completed for URL: {url}{CRst}\n")
+            succeedCnt += 1
+
+    print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
+    return 0 if failedCnt == 0 else 1
+
+
+if __name__ == "__main__":
+    raise sys.exit(main())

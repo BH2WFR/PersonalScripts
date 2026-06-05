@@ -70,7 +70,7 @@ def is_admin() -> bool:
     if not is_windows():
         return False
     try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        return bool(getattr(ctypes, "windll").shell32.IsUserAnAdmin())
     except Exception:
         return False
 
@@ -209,7 +209,7 @@ def delete_reg_value(path: str, name: str) -> None:
 
 def empty_recycle_bin() -> None:
     try:
-        ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x00000001 | 0x00000002 | 0x00000004)
+        getattr(ctypes, "windll").shell32.SHEmptyRecycleBinW(None, None, 0x00000001 | 0x00000002 | 0x00000004)
     except Exception:
         pass
 
@@ -544,4 +544,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise sys.exit(main())

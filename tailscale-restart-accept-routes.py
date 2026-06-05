@@ -5,9 +5,11 @@ import subprocess
 import sys
 from utils import *
 
-if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(f"""
+
+def main() -> int:
+    if "--help" in sys.argv or "-h" in sys.argv:
+        script_name = os.path.basename(sys.argv[0])
+        print(f"""
 {FLYellow}TAILSCALE RESTART ACCEPT ROUTES{CRst}
 ==================================
 
@@ -24,17 +26,22 @@ Usage:
   Linux (apt):      {FGray}sudo apt install tailscale{CRst}
   macOS (brew):     {FGray}brew install tailscale{CRst}
 """)
-    sys.exit(0)
+        return 0
 
-if not Utils.check_commands(CmdCheck("tailscale", hints={
-    "any": f"Is {FLYellow}Tailscale{CRst} installed?",
-})):
-    sys.exit(1)
+    if not Utils.check_commands(CmdCheck("tailscale", hints={
+        "any": f"Is {FLYellow}Tailscale{CRst} installed?",
+    })):
+        return 1
 
-print("Disabling accept-routes...")
-subprocess.run(["tailscale", "set", "--accept-routes=false"], check=True)
+    print("Disabling accept-routes...")
+    subprocess.run(["tailscale", "set", "--accept-routes=false"], check=True)
 
-print("Enabling accept-routes...")
-subprocess.run(["tailscale", "set", "--accept-routes"], check=True)
+    print("Enabling accept-routes...")
+    subprocess.run(["tailscale", "set", "--accept-routes"], check=True)
 
-print(f"{FLGreen}Done{CRst}. Subnet routes acceptance restarted.")
+    print(f"{FLGreen}Done{CRst}. Subnet routes acceptance restarted.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise sys.exit(main())
