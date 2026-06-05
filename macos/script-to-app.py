@@ -7,6 +7,7 @@ import argparse
 import shlex
 import plistlib
 
+SUBDIR = "PersonalScripts"
 
 help_message = f'''
 {FLYellow}==================== SCRIPT TO APP ===================={CRst}
@@ -68,12 +69,17 @@ def _resolve_target_script(arg_value: str | None) -> str:
         p = os.path.abspath(os.path.expanduser(arg_value))
         if not os.path.isfile(p):
             Utils.print_error_and_exit(f"Target script not found: {p}")
+        if os.path.splitext(p)[1].lower() != ".py":
+            Utils.print_error_and_exit(f"Target script must be a .py file: {p}")
         return p
-    return Input.resolve_input_path(
+    p = Input.resolve_input_path(
         default_path=os.path.expanduser("~"),
         prompt="Path to the Python script to wrap",
         path_type="file",
     )
+    if os.path.splitext(p)[1].lower() != ".py":
+        Utils.print_error_and_exit(f"Target script must be a .py file: {p}")
+    return p
 
 
 def _resolve_app_name(arg_value: str | None, script_path: str) -> str:
@@ -212,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         app_name += ".app"
 
     # ----- resolve output path -----
-    output_dir = os.path.expanduser("~/Applications")
+    output_dir = os.path.expanduser(f"~/Applications/{SUBDIR}")
     os.makedirs(output_dir, exist_ok=True)
 
     app_path = os.path.join(output_dir, app_name)
@@ -238,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(f"{FLYellow}  Target script  :{CRst} {FLCyan}{target_script}{CRst}")
     print(f"{FLYellow}  App path       :{CRst} {FLCyan}{app_path}{CRst}")
+    print(f"{FLYellow}  Python path    :{CRst} {FLCyan}{sys.executable}{CRst}")
     print()
 
     confirm = input(f"{FLYellow}Create this .app?{CRst} [Y/n]: ").strip().lower()
@@ -262,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(f"{FLYellow}Usage:{CRst}")
     print(f"  Right-click a file in Finder -> Get Info -> Open With ->")
-    print(f"  select {FLCyan}{os.path.basename(app_path)}{CRst}, then click {FLYellow}Change All...{CRst}")
+    print(f"  select {FLCyan}{app_path}{CRst}, then click {FLYellow}Change All...{CRst}")
     return 0
 
 
