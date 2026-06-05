@@ -99,6 +99,7 @@
 | `run-script.sh` | Bash 启动器，可运行仓库内任意脚本 | Linux/macOS。`bash`、`python3` |
 | `run-script.ps1` | PowerShell 启动器，可运行仓库内任意脚本 | Windows。`PowerShell`、`python` |
 | `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | 仅 macOS。无外部依赖 |
+| `windows/script-to-app.py` | 创建 Windows `.cmd` 启动器，将任意 Python 脚本安装到 `Program Files`。自动检测 Python（conda/系统），接收打开的文件路径作为参数，支持"打开方式"关联文件类型 | 仅 Windows。无外部依赖 |
 
 ### 测试辅助
 

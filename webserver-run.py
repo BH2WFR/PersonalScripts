@@ -42,25 +42,6 @@ def _validate_bind(bind):
         Utils.print_error_and_exit(f"Invalid IP address: {bind}")
 
 
-def _is_headless() -> bool:
-    """Return True if the environment likely has no GUI / display available."""
-    if sys.platform != "win32":
-        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-            return True
-    return False
-
-
-def _open_browser_safe(url: str) -> None:
-    """Open *url* in the default browser, silently skip on headless systems."""
-    if _is_headless():
-        return
-    try:
-        import webbrowser
-        webbrowser.open(url)
-    except Exception:
-        pass  # silently ignore browser-open failures
-
-
 def _run_server(directory, bind, port, url_path="", quiet=False, open_browser=True):
     """Start the HTTP server. Blocks until KeyboardInterrupt."""
     prev_dir = os.getcwd()
@@ -87,7 +68,7 @@ def _run_server(directory, bind, port, url_path="", quiet=False, open_browser=Tr
     print(f"\n{FGray}Press {FLYellow}Ctrl+C{CRst} to stop.{CRst}\n")
 
     if open_browser:
-        _open_browser_safe(full_url)
+        Utils.open_browser_safe(full_url)
 
     try:
         httpd.serve_forever()
@@ -96,6 +77,36 @@ def _run_server(directory, bind, port, url_path="", quiet=False, open_browser=Tr
         httpd.server_close()
     finally:
         os.chdir(prev_dir)
+
+
+def _prompt_bind(default_bind="0.0.0.0"):
+    bind_options = [
+        MenuOption(["0"], "0.0.0.0 (all interfaces)", value="0.0.0.0"),
+        MenuOption(["1"], "127.0.0.1 (localhost only)", value="127.0.0.1"),
+    ]
+    default_key = "1" if default_bind == "127.0.0.1" else "0"
+    bind = Menu.select(
+        bind_options,
+        prompt="Bind address",
+        default_key=default_key,
+        accept_custom_string=True,
+    )
+    return _validate_bind(bind)
+
+
+def _prompt_port(default_port=8000):
+    port_str = input(f"{FLYellow}Port {FGray}[{default_port}]{CRst}{FLYellow}: {CRst}").strip()
+    if not port_str:
+        return default_port
+    try:
+        return int(port_str)
+    except ValueError:
+        Utils.print_error_and_exit(f"Invalid port: {port_str}")
+
+
+def _prompt_quiet():
+    quiet_resp = input(f"{FLYellow}Suppress server output? {FGray}[n]{CRst}{FLYellow}: {CRst}").strip().lower()
+    return quiet_resp == "y"
 
 
 def main():
@@ -108,7 +119,8 @@ def main():
 
 {FLYellow}Usage:{CRst}
   python {script_name}                  interactive mode
-  python {script_name} --dir <PATH>     serve directory or index.html
+  python {script_name} <PATH>           serve directory or index.html
+  python {script_name} <PATH> --bind <IP> --port <PORT>
   python {script_name} --help           show this help
 
 {FLYellow}Description:{CRst}
@@ -116,9 +128,9 @@ def main():
   Uses Python's built-in http.server with threading enabled.
 
 {FLYellow}Options:{CRst}
-  --dir <PATH>       Directory or index.html file to serve
-  --bind <IP>        Bind address (default: 0.0.0.0)
-  --port <PORT>      Port number (default: 8000)
+  <PATH>             Directory or index.html file to serve (positional)
+  --bind <IP>        Bind address; with --port, enables non-interactive mode
+  --port <PORT>      Port number; with --bind, enables non-interactive mode
   --url-path <PATH>  URL path suffix appended after port (e.g. /#/setup?host=...)
   --no-open          Do not open the URL in the default browser
   --quiet            Suppress HTTP request log output
@@ -134,21 +146,28 @@ def main():
     url_path = ""
     no_open = False
     quiet = False
+    bind_provided = False
+    port_provided = False
 
     i = 1
     while i < len(sys.argv):
         a = sys.argv[i]
-        if a == "--dir" and i + 1 < len(sys.argv):
+        if not a.startswith("--") and serve_dir is None:
+            serve_dir = a
+            i += 1
+        elif a == "--dir" and i + 1 < len(sys.argv):
             serve_dir = sys.argv[i + 1]
             i += 2
         elif a == "--bind" and i + 1 < len(sys.argv):
             cli_bind = sys.argv[i + 1]
+            bind_provided = True
             i += 2
         elif a == "--port" and i + 1 < len(sys.argv):
             try:
                 cli_port = int(sys.argv[i + 1])
             except ValueError:
                 Utils.print_error_and_exit(f"Invalid port number: {sys.argv[i + 1]}")
+            port_provided = True
             i += 2
         elif a == "--url-path" and i + 1 < len(sys.argv):
             url_path = sys.argv[i + 1]
@@ -162,44 +181,28 @@ def main():
         else:
             i += 1
 
-    # ----- resolve target directory, bind, port -----
-    if serve_dir is not None:
-        target_dir = _resolve_dir(serve_dir)
-        _validate_bind(cli_bind)
-        bind = cli_bind
-        port = cli_port
-    else:
-        # fully interactive
+    # ----- resolve target directory -----
+    if serve_dir is None:
         raw_path = Input.resolve_input_path(
             "./",
             prompt="Enter directory or index.html path",
             path_type="any",
         )
         target_dir = _resolve_dir(raw_path)
+    else:
+        target_dir = _resolve_dir(serve_dir)
 
-        bind_options = [
-            MenuOption(["0"], "0.0.0.0 (all interfaces)", value="0.0.0.0"),
-            MenuOption(["1"], "127.0.0.1 (localhost only)", value="127.0.0.1"),
-        ]
-        bind = Menu.select(
-            bind_options,
-            prompt="Bind address",
-            default_key="0",
-            accept_custom_string=True,
-        )
+    # ----- resolve bind / port -----
+    if bind_provided and port_provided:
+        _validate_bind(cli_bind)
+        bind = cli_bind
+        port = cli_port
+    else:
+        bind = cli_bind if bind_provided else _prompt_bind(cli_bind)
         _validate_bind(bind)
-
-        port_str = input(f"{FLYellow}Port {FGray}[8000]{CRst}{FLYellow}: {CRst}").strip()
-        if not port_str:
-            port = 8000
-        else:
-            try:
-                port = int(port_str)
-            except ValueError:
-                Utils.print_error_and_exit(f"Invalid port: {port_str}")
-
-        quiet_resp = input(f"{FLYellow}Suppress server output? {FGray}[n]{CRst}{FLYellow}: {CRst}").strip().lower()
-        quiet = quiet_resp == "y"
+        port = cli_port if port_provided else _prompt_port(cli_port)
+        if not quiet:
+            quiet = _prompt_quiet()
 
     _run_server(target_dir, bind, port, url_path=url_path, quiet=quiet, open_browser=not no_open)
 

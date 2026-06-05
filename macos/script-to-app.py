@@ -38,6 +38,14 @@ def _escape_applescript(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _format_process_output(value: bytes | str | None) -> str:
+    if not value:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Create a macOS .app bundle wrapping a Python script.",
@@ -79,15 +87,15 @@ def _resolve_app_name(arg_value: str | None, script_path: str) -> str:
     return name or default_name
 
 
-def _write_launcher(app_contents: str, target_script: str) -> None:
-    """Write the executable launcher script inside the .app bundle.
+def _create_app_bundle(app_path: str, target_script: str) -> None:
+    """Create the .app using osacompile so it receives Apple Events (odoc).
 
-    The launcher uses osascript to open a Terminal window, then runs the
-    target Python script with forwarded arguments (e.g. file paths from Finder).
+    Uses ``osacompile`` to build a native AppleScript applet with both
+    ``on run`` (direct launch / drag-and-drop) and ``on open`` ("Open With"
+    from Finder) handlers.
     """
-    macos_dir = os.path.join(app_contents, "MacOS")
-    os.makedirs(macos_dir, exist_ok=True)
-    launcher_path = os.path.join(macos_dir, "launcher")
+    import tempfile
+    import subprocess
 
     workdir = os.path.dirname(target_script)
     python_exe = sys.executable
@@ -98,40 +106,90 @@ def _write_launcher(app_contents: str, target_script: str) -> None:
         f"{shlex.quote(python_exe)} {shlex.quote(target_script)}"
     )
 
-    # AppleScript fragment — shell_cmd is embedded as a string literal
-    applescript = (
-        "on run argv\n"
-        '    tell application "Terminal"\n'
-        "        activate\n"
-        f'        set cmd to "{_escape_applescript(shell_cmd)}"\n'
-        '        repeat with a in argv\n'
-        '            set cmd to cmd & " " & quoted form of a\n'
-        "        end repeat\n"
-        '        do script cmd & "; exit"\n'
-        "    end tell\n"
-        "end run"
-    )
+    # AppleScript applet — needs both on run AND on open to receive files
+    # from Finder's "Open With" context menu (which sends an odoc Apple Event).
+    #
+    # We avoid "tell application Terminal" because it triggers a TCC
+    # automation permission prompt (-1743). Instead we write the command
+    # to a temp .command file and use "open -a Terminal" to run it.
+    applescript = f'''\
+on runPythonScript(fileArgs)
+    set shellCmd to "{_escape_applescript(shell_cmd)}"
+    repeat with a in fileArgs
+        set shellCmd to shellCmd & " " & quoted form of a
+    end repeat
+    set scriptContent to "#!/bin/bash" & linefeed & shellCmd & "; rm \\"$0\\"; exit" & linefeed
+    set tmpPath to "/tmp/script_launcher_" & (do shell script "uuidgen") & ".command"
+    do shell script "printf '%s' " & quoted form of scriptContent & " > " & quoted form of tmpPath & " && chmod +x " & quoted form of tmpPath & " && open -a Terminal " & quoted form of tmpPath
+end runPythonScript
 
-    # shlex.quote wraps the entire AppleScript as a single shell argument to osascript -e
-    script = f"#!/bin/bash\nexec osascript -e {shlex.quote(applescript)} -- \"$@\"\n"
+on run argv
+    runPythonScript(argv)
+end run
 
-    with open(launcher_path, "w", encoding="utf-8") as f:
-        f.write(script)
-    os.chmod(launcher_path, os.stat(launcher_path).st_mode | 0o111)
+on open theFiles
+    set fileArgs to {{}}
+    repeat with f in theFiles
+        set end of fileArgs to POSIX path of f
+    end repeat
+    runPythonScript(fileArgs)
+end open'''
+
+    # Write AppleScript to a temp file, then compile into the .app bundle.
+    # Keep the script readable so generated apps can be inspected/debugged.
+    fd, tmp_path = tempfile.mkstemp(suffix=".applescript")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(applescript)
+        try:
+            subprocess.run(
+                ["osacompile", "-o", app_path, tmp_path],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = _format_process_output(e.stderr)
+            stdout = _format_process_output(e.stdout)
+            detail = stderr or stdout or str(e)
+            Utils.print_error_and_exit(f"osacompile failed: {detail}")
+    finally:
+        os.unlink(tmp_path)
 
 
 def _write_info_plist(app_contents: str, app_name: str, bundle_id: str) -> None:
+    """Update the Info.plist (created by osacompile) with custom keys.
+
+    Reads the existing plist to preserve keys set by osacompile
+    (e.g. CFBundleExecutable) and merges our additions on top.
+    """
     plist_path = os.path.join(app_contents, "Info.plist")
+    with open(plist_path, "rb") as f:
+        plist = plistlib.load(f)
+
     display_name = app_name.replace(".app", "")
-    plist = {
-        "CFBundleExecutable": "launcher",
+    plist.update({
         "CFBundleIdentifier": bundle_id,
         "CFBundleName": display_name,
         "CFBundleDisplayName": display_name,
-        "CFBundlePackageType": "APPL",
         "CFBundleVersion": "1.0",
         "CFBundleShortVersionString": "1.0",
-    }
+        "CFBundleDocumentTypes": [
+            {
+                "CFBundleTypeName": "All Files",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "LSItemContentTypes": [
+                    "public.item",
+                    "public.data",
+                    "public.content",
+                    "public.text",
+                    "public.html",
+                    "public.xhtml",
+                ],
+            }
+        ],
+    })
+
     with open(plist_path, "wb") as f:
         plistlib.dump(plist, f)
 
@@ -156,7 +214,25 @@ def main(argv: list[str] | None = None) -> int:
     # ----- resolve output path -----
     output_dir = os.path.expanduser("~/Applications")
     os.makedirs(output_dir, exist_ok=True)
-    app_path = Input._find_available_path(os.path.join(output_dir, app_name))
+
+    app_path = os.path.join(output_dir, app_name)
+    while os.path.exists(app_path):
+        print()
+        print(f"{FLYellow}{app_path}{CRst} {FLRed}already exists.{CRst}")
+        choice = input(f"Overwrite? [y/N] or enter a new name: ").strip()
+        if choice.lower() in ("y", "yes"):
+            import shutil
+            shutil.rmtree(app_path)
+            break
+        elif choice:
+            # Treat as a new name
+            if not choice.endswith(".app"):
+                choice += ".app"
+            app_path = os.path.join(output_dir, choice)
+        else:
+            # Empty input = don't overwrite, cancel
+            print(f"{FLRed}Cancelled.{CRst}")
+            return 0
 
     # ----- confirm & create -----
     print()
@@ -169,12 +245,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{FLRed}Cancelled.{CRst}")
         return 0
 
-    app_contents = os.path.join(app_path, "Contents")
-    os.makedirs(app_contents, exist_ok=True)
-
     bundle_id = f"com.script-to-app.{app_name.replace('.app', '').lower()}"
-    _write_launcher(app_contents, target_script)
-    _write_info_plist(app_contents, app_name, bundle_id)
+    _create_app_bundle(app_path, target_script)
+    _write_info_plist(os.path.join(app_path, "Contents"), app_name, bundle_id)
+
+    # Register with Launch Services so it shows in "Open With" immediately
+    import subprocess
+    lsregister = (
+        "/System/Library/Frameworks/CoreServices.framework"
+        "/Frameworks/LaunchServices.framework/Support/lsregister"
+    )
+    if os.path.exists(lsregister):
+        subprocess.run([lsregister, "-f", app_path], capture_output=True)
 
     print(f"{FLGreen}Created:{CRst} {FLCyan}{app_path}{CRst}")
     print()

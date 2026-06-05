@@ -98,6 +98,7 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `run-script.sh` | Bash launcher for running any script in the repo | Linux/macOS. `bash`, `python3` |
 | `run-script.ps1` | PowerShell launcher for running any script in the repo | Windows. `PowerShell`, `python` |
 | `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | macOS only. No external deps |
+| `windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | Windows only. No external deps |
 
 ### Test Helpers
 

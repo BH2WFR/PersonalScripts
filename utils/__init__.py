@@ -178,6 +178,26 @@ class Utils:
                 print(f"{FLRed}Warning: Failed to set locale to UTF-8: {e}{CRst}")
 
     @staticmethod
+    def is_headless() -> bool:
+        """Return True if the environment likely has no GUI/display available."""
+        if sys.platform == "darwin":
+            return False
+        if sys.platform != "win32":
+            return not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+        return False
+
+    @staticmethod
+    def open_browser_safe(url: str) -> None:
+        """Open *url* in the default browser, silently skip on headless systems."""
+        if Utils.is_headless():
+            return
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    @staticmethod
     def print_argv_list() -> None:
         """Print ``sys.argv`` with index and color formatting."""
         print(f"{FLYellow}Command line arguments:{CRst}")
