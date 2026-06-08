@@ -236,9 +236,11 @@ _NAME_ALIASES: dict[str, str] = {
     "printscreen": "print_screen", "prtscn": "print_screen",
     "volup": "media_volume_up", "voldown": "media_volume_down",
     "volmute": "media_volume_mute",
+    "volume_up": "media_volume_up", "volume_down": "media_volume_down",
+    "volume_mute": "media_volume_mute",
+    "media_prev": "media_previous",
     "next": "media_next", "prev": "media_previous",
-    "play": "media_play_pause", "pause": "media_play_pause",
-    "stop": "media_stop",
+    "play": "media_play_pause", "stop": "media_stop",
     "return": "enter",
     "lbutton": "left", "rbutton": "right", "mbutton": "middle",
     "lshift": "shift", "rshift": "shift",
@@ -321,10 +323,12 @@ def _check_win_change() -> None:
     _last_win_key = key
     label = wi.process_name or f"PID:{wi.pid}"
     title = wi.title[:72] + "…" if len(wi.title) > 72 else wi.title
+    wnd_class = wi.window_class
     ts = f"{FGray}{Utils.get_time_str()}{CRst}"
+    cls_str = f"  {FGray}[{FLWhite}{wnd_class}{FGray}]{CRst}" if wnd_class else ""
     print(
-        f"\n{ts} {FLYellow}─── {FLWhite}{CBold}{label}{CRst} "
-        f"{FLYellow}({wi.pid}){CRst}  {FLCyan}{title}{CRst}"
+        f"{ts} {FLYellow}─── {FLWhite}{CBold}{label}{CRst} "
+        f"{FLYellow}({wi.pid}){CRst}{cls_str}  {FLCyan}{title}{CRst}"
     )
 
 
@@ -354,6 +358,8 @@ def _emit_key(name: str, pressed: bool, raw_vk: int = 0) -> None:
         return
 
     if pressed:
+        if norm in _held:
+            return  # skip auto-repeat
         _held.add(norm)
         # Hotkey matching: trigger must match, all modifiers must be held/toggled
         for hk in _hotkeys:
@@ -1082,11 +1088,6 @@ def _win_vk_name(vk: int) -> str:
     return f"key({vk})"
 
 
-_WIN_MOUSE_BTN_MAP: dict[int, str] = {
-    0: "left", 1: "right", 2: "middle", 3: "xbutton1", 4: "xbutton2",
-}
-
-
 def _create_win_hook():
     """Low-level Windows hooks.  Returns object with .start() / .stop()."""
     if _OS != "win32":
@@ -1194,6 +1195,9 @@ def _create_win_hook():
         def _kbd_proc(self, code, wParam, lParam):
             if code >= 0:
                 ks = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                if wParam == _WM_KEYDOWN and ks.vkCode == 0x43:  # VK_C
+                    if ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000:
+                        _PostThreadMessageW(self._thread_id, _WM_STOP, 0, 0)
                 _PostThreadMessageW(self._thread_id, _WM_PROCESS, ks.vkCode, wParam)
             return _CallNextHookEx(None, code, wParam, lParam)
 
@@ -1236,13 +1240,17 @@ def _create_win_hook():
             elif msg_id in (_WM_MBUTTONUP,):
                 _emit_mouse(x, y, "middle", False)
             elif msg_id in (_WM_XBUTTONDOWN,):
-                _emit_mouse(x, y, _WIN_MOUSE_BTN_MAP.get(aux, f"button{aux}"), True)
+                name = "back" if aux == 1 else "forward" if aux == 2 else f"xbutton{aux}"
+                _emit_mouse(x, y, name, True)
             elif msg_id in (_WM_XBUTTONUP,):
-                _emit_mouse(x, y, _WIN_MOUSE_BTN_MAP.get(aux, f"button{aux}"), False)
+                name = "back" if aux == 1 else "forward" if aux == 2 else f"xbutton{aux}"
+                _emit_mouse(x, y, name, False)
             elif msg_id == _WM_MOUSEWHEEL:
-                _emit_scroll(0, aux)
+                delta = ctypes.c_short(aux & 0xFFFF).value // 120
+                _emit_scroll(0, delta)
             elif msg_id == _WM_MOUSEHWHEEL:
-                _emit_scroll(aux, 0)
+                delta = ctypes.c_short(aux & 0xFFFF).value // 120
+                _emit_scroll(delta, 0)
 
         def _process_message(self, wParam, lParam):
             msg_id = lParam & 0xFFFF
@@ -1261,7 +1269,7 @@ def _create_win_hook():
             mou_cb = HOOKPROC(self._mou_proc)
             self._kbd_hook = _SetWindowsHookExW(_WH_KEYBOARD_LL, kbd_cb, None, 0)
             self._mou_hook = _SetWindowsHookExW(_WH_MOUSE_LL, mou_cb, None, 0)
-            if self._kbd_hook is None and self._mou_hook is None:
+            if self._kbd_hook is None or self._mou_hook is None:
                 self._ready.set()
                 raise OSError("Failed to install Windows hooks")
             self._kbd_cb = kbd_cb
@@ -1279,14 +1287,15 @@ def _create_win_hook():
 
         def stop(self):
             self.running = False
+            if self._thread_id is not None:
+                _PostThreadMessageW(self._thread_id, _WM_STOP, 0, 0)
+                time.sleep(0.02)
             if self._kbd_hook is not None:
                 _UnhookWindowsHookEx(self._kbd_hook)
                 self._kbd_hook = None
             if self._mou_hook is not None:
                 _UnhookWindowsHookEx(self._mou_hook)
                 self._mou_hook = None
-            if self._thread_id is not None:
-                _PostThreadMessageW(self._thread_id, _WM_STOP, 0, 0)
 
     return WinHook()
 
@@ -2034,14 +2043,9 @@ def main():
     # Print initial foreground window
     _check_win_change()
 
-    try:
-        hook_thread.join()
-    except KeyboardInterrupt:
-        print()
-        print(f"{FGray}Stopping hooks...{CRst}")
-    finally:
-        hook.stop()
-        print(f"{FLGreen}Bye.{CRst}")
+    hook_thread.join()
+    hook.stop()
+    print(f"{FLGreen}Bye.{CRst}")
 
 
 if __name__ == "__main__":

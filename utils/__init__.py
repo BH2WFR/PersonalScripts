@@ -170,12 +170,13 @@ class Utils:
     def set_locale_utf8() -> None:
         """Set console to UTF-8 mode (Windows: chcp 65001 + en_US.UTF-8 locale)."""
         if os.name == 'nt':
-            os.system('chcp 65001')
+            os.system('chcp 65001 > nul')
             try:
                 import locale
                 locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
             except Exception as e:
                 print(f"{FLRed}Warning: Failed to set locale to UTF-8: {e}{CRst}")
+        print(f"UTF-8 test: 中文한글🤣")
 
     @staticmethod
     def is_headless() -> bool:
