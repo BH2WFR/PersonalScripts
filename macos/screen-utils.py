@@ -978,6 +978,20 @@ def toggle_builtin_display(displays: list[int], skip_confirm: bool = False) -> b
     if err == 0:
         status = "disabled" if not target else "enabled"
         print(f"{FLGreen}  -> Built-in display {status}.{CRst}\n")
+        if target:
+            # 检测内建显示器亮度，如果 <10% 则强制提高到 30%
+            time.sleep(0.5)  # 等待显示器完全激活
+            b = ctypes.c_float(-1)
+            if DSGetDisplayBrightness(builtin_id, ctypes.byref(b)) == 0 and b.value >= 0:
+                if b.value < 0.10:
+                    print(f"{FLYellow}  -> Brightness is {int(b.value * 100)}% (<10%), "
+                          f"forcing to 30%...{CRst}")
+                    if DSSetDisplayBrightness(builtin_id, 0.30) == 0:
+                        print(f"{FLGreen}  -> Brightness set to 30%.{CRst}\n")
+                    else:
+                        print(f"{FLRed}  -> Failed to set brightness.{CRst}\n")
+                else:
+                    print(f"{FGray}  -> Brightness is {int(b.value * 100)}%, no adjustment needed.{CRst}\n")
         return True
     else:
         print(f"{FLRed}  -> CGSCompleteDisplayConfiguration failed: error {err}{CRst}\n")
