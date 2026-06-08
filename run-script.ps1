@@ -22,7 +22,7 @@ $scriptDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Paren
 
 # Platform-aware filtering. $IsWindows/$IsMacOS/$IsLinux only exist in PS Core 6+.
 # Fall back to Environment::OSVersion for Windows PowerShell 5.1.
-$platformExclude = @("utils")
+$platformExclude = @("utils", "BUILD")
 if ($PSVersionTable.PSVersion.Major -ge 6) {
     if ($IsWindows) { $platformExclude += @("linux", "macos") }
     elseif ($IsMacOS) { $platformExclude += @("linux", "windows") }
@@ -88,13 +88,22 @@ function Show-SupportedScripts {
     $scripts = Get-ChildItem -LiteralPath $scriptDirectory -File -Recurse |
         Where-Object {
             ($_.Extension -ieq ".py" -or $_.Extension -ieq ".ps1") -and
-            ($_.Name -ne "__init__.py") -and
+            ($_.Name -notlike "_*") -and
+            (-not ($_.DirectoryName -eq $scriptDirectory -and $_.Name -eq "run-script.py")) -and
+            (-not ($_.DirectoryName -eq $scriptDirectory -and $_.Name -eq "run-script.sh")) -and
             (-not $selfPath -or $_.FullName -ne $selfPath)
         } | Where-Object {
-            # Exclude platform subdirectories that don't match the current OS
             $rel = $_.FullName.Substring($scriptDirectory.Length).TrimStart([System.IO.Path]::DirectorySeparatorChar)
-            $topDir = $rel.Split([System.IO.Path]::DirectorySeparatorChar)[0]
-            $topDir -notin $platformExclude
+            $parts = $rel.Split([System.IO.Path]::DirectorySeparatorChar)
+            # Exclude files inside always-excluded directories (at any depth)
+            $alwaysExclude = @('__pycache__', '.git', '.venv', 'node_modules', '.idea', 'dist')
+            for ($i = 0; $i -lt $parts.Length - 1; $i++) {
+                if ($parts[$i] -in $alwaysExclude) { return $false }
+            }
+            # Exclude platform-specific top-level directories
+            $topDir = $parts[0]
+            if ($topDir -in $platformExclude) { return $false }
+            return $true
         } | Sort-Object FullName
 
     # If a .py and .ps1 exist at the same path with the same name, keep only the .py
@@ -163,17 +172,25 @@ if ($showList) {
     }
 
     Write-Host ""
-    $choice = Read-Host -Prompt "${FLYellow}Enter number to execute${CRst} (or ${FLYellow}Enter${CRst} to exit):"
-    if ([string]::IsNullOrWhiteSpace($choice)) {
+    $choiceLine = Read-Host -Prompt "${FLYellow}Enter number or script name to execute${CRst} (or ${FLYellow}Enter${CRst} to exit):"
+    if ([string]::IsNullOrWhiteSpace($choiceLine)) {
         exit 0
     }
-    $idx = [int]$choice
-    if ($idx -lt 0 -or $idx -ge $allScripts.Count) {
-        Write-Error "Invalid selection: $idx"
-        exit 1
+
+    $parts = $choiceLine -split '\s+'
+    $firstToken = $parts[0]
+    $RemainingArgs = if ($parts.Length -gt 1) { $parts[1..($parts.Length - 1)] } else { @() }
+
+    if ($firstToken -match '^\d+$') {
+        $idx = [int]$firstToken
+        if ($idx -lt 0 -or $idx -ge $allScripts.Count) {
+            Write-Error "Invalid selection: $idx"
+            exit 1
+        }
+        $ScriptName = $allScripts[$idx].FullName
+    } else {
+        $ScriptName = $firstToken
     }
-    $ScriptName = $allScripts[$idx].FullName
-    $RemainingArgs = @()
 }
 
 

@@ -542,7 +542,7 @@ class Input:
         paths: list[str] = []
         seen: set[str] = set()
         for line in raw.splitlines():
-            p = line.strip()
+            p = line.strip().strip("'\"")
             if p and p not in seen:
                 seen.add(p)
                 paths.append(p)

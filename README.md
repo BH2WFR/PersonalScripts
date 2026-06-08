@@ -9,24 +9,33 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 ## Quick Start
 
 ```bash
-# Interactive mode: lists supported scripts, select by number
+# Interactive mode: lists supported scripts, select by number or name
 ./run-script.sh                                # Linux/macOS
 .\run-script.ps1                               # Windows
+python run-script.py                           # All platforms
 
-# Run a specific script directly
-./run-script.sh <script_name> [args...]        # Linux/macOS
-.\run-script.ps1 <script_name> [args...]       # Windows
+# Run a specific script directly (args passed through)
+./run-script.sh <script> [args...]             # Linux/macOS
+.\run-script.ps1 <script> [args...]            # Windows
+python run-script.py <script> [args...]        # All platforms
 
 # List available scripts without running
 ./run-script.sh --list                         # Linux/macOS
 .\run-script.ps1 --list                        # Windows
+python run-script.py --list                    # All platforms
+
+# Build standalone executable of run-script.py (requires Nuitka)
+python _nuitka-build.py                        # All platforms
 ```
 
 **Launcher Features:**
-- Interactive script selection by number (root scripts first, then subfolders)
-- Platform-aware filtering: Linux/macOS launcher hides `windows/` scripts; Windows launcher hides `linux/` and `macos/` scripts
+
+- Interactive selection by **number** or **script name** (e.g. `15`, `macos/ntfs-3g-utils`)
+- Arguments after number/name are **passed through** to the target script (e.g. `15 --help`, `macos/screen-utils --list`)
+- Platform-aware filtering: hides `windows/`/`macos/`/`linux/` scripts that don't match the current OS
+- Interpreter-aware: hides `.sh` scripts if `bash` is not available; hides `.ps1` scripts if `pwsh` is not available
 - Auto-detects Python: prefers miniconda/anaconda, falls back to `python3`
-- On Linux without conda, auto-creates `.venv` to bypass PEP 668 restrictions
+- `_nuitka-build.py` compiles `run-script.py` into a single standalone executable (embeds Python runtime, requires Nuitka)
 
 ---
 
@@ -95,8 +104,10 @@ Most scripts support both interactive mode and command-line arguments. Use `pyth
 | `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) | Cross-platform. `pip install numpy matplotlib plotly` |
 | `research/npy-viewer.bat` | Windows: double-click/drag-and-drop launcher for npy viewer | Windows. Requires `npy-viewer.py` deps |
 | `research/npy-viewer.sh` | Linux/macOS: double-click launcher for npy viewer | Linux/macOS. Requires `npy-viewer.py` deps |
+| `run-script.py` | Python launcher for running any script in the repo | Cross-platform. `python3` |
 | `run-script.sh` | Bash launcher for running any script in the repo | Linux/macOS. `bash`, `python3` |
 | `run-script.ps1` | PowerShell launcher for running any script in the repo | Windows. `PowerShell`, `python` |
+| `_nuitka-build.py` | Build script: compile `run-script.py` into a standalone executable | Cross-platform. `pip install nuitka` |
 | `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | macOS only. No external deps |
 | `windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | Windows only. No external deps |
 

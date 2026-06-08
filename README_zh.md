@@ -9,25 +9,34 @@
 ## 快速开始
 
 ```bash
-# 交互模式：列出支持的脚本，按数字选择
+# 交互模式：列出支持的脚本，按数字或名称选择
 ./run-script.sh                                # Linux/macOS
 .\run-script.ps1                               # Windows
+python run-script.py                           # 全平台
 
-# 直接运行指定脚本
+# 直接运行指定脚本（参数透传）
 ./run-script.sh <脚本名> [参数...]              # Linux/macOS
 .\run-script.ps1 <脚本名> [参数...]             # Windows
+python run-script.py <脚本名> [参数...]         # 全平台
 
 # 仅列出可用脚本
 ./run-script.sh --list                         # Linux/macOS
 .\run-script.ps1 --list                        # Windows
+python run-script.py --list                    # 全平台
+
+# 将 run-script.py 编译为独立可执行文件（需要 Nuitka）
+python _nuitka-build.py                        # 全平台
 ```
 
 **启动器特性：**
-- 按数字交互式选择脚本（根目录脚本优先，子目录次之）
-- 平台感知过滤：Linux/macOS 启动器隐藏 `windows/` 脚本，Windows 启动器隐藏 `linux/` 和 `macos/` 脚本；Linux 额外隐藏 `macos/`，macOS 额外隐藏 `linux/`
-- 自动检测 Python：优先使用 miniconda/anaconda，回退到 `python3`
-- Linux 无 conda 时自动创建 `.venv` 以绕过 PEP 668 限制
+
+- 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-utils`）
+- 数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/screen-utils --list`）
+- 平台感知过滤：隐藏与当前 OS 不匹配的 `windows/`/`macos/`/`linux/` 脚本
+- 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - 同路径存在同名 `.py` 和 `.sh`/`.ps1` 时，仅显示 `.py`
+- 自动检测 Python：优先使用 miniconda/anaconda，回退到 `python3`
+- `_nuitka-build.py` 可将 `run-script.py` 编译为单个独立可执行文件（内嵌 Python 运行时，需安装 Nuitka）
 
 ---
 
@@ -96,8 +105,10 @@
 | `research/npy-viewer.py` | `.npy`/`.npz` 文件交互式查看器（1D 折线/柱状/散点图，2D 热力图/曲面图） | 跨平台。`pip install numpy matplotlib plotly` |
 | `research/npy-viewer.bat` | Windows：npy 查看器的双击/拖拽启动器 | Windows。需 `npy-viewer.py` 依赖 |
 | `research/npy-viewer.sh` | Linux/macOS：npy 查看器的双击启动器 | Linux/macOS。需 `npy-viewer.py` 依赖 |
+| `run-script.py` | Python 启动器，可运行仓库内任意脚本 | 跨平台。`python3` |
 | `run-script.sh` | Bash 启动器，可运行仓库内任意脚本 | Linux/macOS。`bash`、`python3` |
 | `run-script.ps1` | PowerShell 启动器，可运行仓库内任意脚本 | Windows。`PowerShell`、`python` |
+| `_nuitka-build.py` | 编译脚本：将 `run-script.py` 编译为独立可执行文件 | 跨平台。`pip install nuitka` |
 | `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | 仅 macOS。无外部依赖 |
 | `windows/script-to-app.py` | 创建 Windows `.cmd` 启动器，将任意 Python 脚本安装到 `Program Files`。自动检测 Python（conda/系统），接收打开的文件路径作为参数，支持"打开方式"关联文件类型 | 仅 Windows。无外部依赖 |
 

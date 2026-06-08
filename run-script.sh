@@ -60,8 +60,18 @@ show_supported_scripts() {
     # Build platform exclusion patterns as an array (no embedded quotes)
     _find_excludes=(
         ! -name '__init__.py'
+        ! -name '_*'
         ! -path "$script_self"
+        ! -path "${script_dir}/run-script.py"
+        ! -path "${script_dir}/run-script.ps1"
+        ! -path "${script_dir}/BUILD/*"
         ! -path "${script_dir}/utils/*"
+        ! -path "*/__pycache__/*"
+        ! -path "*/.git/*"
+        ! -path "*/.venv/*"
+        ! -path "*/node_modules/*"
+        ! -path "*/.idea/*"
+        ! -path "*/dist/*"
     )
     if [[ "$_is_windows" != "true" ]]; then
         _find_excludes+=(! -path "${script_dir}/windows/*")
@@ -190,17 +200,30 @@ if [[ "$show_list" == true ]]; then
         exit 0
     fi
 
-    printf '\n%bEnter number to execute%b (or %bEnter%b to exit): ' "$FLYellow" "$CRst" "$FLYellow" "$CRst"
-    read -r choice
-    if [[ -z "$choice" ]]; then
+    printf '\n%bEnter number or script name to execute%b (or %bEnter%b to exit): ' "$FLYellow" "$CRst" "$FLYellow" "$CRst"
+    read -r choice_line
+    if [[ -z "$choice_line" ]]; then
         exit 0
     fi
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -ge "${#ALL_SCRIPTS[@]}" ]]; then
-        printf '%bInvalid selection: %s%b\n' "$FLRed" "$choice" "$CRst" >&2
-        exit 1
+
+    # Split into first token and remaining args
+    first_token="${choice_line%% *}"
+    if [[ "$first_token" == "$choice_line" ]]; then
+        remaining_args=()
+    else
+        remaining_args_str="${choice_line#$first_token }"
+        read -ra remaining_args <<< "$remaining_args_str"
     fi
-    script_name="${ALL_SCRIPTS[$choice]}"
-    remaining_args=()
+
+    if [[ "$first_token" =~ ^[0-9]+$ ]]; then
+        if [[ "$first_token" -ge "${#ALL_SCRIPTS[@]}" ]]; then
+            printf '%bInvalid selection: %s%b\n' "$FLRed" "$first_token" "$CRst" >&2
+            exit 1
+        fi
+        script_name="${ALL_SCRIPTS[$first_token]}"
+    else
+        script_name="$first_token"
+    fi
 fi
 
 if [[ -f "$script_name" ]]; then

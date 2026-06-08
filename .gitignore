@@ -5,13 +5,19 @@ __pycache__
 *.pyd
 
 .DS_Store
+Thumbs.db
+.idea/
 *.log
 *.7z
 .venv/
 .venv
+.vscode/
 
 *.tmp
 *.log
 *.bak
 
 output
+
+.claude/
+BUILD/
