@@ -13,7 +13,6 @@ import copy
 import shutil
 import subprocess
 import ctypes
-import pathlib
 import unicodedata
 import platform
 
