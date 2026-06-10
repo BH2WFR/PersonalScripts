@@ -34,6 +34,8 @@ python _nuitka-build.py                        # 全平台
 
 - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-utils`）
 - 数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/screen-utils --list`）
+- 启动时打印 OS 版本、Python 路径与版本、conda 环境、pwsh/bash 可用性
+- 无扩展名时优先查找 `.py`，然后按平台顺序回退：Windows → `.ps1` 再 `.sh`；macOS/Linux → `.sh` 再 `.ps1`
 - 平台感知过滤：隐藏与当前 OS 不匹配的 `windows/`/`macos/`/`linux/` 脚本
 - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - 同路径存在同名 `.py` 和 `.sh`/`.ps1` 时，仅显示 `.py`
@@ -158,6 +160,8 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 ## 约定
 
 - 所有 Python 脚本支持 `--help` / `-h` 查看用法（英文，带颜色）
+- 所有脚本统一使用 `Utils.print_banner()` 绘制双线框标题横幅
+- Python 3.9+ 兼容（使用 `typing` 模块的 `Optional` / `Union`）
 - 命令行参数传入时跳过交互提示（适合批处理）
 - 多行输入使用 EOF（Windows: `Ctrl+Z`，Linux/macOS: `Ctrl+D`）
 - 通过 `utils` ANSI 代码实现彩色输出（`FLYellow`、`FLGreen`、`FLRed` 等）

@@ -718,9 +718,9 @@ class Input:
         - Exits with ``sys.exit(1)`` if no paths remain
         - Returns list of absolute paths
         """
-        _eof_hint = "Ctrl+Z then Enter" if sys.platform == "win32" else "Ctrl+D"
+        _eof_hint = f"{FLYellow}Enter{FGray}→{FLYellow}Ctrl+Z{FGray}→{FLYellow}Enter" if sys.platform == "win32" else f"{FLYellow}Ctrl+D"
         print(f"{FLYellow}{prompt_text}{CRst}")
-        print(f"{FLCyan}End with {FLYellow}{_eof_hint}{FLCyan}:{CRst}")
+        print(f"{FLCyan}End with {_eof_hint}{FLCyan}:{CRst}")
         raw = sys.stdin.read().strip()
         if not raw:
             print(f"{FLRed}No paths provided.{CRst}")
@@ -844,9 +844,9 @@ class Input:
         Returns:
             List of processed lines or raw string. Returns empty list/string if input is empty.
         """
-        _eof_hint = "Ctrl+Z then Enter" if sys.platform == "win32" else "Ctrl+D"
+        _eof_hint = f"{FLYellow}Enter{FGray}→{FLYellow}Ctrl+Z{FGray}→{FLYellow}Enter" if sys.platform == "win32" else f"{FLYellow}Ctrl+D"
         print(f"{FLYellow}{prompt_text}{CRst}")
-        print(f"{FLCyan}End with {FLYellow}{_eof_hint}{FLCyan}:{CRst}")
+        print(f"{FLCyan}End with {_eof_hint}{FLCyan}:{CRst}")
         text = sys.stdin.read()
         if raw:
             if not text.strip():

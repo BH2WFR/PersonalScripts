@@ -8,11 +8,14 @@ $FLYellow = "$esc[33m"
 $FLBlue = "$esc[34m"
 $FLCyan = "$esc[36m"
 $FLGreen = "$esc[32m"
+$FGray = "$esc[90m"
 $CRst = "$esc[0m"
 
 
 
 Write-Host ("${FLYellow}Command line arguments:${CRst}")
+
+Write-Host ("${FLCyan}Interpreter:${CRst}  ${FLGreen}PowerShell${CRst}  ${FGray}$((Get-Process -Id $PID).Path)${CRst}")
 
 $scriptPath = $MyInvocation.MyCommand.Path
 Write-Host ("  PATH: ${FLGreen}$scriptPath${CRst}")

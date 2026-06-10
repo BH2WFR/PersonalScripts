@@ -5,6 +5,7 @@ from utils import *
 
 def main() -> int:
     Utils.print_banner("ARGUMENT PRINTING TOOL")
+    print(f"  {FLCyan}Interpreter:{CRst}  {FLGreen}Python{CRst}  {FGray}{sys.executable}{CRst}")
     Utils.print_argv_list()
     return 0
 

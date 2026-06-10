@@ -69,12 +69,12 @@ def _is_valid_script(script_dir: str, script_path: str) -> bool:
 
 # ============ Script Discovery ============
 
-def _prefer_py_over_alt(paths: list[str], alt_ext: str) -> list[str]:
+def _prefer_py_over_alt(script_dir: str, paths: list[str], alt_ext: str) -> list[str]:
     """If both foo.py and foo.<alt_ext> exist, keep only foo.py."""
     result: list[str] = []
     for p in paths:
         if p.endswith(alt_ext):
-            py_path = p[: -len(alt_ext)] + ".py"
+            py_path = os.path.join(script_dir, p[: -len(alt_ext)] + ".py")
             if os.path.isfile(py_path):
                 continue
         result.append(p)
@@ -121,9 +121,9 @@ def find_scripts(script_dir: str) -> list[str]:
     scripts.sort()
 
     if has_bash:
-        scripts = _prefer_py_over_alt(scripts, ".sh")
+        scripts = _prefer_py_over_alt(script_dir, scripts, ".sh")
     if has_pwsh:
-        scripts = _prefer_py_over_alt(scripts, ".ps1")
+        scripts = _prefer_py_over_alt(script_dir, scripts, ".ps1")
 
     return scripts
 
@@ -221,13 +221,16 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
     
     print(f"  Available {type_str} scripts in `{FGray}{script_dir}{CRst}`:\n")
     
+    total = len(scripts)
+    max_digits = len(str(total - 1)) if total > 0 else 1
+
     all_scripts: list[str] = []
     cnt = 0
 
     for rel in root_scripts:
         color = _script_color(rel)
         fname = os.path.basename(rel)
-        print(f"  {FGray}[{cnt}]{CRst}:  {color}{fname}{CRst}")
+        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {color}{fname}{CRst}")
         all_scripts.append(rel)
         cnt += 1
 
@@ -238,10 +241,7 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
             color = _script_color(rel)
             subdir = os.path.dirname(rel)
             fname = os.path.basename(rel)
-            if cnt < 10:
-                print(f"  {FGray}[{cnt}]{CRst}:  {FLYellow}{subdir}{CRst}/{color}{fname}{CRst}")
-            else:
-                print(f"  {FGray}[{cnt}]{CRst}: {FLYellow}{subdir}{CRst}/{color}{fname}{CRst}")
+            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {FLYellow}{subdir}{CRst}/{color}{fname}{CRst}")
             all_scripts.append(rel)
             cnt += 1
     
@@ -350,30 +350,45 @@ def main() -> int:
         print(f"    {FLYellow}5{CRst}                              select by number")
         print(f"    {FLYellow}5{CRst} {FLCyan}--help{CRst}                       number + passthrough args")
         print(f"    {FLYellow}test/print-argv{CRst} {FLCyan}arg1 arg2{CRst}      name + passthrough args")
-        print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
-        try:
-            choice_line = input().strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            print(f"{FLGreen}Bye.{CRst}")
-            return 0
 
-        if not choice_line:
-            print(f"{FLGreen}Bye.{CRst}")
-            return 0
+        while True:
+            print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
+            try:
+                choice_line = input().strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                print(f"{FLGreen}Bye.{CRst}")
+                return 0
 
-        parts = choice_line.split()
-        first_token = parts[0]
-        remaining_args = parts[1:]
+            if not choice_line:
+                print(f"{FLGreen}Bye.{CRst}")
+                return 0
 
-        if first_token.isdigit():
-            idx = int(first_token)
-            if idx < 0 or idx >= len(all_rel):
-                print(f"{FLRed}Invalid selection: {idx}{CRst}", file=sys.stderr)
-                return 1
-            script_name = all_rel[idx]
-        else:
+            parts = choice_line.split()
+            first_token = parts[0]
+            remaining_args = parts[1:]
+
+            if first_token.isdigit():
+                idx = int(first_token)
+                if idx < 0 or idx >= len(all_rel):
+                    print(f"{FLRed}Invalid selection: {idx} (try .py, .sh or .ps1 extension){CRst}", file=sys.stderr)
+                    continue
+                script_name = all_rel[idx]
+                break
+
             script_name = first_token
+            resolved = resolve_script_path(script_dir, script_name)
+            if resolved is None or not os.path.isfile(resolved):
+                normalized = script_name.replace("\\", "/").lstrip("/")
+                if not normalized.endswith((".py", ".sh", ".ps1")):
+                    print(f"{FLRed}Cannot find script:{CRst}")
+                    print(f"  `{FGray}{os.path.join(script_dir, normalized + '.py')}{CRst}` (preferred)")
+                    print(f"  `{FGray}{os.path.join(script_dir, normalized + '.sh')}{CRst}`")
+                    print(f"  `{FGray}{os.path.join(script_dir, normalized + '.ps1')}{CRst}`")
+                else:
+                    print(f"{FLRed}Cannot find script: `{os.path.join(script_dir, normalized)}`{CRst}", file=sys.stderr)
+                continue
+            break
 
     assert script_name is not None
 
@@ -385,12 +400,10 @@ def main() -> int:
         if resolved is None or not os.path.isfile(resolved):
             normalized = script_name.replace("\\", "/").lstrip("/")
             if not normalized.endswith((".py", ".sh", ".ps1")):
-                print(
-                    f"{FLRed}Cannot find script: "
-                    f"`{os.path.join(script_dir, normalized + '.py')}` (preferred) "
-                    f"or `{os.path.join(script_dir, normalized + '.sh')}`{CRst}",
-                    file=sys.stderr,
-                )
+                print(f"{FLRed}Cannot find script:{CRst}")
+                print(f"  `{FGray}{os.path.join(script_dir, normalized + '.py')}{CRst}` (preferred)")
+                print(f"  `{FGray}{os.path.join(script_dir, normalized + '.sh')}{CRst}`")
+                print(f"  `{FGray}{os.path.join(script_dir, normalized + '.ps1')}{CRst}`")
             else:
                 print(f"{FLRed}Cannot find script: `{os.path.join(script_dir, normalized)}`{CRst}", file=sys.stderr)
             return 1

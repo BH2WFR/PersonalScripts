@@ -34,6 +34,8 @@ python _nuitka-build.py                        # All platforms
 
 - Interactive selection by **number** or **script name** (e.g. `15`, `macos/ntfs-3g-utils`)
 - Arguments after number/name are **passed through** to the target script (e.g. `15 --help`, `macos/screen-utils --list`)
+- Prints OS version, Python path & version, conda environment, pwsh/bash availability on startup
+- When a script name has no extension, `.py` is tried first, then platform-preferred order: Windows → `.ps1` then `.sh`; macOS/Linux → `.sh` then `.ps1`
 - Platform-aware filtering: hides `windows/`/`macos/`/`linux/` scripts that don't match the current OS
 - Interpreter-aware: hides `.sh` scripts if `bash` is not available; hides `.ps1` scripts if `pwsh` is not available
 - Auto-detects Python: prefers miniconda/anaconda, falls back to `python3`
@@ -157,8 +159,9 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 ## Conventions
 
 - All Python scripts support `--help` / `-h` for usage info (English, with color)
+- All scripts use `Utils.print_banner()` with double-line box-drawing characters for uniform title display
+- Python 3.9+ compatible (uses `typing.Optional` / `typing.Union` from the `typing` module)
 - Command-line arguments suppress interactive prompts (batch-friendly)
 - Multi-line input uses EOF (`Ctrl+Z` on Windows, `Ctrl+D` on Linux/macOS)
 - Color output via `utils` ANSI codes (`FLYellow`, `FLGreen`, `FLRed`, etc.)
 - Platform-specific scripts are in `windows/`, `linux/`, `macos/` subdirectories
-- The `parse-unicode-string.py` script displays Unicode character info with color-coded control/whitespace/normal characters
