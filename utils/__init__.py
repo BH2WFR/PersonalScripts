@@ -13,7 +13,6 @@ import copy
 import shutil
 import subprocess
 import ctypes
-import unicodedata
 import platform
 
 #* 控制台颜色
@@ -139,6 +138,11 @@ class Utils:
         CJK full-width / wide characters count as 2 columns; everything else
         counts as 1 column.  Uses :func:`unicodedata.east_asian_width`.
         """
+        try:
+            import unicodedata
+        except ImportError:
+            return len(s)
+
         w = 0
         for ch in s:
             ea = unicodedata.east_asian_width(ch)

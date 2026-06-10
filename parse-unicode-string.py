@@ -1,6 +1,9 @@
 # Parse and display Unicode character info for each character in the input string
 from utils import *
-import unicodedata
+try:
+    import unicodedata
+except ImportError:
+    unicodedata = None
 import subprocess
 
 # Character display names for special/whitespace/control characters
@@ -184,10 +187,13 @@ Usage:
             char_color = FLCyan
             desc_color = FGray
         else:
-            try:
-                desc = unicodedata.name(ch)
-            except ValueError:
-                desc = "<no name>"
+            if unicodedata is None:
+                desc = "N/A"
+            else:
+                try:
+                    desc = unicodedata.name(ch)
+                except ValueError:
+                    desc = "<no name>"
             char_color = FLCyan if is_special else FLYellow
             desc_color = FGray
 
