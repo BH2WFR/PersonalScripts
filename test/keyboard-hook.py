@@ -2043,7 +2043,10 @@ def main():
     # Print initial foreground window
     _check_win_change()
 
-    hook_thread.join()
+    try:
+        hook_thread.join()
+    except KeyboardInterrupt:
+        pass
     hook.stop()
     print(f"{FLGreen}Bye.{CRst}")
 
