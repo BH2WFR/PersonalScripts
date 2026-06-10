@@ -39,7 +39,7 @@ python _nuitka-build.py                        # 全平台
 - 平台感知过滤：隐藏与当前 OS 不匹配的 `windows/`/`macos/`/`linux/` 脚本
 - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - 同路径存在同名 `.py` 和 `.sh`/`.ps1` 时，仅显示 `.py`
-- 自动检测 Python：优先使用 `conda run python` / `conda info --base`，再尝试已知路径，最后回退到 `python3`
+- 自动检测 Python：优先使用 `conda info --base`，再尝试已知路径，最后回退到 `python3`
 - `_nuitka-build.py` 可将 `run-script.py` 编译为单个独立可执行文件（内嵌 Python 运行时，需安装 Nuitka）
 
 ---
@@ -140,7 +140,7 @@ python _nuitka-build.py                        # 全平台
 pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy plotly
 ```
 
-启动器优先通过 `conda run python` / `conda info --base` 定位 conda base 环境 Python，然后回退到已知安装路径和 `python3`。
+启动器优先通过 `conda info --base` 定位 conda base 环境 Python，然后回退到已知安装路径和 `python3`。
 
 ### 外部工具
 

@@ -10,12 +10,9 @@ $scriptDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Paren
 
 # ----- find python: prefer conda command, then known paths, then system python/python3 -----
 $pythonCmd = & {
-    # 1. Try conda command
+    # 1. Try conda info --base (most reliable)
     $conda = Get-Command conda -ErrorAction SilentlyContinue
     if ($conda) {
-        $py = & conda run python -c "import sys; print(sys.executable)" 2>$null
-        if ($py) { return $py.Trim() }
-
         $condaBase = & conda info --base 2>$null
         if ($condaBase) {
             $candidate = Join-Path $condaBase.Trim() "python.exe"

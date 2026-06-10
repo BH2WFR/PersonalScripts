@@ -38,7 +38,7 @@ python _nuitka-build.py                        # All platforms
 - When a script name has no extension, `.py` is tried first, then platform-preferred order: Windows → `.ps1` then `.sh`; macOS/Linux → `.sh` then `.ps1`
 - Platform-aware filtering: hides `windows/`/`macos/`/`linux/` scripts that don't match the current OS
 - Interpreter-aware: hides `.sh` scripts if `bash` is not available; hides `.ps1` scripts if `pwsh` is not available
-- Auto-detects Python: prefers `conda run python` / `conda info --base`, then known conda paths, falls back to `python3`
+- Auto-detects Python: prefers `conda info --base`, then known conda paths, falls back to `python3`
 - `_nuitka-build.py` compiles `run-script.py` into a single standalone executable (embeds Python runtime, requires Nuitka)
 
 ---
@@ -139,7 +139,7 @@ Core utility module: `utils/` — provides ANSI color codes, cursor/screen contr
 pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy plotly
 ```
 
-The launcher uses `conda run python` / `conda info --base` to locate the conda base environment Python first, then falls back to known install paths and `python3`.
+The launcher uses `conda info --base` to locate the conda base environment Python first, then falls back to known install paths and `python3`.
 
 ### External Tools
 

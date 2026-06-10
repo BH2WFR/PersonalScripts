@@ -20,16 +20,13 @@ esac
 # ----- find python: prefer conda command, then known paths, then system python3/python -----
 python_cmd=""
 
-# 1. Try conda command
+# 1. Try conda info --base (most reliable)
 if command -v conda >/dev/null 2>&1; then
-    python_cmd="$(conda run python -c "import sys; print(sys.executable)" 2>/dev/null || true)"
-    if [[ -z "$python_cmd" ]]; then
-        conda_base="$(conda info --base 2>/dev/null || true)"
-        if [[ -n "$conda_base" ]]; then
-            conda_py="$conda_base/bin/python"
-            [[ "$_is_windows" == "true" ]] && conda_py="$conda_base/python.exe"
-            [[ -x "$conda_py" ]] && python_cmd="$conda_py"
-        fi
+    conda_base="$(conda info --base 2>/dev/null || true)"
+    if [[ -n "$conda_base" ]]; then
+        conda_py="$conda_base/bin/python"
+        [[ "$_is_windows" == "true" ]] && conda_py="$conda_base/python.exe"
+        [[ -x "$conda_py" ]] && python_cmd="$conda_py"
     fi
 fi
 
