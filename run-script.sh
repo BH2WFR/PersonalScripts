@@ -17,30 +17,47 @@ case "$_os_name" in
     *)                     _is_windows=false ;;
 esac
 
-# ----- find python: prefer conda, then system python3/python -----
-python_candidates=(
-    "$HOME/miniconda3/bin/python"
-    "$HOME/anaconda3/bin/python"
-    "/opt/miniconda3/bin/python"
-    "/opt/anaconda3/bin/python"
-)
-if [[ "$_is_windows" == "true" ]]; then
-    python_candidates+=(
-        "${USERPROFILE:-$HOME}/miniconda3/python.exe"
-        "${USERPROFILE:-$HOME}/anaconda3/python.exe"
-        "${PROGRAMDATA:-}/miniconda3/python.exe"
-        "${PROGRAMDATA:-}/anaconda3/python.exe"
-    )
-fi
-python_candidates+=(python3 python)
-
+# ----- find python: prefer conda command, then known paths, then system python3/python -----
 python_cmd=""
-for candidate in "${python_candidates[@]}"; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-        python_cmd="$candidate"
-        break
+
+# 1. Try conda command
+if command -v conda >/dev/null 2>&1; then
+    python_cmd="$(conda run python -c "import sys; print(sys.executable)" 2>/dev/null || true)"
+    if [[ -z "$python_cmd" ]]; then
+        conda_base="$(conda info --base 2>/dev/null || true)"
+        if [[ -n "$conda_base" ]]; then
+            conda_py="$conda_base/bin/python"
+            [[ "$_is_windows" == "true" ]] && conda_py="$conda_base/python.exe"
+            [[ -x "$conda_py" ]] && python_cmd="$conda_py"
+        fi
     fi
-done
+fi
+
+# 2. Fallback: known paths
+if [[ -z "$python_cmd" ]]; then
+    python_candidates=(
+        "$HOME/miniconda3/bin/python"
+        "$HOME/anaconda3/bin/python"
+        "/opt/miniconda3/bin/python"
+        "/opt/anaconda3/bin/python"
+    )
+    if [[ "$_is_windows" == "true" ]]; then
+        python_candidates+=(
+            "${USERPROFILE:-$HOME}/miniconda3/python.exe"
+            "${USERPROFILE:-$HOME}/anaconda3/python.exe"
+            "${PROGRAMDATA:-}/miniconda3/python.exe"
+            "${PROGRAMDATA:-}/anaconda3/python.exe"
+        )
+    fi
+    python_candidates+=(python3 python)
+
+    for candidate in "${python_candidates[@]}"; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            python_cmd="$candidate"
+            break
+        fi
+    done
+fi
 if [[ -z "$python_cmd" ]]; then
     printf '%bCannot find python (miniconda/anaconda/python3).%b\n' "$FLRed" "$CRst" >&2
     printf 'Install miniconda: %bhttps://docs.conda.io/en/latest/miniconda.html%b\n' "$FGray" "$CRst" >&2
