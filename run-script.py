@@ -214,7 +214,7 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
         types.append(f"{FLGreen}bash{CRst}")
     if any(s.endswith(".ps1") for s in scripts):
         types.append(f"{FLGreen}PowerShell{CRst}")
-    type_str = " / ".join(types) if types else "scripts"
+    type_str = "/".join(types) if types else "scripts"
 
     
     Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
