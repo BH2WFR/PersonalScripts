@@ -4,6 +4,7 @@
 import os
 import subprocess
 import sys
+from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from utils import *  # noqa: E402
@@ -45,7 +46,7 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def _parse_scan_line(line: str) -> tuple[str, str] | None:
+def _parse_scan_line(line: str) -> Optional[Tuple[str, str]]:
     """Parse a smartctl --scan line like '/dev/disk0 -d sat # /dev/disk0'.
     Returns (device_path, device_type) or None."""
     line = line.strip()
@@ -98,7 +99,8 @@ def _get_device_info(dev_path: str, dev_type: str) -> dict:
 
 # ============ main ============
 def main():
-    print(f"{FLYellow}============ SMART DISK INFO ============={CRst}\n")
+    Utils.print_banner("SMART DISK INFO")
+    print()
 
     # Scan for SMART devices
     r = _run(["smartctl", "--scan"])

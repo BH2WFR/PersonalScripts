@@ -147,7 +147,7 @@ def _check_screen_recording_permission() -> bool:
 
 
 def main() -> int:
-    print(f"{FLYellow}======= Automatic Screen Capturing Tool for Document ======={CRst}")
+    Utils.print_banner("Automatic Screen Capturing Tool for Document")
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
         print(f"""

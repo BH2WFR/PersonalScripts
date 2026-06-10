@@ -11,7 +11,7 @@ else:
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== FFMPEG VIDEO CROP TOOL ==========={CRst}")
+    Utils.print_banner("FFMPEG VIDEO CROP TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])

@@ -7,7 +7,6 @@ Supported platforms:
   - Linux: /sys/class/power_supply when available
 """
 
-from __future__ import annotations
 import json
 import os
 import plistlib
@@ -17,7 +16,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Union
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from utils import *  # noqa: E402,F403
@@ -63,7 +62,7 @@ Usage:
 """)
 
 
-def first_number(*values: Any) -> float | None:
+def first_number(*values: Any) -> Optional[float]:
     for value in values:
         if isinstance(value, bool):
             continue
@@ -77,7 +76,7 @@ def first_number(*values: Any) -> float | None:
     return None
 
 
-def first_bool(*values: Any) -> bool | None:
+def first_bool(*values: Any) -> Optional[bool]:
     for value in values:
         if isinstance(value, bool):
             return value
@@ -98,7 +97,7 @@ def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
-def format_watts(value: float | None) -> str:
+def format_watts(value: Optional[float]) -> str:
     if value is None:
         return f"{FGray}N/A{CRst}"
     if abs(value) >= 10:
@@ -106,37 +105,37 @@ def format_watts(value: float | None) -> str:
     return f"{value:.2f} W"
 
 
-def format_mv(value: float | None) -> str:
+def format_mv(value: Optional[float]) -> str:
     return f"{FGray}N/A{CRst}" if value is None else f"{value / 1000:.2f} V"
 
 
-def format_ma(value: float | None) -> str:
+def format_ma(value: Optional[float]) -> str:
     return f"{FGray}N/A{CRst}" if value is None else f"{value / 1000:.2f} A"
 
 
-def format_percent(value: float | None) -> str:
+def format_percent(value: Optional[float]) -> str:
     return f"{FGray}N/A{CRst}" if value is None else f"{value:.0f}%"
 
 
-def format_wh(value: float | None) -> str:
+def format_wh(value: Optional[float]) -> str:
     return f"{FGray}N/A{CRst}" if value is None else f"{value:.2f} Wh"
 
 
-def mah_mv_to_wh(capacity_mah: float | None, voltage_mv: float | None) -> float | None:
+def mah_mv_to_wh(capacity_mah: Optional[float], voltage_mv: Optional[float]) -> Optional[float]:
     if capacity_mah is None or voltage_mv is None:
         return None
     return capacity_mah * voltage_mv / 1_000_000.0
 
 
-def mwh_to_wh(value_mwh: float | None) -> float | None:
+def mwh_to_wh(value_mwh: Optional[float]) -> Optional[float]:
     return None if value_mwh is None else value_mwh / 1000.0
 
 
-def uwh_to_wh(value_uwh: float | None) -> float | None:
+def uwh_to_wh(value_uwh: Optional[float]) -> Optional[float]:
     return None if value_uwh is None else value_uwh / 1_000_000.0
 
 
-def uah_uv_to_wh(capacity_uah: float | None, voltage_uv: float | None) -> float | None:
+def uah_uv_to_wh(capacity_uah: Optional[float], voltage_uv: Optional[float]) -> Optional[float]:
     if capacity_uah is None or voltage_uv is None:
         return None
     return capacity_uah * voltage_uv / 1_000_000_000_000.0
@@ -145,18 +144,18 @@ def uah_uv_to_wh(capacity_uah: float | None, voltage_uv: float | None) -> float 
 def power_record(
     *,
     platform_name: str,
-    connected: bool | None = None,
-    charging: bool | None = None,
-    discharging: bool | None = None,
-    charger_power_w: float | None = None,
-    adapter_input_w: float | None = None,
-    system_load_w: float | None = None,
-    battery_power_w: float | None = None,
-    battery_percent: float | None = None,
-    battery_design_capacity_wh: float | None = None,
-    battery_full_charge_capacity_wh: float | None = None,
-    details: list[tuple[str, Any]] | None = None,
-    sources: list[tuple[str, str]] | None = None,
+    connected: Optional[bool] = None,
+    charging: Optional[bool] = None,
+    discharging: Optional[bool] = None,
+    charger_power_w: Optional[float] = None,
+    adapter_input_w: Optional[float] = None,
+    system_load_w: Optional[float] = None,
+    battery_power_w: Optional[float] = None,
+    battery_percent: Optional[float] = None,
+    battery_design_capacity_wh: Optional[float] = None,
+    battery_full_charge_capacity_wh: Optional[float] = None,
+    details: Optional[list[tuple[str, Any]]] = None,
+    sources: Optional[list[tuple[str, str]]] = None,
 ) -> dict[str, Any]:
     return {
         "platform": platform_name,
@@ -405,14 +404,14 @@ if (Get-CimClass -ClassName Win32_PowerSupply -ErrorAction SilentlyContinue) {
 
 
 # ============ Linux ============
-def read_sysfs(path: Path) -> str | None:
+def read_sysfs(path: Path) -> Optional[str]:
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
         return None
 
 
-def read_sysfs_number(device: Path, *names: str) -> float | None:
+def read_sysfs_number(device: Path, *names: str) -> Optional[float]:
     for name in names:
         value = first_number(read_sysfs(device / name))
         if value is not None:
@@ -420,7 +419,7 @@ def read_sysfs_number(device: Path, *names: str) -> float | None:
     return None
 
 
-def linux_battery_capacity_wh(device: Path, energy_name: str, charge_name: str, voltage_uv: float | None) -> float | None:
+def linux_battery_capacity_wh(device: Path, energy_name: str, charge_name: str, voltage_uv: Optional[float]) -> Optional[float]:
     energy_uwh = read_sysfs_number(device, energy_name)
     if energy_uwh is not None:
         return uwh_to_wh(energy_uwh)
@@ -545,7 +544,7 @@ def freeze_capacity_fields(record: dict[str, Any]) -> None:
             FROZEN_CAPACITY_FIELDS[cache_key] = value
 
 
-def yes_no_text(value: bool | None, yes_color: str = FLGreen) -> str:
+def yes_no_text(value: Optional[bool], yes_color: str = FLGreen) -> str:
     if value is None:
         return f"{FGray}N/A{CRst}"
     return f"{yes_color}yes{CRst}" if value else f"{FGray}no{CRst}"
@@ -567,8 +566,8 @@ def build_report(verbose: bool, freeze_capacity: bool = False) -> tuple[int, str
     full_charge_capacity_wh = record.get("battery_full_charge_capacity_wh")
 
     separator = f"{FLCyan}{'-' * 48}{CRst}"
+    Utils.print_banner(f"POWER CURRENT - {record['platform']}")
     lines = [
-        f"{FLYellow}=========== POWER CURRENT - {record['platform']} ==========={CRst}",
         separator,
         f"  Charger connected : {yes_no_text(record.get('connected'))}",
         f"  Charger power     : {FLGreen}{format_watts(record.get('charger_power_w'))}{CRst}" if record.get("charger_power_w") is not None else f"  Charger power     : {format_watts(None)}",

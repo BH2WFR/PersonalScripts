@@ -5,13 +5,14 @@
 
 from utils import *
 import sys
+from typing import Optional
 
 import enum
 
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== LINK CREATION TOOL ==========={CRst}")
+    Utils.print_banner("LINK CREATION TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -107,8 +108,8 @@ def main() -> int:
         JUNCTION = 3      # Windows 目录 junction
         HARDLINK = 4      # 硬链接
 
-    file_link_type: LinkType | None = None
-    dir_link_type: LinkType | None = None
+    file_link_type: Optional[LinkType] = None
+    dir_link_type: Optional[LinkType] = None
 
     def ask_file_link_type():
         """询问文件链接类型，返回 LinkType"""
@@ -135,7 +136,7 @@ def main() -> int:
 
 
     #============ 单文件夹特殊处理 ===========
-    mirror_mode: int | None = 0      # 0=直接链接, 1=展平内容, 2=递归镜像
+    mirror_mode: Optional[int] = 0      # 0=直接链接, 1=展平内容, 2=递归镜像
     mirror_source_dir: str = ""    # 仅 mirror_mode 1/2 使用，保存原始目录路径
     is_single_dir = len(dirs) == 1 and len(files) == 0
 

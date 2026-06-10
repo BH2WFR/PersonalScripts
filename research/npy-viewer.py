@@ -86,7 +86,7 @@ def show_1d_array(
     color: str = "royalblue",
     mode: str = "line",
     line_shape: str = "linear",
-    max_display_size: int | None = None,
+    max_display_size: typing.Optional[int] = None,
     force_plt: bool = False,
 ):
     converted = np.asarray(array).squeeze()
@@ -173,7 +173,7 @@ def show_2d_array_3d(
     image_array: np.ndarray,
     title: str = "Image",
     color_scale: str = "cividis",
-    max_display_size: int | None = None,
+    max_display_size: typing.Optional[int] = None,
     force_plt: bool = False
 ):
     if(image_array.ndim != 2):
@@ -238,7 +238,7 @@ def show_2d_array_2d(
     image_array: np.ndarray,
     title: str = "Image",
     color_scale: str = "cividis",
-    max_display_size: int | None = None,
+    max_display_size: typing.Optional[int] = None,
     force_plt: bool = False
 ):
     if(image_array.ndim != 2):
@@ -287,7 +287,7 @@ def _prompt_choice(
     title: str,
     choices: list[str],
     allow_custom: bool = False,
-    default: str | None = None,
+    default: typing.Optional[str] = None,
 ) -> str:
     print(f"{FLYellow}{title}{CRst}")
     for index, choice in enumerate(choices, start=1):
@@ -331,7 +331,7 @@ def _prompt_bool(title: str) -> bool:
         print(f"{FLRed}ERROR{CRst}: Enter y or n")
 
 
-def _prompt_max_display_size(default: int | None = None) -> int | None:
+def _prompt_max_display_size(default: typing.Optional[int] = None) -> typing.Optional[int]:
     print(f"{FLGreen}max-display-size{CRst} help:")
     print(f"  Press {FLCyan}Enter{CRst} or type {FLCyan}all{CRst}: show all data points")
     print(f"  Type {FLCyan}a positive integer{CRst}: when array length exceeds this value, step-sampling is used to avoid slow plotting")
@@ -352,7 +352,7 @@ def _prompt_max_display_size(default: int | None = None) -> int | None:
         print(f"{FLRed}ERROR{CRst}: max-display-size must be > 0")
 
 
-def _parse_max_display_size(value: str | None) -> int | None:
+def _parse_max_display_size(value: typing.Optional[str]) -> typing.Optional[int]:
     if value is None:
         return None
     max_display_size = int(value)
@@ -368,7 +368,7 @@ def _squeeze_supported_array(array: np.ndarray) -> np.ndarray:
     return converted
 
 
-def _parse_array_selection(selection: str, max_index: int) -> list[int] | None:
+def _parse_array_selection(selection: str, max_index: int) -> typing.Optional[list[int]]:
     selection = selection.strip().lower()
     if selection == "all":
         return list(range(max_index))
@@ -568,11 +568,11 @@ def _build_arg_parser():
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: typing.Optional[list[str]] = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     file_path = args.npy_file_path
-    print(f"{FLYellow}================== NPY/NPZ Interactive Viewer =================={CRst}")
+    Utils.print_banner("NPY/NPZ Interactive Viewer")
     if not file_path:
         file_path = input(f"{FLYellow}Enter .npy/.npz file path: {CRst}").strip().strip('"')
         if not file_path:

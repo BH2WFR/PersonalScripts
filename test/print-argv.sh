@@ -5,6 +5,7 @@ esc="$(printf '\033')"
 FLYellow="${esc}[33m"
 FLGreen="${esc}[32m"
 FLCyan="${esc}[36m"
+FGray="${esc}[90m"
 CRst="${esc}[0m"
 
 resolve_script_path() {
@@ -29,6 +30,8 @@ resolve_script_path() {
 printf '%s\n' "${FLYellow}Command line arguments:${CRst}"
 
 script_path="$(resolve_script_path)"
+bash_path="$(command -v bash 2>/dev/null || command -v sh 2>/dev/null || printf 'unknown')"
+printf '%s\n' "${FLCyan}Interpreter:${CRst}  ${FLGreen}bash${CRst}  ${FGray}${bash_path}${CRst}"
 printf '%s\n' "  PATH: ${FLGreen}${script_path}${CRst}"
 
 i=0

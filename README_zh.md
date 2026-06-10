@@ -2,6 +2,8 @@
 
 [English](./README.md)
 
+> 本项目大部分具体代码由 **DeepSeek V4 Pro** 模型在我的反复迭代修改下通过 vibe coding 生成。
+
 跨平台日常实用脚本合集 — PDF 处理、文件链接、视频下载、系统工具等。
 
 大部分脚本支持交互模式和命令行参数。使用 `python <脚本名>.py --help` 查看用法详情。
@@ -32,6 +34,8 @@ python _nuitka-build.py                        # 全平台
 
 - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-utils`）
 - 数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/screen-utils --list`）
+- 启动时打印 OS 版本、Python 路径与版本、conda 环境、pwsh/bash 可用性
+- 无扩展名时优先查找 `.py`，然后按平台顺序回退：Windows → `.ps1` 再 `.sh`；macOS/Linux → `.sh` 再 `.ps1`
 - 平台感知过滤：隐藏与当前 OS 不匹配的 `windows/`/`macos/`/`linux/` 脚本
 - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - 同路径存在同名 `.py` 和 `.sh`/`.ps1` 时，仅显示 `.py`
@@ -116,9 +120,11 @@ python _nuitka-build.py                        # 全平台
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
+| `test/keyboard-hook.py` | 跨平台全局键盘鼠标钩子监控器。打印按键/鼠标/滚轮事件并追踪前台窗口。同时可作为输入控制库使用：`press`、`release`、`tap`、`hotkey`、`send`（序列发送）、`move`、`click`、`scroll`、`get_foreground_window`。macOS 使用原生 CGEvent tap；Windows 用 ctypes 调用 `SetWindowsHookEx`；Linux 使用 X11 XRecord。 | 跨平台。macOS: `pip install pyobjc-framework-Quartz`。Windows: 无（标准库 ctypes）。Linux: `pip install python-xlib`。 |
 | `test/print-argv.py` | 打印所有命令行参数 | 跨平台。无外部依赖 |
 | `test/print-argv.ps1` | PowerShell：彩色打印所有参数 | Windows。PowerShell（系统自带） |
 | `test/print-argv.sh` | Bash：彩色打印所有参数 | Linux/macOS。`bash`（系统自带） |
+| `test/keyboard-hook.py` | 全局键盘鼠标钩子监视器（按下/释放/点击/滚轮）。也可发送输入（按下、轻击、组合键、移动、点击、滚轮）。通过 `setup()` API 支持热键回调 | macOS（pyobjc）、Windows（标准库 ctypes）、Linux（python-xlib/X11） |
 
 ---
 
@@ -154,6 +160,8 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 ## 约定
 
 - 所有 Python 脚本支持 `--help` / `-h` 查看用法（英文，带颜色）
+- 所有脚本统一使用 `Utils.print_banner()` 绘制双线框标题横幅
+- Python 3.9+ 兼容（使用 `typing` 模块的 `Optional` / `Union`）
 - 命令行参数传入时跳过交互提示（适合批处理）
 - 多行输入使用 EOF（Windows: `Ctrl+Z`，Linux/macOS: `Ctrl+D`）
 - 通过 `utils` ANSI 代码实现彩色输出（`FLYellow`、`FLGreen`、`FLRed` 等）

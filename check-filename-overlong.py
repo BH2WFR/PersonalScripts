@@ -1,5 +1,6 @@
 from utils import *
 import os, sys
+from typing import Optional
 
 # 用于在 NAS 等设备上, 截断过长的文件名 (UTF-8 字节长度)
 # 如在群晖的加密文件夹中, 文件名长度限制为 143 字节 (UTF-8), 此工具可检查并截断超长的文件名 (保留扩展名)
@@ -33,7 +34,7 @@ def get_truncated_filename(name, limit, encoding, de_dupe_idx=0):
 
 def main() -> int:
     #* 交互输入
-    print(f"{FLYellow}=========== FILENAME LENGTH CHECKING AND TRUNCATING TOOL ==========={CRst}")
+    Utils.print_banner("FILENAME LENGTH CHECKING AND TRUNCATING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -68,9 +69,9 @@ Usage:
     ENCODING = "utf-8"
 
     # 解析命令行参数
-    _arg_path: str | None = None
-    _arg_limit: int | None = None
-    _arg_encoding: str | None = None
+    _arg_path: Optional[str] = None
+    _arg_limit: Optional[int] = None
+    _arg_encoding: Optional[str] = None
     for i in range(1, len(sys.argv)):
         arg = sys.argv[i]
         if arg.startswith("--limit="):

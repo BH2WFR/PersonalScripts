@@ -49,7 +49,7 @@ Usage:
 """)
         return 0
 
-    print(f"{FLYellow}=========== UPLOAD IP ADDRESS INFO TO S3 BUCKET ==========={CRst}")
+    Utils.print_banner("UPLOAD IP ADDRESS INFO TO S3 BUCKET")
 
     #============ 环境变量检查 ===========
     _required = [

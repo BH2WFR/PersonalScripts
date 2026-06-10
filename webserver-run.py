@@ -6,6 +6,7 @@ import sys
 import ipaddress
 import http.server
 import socket
+from typing import Optional
 
 from utils import *
 
@@ -137,10 +138,10 @@ def main():
 """)
         sys.exit(0)
 
-    print(f"{FLYellow}========= WEBSERVER RUNNING TOOL ========={CRst}")
+    Utils.print_banner("WEBSERVER RUNNING TOOL")
 
     # ----- parse optional CLI args -----
-    serve_dir: str | None = None
+    serve_dir: Optional[str] = None
     cli_bind = "0.0.0.0"
     cli_port = 8000
     url_path = ""

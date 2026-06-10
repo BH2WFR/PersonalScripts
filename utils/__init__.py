@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import ctypes
 import pathlib
+import unicodedata
+import platform
 
 #* 控制台颜色
 # Foreground (text) colors
@@ -106,10 +108,10 @@ class CmdCheck:
         path: Populated by :meth:`Utils.check_commands` — resolved executable
             path, or ``None`` if not found.
     """
-    cmd: str | list[str]
+    cmd: typing.Union[str, list[str]]
     required: bool = True
-    hints: dict[str, str] | None = None
-    path: str | None = dataclasses.field(default=None, init=False)
+    hints: typing.Optional[dict[str, str]] = None
+    path: typing.Optional[str] = dataclasses.field(default=None, init=False)
 
 
 #* 轮子
@@ -118,6 +120,192 @@ class Utils:
     def get_time_str() -> str:
         """Return current time as ``YYYY-MM-DD HH:MM:SS`` string."""
         return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def get_terminal_width() -> int:
+        """Return the current terminal width (columns), or a conservative default.
+
+        Returns ``os.get_terminal_size().columns - 1`` on success, or 119
+        (equivalent to a 120-column terminal) when the size cannot be queried.
+        """
+        try:
+            return os.get_terminal_size().columns - 1
+        except OSError:
+            return 119
+
+    @staticmethod
+    def display_width(s: str) -> int:
+        """Calculate the display width of *s* in a terminal.
+
+        CJK full-width / wide characters count as 2 columns; everything else
+        counts as 1 column.  Uses :func:`unicodedata.east_asian_width`.
+        """
+        w = 0
+        for ch in s:
+            ea = unicodedata.east_asian_width(ch)
+            w += 2 if ea in ("W", "F") else 1
+        return w
+
+    @staticmethod
+    def print_banner(title: str, width: int = 60, color_ansi_esc: typing.Optional[str] = f"{FLYellow}") -> None:
+        """Print *title* centered inside a double-line box-drawing banner.
+
+        The box uses ``╔`` / ``╗`` / ``╚`` / ``╝`` / ``║`` / ``═`` characters.
+        CJK full-width characters in *title* are counted as 2 columns via
+        :meth:`display_width`. If the title's display width exceeds *width*,
+        the box is extended with at least 4 ``═`` characters flanking each side.
+
+        :param title: Text to display centered in the banner.
+        :param width: Desired total width of the box (border included).
+                      Defaults to 40; may be extended if *title* is too long.
+        :param color_ansi_esc: ANSI escape sequence for the box colour.
+                               Defaults to :data:`FLYellow`.  Pass ``None`` for no colour.
+        """
+        if color_ansi_esc is None:
+            color_ansi_esc = ""
+        title_width = Utils.display_width(title)
+        # Content area: at least 8 (4 ═ padding each side) beyond title width
+        min_content = title_width + 8
+        content = max(width - 2, min_content)
+        total = content + 2
+        h_line = "═" * content
+        left_pad = (content - title_width) // 2
+        right_pad = content - title_width - left_pad
+        print(f"{color_ansi_esc}╔{h_line}╗{CRst}")
+        print(f"{color_ansi_esc}║{' ' * left_pad}{title}{' ' * right_pad}║{CRst}")
+        print(f"{color_ansi_esc}╚{h_line}╝{CRst}")
+
+    @staticmethod
+    def print_separator(width: int = 50, color_ansi_esc: typing.Optional[str] = f"{FLYellow}", indent: int = 0) -> None:
+        """Print a horizontal separator line using ``─`` characters.
+
+        :param width: Width of the line in columns. Defaults to 50.
+                      When 0 or ``None``, uses :meth:`get_terminal_width`.
+        :param color_ansi_esc: ANSI escape sequence for the line colour.
+                               Defaults to :data:`FLYellow`.  Pass ``None`` for no colour.
+        :param indent: Number of leading spaces before the separator. Defaults to 0.
+        """
+        if not width:
+            width = Utils.get_terminal_width()
+        if color_ansi_esc is None:
+            color_ansi_esc = ""
+        print(f"{' ' * indent}{color_ansi_esc}{'─' * width}{CRst}")
+
+    @staticmethod
+    def get_os_name() -> str:
+        """Return a human-readable OS name with version."""
+        if sys.platform == "darwin":
+            ver = platform.mac_ver()[0]
+            return f"macOS {ver}" if ver else "macOS"
+        if sys.platform == "linux":
+            return f"Linux ({platform.release()})"
+        if sys.platform in ("win32", "cygwin", "msys"):
+            edition = platform.win32_edition()
+            base = f"Windows {platform.release()} {platform.version()}"
+            return f"{base} {edition}" if edition else base
+        return sys.platform
+
+    @staticmethod
+    def get_conda_env() -> typing.Optional[str]:
+        """Return the conda environment name, or ``None`` if not running in conda."""
+        prefix = sys.prefix
+        if not any(kw in prefix.lower() for kw in ("conda", "anaconda", "miniconda")):
+            return None
+        parent = os.path.dirname(prefix)
+        if os.path.basename(parent) == "envs":
+            return os.path.basename(prefix)
+        if os.path.isdir(os.path.join(prefix, "conda-meta")):
+            return "base"
+        return None
+
+    @staticmethod
+    def find_bash() -> typing.Optional[str]:
+        """Find a bash executable. Returns path or ``None``."""
+        if sys.platform in ("win32", "cygwin", "msys"):
+            for candidate in (
+                r"C:\Program Files\Git\bin\bash.exe",
+                r"C:\Program Files (x86)\Git\bin\bash.exe",
+                r"C:\msys64\usr\bin\bash.exe",
+                r"C:\cygwin64\bin\bash.exe",
+            ):
+                if os.path.isfile(candidate):
+                    return candidate
+        found = shutil.which("bash")
+        return found if found else None
+
+    @staticmethod
+    def find_pwsh() -> typing.Optional[str]:
+        """Find a PowerShell executable. Returns path or ``None``."""
+        for exe in ("pwsh", "powershell"):
+            found = shutil.which(exe)
+            if found:
+                return found
+        return None
+
+    @staticmethod
+    def _get_shell_version(exe_path: str) -> typing.Optional[str]:
+        """Get the version string of a shell, or ``None`` on failure."""
+        try:
+            base = os.path.basename(exe_path).lower()
+            if base.startswith("pwsh") or base.startswith("powershell"):
+                result = subprocess.run(
+                    [exe_path, "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                return result.stdout.strip() or None
+
+            result = subprocess.run(
+                [exe_path, "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            out = result.stdout.strip()
+            if out:
+                return out.splitlines()[0]
+            if result.stderr.strip():
+                return result.stderr.strip().splitlines()[0]
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def print_env_info() -> None:
+        """Print conda environment, Python version, OS, pwsh, and bash info."""
+        lines: list[str] = []
+
+        lines.append(f"{FLYellow}OS:{CRst}           {Utils.get_os_name()}")
+        lines.append(f"{FLYellow}Arch:{CRst}         {FGray}{platform.machine()}{CRst}")
+
+        lines.append(f"{FLCyan}Python:{CRst}       {sys.version.split()[0]}")
+        lines.append(f"              {FGray}{sys.executable}{CRst}")
+
+        conda_env = Utils.get_conda_env()
+        if conda_env is None:
+            lines.append(f"{FLCyan}Conda env:{CRst}    {FLRed}(no conda){CRst}")
+        else:
+            lines.append(f"{FLCyan}Conda env:{CRst}    {FLYellow}{conda_env}{CRst}")
+
+        pwsh = Utils.find_pwsh()
+        if pwsh:
+            ver = Utils._get_shell_version(pwsh)
+            if ver:
+                lines.append(f"{FLGreen}pwsh:{CRst}         {ver}")
+            lines.append(f"              {FGray}{pwsh}{CRst}")
+        else:
+            lines.append(f"{FLGreen}pwsh:{CRst}         {FLRed}(not found){CRst}")
+
+        bash = Utils.find_bash()
+        if bash:
+            ver = Utils._get_shell_version(bash)
+            if ver:
+                lines.append(f"{FLGreen}bash:{CRst}         {ver}")
+            lines.append(f"              {FGray}{bash}{CRst}")
+        else:
+            lines.append(f"{FLGreen}bash:{CRst}         {FLRed}(not found){CRst}")
+
+        print()
+        for line in lines:
+            print(f"  {line}")
+        print()
 
     @staticmethod
     def print_error_and_exit(msg: str, code: int = 1) -> None:
@@ -531,9 +719,9 @@ class Input:
         - Exits with ``sys.exit(1)`` if no paths remain
         - Returns list of absolute paths
         """
-        _eof_hint = "Ctrl+Z then Enter" if sys.platform == "win32" else "Ctrl+D"
+        _eof_hint = f"{FLYellow}Enter{FGray}→{FLYellow}Ctrl+Z{FGray}→{FLYellow}Enter" if sys.platform == "win32" else f"{FLYellow}Ctrl+D"
         print(f"{FLYellow}{prompt_text}{CRst}")
-        print(f"{FLCyan}End with {FLYellow}{_eof_hint}{FLCyan}:{CRst}")
+        print(f"{FLCyan}End with {_eof_hint}{FLCyan}:{CRst}")
         raw = sys.stdin.read().strip()
         if not raw:
             print(f"{FLRed}No paths provided.{CRst}")
@@ -607,7 +795,7 @@ class Input:
         skip_empty: bool = True,
         trim_lines: bool = True,
         strip_trailing_newline: bool = True,
-        pattern: str | None = None,
+        pattern: typing.Optional[str] = None,
         *,
         split_lines: typing.Literal[True] = True,
         raw: typing.Literal[False] = False,
@@ -619,7 +807,7 @@ class Input:
         skip_empty: bool = True,
         trim_lines: bool = True,
         strip_trailing_newline: bool = True,
-        pattern: str | None = None,
+        pattern: typing.Optional[str] = None,
         *,
         split_lines: typing.Literal[False],
         raw: typing.Literal[False] = False,
@@ -638,10 +826,10 @@ class Input:
         skip_empty: bool = True,
         trim_lines: bool = True,
         strip_trailing_newline: bool = True,
-        pattern: str | None = None,
+        pattern: typing.Optional[str] = None,
         split_lines: bool = True,
         raw: bool = False,
-    ) -> list[str] | str:
+    ) -> typing.Union[list[str], str]:
         """Read multi-line text from stdin with EOF prompt.
 
         Args:
@@ -657,9 +845,9 @@ class Input:
         Returns:
             List of processed lines or raw string. Returns empty list/string if input is empty.
         """
-        _eof_hint = "Ctrl+Z then Enter" if sys.platform == "win32" else "Ctrl+D"
+        _eof_hint = f"{FLYellow}Enter{FGray}→{FLYellow}Ctrl+Z{FGray}→{FLYellow}Enter" if sys.platform == "win32" else f"{FLYellow}Ctrl+D"
         print(f"{FLYellow}{prompt_text}{CRst}")
-        print(f"{FLCyan}End with {FLYellow}{_eof_hint}{FLCyan}:{CRst}")
+        print(f"{FLCyan}End with {_eof_hint}{FLCyan}:{CRst}")
         text = sys.stdin.read()
         if raw:
             if not text.strip():
@@ -773,7 +961,7 @@ class Menu:
         *,
         prompt: str = "Choice",
         required: bool = False,
-        default_key: str | None = None,
+        default_key: typing.Optional[str] = None,
         inline: bool = False,
         key_color: str = FLGreen,
         default_desc_color: str = FLYellow,
@@ -783,7 +971,7 @@ class Menu:
         separator_color: str = FLCyan,
         indent: str = "  ",
         accept_custom_string: bool = False,
-    ) -> typing.Any | None:
+    ) -> typing.Optional[typing.Any]:
         """Display an interactive menu and return the selected value.
 
         Prints a list of options (each prefixed with a ``[Key]`` bracket), prompts
