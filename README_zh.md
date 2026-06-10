@@ -2,6 +2,8 @@
 
 [English](./README.md)
 
+> 本项目大部分具体代码由 **DeepSeek V4 Pro** 模型在我的反复迭代修改下通过 vibe coding 生成。
+
 跨平台日常实用脚本合集 — PDF 处理、文件链接、视频下载、系统工具等。
 
 大部分脚本支持交互模式和命令行参数。使用 `python <脚本名>.py --help` 查看用法详情。
@@ -116,6 +118,7 @@ python _nuitka-build.py                        # 全平台
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
+| `test/keyboard-hook.py` | 跨平台全局键盘鼠标钩子监控器。打印按键/鼠标/滚轮事件并追踪前台窗口。同时可作为输入控制库使用：`press`、`release`、`tap`、`hotkey`、`send`（序列发送）、`move`、`click`、`scroll`、`get_foreground_window`。macOS 使用原生 CGEvent tap；Windows 用 ctypes 调用 `SetWindowsHookEx`；Linux 使用 X11 XRecord。 | 跨平台。macOS: `pip install pyobjc-framework-Quartz`。Windows: 无（标准库 ctypes）。Linux: `pip install python-xlib`。 |
 | `test/print-argv.py` | 打印所有命令行参数 | 跨平台。无外部依赖 |
 | `test/print-argv.ps1` | PowerShell：彩色打印所有参数 | Windows。PowerShell（系统自带） |
 | `test/print-argv.sh` | Bash：彩色打印所有参数 | Linux/macOS。`bash`（系统自带） |
