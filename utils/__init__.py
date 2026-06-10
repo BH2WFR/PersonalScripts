@@ -222,6 +222,11 @@ class Utils:
         return None
 
     @staticmethod
+    def find_conda() -> typing.Optional[str]:
+        """Find a conda executable. Returns path or ``None``."""
+        return shutil.which("conda") or None
+
+    @staticmethod
     def find_bash() -> typing.Optional[str]:
         """Find a bash executable. Returns path or ``None``."""
         if sys.platform in ("win32", "cygwin", "msys"):
@@ -285,25 +290,30 @@ class Utils:
         if conda_env is None:
             lines.append(f"{FLCyan}Conda env:{CRst}    {FLRed}(no conda){CRst}")
         else:
-            lines.append(f"{FLCyan}Conda env:{CRst}    {FLYellow}{conda_env}{CRst}")
+            conda_exe = Utils.find_conda()
+            conda_ver = Utils._get_shell_version(conda_exe) if conda_exe else None
+            ver_part = f"  {FGray}({conda_ver}){CRst}" if conda_ver else ""
+            lines.append(f"{FLCyan}Conda env:{CRst}    {FLYellow}{conda_env}{CRst}{ver_part}")
+            if conda_exe:
+                lines.append(f"              {FGray}{conda_exe}{CRst}")
 
         pwsh = Utils.find_pwsh()
         if pwsh:
             ver = Utils._get_shell_version(pwsh)
             if ver:
-                lines.append(f"{FLGreen}pwsh:{CRst}         {ver}")
+                lines.append(f"{FLGreen}PowerShell:{CRst}   {ver}")
             lines.append(f"              {FGray}{pwsh}{CRst}")
         else:
-            lines.append(f"{FLGreen}pwsh:{CRst}         {FLRed}(not found){CRst}")
+            lines.append(f"{FLGreen}PowerShell:{CRst}   {FLRed}(not found){CRst}")
 
         bash = Utils.find_bash()
         if bash:
             ver = Utils._get_shell_version(bash)
             if ver:
-                lines.append(f"{FLGreen}bash:{CRst}         {ver}")
+                lines.append(f"{FLGreen}Bash:{CRst}         {ver}")
             lines.append(f"              {FGray}{bash}{CRst}")
         else:
-            lines.append(f"{FLGreen}bash:{CRst}         {FLRed}(not found){CRst}")
+            lines.append(f"{FLGreen}Bash:{CRst}         {FLRed}(not found){CRst}")
 
         print()
         for line in lines:
