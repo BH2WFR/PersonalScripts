@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Clear privacy traces on macOS with explicit per-section confirmation."""
 
-from __future__ import annotations
-
 import argparse
 import os
 import shutil
@@ -10,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from utils import *  # noqa: E402,F403
@@ -69,7 +68,7 @@ def run(
     cmd: list[str],
     *,
     capture: bool = False,
-    input_data: bytes | None = None,
+    input_data: Optional[bytes] = None,
     check: bool = False,
 ) -> subprocess.CompletedProcess:
     if capture:
@@ -472,11 +471,7 @@ def clear_python_pycache() -> None:
 
 
 def print_banner(args: argparse.Namespace) -> None:
-    print(f"{FLYellow}{'=' * 58}{CRst}")
-    print(f"{FLYellow}  PRIVACY CLEANUP - macOS{CRst}")
-    print(f"{FLYellow}  Explicit per-section confirmation enabled.{CRst}")
-    print(f"{FLYellow}{'=' * 58}{CRst}")
-    print()
+    Utils.print_banner("PRIVACY CLEANUP - macOS")
     print("  Enabled sections:")
     if not args.skip_recent:
         print("    1. Recent items / Finder state / shell history")

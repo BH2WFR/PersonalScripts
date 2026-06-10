@@ -2,13 +2,13 @@ from utils import *
 import sys
 
 import re
-from typing import Final
+from typing import Final, Optional
 
 
 # 文件/文件夹 时间修改器，支持加抖动
 
 def main() -> int:
-    print(f"{FLYellow}======== FILE TIME MODIFICATION TOOL ======={CRst}")
+    Utils.print_banner("FILE TIME MODIFICATION TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -56,8 +56,8 @@ def main() -> int:
     # }
 
     class Jitter:
-        upperBound : datetime.timedelta | None = None
-        lowerBound : datetime.timedelta | None = None
+        upperBound : Optional[datetime.timedelta] = None
+        lowerBound : Optional[datetime.timedelta] = None
 
     def get_jittered_time(baseTime: datetime.datetime, jitter: Jitter) -> datetime.datetime:
         if jitter is None:
@@ -71,19 +71,19 @@ def main() -> int:
         return jittered_time
 
     class newTimeConfig:
-        openedTime : datetime.datetime | None = None
-        createdTime : datetime.datetime | None = None
-        modifiedTime : datetime.datetime | None = None
+        openedTime : Optional[datetime.datetime] = None
+        createdTime : Optional[datetime.datetime] = None
+        modifiedTime : Optional[datetime.datetime] = None
 
-        openedTimeJitter : Jitter | None = None
-        createdTimeJitter : Jitter | None = None
-        modifiedTimeJitter : Jitter | None = None
+        openedTimeJitter : Optional[Jitter] = None
+        createdTimeJitter : Optional[Jitter] = None
+        modifiedTimeJitter : Optional[Jitter] = None
 
 
     class FileTimeInfo:
-        openedTime : datetime.datetime | None = None
-        createdTime : datetime.datetime | None = None
-        modifiedTime : datetime.datetime | None = None
+        openedTime : Optional[datetime.datetime] = None
+        createdTime : Optional[datetime.datetime] = None
+        modifiedTime : Optional[datetime.datetime] = None
 
 
 
@@ -96,7 +96,7 @@ def main() -> int:
         SHOW_TIMES = 4
     g_feature : Feature = Feature.MODIFY_TIMES
 
-    def parse_dt(s: str) -> datetime.datetime | None:
+    def parse_dt(s: str) -> Optional[datetime.datetime]:
         """
         Parse:
           - "YYYY-MM-DD HH:MM:SS"
@@ -125,7 +125,7 @@ def main() -> int:
         return datetime.datetime.strptime(s_norm, "%Y-%m-%d %H:%M:%S.%f")
 
 
-    def _format_dt(dt: datetime.datetime | None, isFormatZZZ : bool = False) -> str | None:
+    def _format_dt(dt: Optional[datetime.datetime], isFormatZZZ : bool = False) -> Optional[str]:
         if dt is None:
             return None
         if(isFormatZZZ):
@@ -133,7 +133,7 @@ def main() -> int:
         else:
             return dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    def parse_jitter(s: str) -> Jitter | None:
+    def parse_jitter(s: str) -> Optional[Jitter]:
         """
         Parse jitter:
           - "" -> None

@@ -1,315 +1,52 @@
 #!/usr/bin/env bash
+# Thin wrapper: find Python, then delegate to run-script.py with all arguments.
 
 set -eo pipefail
 
 esc=$'\033'
-FLYellow="${esc}[33m"
-FLGreen="${esc}[32m"
-FLCyan="${esc}[36m"
 FLRed="${esc}[31m"
 FGray="${esc}[90m"
 CRst="${esc}[0m"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-script_self="$script_dir/$(basename -- "${BASH_SOURCE[0]}")"
 
-# Detect OS to exclude non-applicable platform scripts
+# ----- platform flag for conda path resolution -----
 _os_name="$(uname -s)"
 case "$_os_name" in
-    Linux)                      _is_windows=false ; _is_macos=false ; _is_linux=true  ;;
-    Darwin)                     _is_windows=false ; _is_macos=true  ; _is_linux=false ;;
-    MINGW*|MSYS*|CYGWIN*)      _is_windows=true  ; _is_macos=false ; _is_linux=false ;;
-    *)                          _is_windows=false ; _is_macos=false ; _is_linux=false ;;
+    MINGW*|MSYS*|CYGWIN*) _is_windows=true  ;;
+    *)                     _is_windows=false ;;
 esac
 
-get_relative_script_path() {
-    local full_path="$1"
-    local relative_path="${full_path#"$script_dir"/}"
-    printf '%s\n' "${relative_path//\\//}"
-}
-
-resolve_script_path() {
-    local requested_script_name="$1"
-    local normalized_script_name="${requested_script_name//\\//}"
-    normalized_script_name="${normalized_script_name#/}"
-
-    if [[ "$normalized_script_name" =~ \.py$ || "$normalized_script_name" =~ \.sh$ ]]; then
-        printf '%s/%s\n' "$script_dir" "$normalized_script_name"
-        return
-    fi
-
-    local candidate_py="$script_dir/${normalized_script_name}.py"
-    if [[ -f "$candidate_py" ]]; then
-        printf '%s\n' "$candidate_py"
-        return
-    fi
-
-    local candidate_sh="$script_dir/${normalized_script_name}.sh"
-    if [[ -f "$candidate_sh" ]]; then
-        printf '%s\n' "$candidate_sh"
-        return
-    fi
-
-    # Default to .py for a clearer error message, while still preferring .py when both exist.
-    printf '%s\n' "$candidate_py"
-}
-
-show_supported_scripts() {
-    local scripts=()
-    local line
-    # Build platform exclusion patterns as an array (no embedded quotes)
-    _find_excludes=(
-        ! -name '__init__.py'
-        ! -name '_*'
-        ! -path "$script_self"
-        ! -path "${script_dir}/run-script.py"
-        ! -path "${script_dir}/run-script.ps1"
-        ! -path "${script_dir}/BUILD/*"
-        ! -path "${script_dir}/utils/*"
-        ! -path "*/__pycache__/*"
-        ! -path "*/.git/*"
-        ! -path "*/.venv/*"
-        ! -path "*/node_modules/*"
-        ! -path "*/.idea/*"
-        ! -path "*/dist/*"
+# ----- find python: prefer conda, then system python3/python -----
+python_candidates=(
+    "$HOME/miniconda3/bin/python"
+    "$HOME/anaconda3/bin/python"
+    "/opt/miniconda3/bin/python"
+    "/opt/anaconda3/bin/python"
+)
+if [[ "$_is_windows" == "true" ]]; then
+    python_candidates+=(
+        "${USERPROFILE:-$HOME}/miniconda3/python.exe"
+        "${USERPROFILE:-$HOME}/anaconda3/python.exe"
+        "${PROGRAMDATA:-}/miniconda3/python.exe"
+        "${PROGRAMDATA:-}/anaconda3/python.exe"
     )
-    if [[ "$_is_windows" != "true" ]]; then
-        _find_excludes+=(! -path "${script_dir}/windows/*")
-    fi
-    if [[ "$_is_macos" != "true" ]]; then
-        _find_excludes+=(! -path "${script_dir}/macos/*")
-    fi
-    if [[ "$_is_linux" != "true" ]]; then
-        _find_excludes+=(! -path "${script_dir}/linux/*")
-    fi
-
-    while IFS= read -r line; do
-        scripts+=("$line")
-    done < <(
-        find "$script_dir" -type f \( -name '*.py' -o -name '*.sh' \) \
-            "${_find_excludes[@]}" \
-            | sort
-    )
-
-    # If a .py and .sh exist at the same path with the same name, keep only the .py
-    local filtered_scripts=()
-    for full_path in "${scripts[@]}"; do
-        if [[ "$full_path" =~ \.sh$ ]]; then
-            local py_path="${full_path%.sh}.py"
-            if [[ -f "$py_path" ]]; then
-                continue
-            fi
-        fi
-        filtered_scripts+=("$full_path")
-    done
-    scripts=("${filtered_scripts[@]}")
-
-    if [[ "${#scripts[@]}" -eq 0 ]]; then
-        printf 'No Python/Shell scripts found in: `%s`:\n' "$script_dir"
-        return 1
-    fi
-
-    # Separate root-level and subfolder scripts
-    local root_scripts=()
-    local sub_scripts=()
-    for full_path in "${scripts[@]}"; do
-        local rel_dir
-        rel_dir="$(dirname -- "$full_path")"
-        if [[ "$rel_dir" == "$script_dir" ]]; then
-            root_scripts+=("$full_path")
-        else
-            sub_scripts+=("$full_path")
-        fi
-    done
-
-    printf '%b================== PERSONAL SCRIPTS ====================%b\n' "$FLYellow" "$CRst"
-    printf '  Available %bbash%b and %bpython%b scripts in `%b%s%b`:\n\n' "$FLGreen" "$CRst" "$FLCyan" "$CRst" "$FGray" "$script_dir" "$CRst"
-
-    local cnt=0
-    local full_path relative_path file_name color
-
-    for full_path in "${root_scripts[@]}"; do
-        relative_path="$(get_relative_script_path "$full_path")"
-        file_name="$(basename -- "$relative_path")"
-        if [[ "$full_path" =~ \.py$ ]]; then
-            color="$FLCyan"
-        else
-            color="$FLGreen"
-        fi
-        if [[ $cnt -lt 10 ]]; then
-            printf '  %b[%d]%b:  %b%s%b\n' "$FGray" "$cnt" "$CRst" "$color" "$file_name$CRst"
-        else
-            printf '  %b[%d]%b: %b%s%b\n' "$FGray" "$cnt" "$CRst" "$color" "$file_name$CRst"
-        fi
-        cnt=$((cnt + 1))
-    done
-
-    if [[ "${#sub_scripts[@]}" -gt 0 ]]; then
-        printf '\n'
-        printf '  %b--- Subfolders ---%b\n' "$FLYellow" "$CRst"
-        for full_path in "${sub_scripts[@]}"; do
-            relative_path="$(get_relative_script_path "$full_path")"
-            file_name="$(basename -- "$relative_path")"
-            local relative_directory
-            relative_directory="$(dirname -- "$relative_path")"
-            if [[ "$full_path" =~ \.py$ ]]; then
-                color="$FLCyan"
-            else
-                color="$FLGreen"
-            fi
-            if [[ $cnt -lt 10 ]]; then
-                printf '  %b[%d]%b:  %b%s%b/%b%s%b\n' "$FGray" "$cnt" "$CRst" "$FLYellow" "$relative_directory" "$CRst" "$color" "$file_name$CRst"
-            else
-                printf '  %b[%d]%b: %b%s%b/%b%s%b\n' "$FGray" "$cnt" "$CRst" "$FLYellow" "$relative_directory" "$CRst" "$color" "$file_name$CRst"
-            fi
-            cnt=$((cnt + 1))
-        done
-    fi
-
-    # Return all scripts as a combined array via a global variable
-    ALL_SCRIPTS=("${root_scripts[@]}" "${sub_scripts[@]}")
-    return 0
-}
-
-script_name="${1-}"
-if [[ $# -gt 0 ]]; then
-    shift
 fi
-remaining_args=("$@")
+python_candidates+=(python3 python)
 
-show_list=false
-if [[ -z "$script_name" || "$script_name" == "--list" ]]; then
-    show_list=true
-fi
-
-ALL_SCRIPTS=()
-
-if [[ "$show_list" == true ]]; then
-    show_supported_scripts
-    ret=$?
-    if [[ "$script_name" == "--list" ]]; then
-        exit 0
+python_cmd=""
+for candidate in "${python_candidates[@]}"; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        python_cmd="$candidate"
+        break
     fi
-    for arg in "${remaining_args[@]}"; do
-        if [[ "$arg" == "--list" ]]; then
-            exit 0
-        fi
-    done
-
-    if [[ $ret -ne 0 ]]; then
-        exit 0
-    fi
-
-    printf '\n%bExamples:%b\n' "$FGray" "$CRst"
-    printf '  %b5%b                         select by number\n' "$FLCyan" "$CRst"
-    printf '  %b5 --help%b                 number + passthrough args\n' "$FLCyan" "$CRst"
-    printf '  %bwebserver-run.py --port 9000%b   name + passthrough args\n' "$FLCyan" "$CRst"
-    printf '\n%bEnter number or script name to execute%b (or %bEnter%b to exit): ' "$FLYellow" "$CRst" "$FLYellow" "$CRst"
-    read -r choice_line
-    if [[ -z "$choice_line" ]]; then
-        exit 0
-    fi
-
-    # Split into first token and remaining args
-    first_token="${choice_line%% *}"
-    if [[ "$first_token" == "$choice_line" ]]; then
-        remaining_args=()
-    else
-        remaining_args_str="${choice_line#$first_token }"
-        read -ra remaining_args <<< "$remaining_args_str"
-    fi
-
-    if [[ "$first_token" =~ ^[0-9]+$ ]]; then
-        if [[ "$first_token" -ge "${#ALL_SCRIPTS[@]}" ]]; then
-            printf '%bInvalid selection: %s%b\n' "$FLRed" "$first_token" "$CRst" >&2
-            exit 1
-        fi
-        script_name="${ALL_SCRIPTS[$first_token]}"
-    else
-        script_name="$first_token"
-    fi
-fi
-
-if [[ -f "$script_name" ]]; then
-    script_path="$script_name"
-else
-    script_path="$(resolve_script_path "$script_name")"
-fi
-
-if [[ "$script_path" == "$script_self" ]]; then
-    printf '%bRefusing to run itself: `%s`%b\n' "$FLRed" "$script_path" "$CRst" >&2
+done
+if [[ -z "$python_cmd" ]]; then
+    printf '%bCannot find python (miniconda/anaconda/python3).%b\n' "$FLRed" "$CRst" >&2
+    printf 'Install miniconda: %bhttps://docs.conda.io/en/latest/miniconda.html%b\n' "$FGray" "$CRst" >&2
     exit 1
 fi
 
-if [[ ! -f "$script_path" ]]; then
-    normalized_script_name="${script_name//\\//}"
-    normalized_script_name="${normalized_script_name#/}"
-
-    if [[ ! "$normalized_script_name" =~ \.py$ && ! "$normalized_script_name" =~ \.sh$ ]]; then
-        candidate_py="$script_dir/${normalized_script_name}.py"
-        candidate_sh="$script_dir/${normalized_script_name}.sh"
-        printf '%bCannot find script: `%s` (preferred) or `%s`%b\n' "$FLRed" "$candidate_py" "$candidate_sh" "$CRst" >&2
-    else
-        printf '%bCannot find script: `%s`%b\n' "$FLRed" "$script_path" "$CRst" >&2
-    fi
-    exit 1
-fi
-
-printf '%bResolved script path:%b %b%s%b\n' "$FLYellow" "$CRst" "$FLGreen" "$script_path" "$CRst"
-
-ext="${script_path##*.}"
-if [[ "$ext" == "py" ]]; then
-    if command -v cygpath >/dev/null 2>&1; then
-        pathsep=';'
-        export PYTHONPATH="$(cygpath -w "$script_dir")${PYTHONPATH:+${pathsep}${PYTHONPATH}}"
-        python_script_path="$(cygpath -w "$script_path")"
-    else
-        pathsep=':'
-        export PYTHONPATH="$script_dir${PYTHONPATH:+${pathsep}${PYTHONPATH}}"
-        python_script_path="$script_path"
-    fi
-
-    # Find python command: prefer conda, then python3/python
-    python_candidates=(
-        "$HOME/miniconda3/bin/python"
-        "$HOME/anaconda3/bin/python"
-        "/opt/miniconda3/bin/python"
-        "/opt/anaconda3/bin/python"
-    )
-    if [[ "$_is_windows" == "true" ]]; then
-        python_candidates+=(
-            "${USERPROFILE:-$HOME}/miniconda3/python.exe"
-            "${USERPROFILE:-$HOME}/anaconda3/python.exe"
-            "${PROGRAMDATA:-}/miniconda3/python.exe"
-            "${PROGRAMDATA:-}/anaconda3/python.exe"
-        )
-    fi
-    python_candidates+=(python3 python)
-
-    python_cmd=""
-    for candidate in "${python_candidates[@]}"; do
-        if command -v "$candidate" >/dev/null 2>&1; then
-            python_cmd="$candidate"
-            break
-        fi
-    done
-    if [[ -z "$python_cmd" ]]; then
-        printf '%bCannot find python (miniconda/anaconda/python3). Install miniconda: https://docs.conda.io/en/latest/miniconda.html%b\n' "$FLRed" "$CRst" >&2
-        exit 1
-    fi
-
-    printf '%bResolved Python path:%b %b%s%b\n\n' "$FLYellow" "$CRst" "$FLGreen" "$python_cmd" "$CRst"
-    "$python_cmd" "$python_script_path" "${remaining_args[@]}"
-    exit $?
-fi
-
-printf '\n'
-
-if [[ "$ext" == "sh" ]]; then
-    bash_exe="${BASH:-bash}"
-    "$bash_exe" "$script_path" "${remaining_args[@]}"
-    exit $?
-fi
-
-printf '%bUnsupported script type: `%s`%b\n' "$FLRed" ".$ext" "$CRst" >&2
-exit 1
+# ----- delegate to run-script.py -----
+export PYTHONPATH="$script_dir${PYTHONPATH:+:${PYTHONPATH}}"
+exec "$python_cmd" "$script_dir/run-script.py" "$@"

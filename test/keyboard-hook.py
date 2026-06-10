@@ -22,7 +22,7 @@ import ctypes.wintypes
 import dataclasses
 import subprocess
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from utils import *  # noqa: E402
@@ -656,7 +656,7 @@ _MOUSE_BTN_MAP: dict[int, str] = {
 }
 
 
-def _key_name_from_event(vk: int, chars: str | None) -> str:
+def _key_name_from_event(vk: int, chars: Optional[str]) -> str:
     if vk in _VK_MAP:
         return _VK_MAP[vk]
     if chars and len(chars) > 0 and chars.isprintable():

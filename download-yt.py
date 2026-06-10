@@ -5,7 +5,7 @@ from utils import *
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== YT-DLP TOOL ==========={CRst}")
+    Utils.print_banner("YT-DLP TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Clear privacy traces on Windows with explicit section confirmation."""
 
-from __future__ import annotations
-
 import argparse
 import ctypes
 import os
@@ -11,7 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from utils import *  # noqa: E402,F403
@@ -79,7 +77,7 @@ def run(
     cmd: list[str],
     *,
     capture: bool = False,
-    input_text: str | None = None,
+    input_text: Optional[str] = None,
 ) -> subprocess.CompletedProcess:
     if capture:
         if input_text is not None:
@@ -164,7 +162,7 @@ def try_relaunch_with_helper(helper: str) -> bool:
     return False
 
 
-def env_path(name: str) -> Path | None:
+def env_path(name: str) -> Optional[Path]:
     value = os.environ.get(name)
     return Path(value) if value else None
 
@@ -464,11 +462,7 @@ def clear_additional(args: argparse.Namespace) -> None:
 
 
 def print_banner(args: argparse.Namespace) -> None:
-    print(f"{FLYellow}{'=' * 60}{CRst}")
-    print(f"{FLYellow}  PRIVACY CLEANUP - Windows{CRst}")
-    print(f"{FLYellow}  Explicit per-section confirmation enabled.{CRst}")
-    print(f"{FLYellow}{'=' * 60}{CRst}")
-    print()
+    Utils.print_banner("PRIVACY CLEANUP - Windows")
     print("  Enabled sections:")
     if not args.skip_shell_history:
         print("    1. Explorer / Shell history")

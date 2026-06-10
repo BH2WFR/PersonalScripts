@@ -5,7 +5,7 @@ from utils import *
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== M3U8 DOWNLOAD TOOL ==========={CRst}")
+    Utils.print_banner("M3U8 DOWNLOAD TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])

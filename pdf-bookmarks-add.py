@@ -5,6 +5,7 @@
 import sys
 from utils import *
 import pypdf # pip install pypdf
+from typing import Optional
 
 
 def parse_bookmark_line(bookmarkObj, page_offset: int) -> typing.Optional[typing.Tuple[int, int, str]]:
@@ -53,7 +54,7 @@ def parse_bookmark_line(bookmarkObj, page_offset: int) -> typing.Optional[typing
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== PDF BOOKMARK INSERTING TOOL ==========={CRst}")
+    Utils.print_banner("PDF BOOKMARK INSERTING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -128,8 +129,8 @@ Usage:
 
 
     #============ 命令行参数解析 ===========
-    _arg_path: str | None = None
-    _arg_output: str | None = None
+    _arg_path: Optional[str] = None
+    _arg_output: Optional[str] = None
     i = 1
     while i < len(sys.argv):
         arg = sys.argv[i]

@@ -63,29 +63,20 @@ DESC_SPECIAL = {
     0xFFFF: "NOT A CHARACTER",
 }
 
-def display_width(s: str) -> int:
-    """Calculate the display width of a string in a terminal (CJK chars = 2 columns)."""
-    w = 0
-    for ch in s:
-        ea = unicodedata.east_asian_width(ch)
-        w += 2 if ea in ("W", "F") else 1
-    return w
-
-
 def pad_to_width(s: str, target_width: int) -> str:
     """Pad a string to a fixed display width. Truncates if too long."""
-    current = display_width(s)
+    current = Utils.display_width(s)
     if current > target_width:
         # Truncate character by character until it fits, add "…"
         while current > target_width - 1 and len(s) > 0:
             s = s[:-1]
-            current = display_width(s)
+            current = Utils.display_width(s)
         return s + "…"
     return s + " " * (target_width - current)
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== UNICODE STRING PARSER ==========={CRst}")
+    Utils.print_banner("UNICODE STRING PARSER")
 
     CLIP_FLAGS = {"--clip", "--from-clipboard"}
     from_clipboard = bool(CLIP_FLAGS & set(sys.argv))
@@ -159,10 +150,7 @@ Usage:
 
 
     #============ 打印表头 ===========
-    try:
-        term_width = os.get_terminal_size().columns - 1
-    except OSError:
-        term_width = 119  # default 120-column terminal
+    term_width = Utils.get_terminal_width()
     desc_width = max(20, term_width - 46)  # 46 = Index(7) + Char(13) + Hex(10) + Dec(9) + 7 separators
     HEX_COL = 23    # 1-based cursor column where Hex starts
     DEC_COL = 34    # 1-based cursor column where Dec starts

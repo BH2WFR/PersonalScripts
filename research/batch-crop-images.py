@@ -9,10 +9,10 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, cast, Optional
 
 
-print(f"{FLYellow}=========== BATCH IMAGE CROPPING TOOL ==========={CRst}")
+Utils.print_banner("BATCH IMAGE CROPPING TOOL")
 
 if "--help" in sys.argv or "-h" in sys.argv:
     script_name = os.path.basename(sys.argv[0])
@@ -39,8 +39,8 @@ ImageArray = npt.NDArray[Any]
 
 @dataclass
 class Image:
-	original_image: ImageArray | None = None
-	cropped_image: ImageArray | None = None
+	original_image: Optional[ImageArray] = None
+	cropped_image: Optional[ImageArray] = None
 	image_name: str = ""
 
 class Region:

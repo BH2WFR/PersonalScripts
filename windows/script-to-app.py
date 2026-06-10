@@ -4,12 +4,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from utils import *
 
 import argparse
+from typing import Optional
 
 
 SUBDIR = "PersonalScripts"
 
 help_message = f'''
-{FLYellow}==================== SCRIPT TO APP ===================={CRst}
 {FLYellow}Description:{CRst}
   Create a Windows .cmd launcher for a Python script under Program Files.
   The generated .cmd can be selected from "Open with" and receives opened
@@ -51,12 +51,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir", dest="output_dir",
-        help=r"Directory for the launcher (default: %ProgramFiles%\PersonalScripts)",
+        help=r"Directory for the launcher (default: %%ProgramFiles%%\PersonalScripts)",
     )
     return parser
 
 
-def _resolve_target_script(arg_value: str | None) -> str:
+def _resolve_target_script(arg_value: Optional[str]) -> str:
     if arg_value:
         p = os.path.abspath(os.path.expanduser(arg_value))
         if not os.path.isfile(p):
@@ -74,7 +74,7 @@ def _resolve_target_script(arg_value: str | None) -> str:
     return p
 
 
-def _resolve_app_name(arg_value: str | None, script_path: str) -> str:
+def _resolve_app_name(arg_value: Optional[str], script_path: str) -> str:
     if arg_value:
         return arg_value
     stem = os.path.splitext(os.path.basename(script_path))[0]
@@ -85,7 +85,7 @@ def _resolve_app_name(arg_value: str | None, script_path: str) -> str:
     return name or default_name
 
 
-def _resolve_output_dir(arg_value: str | None) -> str:
+def _resolve_output_dir(arg_value: Optional[str]) -> str:
     if arg_value:
         return os.path.abspath(os.path.expanduser(arg_value))
     program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
@@ -125,7 +125,9 @@ def _write_launcher(launcher_path: str, target_script: str) -> None:
         f.write(content)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    Utils.print_banner("SCRIPT TO APP")
+
     if sys.platform != "win32":
         Utils.print_error_and_exit("This script only works on Windows.")
 

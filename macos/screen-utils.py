@@ -1,6 +1,7 @@
 import sys
 import os
 import ctypes
+from typing import Optional, Union, Tuple
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import *
@@ -280,14 +281,14 @@ def _cfstr(s: str):
     """Create a CFString from a Python string."""
     return _CFStringCreateWithCString(0, s.encode(), 0x08000100)
 
-def _cfstring_to_py(cf) -> str | None:
+def _cfstring_to_py(cf) -> Optional[str]:
     """Convert a CFString to a Python string."""
     buf = ctypes.create_string_buffer(1024)
     if _CFStringGetCString(cf, buf, 1024, 0x08000100):
         return buf.value.decode()
     return None
 
-def _cfdict_get_int(d, key) -> int | None:
+def _cfdict_get_int(d, key) -> Optional[int]:
     """Get an integer value from a CFDictionary by CFString key."""
     v = _CFDictionaryGetValue(d, key)
     if not v:
@@ -297,7 +298,7 @@ def _cfdict_get_int(d, key) -> int | None:
         return num.value
     return None
 
-def _cfdict_get_str(d, key: str) -> str | None:
+def _cfdict_get_str(d, key: str) -> Optional[str]:
     """Get a string value from a CFDictionary (supports localized dicts)."""
     v = _CFDictionaryGetValue(d, _cfstr(key))
     if not v:
@@ -317,7 +318,7 @@ def _ioreg_cf_property(entry: int, key: str, recursive: bool = True):
     """Read a CF property from an IORegistry entry."""
     return IORegistryEntryCreateCFProperty(entry, _cfstr(key), 0, 1 if recursive else 0)
 
-def _ioreg_get_name(entry: int) -> str | None:
+def _ioreg_get_name(entry: int) -> Optional[str]:
     """Get IORegistry entry name."""
     buf = ctypes.create_string_buffer(128)
     if IORegistryEntryGetName(entry, buf) == 0:
@@ -364,7 +365,7 @@ def _ddc_checksum(chk: int, data: list[int]) -> int:
         chk ^= b
     return chk & 0xFF
 
-def _ddc_parse_reply(reply: list[int], command: int) -> tuple[int, int] | None:
+def _ddc_parse_reply(reply: list[int], command: int) -> Optional[Tuple[int, int]]:
     """Parse a standard DDC/CI VCP reply."""
     if len(reply) >= 11 and _ddc_checksum(0x50, reply[:10]) == reply[10]:
         if reply[2] == 0x02 and reply[4] == command:
@@ -375,7 +376,7 @@ def _ddc_parse_reply(reply: list[int], command: int) -> tuple[int, int] | None:
 
     return None
 
-def _ddc_read(service, command: int) -> tuple[int, int] | None:
+def _ddc_read(service, command: int) -> Optional[Tuple[int, int]]:
     """Read DDC/CI value. Returns (current, max) or None on failure."""
     send = [command]
     reply = [0] * 11
@@ -406,7 +407,7 @@ def _ddc_read(service, command: int) -> tuple[int, int] | None:
         time.sleep(0.02)
     return None
 
-def _ddc_raw_read(service, command: int, reply_len: int = 32) -> tuple[int, list[int], tuple[int, int] | None]:
+def _ddc_raw_read(service, command: int, reply_len: int = 32) -> Tuple[int, list[int], Optional[Tuple[int, int]]]:
     """Read one raw DDC/CI VCP reply for diagnostics."""
     send = [command]
     packet = [0x80 | (len(send) + 1), len(send)] + send + [0]
@@ -531,7 +532,7 @@ def _get_ioreg_services_for_matching() -> list[dict]:
 
     iterator = ctypes.c_uint32(0)
     services: list[dict] = []
-    current_info: dict | None = None
+    current_info: Optional[dict] = None
     service_location = 0
     keys_framebuffer = ["AppleCLCD2", "IOMobileFramebufferShim"]
     interests = ["DCPAVServiceProxy"] + keys_framebuffer
@@ -594,9 +595,9 @@ def _match_ddc_services(displays: list[int]) -> dict[int, typing.Any]:
     return result
 
 # Global DDC service map, populated on first use
-_ddc_service_map: dict[int, typing.Any] | None = None
+_ddc_service_map: Optional[dict[int, typing.Any]] = None
 
-def _get_ddc_service(did: int) -> typing.Any | None:
+def _get_ddc_service(did: int) -> Optional[typing.Any]:
     global _ddc_service_map
     if _ddc_service_map is None:
         all_displays = get_all_displays()
@@ -668,7 +669,7 @@ def _is_sidecar_display(product_name: str, display_location: str) -> bool:
     text = f"{product_name} {display_location}".lower()
     return "sidecar" in text or "ipad" in text
 
-def _nsscreen_geometry(did: int) -> dict | None:
+def _nsscreen_geometry(did: int) -> Optional[dict]:
     """Return AppKit screen geometry for the display, if PyObjC/AppKit is available."""
     try:
         from AppKit import NSScreen  # type: ignore[import-untyped]
@@ -1150,13 +1151,13 @@ def _get_display_modes(did: int) -> list[dict]:
             modes.append(info)
     return modes
 
-def _current_mode_id(did: int) -> int | None:
+def _current_mode_id(did: int) -> Optional[int]:
     mode = CGDisplayCopyDisplayMode(did)
     if not mode:
         return None
     return int(CGDisplayModeGetIODisplayModeID(mode))
 
-def _mode_source_labels(did: int | None, mode: dict) -> str:
+def _mode_source_labels(did: Optional[int], mode: dict) -> str:
     labels = []
     if mode["hidpi"]:
         labels.append(f"{FLCyan}[HiDPI]{CRst}")
@@ -1177,7 +1178,7 @@ def _mode_source_labels(did: int | None, mode: dict) -> str:
         labels.append(f"{FLGreen}[near Derived safe]{CRst}")
     return " ".join(labels)
 
-def _format_mode(mode: dict, did: int | None = None) -> str:
+def _format_mode(mode: dict, did: Optional[int] = None) -> str:
     refresh = f"{mode['refresh']:.0f}Hz" if mode["refresh"] > 0 else "?Hz"
     pixel = ""
     if mode["pixel_width"] != mode["width"] or mode["pixel_height"] != mode["height"]:
@@ -1276,7 +1277,7 @@ def set_resolution(displays: list[int]) -> bool:
 
 
 #============ 功能：亮度 ===========
-def _brightness_get_builtin(did: int) -> tuple[float, str] | None:
+def _brightness_get_builtin(did: int) -> Optional[Tuple[float, str]]:
     """Read built-in brightness. Returns (0.0-1.0, display_str) or None."""
     b = ctypes.c_float(-1)
     err = DSGetDisplayBrightness(did, ctypes.byref(b))
@@ -1288,7 +1289,7 @@ def _brightness_set_builtin(did: int, target: float) -> bool:
     """Set built-in brightness (0.0-1.0)."""
     return DSSetDisplayBrightness(did, target) == 0
 
-def _brightness_get_ddc(did: int) -> tuple[int, int, str] | None:
+def _brightness_get_ddc(did: int) -> Optional[Tuple[int, int, str]]:
     """Read DDC/CI brightness. Returns (current, max, display_str) or None."""
     ddc_svc = _get_ddc_service(did)
     if not ddc_svc:
@@ -1410,7 +1411,7 @@ def _pause():
 
 
 def main():
-    print(f"{FLYellow}=========== SCREEN UTILS TOOL ==========={CRst}")
+    Utils.print_banner("SCREEN UTILS TOOL")
 
     displays = get_all_displays()
     if not displays:
