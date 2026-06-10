@@ -118,6 +118,7 @@ python _nuitka-build.py                        # All platforms
 | `test/print-argv.py` | Print all command-line arguments | Cross-platform. No external deps |
 | `test/print-argv.ps1` | PowerShell: print all arguments with color | Windows. PowerShell (built-in) |
 | `test/print-argv.sh` | Bash: print all arguments with color | Linux/macOS. `bash` (built-in) |
+| `test/keyboard-hook.py` | Global keyboard & mouse hook monitor (press/release/click/scroll). Can also send input (press, tap, hotkey, move, click, scroll). Hotkey callbacks via `setup()` API | macOS (pyobjc), Windows (stdlib ctypes), Linux (python-xlib/X11) |
 
 ---
 

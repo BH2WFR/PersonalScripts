@@ -119,6 +119,7 @@ python _nuitka-build.py                        # 全平台
 | `test/print-argv.py` | 打印所有命令行参数 | 跨平台。无外部依赖 |
 | `test/print-argv.ps1` | PowerShell：彩色打印所有参数 | Windows。PowerShell（系统自带） |
 | `test/print-argv.sh` | Bash：彩色打印所有参数 | Linux/macOS。`bash`（系统自带） |
+| `test/keyboard-hook.py` | 全局键盘鼠标钩子监视器（按下/释放/点击/滚轮）。也可发送输入（按下、轻击、组合键、移动、点击、滚轮）。通过 `setup()` API 支持热键回调 | macOS（pyobjc）、Windows（标准库 ctypes）、Linux（python-xlib/X11） |
 
 ---
 

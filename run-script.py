@@ -323,6 +323,10 @@ def main() -> int:
         if not all_rel:
             return 0
 
+        print(f"\n{FGray}Examples:{CRst}")
+        print(f"  {FLCyan}5{CRst}                         select by number")
+        print(f"  {FLCyan}5 --help{CRst}                 number + passthrough args")
+        print(f"  {FLCyan}webserver-run.py --port 9000{CRst}   name + passthrough args")
         print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
         try:
             choice_line = input().strip()

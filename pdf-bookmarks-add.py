@@ -11,8 +11,9 @@ def parse_bookmark_line(bookmarkObj, page_offset: int) -> typing.Optional[typing
     """
     解析一行：
     例：'{"page": 1, "level": 1, "index": "", "title": "Preface"},'
-    返回: (page, level, title)
-    注意：输入项目中，`index` 是可选的，经过字符串拼接 `index + " " + title` 形成目录项标题, 作为返回 tuple 中的 title 部分。
+    返回: (page_index, level, title)
+    page 正整数为书的正常页码，负整数表示在第一页之前（如 -1 = 第一页的前一页），0 不允许。
+    `index` 是可选的，经过字符串拼接 `index + " " + title` 形成目录项标题。
     """
     if not bookmarkObj:
         return None
@@ -30,7 +31,7 @@ def parse_bookmark_line(bookmarkObj, page_offset: int) -> typing.Optional[typing
     except (TypeError, ValueError):
         return None
 
-    if logical_page < 1 or level < 1:
+    if logical_page == 0 or level < 1:
         return None
 
     try:
@@ -72,6 +73,7 @@ Usage:
 {FLYellow}Description:{CRst}
   Add table-of-contents bookmarks to PDF books.
   Reads JSON outline (page/level/index/title format) from an LLM and writes it into the PDF.
+  `page` supports negative numbers: -1 = the page before page 1, -2 = two pages before page 1, etc.
 
 {FLYellow}Requirements:{CRst}
   Python: {FGray}pip install pypdf{CRst}
@@ -79,48 +81,49 @@ Usage:
         return 0
 
 
-    #============ 大模型提示词 ===========
-    # 模型： Qwen3-VL-235B-A22B-Instruct 或类似的 多模态模型
-    # 提示词：
+    #============ LLM prompt ===========
+    # Model: Qwen3-VL-235B-A22B-Instruct or similar multimodal model
+    # Prompt:
     """
-    你是一个将扫描版 pdf 书籍的目录部分转换为字符串的工具，我传入书籍目录图片，你分析标题、页码和层级后转换以下格式：
+    You are a tool that converts the table of contents section of a scanned PDF book into a JSON string. I will provide images of the book's table of contents; you analyze the titles, page numbers, and hierarchy levels, then output in the following format:
 
     ```json
     [
+        {"page": -2, "level": 1, "index": "", "title": "Index"},
         {"page": 1, "level": 1, "index": "", "title": "Preface"},
         {"page": 3, "level": 1, "index": "Chapter 1", "title": "Subject Overview"},
         {"page": 3, "level": 2, "index": "1.1", "title": "History"},
         {"page": 3, "level": 3, "index": "1.1.1", "title": "1920-1950: Early Period"},
         {"page": 7, "level": 3, "index": "1.1.2", "title": "1950-2000: Growth Period"},
-        {"page": 8, "level": 3, "index": "1.1.3", "title": "2000-至今: 成熟期"},
-        {"page": 10, "level": 2, "index": "1.2", "title": "基本概念"},
-        {"page": 10, "level": 3, "index": "1.2.1", "title": "政治"},
-        {"page": 12, "level": 3, "index": "1.2.2", "title": "国家"},
-        {"page": 14, "level": 3, "index": "1.2.3", "title": "政府"},
-        {"page": 16, "level": 2, "index": "1.3", "title": "研究方法"},
-        {"page": 16, "level": 3, "index": "1.3.1", "title": "定性分析"},
-        {"page": 18, "level": 3, "index": "1.3.2", "title": "定量分析"},
+        {"page": 8, "level": 3, "index": "1.1.3", "title": "2000-Present: Maturity"},
+        {"page": 10, "level": 2, "index": "1.2", "title": "Basic Concepts"},
+        {"page": 10, "level": 3, "index": "1.2.1", "title": "Politics"},
+        {"page": 12, "level": 3, "index": "1.2.2", "title": "State"},
+        {"page": 14, "level": 3, "index": "1.2.3", "title": "Government"},
+        {"page": 16, "level": 2, "index": "1.3", "title": "Research Methods"},
+        {"page": 16, "level": 3, "index": "1.3.1", "title": "Qualitative Analysis"},
+        {"page": 18, "level": 3, "index": "1.3.2", "title": "Quantitative Analysis"},
         {"page": 20, "level": 1, "index": "Chapter 2", "title": "Camera Calibration and Imaging Model"},
         {"page": 20, "level": 2, "index": "2.1", "title": "Calibration Parameters"},
-        {"page": 20, "level": 3, "index": "2.1.1", "title": "内参"},
-        {"page": 22, "level": 3, "index": "2.1.2", "title": "外参"},
-        {"page": 24, "level": 2, "index": "2.2", "title": "相机成像模型"},
-        {"page": 24, "level": 3, "index": "2.2.1", "title": "针孔模型"},
-        {"page": 26, "level": 3, "index": "2.2.2", "title": "畸变模型"}
-        {"page": 28, "level": 2, "index": "2.3", "title": "相机标定方法概述"},
-        {"page": 30, "level": 1, "index": "第三章", "title": "图像处理基础"},
-        {"_以下省略": "使用标准 json 格式。page 为页码，level 为层级，index和title共同构成目录项标题"},
-        {"page": 100, "level": 1, "index": "", "title": "后记"},
+        {"page": 20, "level": 3, "index": "2.1.1", "title": "Intrinsic Parameters"},
+        {"page": 22, "level": 3, "index": "2.1.2", "title": "Extrinsic Parameters"},
+        {"page": 24, "level": 2, "index": "2.2", "title": "Camera Imaging Model"},
+        {"page": 24, "level": 3, "index": "2.2.1", "title": "Pinhole Model"},
+        {"page": 26, "level": 3, "index": "2.2.2", "title": "Distortion Model"}
+        {"page": 28, "level": 2, "index": "2.3", "title": "Overview of Camera Calibration Methods"},
+        {"page": 30, "level": 1, "index": "Chapter 3", "title": "Image Processing Basics"},
+        {"_omitted below": "Use standard JSON format. page = page number (supports negative: -1 = before page 1), level = hierarchy depth, index and title together form the bookmark heading"},
+        {"page": 100, "level": 1, "index": "", "title": "Afterword"},
         {"page": 102, "level": 1, "index": "", "title": "References"},
     ]
     ```
 
-    需要严格按照这种格式输出，不得带有注释，因为需要用 python 脚本读取。`page` 和 `level` 项是必须的，`index` 是可选项，`index` 与 `title` 经过字符串拼接共同构成目录项的标题。
+    You must output strictly in this format without any comments, as the output will be parsed by a Python script. The `page` and `level` fields are required. `page` supports negative numbers (-1 = one page before page 1, -2 = two pages before page 1, and so on). `index` is optional; `index` and `title` are concatenated with a space to form the bookmark heading.
 
-    如果书籍中有绪论（p0)、参考文献和后记，则要求作为 level 1 的章节标题写入。
-    如果书中有超过章节的「大分类」，则将「大分类」作为章节（level 1），「章节」作为小节（level2），「小节」类推 level 加 1。
+    If the book has a preface (p0), references, or afterword, include them as level-1 chapter headings.
+    If the book has "parts" or "sections" above the chapter level, treat them as level 1, chapters as level 2, sub-sections as level 3, and so on.
 
-    如果书籍中没有章节号或小节号，则 `index` 保持为空。
+    If the book has no chapter or section numbers, leave `index` as an empty string.
     """
 
 
@@ -181,6 +184,7 @@ Usage:
     # 多行文本的输入
     text_prompt = """
     [
+        {"page": -1, "level": 1, "index": "", "title": "封面"},
         {"page": 1, "level": 1, "index": "", "title": "Preface"},
         {"page": 3, "level": 1, "index": "Chapter 1", "title": "Subject Overview"},
         {"page": 3, "level": 2, "index": "1.1", "title": "History"},

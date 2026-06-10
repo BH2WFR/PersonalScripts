@@ -172,6 +172,11 @@ if ($showList) {
     }
 
     Write-Host ""
+    Write-Host "${FGray}Examples:${CRst}"
+    Write-Host "  ${FLCyan}5${CRst}                         select by number"
+    Write-Host "  ${FLCyan}5 --help${CRst}                 number + passthrough args"
+    Write-Host "  ${FLCyan}webserver-run.py --port 9000${CRst}   name + passthrough args"
+    Write-Host ""
     $choiceLine = Read-Host -Prompt "${FLYellow}Enter number or script name to execute${CRst} (or ${FLYellow}Enter${CRst} to exit):"
     if ([string]::IsNullOrWhiteSpace($choiceLine)) {
         exit 0

@@ -200,6 +200,10 @@ if [[ "$show_list" == true ]]; then
         exit 0
     fi
 
+    printf '\n%bExamples:%b\n' "$FGray" "$CRst"
+    printf '  %b5%b                         select by number\n' "$FLCyan" "$CRst"
+    printf '  %b5 --help%b                 number + passthrough args\n' "$FLCyan" "$CRst"
+    printf '  %bwebserver-run.py --port 9000%b   name + passthrough args\n' "$FLCyan" "$CRst"
     printf '\n%bEnter number or script name to execute%b (or %bEnter%b to exit): ' "$FLYellow" "$CRst" "$FLYellow" "$CRst"
     read -r choice_line
     if [[ -z "$choice_line" ]]; then
