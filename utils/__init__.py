@@ -273,6 +273,7 @@ class Utils:
         lines: list[str] = []
 
         lines.append(f"{FLYellow}OS:{CRst}           {Utils.get_os_name()}")
+        lines.append(f"{FLYellow}Arch:{CRst}         {FGray}{platform.machine()}{CRst}")
 
         lines.append(f"{FLCyan}Python:{CRst}       {sys.version.split()[0]}")
         lines.append(f"              {FGray}{sys.executable}{CRst}")
