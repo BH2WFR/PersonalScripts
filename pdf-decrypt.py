@@ -2,10 +2,11 @@
 import sys
 from utils import *
 import pypdf # pip install pypdf
+from typing import Optional
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== PDF DECRYPTING TOOL ==========={CRst}")
+    Utils.print_banner("PDF DECRYPTING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -33,8 +34,8 @@ Usage:
         return 0
 
     #============ 命令行参数解析 ===========
-    _arg_path: str | None = None
-    _arg_output: str | None = None
+    _arg_path: Optional[str] = None
+    _arg_output: Optional[str] = None
     i = 1
     while i < len(sys.argv):
         arg = sys.argv[i]

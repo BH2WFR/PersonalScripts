@@ -9,18 +9,11 @@ Usage:
 
 import sys
 import os
-import shutil
 import subprocess
 import importlib.util
+from typing import Optional
 
-# ============ ANSI Colors (inline, no dependency on utils) ============
-#* 不依赖 utils（避免自举问题）
-FLYellow = "\033[93m"
-FLGreen  = "\033[92m"
-FLCyan   = "\033[96m"
-FLRed    = "\033[91m"
-FGray    = "\033[90m"
-CRst     = "\033[0m"
+from utils import Utils, FLYellow, FLGreen, FLCyan, FLRed, FGray, CRst
 
 # ============ Helpers ============
 
@@ -43,32 +36,36 @@ def _detect_platform() -> tuple[bool, bool, bool]:
     return False, False, False
 
 
+def _get_excluded_dirs() -> set[str]:
+    """Return directories excluded from script discovery and resolution."""
+    is_win, is_mac, is_linux = _detect_platform()
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL"}
+    if not is_win:
+        exclude_dirs.add("windows")
+    if not is_mac:
+        exclude_dirs.add("macos")
+    if not is_linux:
+        exclude_dirs.add("linux")
+    return exclude_dirs
+
+
+_LAUNCHER_NAMES = {"run-script.py", "run-script.sh", "run-script.ps1"}
+
+
+def _is_valid_script(script_dir: str, script_path: str) -> bool:
+    """Return True if *script_path* is not a launcher file and not in an excluded dir."""
+    rel = os.path.relpath(script_path, script_dir)
+    parts = rel.replace("\\", "/").split("/")
+    if len(parts) == 1 and parts[0] in _LAUNCHER_NAMES:
+        return False
+    exclude_dirs = _get_excluded_dirs()
+    for part in parts[:-1]:
+        if part in exclude_dirs:
+            return False
+    return True
+
+
 # ============ Interpreter Discovery ============
-
-def _find_bash() -> str | None:
-    """Find a bash executable. Returns path or None."""
-    is_win, _, _ = _detect_platform()
-    if is_win:
-        for candidate in (
-            r"C:\Program Files\Git\bin\bash.exe",
-            r"C:\Program Files (x86)\Git\bin\bash.exe",
-            r"C:\msys64\usr\bin\bash.exe",
-            r"C:\cygwin64\bin\bash.exe",
-        ):
-            if os.path.isfile(candidate):
-                return candidate
-    found = shutil.which("bash")
-    return found if found else None
-
-
-def _find_pwsh() -> str | None:
-    """Find a PowerShell executable. Returns path or None."""
-    for exe in ("pwsh", "powershell"):
-        found = shutil.which(exe)
-        if found:
-            return found
-    return None
-
 
 # ============ Script Discovery ============
 
@@ -95,19 +92,10 @@ def find_scripts(script_dir: str) -> list[str]:
       - .sh scripts if bash is not available
       - .ps1 scripts if pwsh is not available
     """
-    is_win, is_mac, is_linux = _detect_platform()
+    exclude_dirs = _get_excluded_dirs()
 
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist"}
-
-    if not is_win:
-        exclude_dirs.add("windows")
-    if not is_mac:
-        exclude_dirs.add("macos")
-    if not is_linux:
-        exclude_dirs.add("linux")
-
-    has_bash = _find_bash() is not None
-    has_pwsh = _find_pwsh() is not None
+    has_bash = Utils.find_bash() is not None
+    has_pwsh = Utils.find_pwsh() is not None
 
     extensions: list[str] = [".py"]
     if has_bash:
@@ -116,7 +104,6 @@ def find_scripts(script_dir: str) -> list[str]:
         extensions.append(".ps1")
 
     scripts: list[str] = []
-    _launcher_names = {"run-script.py", "run-script.sh", "run-script.ps1"}
 
     for root, dirs, files in os.walk(script_dir):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
@@ -124,7 +111,7 @@ def find_scripts(script_dir: str) -> list[str]:
         for f in files:
             if f.startswith("_"):
                 continue
-            if root == script_dir and f in _launcher_names:
+            if root == script_dir and f in _LAUNCHER_NAMES:
                 continue
             if any(f.endswith(ext) for ext in extensions):
                 full = os.path.join(root, f)
@@ -143,33 +130,61 @@ def find_scripts(script_dir: str) -> list[str]:
 
 # ============ Script Resolution ============
 
-def resolve_script_path(script_dir: str, name: str) -> str | None:
+def resolve_script_path(script_dir: str, name: str) -> Optional[str]:
     """Resolve a user-supplied script name to a full path.
 
     Handles:
       - Full path (absolute)
       - Relative path with extension (e.g. macos/screen-utils.py)
-      - Name without extension → tries .py then .sh/.ps1
+      - Name without extension → tries .py first, then platform-preferred fallback:
+        Windows: .ps1 → .sh (if bash available)
+        macOS / Linux: .sh → .ps1 (if pwsh available)
+
+    Returns ``None`` when the name matches a launcher file or an excluded
+    directory.
     """
     name = name.replace("\\", "/").lstrip("/")
 
     if os.path.isabs(name):
-        if os.path.isfile(name):
+        if os.path.isfile(name) and _is_valid_script(script_dir, name):
             return name
         return None
 
     if name.endswith((".py", ".sh", ".ps1")):
         candidate = os.path.join(script_dir, name)
-        if os.path.isfile(candidate):
+        if os.path.isfile(candidate) and _is_valid_script(script_dir, candidate):
             return candidate
         return None
 
-    for ext in (".py", ".sh", ".ps1"):
-        candidate = os.path.join(script_dir, name + ext)
-        if os.path.isfile(candidate):
-            return candidate
+    # No extension → try .py first (always preferred)
+    py_candidate = os.path.join(script_dir, name + ".py")
+    if os.path.isfile(py_candidate) and _is_valid_script(script_dir, py_candidate):
+        return py_candidate
 
-    return os.path.join(script_dir, name + ".py")
+    # Platform-specific fallback
+    is_win, _, _ = _detect_platform()
+    if is_win:
+        ps1_candidate = os.path.join(script_dir, name + ".ps1")
+        if os.path.isfile(ps1_candidate) and _is_valid_script(script_dir, ps1_candidate):
+            return ps1_candidate
+        if Utils.find_bash() is not None:
+            sh_candidate = os.path.join(script_dir, name + ".sh")
+            if os.path.isfile(sh_candidate) and _is_valid_script(script_dir, sh_candidate):
+                return sh_candidate
+    else:
+        sh_candidate = os.path.join(script_dir, name + ".sh")
+        if os.path.isfile(sh_candidate) and _is_valid_script(script_dir, sh_candidate):
+            return sh_candidate
+        if Utils.find_pwsh() is not None:
+            ps1_candidate = os.path.join(script_dir, name + ".ps1")
+            if os.path.isfile(ps1_candidate) and _is_valid_script(script_dir, ps1_candidate):
+                return ps1_candidate
+
+    # Final fallback for error reporting
+    final = os.path.join(script_dir, name + ".py")
+    if os.path.isfile(final) and not _is_valid_script(script_dir, final):
+        return None
+    return final
 
 
 # ============ Display ============
@@ -201,9 +216,11 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
         types.append(f"{FLGreen}PowerShell{CRst}")
     type_str = " / ".join(types) if types else "scripts"
 
-    print(f"{FLYellow}================== PERSONAL SCRIPTS ===================={CRst}")
+    
+    Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
+    
     print(f"  Available {type_str} scripts in `{FGray}{script_dir}{CRst}`:\n")
-
+    
     all_scripts: list[str] = []
     cnt = 0
 
@@ -216,7 +233,7 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
 
     if sub_scripts:
         print()
-        print(f"  {FLYellow}--- Subfolders ---{CRst}")
+        print(f"  {FLYellow}─── Subfolders ───{CRst}")
         for rel in sub_scripts:
             color = _script_color(rel)
             subdir = os.path.dirname(rel)
@@ -227,7 +244,9 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
                 print(f"  {FGray}[{cnt}]{CRst}: {FLYellow}{subdir}{CRst}/{color}{fname}{CRst}")
             all_scripts.append(rel)
             cnt += 1
-
+    
+    Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
+    
     return all_scripts
 
 
@@ -277,7 +296,7 @@ def run_py_script(script_path: str) -> int:
 
 def run_sh_script(script_path: str, args: list[str]) -> int:
     """Execute a .sh script via bash."""
-    bash = _find_bash()
+    bash = Utils.find_bash()
     if bash is None:
         print(f"{FLRed}Cannot find bash interpreter{CRst}", file=sys.stderr)
         return 1
@@ -287,7 +306,7 @@ def run_sh_script(script_path: str, args: list[str]) -> int:
 
 def run_ps1_script(script_path: str, args: list[str]) -> int:
     """Execute a .ps1 script via PowerShell."""
-    pwsh = _find_pwsh()
+    pwsh = Utils.find_pwsh()
     if pwsh is None:
         print(f"{FLRed}Cannot find PowerShell interpreter (pwsh/powershell){CRst}", file=sys.stderr)
         return 1
@@ -301,9 +320,12 @@ def run_ps1_script(script_path: str, args: list[str]) -> int:
 # ============ Main ============
 
 def main() -> int:
+    Utils.print_banner("PERSONAL SCRIPT LAUNCHER")
+    Utils.print_env_info()
+
     script_dir = _get_script_dir()
 
-    script_name: str | None = None
+    script_name: Optional[str] = None
     remaining_args: list[str] = []
 
     if len(sys.argv) >= 2:
@@ -323,14 +345,21 @@ def main() -> int:
         if not all_rel:
             return 0
 
+        print(f"\nAll of the python scripts support argument {FLCyan}--help{CRst} for usage details.")
+        print(f"Examples:")
+        print(f"    {FLYellow}5{CRst}                              select by number")
+        print(f"    {FLYellow}5{CRst} {FLCyan}--help{CRst}                       number + passthrough args")
+        print(f"    {FLYellow}test/print-argv{CRst} {FLCyan}arg1 arg2{CRst}      name + passthrough args")
         print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
         try:
             choice_line = input().strip()
         except (EOFError, KeyboardInterrupt):
             print()
+            print(f"{FLGreen}Bye.{CRst}")
             return 0
 
         if not choice_line:
+            print(f"{FLGreen}Bye.{CRst}")
             return 0
 
         parts = choice_line.split()

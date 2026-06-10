@@ -6,6 +6,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from utils import *
+from typing import Optional
 
 
 def main() -> int:
@@ -15,7 +16,7 @@ def main() -> int:
         return 1
 
     #* 交互输入
-    print(f"{FLYellow}========= SYMLINK TO SYMLINKD CONVERTING TOOL ========={CRst}")
+    Utils.print_banner("SYMLINK TO SYMLINKD CONVERTING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -61,7 +62,7 @@ Usage:
     symlinkInfos : list[Info] = []
     symlinkdInfos : list[Info] = []
 
-    def check_file_is_symlink(filepath : str) -> Info | None:
+    def check_file_is_symlink(filepath : str) -> Optional[Info]:
         if not os.path.lexists(filepath): # 不算损坏的符号链接
             return None
 

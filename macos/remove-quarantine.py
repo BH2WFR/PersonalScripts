@@ -21,7 +21,7 @@ def _remove_attrs(file_path: str, clear_provenance: bool) -> tuple[bool, bool]:
 
 
 def main() -> int:
-    print(f"{FLYellow}=========== REMOVE QUARANTINE ATTRIBUTE TOOL ==========={CRst}")
+    Utils.print_banner("REMOVE QUARANTINE ATTRIBUTE TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])

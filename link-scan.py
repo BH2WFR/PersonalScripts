@@ -1,6 +1,7 @@
 import sys
 from utils import *
 import stat
+from typing import Optional
 
 # 扫描某个路径下所有的符号链接、Junction 和 Hard Link 文件，并打印出来，同时还会识别是否指向一个无效地址。
 # 列举后，可自动删除所有指向地址无效的链接
@@ -10,7 +11,7 @@ import stat
 
 def main() -> int:
     #* 交互输入或 argv[1] 读取
-    print(f"{FLYellow}=========== LINK SCANNING TOOL ==========={CRst}")
+    Utils.print_banner("LINK SCANNING TOOL")
 
     script_name = os.path.basename(sys.argv[0])
 
@@ -62,7 +63,7 @@ Usage:
             self.dest = dest
 
 
-    def check_file_is_symlink(filepath : str) -> Info | None:
+    def check_file_is_symlink(filepath : str) -> Optional[Info]:
         if not os.path.lexists(filepath): # 不算损坏的符号链接
             return None
 

@@ -6,11 +6,11 @@ from utils import *
 import argparse
 import shlex
 import plistlib
+from typing import Optional, Union
 
 SUBDIR = "PersonalScripts"
 
 help_message = f'''
-{FLYellow}==================== SCRIPT TO APP ===================={CRst}
 {FLYellow}Description:{CRst}
   Create a macOS .app bundle that wraps a Python script as a
   double-clickable application.  The generated .app can be
@@ -39,7 +39,7 @@ def _escape_applescript(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _format_process_output(value: bytes | str | None) -> str:
+def _format_process_output(value: Optional[Union[bytes, str]]) -> str:
     if not value:
         return ""
     if isinstance(value, bytes):
@@ -64,7 +64,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_target_script(arg_value: str | None) -> str:
+def _resolve_target_script(arg_value: Optional[str]) -> str:
     if arg_value:
         p = os.path.abspath(os.path.expanduser(arg_value))
         if not os.path.isfile(p):
@@ -82,7 +82,7 @@ def _resolve_target_script(arg_value: str | None) -> str:
     return p
 
 
-def _resolve_app_name(arg_value: str | None, script_path: str) -> str:
+def _resolve_app_name(arg_value: Optional[str], script_path: str) -> str:
     if arg_value:
         return arg_value
     stem = os.path.splitext(os.path.basename(script_path))[0]
@@ -200,7 +200,9 @@ def _write_info_plist(app_contents: str, app_name: str, bundle_id: str) -> None:
         plistlib.dump(plist, f)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    Utils.print_banner("SCRIPT TO APP")
+
     if sys.platform != "darwin":
         Utils.print_error_and_exit("This script only works on macOS.")
 

@@ -77,7 +77,8 @@ def _fmt_size(size_bytes):
 
 # ============ main ============
 def main():
-    print(f"{FLYellow}============== PDF COMPRESS =============={CRst}\n")
+    Utils.print_banner("PDF COMPRESS")
+    print()
 
     # 1. input file
     while True:

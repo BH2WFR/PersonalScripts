@@ -483,7 +483,7 @@ def _print_partitions(partitions: list[dict]):
 
 
 def main():
-    print(f"{FLYellow}============ NTFS-3G UTILS ============={CRst}")
+    Utils.print_banner("NTFS-3G UTILS")
 
     while True:
         partitions = _get_ntfs_partitions()
