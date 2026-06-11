@@ -198,7 +198,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
         choice = input(f"\n{FLYellow}  Select disk number or full path (Enter to cancel): {CRst}").strip()
         if not choice:
             return False
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return False
 
@@ -232,7 +232,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
             dir_choice = input(
                 f"{FLYellow}  Mount directory [{default_dir}]: {CRst}"
             ).strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
             return False
 
@@ -247,7 +247,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
                 use_alt = input(
                     f"{FLYellow}  Use {FLGreen}{alt}{CRst}{FLYellow} instead? (Y/n/Enter new path): {CRst}"
                 ).strip().lower()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
                 return False
             if use_alt in ("y", "yes", ""):
@@ -264,7 +264,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
                 use = input(
                     f"{FLYellow}  Directory exists (empty): {FGray}{mount_dir}{CRst}{FLYellow}. Use it? (Y/n): {CRst}"
                 ).strip().lower()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
                 return False
             if use in ("y", "yes", ""):
@@ -282,7 +282,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
             create = input(
                 f"{FLYellow}  Directory does not exist. Create {FGray}{mount_dir}{CRst}{FLYellow}? (Y/n): {CRst}"
             ).strip().lower()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
             return False
         if create in ("y", "yes", ""):
@@ -303,7 +303,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
         print(f"    {FLCyan}Will unmount from macOS default first.{CRst}")
     try:
         confirm = input(f"\n{FLYellow}  Proceed with mount? (Y/n): {CRst}").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return False
     if confirm not in ("y", "yes", ""):
@@ -356,7 +356,7 @@ def _remount_by_system(partitions: list[dict]) -> bool:
         choice = input(f"\n{FLYellow}  Select disk (Enter to cancel): {CRst}").strip()
         if not choice:
             return False
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return False
 
@@ -418,7 +418,7 @@ def do_eject(partitions: list[dict]) -> bool:
         choice = input(f"\n{FLYellow}  Select disk to eject (Enter to cancel): {CRst}").strip()
         if not choice:
             return False
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return False
 
@@ -443,7 +443,7 @@ def do_eject(partitions: list[dict]) -> bool:
         confirm = input(
             f"{FLRed}  Eject {selected['disk']}? This removes the entire disk. (y/N): {CRst}"
         ).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print(f"{FGray}  Canceled.{CRst}\n")
         return False
     if confirm not in ("y", "yes"):
@@ -493,7 +493,7 @@ def main():
 
         choice = Menu.select(_MAIN_OPTIONS, prompt="Choice")
         if choice is None:
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             break
 
         if choice == "N":
@@ -506,19 +506,22 @@ def main():
             if do_eject(partitions) is False:
                 _pause()
             else:
-                print(f"{FLGreen}Bye.{CRst}")
+                Utils.print_exit_message("Bye.")
                 break
         elif choice == "Q":
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             break
 
 
 def _pause():
     try:
         input(f"{FGray}  Press Enter to continue...{CRst}")
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
 
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

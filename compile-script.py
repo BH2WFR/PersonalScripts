@@ -316,13 +316,13 @@ def main() -> int:
     while True:
         try:
             choice_line = input(f"{FLYellow}Select script{CRst} {FGray}[#]{CRst}: ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             return 0
 
         if not choice_line:
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             return 0
 
         if choice_line.isdigit():
@@ -349,4 +349,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

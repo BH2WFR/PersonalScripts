@@ -438,8 +438,13 @@ def _validate_raw_task(task: dict, path: str, known_profiles: set) -> list[str]:
         if key in _STRUCTURAL_KEYS:
             continue
         if key == "inherit":
-            if value and value not in known_profiles:
-                errors.append(f"{path}: inherit='{value}' not found in settings")
+            if isinstance(value, str):
+                if value not in known_profiles:
+                    errors.append(f"{path}: inherit='{value}' not found in settings")
+            elif isinstance(value, list):
+                for v in value:
+                    if isinstance(v, str) and v not in known_profiles:
+                        errors.append(f"{path}: inherit='{v}' not found in settings")
             continue
         err = _validate_field_in_dict(key, value, path)
         if err:
@@ -683,6 +688,7 @@ def main() -> int:
         import yaml as yaml_mod
     except ImportError:
         Utils.print_error_and_exit("PyYAML is not installed. Run: pip install pyyaml")
+        raise  # unreachable — satisfies the type checker
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -704,16 +710,17 @@ def main() -> int:
     # ================================================================
     # Step 1: Resolve YAML schema file path
     # ================================================================
-    schema_file: str
+    default_schema = DEFAULT_SCHEMA_FILE
+    if ENV_SCHEMA_FILE in os.environ:
+        default_schema = os.environ[ENV_SCHEMA_FILE]
     if cli_schema_file:
-        schema_file = cli_schema_file
-    elif ENV_SCHEMA_FILE in os.environ:
-        schema_file = os.environ[ENV_SCHEMA_FILE]
-    elif cli_task:
-        schema_file = DEFAULT_SCHEMA_FILE
+        default_schema = cli_schema_file
+
+    if cli_task:
+        schema_file = default_schema
     else:
         schema_file = Input.resolve_input_path(
-            DEFAULT_SCHEMA_FILE,
+            default_schema,
             prompt="Path to YAML schema file",
             path_type="file",
         )
@@ -861,12 +868,12 @@ def main() -> int:
         while True:
             try:
                 choice = input(f"\n{FLYellow}Select task{CRst} {FGray}[#]{CRst}: ").strip()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
-                print(f"{FLGreen}Bye.{CRst}")
+                Utils.print_exit_message("Bye.")
                 return 0
             if not choice:
-                print(f"{FLGreen}Bye.{CRst}")
+                Utils.print_exit_message("Bye.")
                 return 0
             if choice.lower() == "e":
                 Utils.open_with_default_app(schema_file)
@@ -926,7 +933,7 @@ def main() -> int:
                     choice = input(
                         f"\n{FLYellow}Select sub-task{CRst} {FGray}[# or Enter to go back]{CRst}: "
                     ).strip()
-                except (EOFError, KeyboardInterrupt):
+                except EOFError:
                     print()
                     return 0
                 if not choice:
@@ -986,7 +993,7 @@ def main() -> int:
             separator=False,
         )
         if result is None:
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             return 0
         direction = result
     elif not directional and cli_direction:
@@ -1040,9 +1047,9 @@ def main() -> int:
                 choice = input(
                     f"\n{FLYellow}Execute?{CRst} {FGray}[y=yes / n=back / d=dry-run / q=quit]{CRst}: "
                 ).strip().lower()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
-                print(f"{FLGreen}Bye.{CRst}")
+                Utils.print_exit_message("Bye.")
                 return 0
 
             if choice == "y":
@@ -1055,7 +1062,7 @@ def main() -> int:
                 print(f"\n{FGray}(dry-run - no changes made){CRst}")
                 continue
             elif choice == "q":
-                print(f"{FLGreen}Bye.{CRst}")
+                Utils.print_exit_message("Bye.")
                 return 0
             else:
                 print(f"{FLRed}Enter y, n, d, or q.{CRst}")
@@ -1088,9 +1095,9 @@ def main() -> int:
             choice = input(
                 f"\n{FLYellow}What next?{CRst} {FGray}[r=re-run / s=select another / q=quit]{CRst}: "
             ).strip().lower()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             return 0
 
         if choice == "r":
@@ -1103,11 +1110,14 @@ def main() -> int:
         elif choice == "s":
             return main()
         elif choice == "q":
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             return 0
         else:
             print(f"{FLRed}Enter r, s, or q.{CRst}")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

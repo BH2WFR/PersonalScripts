@@ -355,13 +355,13 @@ def main() -> int:
             print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
             try:
                 choice_line = input().strip()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
-                print(f"{FLGreen}Bye.{CRst}")
+                Utils.print_exit_message("Bye.")
                 return 0
 
             if not choice_line:
-                print(f"{FLGreen}Bye.{CRst}")
+                Utils.print_exit_message("Bye.")
                 return 0
 
             parts = choice_line.split()
@@ -437,4 +437,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

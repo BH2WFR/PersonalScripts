@@ -97,7 +97,7 @@ Usage:
         prompt="Select download mode",
     )
     if BITRATE is None:
-        print(f"{FLGreen}Bye.{CRst}")
+        Utils.print_exit_message("Bye.")
         return 0
 
 
@@ -118,7 +118,7 @@ Usage:
         prompt="Select API type",
     )
     if API_TYPE is None:
-        print(f"{FLGreen}Bye.{CRst}")
+        Utils.print_exit_message("Bye.")
         return 0
 
 
@@ -191,4 +191,7 @@ Usage:
 
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

@@ -651,9 +651,6 @@ def live_report(verbose: bool, interval: float) -> int:
                     print()
                     return exit_code
                 time.sleep(0.05)
-    except KeyboardInterrupt:
-        print()
-        return exit_code
     finally:
         if os.name != "nt" and old_settings is not None:
             import termios
@@ -706,4 +703,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

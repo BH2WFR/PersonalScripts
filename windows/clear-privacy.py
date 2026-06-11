@@ -126,7 +126,7 @@ def prompt_yes_no(prompt: str, *, default: bool = False) -> bool:
     suffix = "Y/n" if default else "y/N"
     try:
         reply = input(f"{prompt} ({suffix}) ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return False
     if not reply:
@@ -538,4 +538,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

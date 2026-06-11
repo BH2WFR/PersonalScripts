@@ -315,6 +315,28 @@ class Utils:
         exit(code)
 
     @staticmethod
+    def print_keyboard_interrupt_message_and_exit(key : str = "Ctrl+C") -> None:
+        """Print a standardized message for KeyboardInterrupt exceptions."""
+        print(f"\n{FLGreen}[Exit by {FLYellow}{key}{FLGreen}]{CRst}")
+    
+    @staticmethod
+    def print_exit_message(msg: str = "Bye.") -> None:
+        """Print a standardized exit message without calling ``exit()``."""
+        print(f"{FLGreen}{msg}{CRst}")
+
+    @staticmethod
+    def print_exit_message_and_exit(
+        msg: str = "Exiting.",
+        color_ansi_esc: typing.Optional[str] = f"{FLGreen}",
+        exit_code: int = 0
+    ) -> None:
+        """Print a standardized exit message and call ``exit(0)``."""
+        if color_ansi_esc is None:
+            color_ansi_esc = ""
+        print(f"{color_ansi_esc}{msg}{CRst}")
+        sys.exit(exit_code)
+    
+    @staticmethod
     def check_commands(*checks: CmdCheck) -> bool:
         """Verify all commands in *checks* exist in PATH.
 
@@ -544,15 +566,14 @@ class Utils:
     @staticmethod
     def notify(title: str, body: str) -> None:
         """Send a desktop notification (best-effort, silently fails)."""
-        plat = Utils.get_platform()
         try:
-            if plat == "windows":
+            if sys.platform == "win32":
                 try:
                     from win10toast import ToastNotifier
                     ToastNotifier().show_toast(title, body, duration=5, threaded=True)
                 except ImportError:
                     pass
-            elif plat == "darwin":
+            elif sys.platform == "darwin":
                 subprocess.run([
                     "osascript", "-e",
                     f'display notification "{body}" with title "{title}"',
@@ -1274,7 +1295,7 @@ class Menu:
                     prompt_line = f"{FLYellow}{prompt} > {CRst}"
                 raw_input = input(prompt_line).strip()
                 choice = raw_input.upper()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
                 sys.exit(0)
 

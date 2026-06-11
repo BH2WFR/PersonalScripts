@@ -13,29 +13,6 @@ from dataclasses import dataclass
 from typing import Any, cast, Optional
 
 
-Utils.print_banner("BATCH IMAGE CROPPING TOOL")
-
-if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(f"""
-BATCH IMAGE CROPPING TOOL
-=========================
-
-Usage:
-  python {script_name} <dir1> <dir2> ...    specify directory paths, skip interaction
-  python {script_name}                      no arguments, interactive mode
-  python {script_name} --help               show this help
-
-{FLYellow}Description:{CRst}
-  Batch image cropping tool. Based on OpenCV (cv2).
-  Interactively select input/output directories and crop region,
-  then batch-crop all images.
-
-{FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install opencv-python numpy{CRst}
-""")
-    sys.exit(0)
-
 ImageArray = npt.NDArray[Any]
 
 @dataclass
@@ -61,49 +38,6 @@ class Region:
 	# 	self.x2 = coord2[0]
 	# 	self.y2 = coord2[1]
 	# 	pass
-
-
-input_directory  = "E:/!重建问题测试/HDR_金属件/HDR"
-output_directory = "E:/!重建问题测试/HDR_金属件/HDR_cropped"
-crop_rectangle : Region = Region(564, 960, 1533, 1743)   # x, y, w, h
-images : list[Image] = []
-
-#============ 用户交互 ===========
-if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
-    input_directory = sys.argv[1]
-else:
-    input_directory = input(f"Enter input directory path (default: {input_directory}): ") or input_directory
-if(not input_directory or os.path.exists(input_directory) == False):
-	print(f"{FLRed}Invalid input directory path. EXIT...{CRst}\n")
-	sys.exit(1)
-
-output_directory = input(f"Enter output directory path (default: {output_directory}): ") or output_directory
-if(not output_directory):
-	print(f"{FLRed}Invalid output directory path. EXIT...{CRst}\n")
-	sys.exit(1)
-if(not os.path.exists(output_directory)):
-	print(f"{FLYellow}Output path does not exist, create it? (y/n, default: y): {CRst}")
-	confirm = input().strip().lower() or "y"
-	if confirm != "y":
-		print(f"{FLRed}Output directory does not exist. EXIT...{CRst}\n")
-		sys.exit(1)
-	else:
-		try:
-			os.makedirs(output_directory, exist_ok=True)
-			print(f"{FLGreen}Output directory created successfully. ({output_directory}){CRst}\n")
-		except Exception as e:
-			print(f"{FLRed}Failed to create output directory: {e}. EXIT...{CRst}\n")
-			sys.exit(1)
-
-try:
-	crop_x1 = int(input(f"Enter crop rectangle {FLYellow}x1{CRst} (default: {crop_rectangle.x1}): ") or crop_rectangle.x1)
-	crop_y1 = int(input(f"Enter crop rectangle {FLYellow}y1{CRst} (default: {crop_rectangle.y1}): ") or crop_rectangle.y1)
-	crop_x2 = int(input(f"Enter crop rectangle {FLYellow}x2{CRst} (default: {crop_rectangle.x2}): ") or crop_rectangle.x2)
-	crop_y2 = int(input(f"Enter crop rectangle {FLYellow}y2{CRst} (default: {crop_rectangle.y2}): ") or crop_rectangle.y2)
-	crop_rectangle = Region(crop_x1, crop_y1, crop_x2, crop_y2)
-except ValueError:
-	print(f"{FLRed}Invalid crop rectangle coordinates. EXIT...{CRst}\n")
-	sys.exit(1)
 
 
 #============ 代码主体部分 ===========
@@ -168,25 +102,96 @@ def save_cropped_image(img: Image, output_dir: str) -> None:
 	imwrite_unicode(output_path, img.cropped_image)
 
 
-#* 主程序
-os.system("chcp 65001")
-os.environ.setdefault("PYTHONUTF8", "1")
-try:
-	locale.setlocale(locale.LC_ALL, "C.UTF-8")
-except locale.Error:
-	pass
+def main() -> int:
+    Utils.print_banner("BATCH IMAGE CROPPING TOOL")
 
-stdout_reconfigure = getattr(sys.stdout, "reconfigure", None)
-if callable(stdout_reconfigure):
-	try:
-		cast(Any, stdout_reconfigure)(encoding="utf-8", errors="replace")
-	except Exception:
-		pass
+    if "--help" in sys.argv or "-h" in sys.argv:
+        script_name = os.path.basename(sys.argv[0])
+        print(f"""
+BATCH IMAGE CROPPING TOOL
+=========================
+
+Usage:
+  python {script_name} <dir1> <dir2> ...    specify directory paths, skip interaction
+  python {script_name}                      no arguments, interactive mode
+  python {script_name} --help               show this help
+
+{FLYellow}Description:{CRst}
+  Batch image cropping tool. Based on OpenCV (cv2).
+  Interactively select input/output directories and crop region,
+  then batch-crop all images.
+
+{FLYellow}Requirements:{CRst}
+  Python: {FGray}pip install opencv-python numpy{CRst}
+""")
+        return 0
+
+    input_directory = "E:/!重建问题测试/HDR_金属件/HDR"
+    output_directory = "E:/!重建问题测试/HDR_金属件/HDR_cropped"
+    crop_rectangle: Region = Region(564, 960, 1533, 1743)
+
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+        input_directory = sys.argv[1]
+    else:
+        input_directory = input(f"Enter input directory path (default: {input_directory}): ") or input_directory
+    if not input_directory or not os.path.exists(input_directory):
+        print(f"{FLRed}Invalid input directory path. EXIT...{CRst}\n")
+        return 1
+
+    output_directory = input(f"Enter output directory path (default: {output_directory}): ") or output_directory
+    if not output_directory:
+        print(f"{FLRed}Invalid output directory path. EXIT...{CRst}\n")
+        return 1
+    if not os.path.exists(output_directory):
+        print(f"{FLYellow}Output path does not exist, create it? (y/n, default: y): {CRst}")
+        confirm = input().strip().lower() or "y"
+        if confirm != "y":
+            print(f"{FLRed}Output directory does not exist. EXIT...{CRst}\n")
+            return 1
+        else:
+            try:
+                os.makedirs(output_directory, exist_ok=True)
+                print(f"{FLGreen}Output directory created successfully. ({output_directory}){CRst}\n")
+            except Exception as e:
+                print(f"{FLRed}Failed to create output directory: {e}. EXIT...{CRst}\n")
+                return 1
+
+    try:
+        crop_x1 = int(input(f"Enter crop rectangle {FLYellow}x1{CRst} (default: {crop_rectangle.x1}): ") or crop_rectangle.x1)
+        crop_y1 = int(input(f"Enter crop rectangle {FLYellow}y1{CRst} (default: {crop_rectangle.y1}): ") or crop_rectangle.y1)
+        crop_x2 = int(input(f"Enter crop rectangle {FLYellow}x2{CRst} (default: {crop_rectangle.x2}): ") or crop_rectangle.x2)
+        crop_y2 = int(input(f"Enter crop rectangle {FLYellow}y2{CRst} (default: {crop_rectangle.y2}): ") or crop_rectangle.y2)
+        crop_rectangle = Region(crop_x1, crop_y1, crop_x2, crop_y2)
+    except ValueError:
+        print(f"{FLRed}Invalid crop rectangle coordinates. EXIT...{CRst}\n")
+        return 1
+
+    # main execution
+    os.system("chcp 65001")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    try:
+        locale.setlocale(locale.LC_ALL, "C.UTF-8")
+    except locale.Error:
+        pass
+
+    stdout_reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(stdout_reconfigure):
+        try:
+            cast(Any, stdout_reconfigure)(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    images = load_images_from_directory(input_directory)
+    for img in images:
+        crop_image(img, crop_rectangle)
+        save_cropped_image(img, output_directory)
+
+    print(f"Processed {len(images)} images.")
+    return 0
 
 
-images = load_images_from_directory(input_directory)
-for img in images:
-	crop_image(img, crop_rectangle)
-	save_cropped_image(img, output_directory)
-
-print(f"Processed {len(images)} images.")
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

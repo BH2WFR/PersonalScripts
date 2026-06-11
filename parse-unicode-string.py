@@ -219,11 +219,14 @@ Usage:
     if do_pause:
         try:
             input(f"{FGray}Press Enter to exit...{CRst}")
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
 
     return 0
 
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

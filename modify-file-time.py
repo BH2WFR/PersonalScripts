@@ -410,7 +410,7 @@ def main() -> int:
         prompt="Select feature",
     )
     if featureInt is None:
-        print(f"{FLGreen}Bye.{CRst}")
+        Utils.print_exit_message("Bye.")
         return 0
     g_feature = Feature(featureInt)
 
@@ -498,6 +498,7 @@ def main() -> int:
 
     #============ 代码主体部分 ===========
 
+    g_fileNodes = []
     if(g_feature == Feature.MODIFY_TIMES) or g_feature == Feature.BACKUP_TIMES:
         g_fileNodes = load_file_nodes_from_directory(g_path, g_isRecursive)
 
@@ -521,4 +522,7 @@ def main() -> int:
     return 0
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

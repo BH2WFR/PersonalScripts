@@ -156,21 +156,23 @@ printf "  -> ${FLCyan}target${CRst}: ${FLYellow}%s${CRst}\n" "$TARGET"
 
 # ============ 构建 find 排除参数 ============
 FIND_EXCLUDES=()
-for _pat in "${IGNORE_PATTERNS[@]}"; do
-    if [[ "$_pat" == */* ]]; then
-        # Contains path separator — use -path
-        if [[ "$_pat" == /* ]]; then
-            # Anchored to TARGET root
-            FIND_EXCLUDES+=(! -path "${TARGET}${_pat}")
+if [[ ${#IGNORE_PATTERNS[@]} -gt 0 ]]; then
+    for _pat in "${IGNORE_PATTERNS[@]}"; do
+        if [[ "$_pat" == */* ]]; then
+            # Contains path separator — use -path
+            if [[ "$_pat" == /* ]]; then
+                # Anchored to TARGET root
+                FIND_EXCLUDES+=(! -path "${TARGET}${_pat}")
+            else
+                # Relative path
+                FIND_EXCLUDES+=(! -path "*/${_pat}")
+            fi
         else
-            # Relative path
-            FIND_EXCLUDES+=(! -path "*/${_pat}")
+            # Simple name pattern
+            FIND_EXCLUDES+=(! -name "$_pat")
         fi
-    else
-        # Simple name pattern
-        FIND_EXCLUDES+=(! -name "$_pat")
-    fi
-done
+    done
+fi
 
 if [[ ${#SUFFIXES[@]} -gt 0 ]]; then
     printf "  -> ${FLCyan}suffixes${CRst}: ${FLYellow}%s${CRst}\n" "${SUFFIXES[*]}"
@@ -199,9 +201,12 @@ if [ -f "$TARGET" ]; then
     printf "${FLGreen}Done. +x added to${CRst} ${FLYellow}%s${CRst}\n" "$TARGET"
 elif [ -d "$TARGET" ]; then
     printf "  -> adding +x to files in ${FLYellow}%s${CRst}...\n" "$TARGET"
-    find "$TARGET" -type f \( "${FIND_NAME_COND[@]}" \) \
-        "${FIND_EXCLUDES[@]}" \
-        -print -exec chmod +x {} \;
+    FIND_ARGS=("$TARGET" -type f \( "${FIND_NAME_COND[@]}" \))
+    if [[ ${#FIND_EXCLUDES[@]} -gt 0 ]]; then
+        FIND_ARGS+=("${FIND_EXCLUDES[@]}")
+    fi
+    FIND_ARGS+=(-print -exec chmod +x {} \;)
+    find "${FIND_ARGS[@]}"
     printf "${FLGreen}Done.${CRst}\n"
 else
     printf "${FLRed}ERROR: Unknown path type${CRst}: ${FLYellow}%s${CRst}\n" "$TARGET"

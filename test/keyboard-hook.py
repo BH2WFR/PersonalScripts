@@ -2030,6 +2030,7 @@ def main():
         hook = _create_hook()
     except (ImportError, OSError, NotImplementedError) as e:
         Utils.print_error_and_exit(str(e))
+        raise  # unreachable — satisfies the type checker
 
     # --- run hook -------------------------------------------------------------
     hook_thread = threading.Thread(
@@ -2048,8 +2049,11 @@ def main():
     except KeyboardInterrupt:
         pass
     hook.stop()
-    print(f"{FLGreen}Bye.{CRst}")
+    Utils.print_exit_message("Bye.")
 
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()

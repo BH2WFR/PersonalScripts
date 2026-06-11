@@ -959,7 +959,7 @@ def toggle_builtin_display(displays: list[int], skip_confirm: bool = False) -> b
         print(f"  Active external displays: {FLYellow}{external_active_count}{CRst}")
         try:
             confirm = input(f"  {FLYellow}Confirm? (y/N, default y): {CRst}").strip().lower() or "y"
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print(f"{FGray}  Canceled.{CRst}\n")
             return False
         if confirm != 'y' and confirm != 'yes':
@@ -1263,7 +1263,7 @@ def set_resolution(displays: list[int]) -> bool:
     print(f"{FLYellow}  Target mode: {FLMagenta}{_format_mode(target, did)}{CRst}")
     try:
         confirm = input(f"  {FLYellow}Apply for current session? (y/N): {CRst}").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print(f"{FGray}  Canceled.{CRst}\n")
         return False
     if confirm not in ("y", "yes"):
@@ -1407,7 +1407,7 @@ def adjust_brightness(displays: list[int]) -> bool:
 def _pause():
     try:
         input(f"{FGray}  Press Enter to continue...{CRst}")
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
 
 
@@ -1450,7 +1450,7 @@ def main():
     while True:
         choice = Menu.select(_MAIN_OPTIONS, prompt="Choice")
         if choice is None:
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             break
 
         if choice == 'L':
@@ -1477,7 +1477,7 @@ def main():
                 _pause()
 
         elif choice == 'Q':
-            print(f"{FLGreen}Bye.{CRst}")
+            Utils.print_exit_message("Bye.")
             break
 
         # 操作完成后重新打印屏幕信息
@@ -1487,4 +1487,7 @@ def main():
 
 
 if __name__ == "__main__":
-    raise sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        Utils.print_keyboard_interrupt_message_and_exit()
