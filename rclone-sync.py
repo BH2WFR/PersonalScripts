@@ -1518,13 +1518,11 @@ def main() -> int:
             result = Menu.select(
                 direction_options,
                 prompt="Sync direction",
-                default_key=direction_options[0].keys[0],
                 separator=False,
-                key_color = ""
+                key_color="",
             )
             if result is None:
-                Utils.print_exit_message("Bye.")
-                return 0
+                continue  # back to task selection
             direction = result
         elif not directional and cli_direction:
             print(f"{FGray}  -> direction 'push/pull' ignored for mode '{final_task.mode}'{CRst}")
