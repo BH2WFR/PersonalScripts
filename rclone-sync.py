@@ -33,15 +33,16 @@ UNNAMED_TASK = "unnamed"
 DISPLAY_WIDTH = 60
 
 VALID_MODES       = {"sync", "copy", "move", "check", "bisync"}
-VALID_PLATFORMS   = {"all", "windows", "linux", "darwin", "macos"}
-VALID_ARCHS       = {"all", "386", "arm", "arm64", "amd64", "x86", "x64"}
+VALID_PLATFORMS   = {"darwin", "linux", "win32", "macos", "windows"}
+VALID_ARCHS       = {"386", "arm", "arm64", "amd64", "x86", "x64"}
 VALID_LOG_LEVELS  = {"ERROR", "NOTICE", "INFO", "DEBUG"}
 
 _DATA_MODES = {"sync", "copy", "move", "bisync"}
 _DIRECTIONAL_MODES = {"sync", "copy", "move"}  # modes where push/pull makes sense
 
 VALID_DIRECTIONS = {"push", "pull"}
-LIST_STRING_FIELDS = {"exclude", "additional-args"}
+LIST_STRING_FIELDS = {"exclude", "additional-args", "alternative-remote-host"}
+STRING_OR_LIST_FIELDS = {"platform", "arch", "computer-name"}
 
 # ================================================================
 # The default schema is at: ./rclone-sync-default-schema.yaml
@@ -78,17 +79,39 @@ class FieldDef:
         """Validate *value* against this field.  Returns an error or ``None``."""
         if value is None:
             return None
-        if self.allowed is not None and value not in self.allowed:
-            return f"{path}: '{self.yaml_key}' must be one of {sorted(self.allowed)}, got '{value}'"
         if self.check_type is int and isinstance(value, bool):
             return f"{path}: '{self.yaml_key}' must be int"
         if self.check_type is not None and not isinstance(value, self.check_type):
             return f"{path}: '{self.yaml_key}' must be {self.check_type.__name__}"
+
+        # Fields that accept str or list[str] (OR semantics)
+        if self.yaml_key in STRING_OR_LIST_FIELDS:
+            if isinstance(value, list):
+                if not all(isinstance(item, str) for item in value):
+                    return f"{path}: '{self.yaml_key}' must contain only strings"
+                if self.allowed is not None:
+                    for item in value:
+                        if item not in self.allowed:
+                            return f"{path}: '{self.yaml_key}' list item '{item}' must be one of {sorted(self.allowed)}"
+            elif isinstance(value, str):
+                if self.allowed is not None and value != "" and value not in self.allowed:
+                    return f"{path}: '{self.yaml_key}' must be one of {sorted(self.allowed)}, got '{value}'"
+            else:
+                return f"{path}: '{self.yaml_key}' must be string or list of strings"
+            return None
+
+        # Fields that are always lists of strings
         if self.yaml_key in LIST_STRING_FIELDS:
             if not isinstance(value, list):
                 return f"{path}: '{self.yaml_key}' must be list"
             if not all(isinstance(item, str) for item in value):
                 return f"{path}: '{self.yaml_key}' must contain only strings"
+            return None
+
+        # Scalar fields with allowed-value check
+        if self.allowed is not None and value not in self.allowed:
+            return f"{path}: '{self.yaml_key}' must be one of {sorted(self.allowed)}, got '{value}'"
+
         if self.yaml_key == "transfer" and isinstance(value, int) and not (1 <= value <= 64):
             return f"{path}: 'transfer' must be in range 1..64"
         return None
@@ -124,6 +147,17 @@ _FIELDS: list[FieldDef] = [
     FieldDef("local-path",        "local_path",         default=""),
     FieldDef("remote-path",       "remote_path",        default=""),
     FieldDef("backup-dir",        "backup_dir",         default=""),
+    # case sensitivity
+    FieldDef("ignore-case",       "ignore_case",        default=False,       check_type=bool),
+    FieldDef("ignore-case-sync",  "ignore_case_sync",   default=False,       check_type=bool),
+    # comparison strategy
+    FieldDef("checksum",          "checksum",           default=False,       check_type=bool),
+    FieldDef("size-only",         "size_only",          default=False,       check_type=bool),
+    FieldDef("update",            "update",             default=False,       check_type=bool),
+    # transfer behaviour
+    FieldDef("bwlimit",           "bwlimit",            default="",          check_type=str),
+    FieldDef("ignore-errors",     "ignore_errors",      default=False,       check_type=bool),
+    FieldDef("retries",           "retries",            default=3,           check_type=int),
     # safety
     FieldDef("max-delete",        "max_delete",         default=None,        check_type=int),
     FieldDef("check-before-sync", "check_before_sync",  default=False,       allowed={False, True, "size-only"}),
@@ -133,11 +167,12 @@ _FIELDS: list[FieldDef] = [
     FieldDef("log-level",         "log_level",          default="",          allowed=VALID_LOG_LEVELS | {""}),
     FieldDef("notify-after-sync", "notify_after_sync",  default=False,       check_type=bool),
     # lists
-    FieldDef("exclude",           "exclude",            default=[]),
-    FieldDef("additional-args",   "additional_args",    default=[]),
+    FieldDef("exclude",                "exclude",                default=[]),
+    FieldDef("additional-args",        "additional_args",        default=[]),
+    FieldDef("alternative-remote-host","alternative_remote_hosts",default=[]),
     # filters (not rclone flags)
-    FieldDef("platform",          "platform",           default="all",       allowed=VALID_PLATFORMS),
-    FieldDef("arch",              "arch",               default="all",       allowed=VALID_ARCHS),
+    FieldDef("platform",          "platform",           default="",          allowed=VALID_PLATFORMS),
+    FieldDef("arch",              "arch",               default="",          allowed=VALID_ARCHS),
     FieldDef("computer-name",     "computer_name",      default=""),
 ]
 
@@ -146,13 +181,50 @@ _YAML_TO_ATTR: dict[str, str] = {fd.yaml_key: fd.py_attr for fd in _FIELDS}
 _ATTR_TO_FIELD: dict[str, FieldDef] = {fd.py_attr: fd for fd in _FIELDS}
 _FIELD_DEFAULTS: dict[str, Any] = {}
 for fd in _FIELDS:
-    if fd.yaml_key in ("exclude", "additional-args"):
+    if fd.yaml_key in ("exclude", "additional-args", "alternative-remote-host"):
         _FIELD_DEFAULTS[fd.py_attr] = []
     else:
         _FIELD_DEFAULTS[fd.py_attr] = fd.default
 
 # Structural keys inside a raw YAML task dict that are not fields
 _STRUCTURAL_KEYS = {"sub-tasks"}
+
+
+def _normalize_inherit(value) -> list[str]:
+    """Normalize an inherit value (str or list) to a list of profile names."""
+    if isinstance(value, list):
+        return [v for v in value if isinstance(v, str) and v]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
+
+
+def _resolve_profile_chain(settings: dict, profile_name: str, visited: set[str]) -> 'SyncTask':
+    """Recursively resolve a named profile, following its own ``inherit``.
+
+    Returns a SyncTask with the profile's fields (and any profiles it
+    inherits) resolved.  *visited* prevents infinite recursion on cycles.
+    """
+    if profile_name in visited:
+        return SyncTask()
+    visited.add(profile_name)
+
+    profile = settings.get(profile_name)
+    if not isinstance(profile, dict):
+        return SyncTask()
+
+    # 1. Resolve profiles that THIS profile inherits (base layer)
+    inh = profile.get("inherit")
+    base = SyncTask()
+    if isinstance(inh, list):
+        for name in inh:
+            if isinstance(name, str):
+                base = base.merge(_resolve_profile_chain(settings, name, visited))
+    elif isinstance(inh, str) and inh:
+        base = base.merge(_resolve_profile_chain(settings, inh, visited))
+
+    # 2. Merge this profile's own fields on top
+    return base.merge(SyncTask.from_dict(profile))
 
 
 # ================================================================
@@ -175,6 +247,14 @@ class SyncTask:
     transfer:          int = 4
     links:             bool = False
     copy_links:        bool = False
+    ignore_case:       bool = False
+    ignore_case_sync:  bool = False
+    checksum:          bool = False
+    size_only:         bool = False
+    update:            bool = False
+    bwlimit:           str = ""
+    ignore_errors:     bool = False
+    retries:           int = 3
     delete_excluded:   bool = False
     allow_push:        bool = True
     allow_pull:        bool = True
@@ -187,11 +267,12 @@ class SyncTask:
     log_file:          str = ""
     log_level:         str = ""
     notify_after_sync: bool = False
-    exclude:           list = dataclasses.field(default_factory=list)
-    additional_args:   list = dataclasses.field(default_factory=list)
-    platform:          str = "all"
-    arch:              str = "all"
-    computer_name:     str = ""
+    exclude:                 list = dataclasses.field(default_factory=list)
+    additional_args:         list = dataclasses.field(default_factory=list)
+    alternative_remote_hosts: list = dataclasses.field(default_factory=list)
+    platform:                Union[str, list] = ""
+    arch:                    Union[str, list] = ""
+    computer_name:           Union[str, list] = ""
     sub_tasks:         list['SyncTask'] = dataclasses.field(default_factory=list)
     explicit_fields:   set[str] = dataclasses.field(default_factory=set, repr=False)
 
@@ -239,11 +320,15 @@ class SyncTask:
         if isinstance(defaults, dict):
             result = result.merge(cls.from_dict(defaults))
 
-        # 2. named profile (inherit)
+        # 2. named profile(s) (inherit) — resolved recursively
         inh = task_dict.get("inherit")
-        profile = settings.get(inh) if inh else None
-        if isinstance(profile, dict):
-            result = result.merge(cls.from_dict(profile))
+        if isinstance(inh, list):
+            visited: set[str] = set()
+            for profile_name in inh:
+                if isinstance(profile_name, str):
+                    result = result.merge(_resolve_profile_chain(settings, profile_name, visited))
+        elif isinstance(inh, str) and inh:
+            result = result.merge(_resolve_profile_chain(settings, inh, set()))
 
         # 3. task itself (preserve sub-tasks for later filtering)
         task_only = {k: v for k, v in task_dict.items() if k != "sub-tasks"}
@@ -251,13 +336,51 @@ class SyncTask:
 
     # ---- inheritance merge ----
 
+    def resolve_profiles(self, settings: dict) -> 'SyncTask':
+        """Apply named profiles from ``inherit_profile`` on top of this task.
+
+        Does NOT apply ``default`` — only profiles named in this task's
+        ``inherit`` field.  Profiles are resolved recursively (a profile
+        that itself has ``inherit`` will pull in its parents first).
+        """
+        profiles = _normalize_inherit(self.inherit_profile)
+        if not profiles:
+            return self
+        result = copy.deepcopy(self)
+        visited: set[str] = set()
+        for name in profiles:
+            result = result.merge(_resolve_profile_chain(settings, name, visited))
+        return result
+
     def merge(self, override: 'SyncTask') -> 'SyncTask':
         """Return a new SyncTask with non-default fields from *override* layered on top."""
         result = copy.deepcopy(self)
         for fd in _FIELDS:
             if fd.py_attr in override.explicit_fields:
                 ov = getattr(override, fd.py_attr)
-                setattr(result, fd.py_attr, copy.deepcopy(ov))
+                if fd.py_attr in ("exclude", "alternative_remote_hosts") and isinstance(ov, list):
+                    # Append with dedup (preserve base order, then new items)
+                    base_list: list = getattr(result, fd.py_attr)
+                    seen = set(base_list)
+                    merged = list(base_list)
+                    for item in ov:
+                        if item not in seen:
+                            merged.append(item)
+                            seen.add(item)
+                    setattr(result, fd.py_attr, merged)
+                elif fd.py_attr == "inherit_profile" and ov:
+                    # Append with dedup — sub-task inherit adds to task inherit
+                    base_list = _normalize_inherit(getattr(result, fd.py_attr))
+                    ov_list = _normalize_inherit(ov)
+                    seen = set(base_list)
+                    merged = list(base_list)
+                    for item in ov_list:
+                        if item not in seen:
+                            merged.append(item)
+                            seen.add(item)
+                    setattr(result, fd.py_attr, merged)
+                else:
+                    setattr(result, fd.py_attr, copy.deepcopy(ov))
                 result.explicit_fields.add(fd.py_attr)
         # sub-tasks are always taken from the override when present
         if override.sub_tasks:
@@ -292,33 +415,59 @@ class SyncTask:
 
     # ---- platform / arch / computer-name matching ----
 
+    def _filter_matches(self, value, current: str, case_sensitive: bool = False) -> bool:
+        """Check *value* (str, list[str], or empty) against *current*.
+
+        Empty/None means "match any".  List items are OR'd (any match).
+        """
+        if not value:
+            return True
+        if isinstance(value, list):
+            if case_sensitive:
+                return current in value
+            return any(current.lower() == v.lower() for v in value)
+        # str
+        if case_sensitive:
+            return current == value
+        return current.lower() == value.lower()
+
+    @staticmethod
+    def _normalize_platform(p):
+        """Normalize platform aliases: 'macos' → 'darwin', 'windows' → 'win32'."""
+        if isinstance(p, str):
+            pl = p.lower()
+            if pl == "macos": return "darwin"
+            if pl == "windows": return "win32"
+        elif isinstance(p, list):
+            result = []
+            for v in p:
+                vl = v.lower()
+                if vl == "macos": result.append("darwin")
+                elif vl == "windows": result.append("win32")
+                else: result.append(v)
+            return result
+        return p
+
     def matches_machine(self, platform: str, arch: str, hostname: str) -> bool:
         """Return True if this task's filters match the given machine identity."""
-        p = self.platform.lower()
-        if p == "macos":
-            p = "darwin"
-        if p != "all" and p != platform:
+        if not self._filter_matches(self._normalize_platform(self.platform), platform):
             return False
-        a = self.arch.lower()
-        if a != "all" and a != arch:
+        if not self._filter_matches(self.arch, arch):
             return False
-        cn = self.computer_name.strip()
-        if cn and cn.lower() != hostname.lower():
+        if not self._filter_matches(self.computer_name.strip() if isinstance(self.computer_name, str) else self.computer_name, hostname):
             return False
         return True
 
     def display_filters(self) -> str:
         """Return a colour-formatted filter summary, or empty string."""
         parts: list[str] = []
-        p = self.platform.lower()
-        if p == "macos":
-            p = "darwin"
-        if p != "all":
-            parts.append(f"os: {p}")
-        a = self.arch.lower()
-        if a != "all":
-            parts.append(f"arch: {a}")
-        cn = self.computer_name.strip()
+        p = self._normalize_platform(self.platform)
+        if p:
+            parts.append(f"os: {', '.join(p) if isinstance(p, list) else p}")
+        a = self.arch
+        if a:
+            parts.append(f"arch: {', '.join(a) if isinstance(a, list) else a}")
+        cn = self.computer_name.strip() if isinstance(self.computer_name, str) else self.computer_name
         if cn:
             parts.append(f"computer-name: {cn}")
         return f"  {FGray}[{', '.join(parts)}]{CRst}" if parts else ""
@@ -367,6 +516,10 @@ class SyncTask:
             cmd.append("--links")
         if self.copy_links:
             cmd.append("--copy-links")
+        if self.ignore_case:
+            cmd.append("--ignore-case")
+        if self.ignore_case_sync:
+            cmd.append("--ignore-case-sync")
 
     def _append_log_flags(self, cmd: list[str]) -> None:
         """Append rclone logging flags."""
@@ -374,6 +527,23 @@ class SyncTask:
             cmd.extend(["--log-file", self.log_file])
         if self.log_level:
             cmd.extend(["--log-level", self.log_level])
+
+    def _append_comparison_and_transfer_flags(self, cmd: list[str], is_data: bool) -> None:
+        """Append flags shared by sync/copy/move/check: comparison, bwlimit, retries, etc."""
+        if is_data:
+            if self.checksum:
+                cmd.append("--checksum")
+            if self.size_only:
+                cmd.append("--size-only")
+            if self.update:
+                cmd.append("--update")
+            if self.bwlimit:
+                cmd.extend(["--bwlimit", self.bwlimit])
+            if self.ignore_errors:
+                cmd.append("--ignore-errors")
+        if is_data or self.mode == "check":
+            if self.retries != 3:
+                cmd.extend(["--retries", str(self.retries)])
 
     def to_command(self, rclone_exe: str, dry_run: bool = False, direction: str = "push") -> list[str]:
         """Build the rclone command line list for this task.
@@ -390,6 +560,7 @@ class SyncTask:
         if is_data and self.transfer != 4:
             cmd.extend(["--transfers", str(self.transfer)])
         self._append_filter_flags(cmd)
+        self._append_comparison_and_transfer_flags(cmd, is_data)
         if is_data and self.backup_dir:
             cmd.extend(["--backup-dir", self.backup_dir])
         if is_data and self.max_delete is not None:
@@ -413,6 +584,7 @@ class SyncTask:
         self._append_filter_flags(cmd)
         if self.check_before_sync == "size-only":
             cmd.append("--size-only")
+        self._append_comparison_and_transfer_flags(cmd, False)
         self._append_log_flags(cmd)
         return cmd
 
@@ -543,12 +715,144 @@ def _detect_encrypted_config(rclone_exe: str) -> bool:
 
 def _print_cmd(cmd: list[str]) -> None:
     display = " ".join(f'"{a}"' if " " in a else a for a in cmd)
-    print(f"\n{FLYellow}Rclone command:{CRst}")
-    print(f"  {FGray}{display}{CRst}")
+    print(f"  {FLYellow}Rclone command:{CRst}")
+    print(f"{FGray}{display}{CRst}")
 
 
 def _notify(title: str, body: str) -> None:
     Utils.notify(title, body)
+
+
+# ---- alternative remote host helpers ----
+
+_HOST_RE = re.compile(
+    r'^(\\\\[^\\]+\\[^\\]+)'     # UNC: \\server\share
+    r'|^([\w][\w.-]*):'           # rclone remote: name:
+    r'|^([A-Za-z]:)'              # Windows drive: X:
+)
+
+
+def _extract_path_host(path: str) -> tuple[Optional[str], Optional[str]]:
+    """Extract the host prefix from *path*.
+
+    Returns ``(full_prefix, host_name)`` where *full_prefix* is the exact
+    leading substring to swap (includes ``:`` for remotes / drives) and
+    *host_name* is the identifier for display and matching.  Returns
+    ``(None, None)`` for plain Unix paths.
+    """
+    if not path:
+        return None, None
+    m = _HOST_RE.match(path)
+    if m is None:
+        return None, None
+    if m.group(1):  # UNC
+        return m.group(1), m.group(1)
+    if m.group(2):  # remote name:  (group 2 = name without colon)
+        return m.group(2) + ':', m.group(2)
+    if m.group(3):  # drive letter
+        return m.group(3), m.group(3)
+    return None, None
+
+
+def _replace_path_host(path: str, old_prefix: str, new_prefix: str) -> str:
+    """Replace the host prefix in *path*."""
+    if path.startswith(old_prefix):
+        return new_prefix + path[len(old_prefix):]
+    return path
+
+
+def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
+    """If *final_task* has ``alternative_remote_hosts``, offer the user
+    a choice of which host to use in ``local_path`` / ``remote_path``.
+    Modifies *final_task* in place.  Skipped silently when *cli_auto*.
+    """
+    if cli_auto:
+        return
+    alternatives = final_task.alternative_remote_hosts
+    if not alternatives:
+        return
+
+    # Determine which path has a recognisable host
+    path_attr: Optional[str] = None
+    current_prefix: Optional[str] = None
+    current_host: Optional[str] = None
+    for attr in ("remote_path", "local_path"):
+        val = getattr(final_task, attr)
+        prefix, name = _extract_path_host(val)
+        if prefix:
+            path_attr = attr
+            current_prefix = prefix
+            current_host = name
+            break
+
+    if path_attr is None or current_host is None or current_prefix is None:
+        print(f"\n  {FLYellow}Warning:{CRst} alternative-remote-host is set but no remote name, drive letter,"
+              f" or UNC host found in local-path or remote-path — skipping host selection.")
+        return
+
+    # Build choices: current host first, then alternatives.
+    # [0] is kept even if an alternative has the same name.
+    assert current_prefix is not None  # narrowed above
+    choices: list[tuple[str, str]] = []  # (host_name, full_prefix)
+    choices.append((current_host, current_prefix))
+
+    seen: set[str] = set()
+    for alt in alternatives:
+        alt = alt.strip()
+        if not alt or alt in seen:
+            continue
+        seen.add(alt)
+        alt_prefix = _host_name_to_prefix(alt, current_prefix)
+        choices.append((alt, alt_prefix))
+
+    if len(choices) <= 1:
+        return
+
+    # Compute full path for each choice by swapping the host prefix
+    original_path = getattr(final_task, path_attr)
+    # [0] is dimmed if an alternative also has the same host name
+    current_overlaps = current_host in seen
+    print(f"\n{FLYellow}Alternative hosts available{CRst} for {FLCyan}{path_attr.replace('_', '-')}{CRst}:")
+    for idx, (name, prefix) in enumerate(choices):
+        mark = f"{FGray}[{CRst}{idx}{FGray}]{CRst}"
+        full = _replace_path_host(original_path, current_prefix, prefix)
+        if idx == 0 and current_overlaps:
+            # [0] duplicates an alternative — show dimmed
+            print(f"  {mark}: {FGray}{full}{CRst} {FGray}(current){CRst}")
+        elif idx == 0:
+            print(f"  {mark}: {FLCyan}{full}{CRst} {FGray}(current){CRst}")
+        else:
+            print(f"  {mark}: {FLCyan}{full}{CRst}")
+
+    while True:
+        try:
+            choice = input(
+                f"\n{FLYellow}Select host{CRst} {FGray}[# or Enter to keep current]{CRst}: "
+            ).strip()
+        except EOFError:
+            print()
+            return
+        if not choice:
+            return
+        if choice.isdigit():
+            idx = int(choice)
+            if 0 <= idx < len(choices):
+                _, new_prefix = choices[idx]
+                if new_prefix != current_prefix:
+                    old_val = getattr(final_task, path_attr)
+                    setattr(final_task, path_attr, _replace_path_host(old_val, current_prefix, new_prefix))
+                return
+            print(f"{FLRed}Invalid number: {idx}{CRst}")
+
+
+def _host_name_to_prefix(name: str, template_prefix: str) -> str:
+    """Build a full path prefix from a host *name* using *template_prefix*
+    to determine the format (remote, drive, or UNC)."""
+    if template_prefix.endswith(':'):
+        # remote or drive — keep trailing colon
+        return name if name.endswith(':') else name + ':'
+    # UNC — no colon
+    return name
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -581,7 +885,7 @@ def _fix_windows_symlinkd(local_path: str) -> None:
 
     Uses the same detection logic as ``windows/link-fix-symlinkd.py``.
     """
-    if Utils.get_platform() != "windows":
+    if sys.platform != "win32":
         return
     if not os.path.isdir(local_path):
         return
@@ -685,8 +989,6 @@ def main() -> int:
         _print_help()
         return 0
 
-    Utils.print_env_info()
-
     try:
         import yaml as yaml_mod
     except ImportError:
@@ -712,7 +1014,42 @@ def main() -> int:
     cli_auto = cli_task is not None
 
     # ================================================================
-    # Step 1: Resolve YAML schema file path
+    # Step 1: Check rclone & configure password
+    # ================================================================
+    _rclone = CmdCheck("rclone", hints={
+        "windows": f"{FGray}scoop install rclone{CRst}",
+        "macos":   f"{FGray}brew install rclone{CRst}",
+        "linux":   f"{FGray}sudo apt install rclone{CRst}",
+    })
+    if not Utils.check_commands(_rclone):
+        return 1
+    assert _rclone.path is not None
+    rclone_exe: str = _rclone.path
+
+    # Print rclone location and version
+    ver_process = subprocess.run([rclone_exe, "version"], capture_output=True, text=True, timeout=10)
+    ver_first_line = ver_process.stdout.strip().split("\n")[0] if ver_process.stdout else ""
+    if ver_first_line:
+        print(f"{FGray}rclone:{CRst} {rclone_exe} {FGray}({ver_first_line}){CRst}")
+    
+    print("")
+    
+    config_password: Optional[str] = None
+    if cli_config_password:
+        config_password = cli_config_password
+    elif ENV_CONFIG_PASSWORD in os.environ:
+        config_password = os.environ[ENV_CONFIG_PASSWORD]
+    elif _detect_encrypted_config(rclone_exe):
+        print(f"{FLYellow}  rclone config is encrypted.{CRst}")
+        config_password = Input.input_password("Enter rclone config password")
+
+    if config_password:
+        os.environ["RCLONE_CONFIG_PASS"] = config_password
+    if cli_config_file:
+        os.environ["RCLONE_CONFIG"] = cli_config_file
+
+    # ================================================================
+    # Step 2: Resolve YAML schema file path
     # ================================================================
     default_schema = DEFAULT_SCHEMA_FILE
     if ENV_SCHEMA_FILE in os.environ:
@@ -740,49 +1077,22 @@ def main() -> int:
         return 1
 
     # ================================================================
-    # Step 2: Check rclone & configure password
-    # ================================================================
-    _rclone = CmdCheck("rclone", hints={
-        "windows": f"{FGray}scoop install rclone{CRst}",
-        "macos":   f"{FGray}brew install rclone{CRst}",
-        "linux":   f"{FGray}sudo apt install rclone{CRst}",
-    })
-    if not Utils.check_commands(_rclone):
-        return 1
-    assert _rclone.path is not None
-    rclone_exe: str = _rclone.path
-
-    config_password: Optional[str] = None
-    if cli_config_password:
-        config_password = cli_config_password
-    elif ENV_CONFIG_PASSWORD in os.environ:
-        config_password = os.environ[ENV_CONFIG_PASSWORD]
-    elif _detect_encrypted_config(rclone_exe):
-        print(f"{FLYellow}  rclone config is encrypted.{CRst}")
-        config_password = Input.input_password("Enter rclone config password")
-
-    if config_password:
-        os.environ["RCLONE_CONFIG_PASS"] = config_password
-    if cli_config_file:
-        os.environ["RCLONE_CONFIG"] = cli_config_file
-
-    # ================================================================
     # Step 3: Load & validate YAML
     # ================================================================
     try:
         with open(schema_file, "r", encoding="utf-8") as fh:
             schema = yaml_mod.safe_load(fh)
     except Exception as e:
-        print(f"{FLRed}Failed to read YAML schema: {e}{CRst}")
+        print(f"{FLRed}Failed to read YAML schema:{CRst} {FGray}{schema_file}{CRst}\n{FGray}{e}{CRst}")
         return 1
 
     if schema is None:
-        print(f"{FLRed}Schema file is empty.{CRst}")
+        print(f"{FLRed}Schema file is empty:{CRst} {FGray}{schema_file}{CRst}")
         return 1
 
     errors = _validate_schema(schema)
     if errors:
-        print(f"{FLRed}Schema validation failed:{CRst}")
+        print(f"{FLRed}Schema validation failed:{CRst} {FGray}{schema_file}{CRst}")
         for err in errors:
             print(f"  {FLRed}- {err}{CRst}")
         return 1
@@ -793,7 +1103,7 @@ def main() -> int:
 
     tasks_section = schema.get("tasks", {})
     if not isinstance(tasks_section, dict):
-        print(f"{FLRed}'tasks' must be a dict (group_name → task list).{CRst}")
+        print(f"{FLRed}'tasks' must be a dict (group_name → task list):{CRst} {FGray}{schema_file}{CRst}")
         return 1
 
     # ================================================================
@@ -802,34 +1112,92 @@ def main() -> int:
     ungrouped: list[dict] = []
     grouped: list[tuple[str, dict]] = []
 
-    for gname, tlist in tasks_section.items():
+    for group_name, tlist in tasks_section.items():
         if not isinstance(tlist, list):
             continue
         for t in tlist:
             if not isinstance(t, dict):
                 continue
-            if gname == UNGROUPED_KEY:
+            if group_name == UNGROUPED_KEY:
                 ungrouped.append(t)
             else:
-                grouped.append((gname, t))
+                grouped.append((group_name, t))
 
     grouped.sort(key=lambda x: x[0].lower())
 
     all_entries: list[tuple[Optional[str], dict]] = []
     for t in ungrouped:
         all_entries.append((None, t))
-    for gname, t in grouped:
-        all_entries.append((gname, t))
+    for group_name, t in grouped:
+        all_entries.append((group_name, t))
 
     if not all_entries:
         print(f"{FLRed}No tasks found in schema.{CRst}")
         return 1
+
+    # ---- Scan YAML for name: line numbers (for duplicate-name error reporting) ----
+    with open(schema_file, "r", encoding="utf-8") as fh:
+        yaml_text = fh.read()
+
+    # Ordered list of (group, task_name) and (group, task_name, sub_name) from parsed schema
+    _task_name_order: list[tuple[Optional[str], str]] = []
+    _subtask_name_order: list[tuple[Optional[str], str, str]] = []
+    for g, t in all_entries:
+        _task_name_order.append((g, t.get("name", "")))
+        for st in (t.get("sub-tasks") or []):
+            if isinstance(st, dict):
+                _subtask_name_order.append((g, t.get("name", ""), st.get("name", "")))
+
+    # Scan the raw YAML for all "  - name: ..." lines
+    _name_matches = list(re.finditer(r'^\s*-\s+name:\s*(.+)$', yaml_text, re.MULTILINE))
+    _name_entries: list[tuple[int, str]] = []
+    for m in _name_matches:
+        lineno = yaml_text[:m.start()].count('\n') + 1
+        val = m.group(1).strip().strip('"').strip("'")
+        _name_entries.append((lineno, val))
+
+    # First len(_task_name_order) entries are task names
+    _task_name_to_lines: dict[str, list[tuple[Optional[str], int]]] = {}
+    for (g, tn), (lineno, _) in zip(_task_name_order, _name_entries[:len(_task_name_order)]):
+        _task_name_to_lines.setdefault(tn, []).append((g, lineno))
+
+    # Remaining are sub-task names
+    _subtask_name_to_lines: dict[tuple[Optional[str], str, str], list[int]] = {}
+    for (g, tn, sn), (lineno, _) in zip(_subtask_name_order, _name_entries[len(_task_name_order):]):
+        key = (g, tn, sn)
+        if key not in _subtask_name_to_lines:
+            _subtask_name_to_lines[key] = []
+        _subtask_name_to_lines[key].append(lineno)
+
+    platform_cur = sys.platform
+    arch_cur = Utils.get_arch()
+    computer_cur = Utils.get_computer_name()
+
+    # Pre-compute matching sub-tasks for every task (reused in Steps 4-5).
+    # Task-level ``platform`` / ``arch`` / ``computer-name`` are merged
+    # into each sub-task for matching, but the stored SyncTask is the
+    # original sub-task — the full merge happens at execution time.
+    _matching_subs_cache: dict[int, list[SyncTask]] = {}
+    for i, (_, t) in enumerate(all_entries):
+        raw_subs = t.get("sub-tasks") or []
+        if raw_subs:
+            parent_dict = {k: v for k, v in t.items() if k != "sub-tasks"}
+            parent = SyncTask.from_dict(parent_dict)
+            matching: list[SyncTask] = []
+            for st in raw_subs:
+                sub = SyncTask.from_dict(st)
+                if parent.merge(sub).matches_machine(platform_cur, arch_cur, computer_cur):
+                    matching.append(sub)
+            _matching_subs_cache[i] = matching
+        else:
+            _matching_subs_cache[i] = []
 
     while True:
         # ================================================================
         # Step 4: Select task
         # ================================================================
         selected_task_dict: Optional[dict] = None
+        selected_entry_idx: int = -1
 
         if cli_auto:
             assert cli_task is not None
@@ -838,10 +1206,20 @@ def main() -> int:
                 parts = cli_task.split("/", 1)
                 target_group, target_name = parts[0], parts[1]
 
-            for gname, t in all_entries:
+            # Reject --task when the name is duplicated
+            dup_entries = _task_name_to_lines.get(target_name, [])
+            if len(dup_entries) > 1:
+                print(f"{FLRed}Duplicate task name '{target_name}':{CRst}")
+                for g, lineno in dup_entries:
+                    label = f"{g}/{target_name}" if g else target_name
+                    print(f"  {FGray}line {lineno}:{CRst} {FLCyan}{label}{CRst}")
+                return 1
+
+            for i, (group_name, t) in enumerate(all_entries):
                 if t.get("name") == target_name:
-                    if target_group is None or gname == target_group:
+                    if target_group is None or group_name == target_group:
                         selected_task_dict = t
+                        selected_entry_idx = i
                         break
 
             if selected_task_dict is None:
@@ -853,34 +1231,68 @@ def main() -> int:
                 else:
                     print(f"{FLRed}Task '{cli_task}' not found.{CRst}")
                 return 1
+            if not _matching_subs_cache[selected_entry_idx]:
+                print(f"{FLRed}Task '{cli_task}' has no sub-tasks matching this machine.{CRst}")
+                return 1
         else:
             Utils.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
             print(f"  Available tasks from `{FGray}{schema_file}{CRst}`:\n")
 
-            max_digits = len(str(len(all_entries) - 1)) if len(all_entries) > 0 else 1
-            idx = 0
+            # Build mapping: display index -> all_entries index (only matching tasks)
+            selectable_map: dict[int, int] = {}
+            selectable_set: set[int] = set()
+            display_total = 0
+            for i in range(len(all_entries)):
+                if _matching_subs_cache[i]:
+                    selectable_map[display_total] = i
+                    selectable_set.add(i)
+                    display_total += 1
 
-            # Ungrouped tasks first
-            for t in ungrouped:
+            if not selectable_map:
+                print(f"  {FLRed}No tasks have sub-tasks matching this machine.{CRst}")
+                Utils.print_exit_message("Bye.")
+                return 0
+
+            max_digits = len(str(display_total - 1))
+
+            # Display all tasks — matching get numbers, non-matching shown in gray
+            d_idx = 0   # display index (only for matching tasks)
+            prev_group: Optional[str] = None
+            for all_idx, (group_name, t) in enumerate(all_entries):
                 tname = t.get("name", UNNAMED_TASK)
-                print(f"  {FGray}[{idx:>{max_digits}}]{CRst}: {FLCyan}{tname}{CRst}")
-                idx += 1
+                is_match = all_idx in selectable_set
 
-            # Grouped tasks with blank lines between groups
-            if grouped:
-                print()
-                prev_group = ""
-                for gname, t in grouped:
-                    if prev_group and gname != prev_group:
-                        print()
-                    tname = t.get("name", UNNAMED_TASK)
-                    print(f"  {FGray}[{idx:>{max_digits}}]{CRst}: {FLYellow}{gname}{CRst}/{FLCyan}{tname}{CRst}")
-                    idx += 1
-                    prev_group = gname
+                # Blank line between groups
+                if group_name is not None and prev_group is not None and group_name != prev_group:
+                    print()
+
+                if is_match:
+                    if group_name is None:
+                        print(f"  {FGray}[{CRst}{d_idx:>{max_digits}}{FGray}]{CRst}: {FLCyan}{tname}{CRst}")
+                    else:
+                        print(f"  {FGray}[{CRst}{d_idx:>{max_digits}}{FGray}]{CRst}: {FLYellow}{group_name}{CRst}/{FLCyan}{tname}{CRst}")
+                    d_idx += 1
+                else:
+                    if group_name is None:
+                        print(f"  {FGray}{' ' * (max_digits + 4)}{tname}{CRst}")
+                    else:
+                        print(f"  {FGray}{' ' * (max_digits + 4)}{group_name}/{tname}{CRst}")
+
+                if group_name is not None:
+                    prev_group = group_name
 
             Utils.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
 
-            print(f"\n  {FLYellow}Enter number to select{CRst}, {FLCyan}e{CRst} to open YAML, or {FLYellow}Enter{CRst} to exit")
+            # Warn about duplicate task names
+            _dup_task_names = {tn: entries for tn, entries in _task_name_to_lines.items() if len(entries) > 1}
+            if _dup_task_names:
+                print(f"\n  {FLYellow}Warning: duplicate task names:{CRst}")
+                for tn, entries in _dup_task_names.items():
+                    for g, lineno in entries:
+                        label = f"{g}/{tn}" if g else tn
+                        print(f"    {FGray}line {lineno}:{CRst} {FLCyan}{label}{CRst}")
+
+            print(f"\n  Enter {FLGreen}number{CRst} to select, {FLCyan}e{CRst} to open YAML, or {FLCyan}Enter{CRst} to exit")
 
             while True:
                 try:
@@ -896,11 +1308,12 @@ def main() -> int:
                     Utils.open_with_default_app(schema_file)
                     continue
                 if choice.isdigit():
-                    idx = int(choice)
-                    if 0 <= idx < len(all_entries):
-                        _, selected_task_dict = all_entries[idx]
+                    sel_idx = int(choice)
+                    if sel_idx in selectable_map:
+                        selected_entry_idx = selectable_map[sel_idx]
+                        _, selected_task_dict = all_entries[selected_entry_idx]
                         break
-                    print(f"{FLRed}Invalid number: {idx}{CRst}")
+                    print(f"{FLRed}Invalid number: {sel_idx}{CRst}")
                     continue
                 print(f"{FLRed}Enter a number, 'e' to open YAML, or Enter to exit.{CRst}")
 
@@ -913,37 +1326,59 @@ def main() -> int:
             print(f"{FGray}Selected: {merged_task.name}{CRst}")
 
         # ================================================================
-        # Step 5: Sub-task selection
+        # Step 5: Sub-task selection (reuses pre-computed matching list)
         # ================================================================
-        # Build sub-task SyncTask instances from the raw dict
-        raw_subs: list[dict] = selected_task_dict.get("sub-tasks") or []
-        all_sub_tasks = [SyncTask.from_dict(st) for st in raw_subs]
-
-        platform_cur = Utils.get_platform()
-        arch_cur = Utils.get_arch()
-        computer_cur = Utils.get_computer_name()
-
-        matching_subs = [st for st in all_sub_tasks if st.matches_machine(platform_cur, arch_cur, computer_cur)]
+        matching_subs = _matching_subs_cache[selected_entry_idx]
         selected_subtask: Optional[SyncTask] = None
 
+        _task_group = all_entries[selected_entry_idx][0]
+        _task_name = selected_task_dict.get("name", UNNAMED_TASK)
+        _task_label = f"{_task_group}/{_task_name}" if _task_group else _task_name
+
+        # Check for duplicate sub-task names within this task (warn interactive, reject --sub-task)
+        raw_subs = selected_task_dict.get("sub-tasks") or []
+        sub_name_counts: dict[str, int] = {}
+        for st in raw_subs:
+            if isinstance(st, dict):
+                sn = st.get("name", "")
+                sub_name_counts[sn] = sub_name_counts.get(sn, 0) + 1
+        _dup_sub_names = {sn: cnt for sn, cnt in sub_name_counts.items() if cnt > 1}
+
         if cli_sub_task:
+            if cli_sub_task in _dup_sub_names:
+                task_group = all_entries[selected_entry_idx][0]
+                task_name = selected_task_dict.get("name", "")
+                task_label = f"{task_group}/{task_name}" if task_group else task_name
+                print(f"{FLRed}Duplicate sub-task name '{FLYellow}{cli_sub_task}{FLRed}' in task '{FLYellow}{task_label}{FLRed}':{CRst}")
+                key = (task_group, task_name, cli_sub_task)
+                for lineno in _subtask_name_to_lines.get(key, []):
+                    print(f"  {FGray}line {lineno}{CRst}")
+                return 1
+
             if not matching_subs:
-                print(f"{FLRed}Task has no sub-tasks matching this machine.{CRst}")
+                print(f"{FLRed}Task {FLYellow}{_task_label}{FLRed} has no sub-tasks matching this machine.{CRst}")
                 return 1
             found = next((st for st in matching_subs if st.name == cli_sub_task), None)
             if found is None:
                 names = [st.name for st in matching_subs]
-                print(f"{FLRed}Sub-task '{cli_sub_task}' not found. Matching: {', '.join(names)}{CRst}")
+                print(f"{FLRed}Sub-task '{cli_sub_task}' not found in task {FLYellow}{_task_label}{FLRed}. Matching: {', '.join(names)}{CRst}")
                 return 1
             selected_subtask = found
         elif matching_subs:
+            # Warn about duplicate sub-task names
+            if _dup_sub_names:
+                print(f"\n  {FLYellow}Warning: duplicate sub-task names in {_task_label}:{CRst}")
+                for sn in _dup_sub_names:
+                    key = (_task_group, _task_name, sn)
+                    for lineno in _subtask_name_to_lines.get(key, []):
+                        print(f"    {FGray}line {lineno}:{CRst} {FLCyan}{sn}{CRst}")
+
             if len(matching_subs) == 1:
                 selected_subtask = matching_subs[0]
-                print(f"\n{FLCyan}Auto-selected sub-task:{CRst} {FLGreen}{selected_subtask.name}{CRst}{selected_subtask.display_filters()}")
             else:
-                print(f"\n{FLYellow}Multiple sub-tasks match this machine:{CRst}")
+                print(f"\nMultiple sub-tasks of task {FLYellow}{_task_label}{CRst} match this machine:")
                 for idx, sub in enumerate(matching_subs):
-                    print(f"  {FGray}[{idx}]{CRst}: {FLGreen}{sub.name}{CRst}{sub.display_filters()}")
+                    print(f"  {FGray}[{CRst}{idx}{FGray}]{CRst}: {FLGreen}{sub.name}{CRst}{sub.display_filters()}")
 
                 while True:
                     try:
@@ -964,10 +1399,18 @@ def main() -> int:
 
         # ---- Merge sub-task into final task, resolve paths ----
         if selected_subtask:
-            final_task = merged_task.merge(selected_subtask)
+            # Re-validate sub-task matches this machine at execution time
+            if not selected_subtask.matches_machine(platform_cur, arch_cur, computer_cur):
+                print(f"{FLRed}Selected sub-task '{selected_subtask.name}' does not match this machine.{CRst}")
+                return 1
+            # Resolve sub-task's own inherit profiles on top of the sub-task
+            # before merging onto the already-resolved task.
+            sub_resolved = selected_subtask.resolve_profiles(settings)
+            final_task = merged_task.merge(sub_resolved)
             final_task.name = f"{merged_task.name}/{selected_subtask.name}"
         else:
-            final_task = merged_task
+            print(f"{FLRed}No matching sub-tasks for this machine — task requires a compatible sub-task.{CRst}")
+            return 1
 
         final_errors = final_task.validate("selected task")
         if final_errors:
@@ -982,6 +1425,9 @@ def main() -> int:
             print(f"{FLRed}Task is missing local-path or remote-path.{CRst}")
             return 1
 
+        # ---- Alternative remote host selection ----
+        _interactive_host_swap(final_task, cli_auto)
+
         # ================================================================
         # Step 6: Pre-sync check (if configured)
         # ================================================================
@@ -993,6 +1439,7 @@ def main() -> int:
         if directional and cli_direction is None:
             # ---- Interactive direction selection ----
             print()
+            print(f"  {FLYellow}Task:{CRst} {FLCyan}{final_task.name}{CRst}")
             lp, rp = final_task.local_path, final_task.remote_path
             direction_options: list[MenuOption] = []
             if final_task.allow_push:
@@ -1008,6 +1455,7 @@ def main() -> int:
                 prompt="Sync direction",
                 default_key=direction_options[0].keys[0],
                 separator=False,
+                key_color = ""
             )
             if result is None:
                 Utils.print_exit_message("Bye.")
@@ -1047,6 +1495,8 @@ def main() -> int:
         # ================================================================
         # Step 7: Confirm & execute
         # ================================================================
+        print("────────────")
+        print(f"  {FLYellow}Task:{CRst} {FLCyan}{final_task.name}{CRst}  {FLYellow}mode:{CRst} {FLCyan}{final_task.mode}{CRst}  {FLYellow}direction:{CRst} {FLCyan}{direction}{CRst}")
         cmd = final_task.to_command(rclone_exe, dry_run=cli_dry_run, direction=direction)
         _print_cmd(cmd)
 
@@ -1062,7 +1512,7 @@ def main() -> int:
             while True:
                 try:
                     choice = input(
-                        f"\n{FLYellow}Execute?{CRst} {FGray}[y=yes / n=back / d=dry-run / q=quit]{CRst}: "
+                        f"\n{FLYellow}Execute?{CRst} {FGray}[{FLGreen}y{FGray}=yes / {FLCyan}n{FGray}=back / {FLCyan}d{FGray}=dry-run / {FLCyan}q{FGray}=quit]{CRst}: "
                     ).strip().lower()
                 except EOFError:
                     print()
@@ -1075,8 +1525,11 @@ def main() -> int:
                     continue
                 elif choice == "d":
                     dry_cmd = final_task.to_command(rclone_exe, dry_run=True, direction=direction)
-                    _print_cmd(dry_cmd)
-                    print(f"\n{FGray}(dry-run - no changes made){CRst}")
+                    exec_result = subprocess.run(dry_cmd, check=False)
+                    if exec_result.returncode == 0:
+                        print(f"\n{FGray}(dry-run complete — no changes){CRst}")
+                    else:
+                        print(f"\n{FLRed}Dry-run failed with exit code {exec_result.returncode}.{CRst}")
                     continue
                 elif choice == "q":
                     Utils.print_exit_message("Bye.")
@@ -1110,27 +1563,27 @@ def main() -> int:
         while True:
             try:
                 choice = input(
-                    f"\n{FLYellow}What next?{CRst} {FGray}[r=re-run / s=select another / q=quit]{CRst}: "
+                    f"\n{FLYellow}What next?{CRst} {FGray}[{FLGreen}m{FGray}/{FLGreen}Enter{FGray}=back to menu / {FLCyan}r{FGray}=re-run / {FLCyan}q{FGray}=quit]{CRst}: "
                 ).strip().lower()
             except EOFError:
                 print()
                 Utils.print_exit_message("Bye.")
                 return 0
 
-            if choice == "r":
+            if not choice or choice == "m":
+                break  # back to task selection menu
+            elif choice == "r":
                 print(f"\n{FLYellow}Re-running...{CRst}\n")
                 exec_result = subprocess.run(cmd, check=False)
                 if exec_result.returncode == 0:
                     print(f"\n{FLGreen}Sync completed successfully.{CRst}")
                 else:
                     print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
-            elif choice == "s":
-                continue
             elif choice == "q":
                 Utils.print_exit_message("Bye.")
                 return 0
             else:
-                print(f"{FLRed}Enter r, s, or q.{CRst}")
+                print(f"{FLRed}Enter s/Enter, r, or q.{CRst}")
 
 
 if __name__ == "__main__":

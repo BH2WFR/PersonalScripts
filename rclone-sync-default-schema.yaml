@@ -3,13 +3,37 @@
 # ============================================================
 #
 # This is the default schema file bundled with rclone-sync.py.
-# It serves as a reference — copy and customise it for your own use.
+# It serves as a reference — copy and customize it for your own use.
 #
-# Environment variables recognised by the script:
+# Environment variables recognized by the script:
 #   ZL_RCLONE_SYNC_SCHEMA_FILE   path to the YAML schema file
 #   ZL_RCLONE_CONFIG_PASSWORD    password for an encrypted rclone config
 #
-# ---- Path variables -------------------------------------------------
+# ---- Inheritance rules ------------------------------------------------
+# The inheritance chain is:  default → profile(s) → task → sub-task.
+# Each layer adds on top of the previous one:
+#
+#   Field type             Merge behavior
+#   ──────────             ──────────────
+#   inherit                append+dedup  (resolved recursively — a profile
+#                                         may itself inherit other profiles)
+#   exclude                append+dedup
+#   alternative-remote-host  append+dedup
+#   sub-tasks              replace
+#   everything else        replace (override)
+#
+# Multiple profiles can be inherited via `inherit: [p1, p2]` — later
+# profiles override earlier ones for the same field.  When a profile
+# itself declares `inherit`, its parents are resolved first (recursively),
+# forming a DAG.  Cycles are detected and silently broken.
+#
+# ---- Path variables ---------------------------------------------------
+# ``local-path`` and ``remote-path`` can be set at the task level and
+# will be inherited by every sub-task that does not override them.
+# A task still requires at least one machine-matching sub-task before
+# it can execute — task-level paths just reduce repetition when many
+# sub-tasks share the same source or destination.
+#
 # Every path-type field (local-path, remote-path, backup-dir, log-file)
 # supports the following placeholders:
 #
@@ -32,7 +56,6 @@
 # -------------------------------------------------------------------
 settings:
   # "default" is special: every task inherits these values automatically.
-  # Any setting can be overridden in profiles or individual tasks.
   default:
     mode: sync              # sync | copy | move | check | bisync  [default: sync]
     progress: true          # show real-time transfer progress     [default: true]
@@ -44,17 +67,51 @@ settings:
       - "Thumbs.db"
       - "*.bak"
 
-  # Additional named profiles can be referenced via `inherit:` in a task.
-  # They layer on top of `default` — only explicitly set values override.
+  # ---- bulk ---------------------------------------------------------
+  # For large transfers: bumps parallelism, enables logging.
   bulk:
     transfer: 24
     log-file: "{{schema_dir}}/rclone-sync.log"
     log-level: INFO         # ERROR | NOTICE | INFO | DEBUG        [default: "" = rclone default]
 
+  # ---- cautious -----------------------------------------------------
+  # Safety net: limits deletions, runs a pre-sync check.
   cautious:
     max-delete: 50
     check-before-sync: true
     stop-on-check-failure: false
+
+  # ---- host-webdav ---------------------------------------------------
+  # Provides alternative WebDAV host names for accessing the same NAS
+  # via different network paths.  At runtime the user is prompted to
+  # pick one (or keep the default from their sub-task's remote-path).
+  #
+  # `alternative-remote-host` is inherited by *append+dedup* — a sub-task
+  # that adds its own list will extend the inherited one, not discard it.
+  #
+  # Example — if a sub-task has remote-path: "dav-ddns4:/backup/data",
+  # the user will see these full paths at runtime:
+  #   [0] dav-ddns4:/backup/data     (current)
+  #   [1] dav-ddns6:/backup/data     DDNS IPv6 (direct)
+  #   [2] dav-lan:/backup/data       local network (same subnet)
+  #   [3] dav-tailscale:/backup/data Tailscale mesh VPN
+  host-webdav:
+    alternative-remote-host:
+      - "dav-ddns4"         # DDNS IPv4 (e.g. port forward / FRP)
+      - "dav-ddns6"         # DDNS IPv6 (direct)
+      - "dav-lan"           # local network (same subnet)
+      - "dav-tailscale"     # Tailscale mesh VPN
+
+  # ---- profile-inherits-profile example --------------------------------
+  # Profiles can inherit other profiles recursively.  The chain is
+  # resolved depth-first: parents first, then the inheriting profile on
+  # top.  ``inherit`` itself is append+dedup, so a profile that inherits
+  # another will also pass through its inherited parent's profiles.
+  #
+  # full-bulk:
+  #   inherit: bulk
+  #   notify-after-sync: true
+  #   bwlimit: "5M"
 
 
 # -------------------------------------------------------------------
@@ -70,10 +127,7 @@ tasks:
 
       # ---- inherit --------------------------------------------------
       # Pull defaults from a named profile in `settings`.
-      # The inheritance chain is:  default → profile → task → sub-task.
-      # Later layers override fields explicitly set in YAML. This means
-      # `exclude: []` can intentionally clear inherited excludes.
-      inherit: cautious         # [default: "" = no profile]
+      inherit: [cautious]            # [default: "" = no profile]
 
       # ---- mode -----------------------------------------------------
       # sync   — make dest match source, one-way (deletes extra files)
@@ -81,131 +135,207 @@ tasks:
       # move   — like copy but deletes source files after transfer
       # check  — compare source vs dest (read-only, no transfer)
       # bisync — bidirectional sync (experimental, needs rclone ≥ 1.58)
-      mode: sync                # [default: sync]
+      mode: sync                     # [default: sync]
 
       # ---- progress -------------------------------------------------
-      progress: true            # show live progress with -P flag    [default: true]
+      progress: true                 # show live progress with -P     [default: true]
 
       # ---- transfer -------------------------------------------------
-      transfer: 16              # parallel transfers, 1-64            [default: 4]
+      transfer: 16                   # parallel transfers, 1-64       [default: 4]
 
       # ---- links / copy-links ---------------------------------------
       # links      — preserve symlinks as symlinks (--links / -l).
       # copy-links — follow symlinks and copy target files (--copy-links / -L).
       # `follow-link` is kept as a deprecated alias for `copy-links`.
-      links: false              # [default: false]
-      copy-links: true          # [default: false]
+      links: false                   # [default: false]
+      copy-links: true               # [default: false]
+
+      # ---- case sensitivity -------------------------------------------
+      # ignore-case      — make filter/exclude patterns case-insensitive
+      #                     (--ignore-case).  E.g. --exclude "*.jpg" also
+      #                     matches .JPG, .Jpg, etc.
+      # ignore-case-sync — treat files differing only in case as the same
+      #                     (--ignore-case-sync).  Important for cross-
+      #                     platform sync: Windows/macOS vs Linux.
+      ignore-case: false             # [default: false]
+      ignore-case-sync: false        # [default: false]
+
+      # ---- comparison strategy ------------------------------------------
+      # checksum  — compare by checksum (MD5/SHA1), not modtime+size
+      #             (--checksum).  Slower but detects bit-level changes
+      #             that don't update modtime.
+      # size-only — compare by file size only, skip checksum AND modtime
+      #             (--size-only).  Fastest but least accurate.
+      # update    — skip files that are newer on the destination
+      #             (--update).  Useful for one-way backups.
+      checksum: false                # [default: false]
+      size-only: false               # [default: false]
+      update: false                  # [default: false]
+
+      # ---- transfer behaviour -------------------------------------------
+      # bwlimit       — bandwidth limit, e.g. "2M", "1.5M", "off"
+      #                 (--bwlimit).  Empty = unlimited.
+      # ignore-errors — continue even if I/O errors occur on some files
+      #                 (--ignore-errors).  Useful for bulk transfers.
+      # retries       — number of retries on failure (--retries, 3=default)
+      bwlimit: ""                    # [default: "" = unlimited]
+      ignore-errors: false           # [default: false]
+      retries: 3                     # [default: 3]
 
       # ---- direction safety -----------------------------------------
-      # Disable one direction for tasks that must never be reversed.
-      # Example: a "copy backup" task usually allows push but not pull.
-      allow-push: true          # [default: true]
-      allow-pull: true          # [default: true]
+      # Disable one direction to prevent accidental reversal.
+      allow-push: true               # [default: true]
+      allow-pull: true               # [default: true]
 
       # ---- exclude --------------------------------------------------
-      # Glob patterns for files/dirs to skip. Passed as --exclude
-      # flags to rclone. Patterns are relative to the sync root.
-      exclude:                  # [default: []]
+      # Appends to inherited excludes (here: default + cautious).
+      # Effective excludes for this task:
+      #   .git/**  .DS_Store  Desktop.ini  Thumbs.db  *.bak  *.tmp  node_modules/**  .venv/**
+      exclude:                       # [default: []]
         - "*.tmp"
         - "node_modules/**"
         - ".venv/**"
 
       # ---- delete-excluded ------------------------------------------
       # Also delete excluded files from destination (--delete-excluded).
-      # Only meaningful for sync mode.
-      delete-excluded: true     # [default: false]
-
-      # ---- local-path -----------------------------------------------
-      # Local file or directory. Supports the path variables listed
-      # at the top of this file (${VAR}, {{schema_dir}}, …).
-      local-path: "~/Projects"
-
-      # ---- remote-path ----------------------------------------------
-      # Remote in rclone syntax:  <remote-name>:<path>
-      # Also supports path variables.
-      remote-path: "myremote:Projects"
+      delete-excluded: true          # [default: false]
 
       # ---- backup-dir -----------------------------------------------
-      # If set, deleted or overwritten files are moved here instead of
-      # being permanently lost (--backup-dir). Supports path variables.
-      # Must be on the same side / backend as the destination. The script
-      # refuses pull when a generic backup-dir is configured.
-      backup-dir: "myremote:Projects/_deleted_backup"   # [default: "" = off]
+      # Deleted / overwritten files are moved here instead of
+      # being permanently lost (--backup-dir).  Supports path variables.
+      # Must be on the same backend as the destination.  Pull is
+      # refused when a generic backup-dir is configured.
+      backup-dir: "myremote:Projects/_deleted_backup"  # [default: "" = off]
 
       # ---- max-delete -----------------------------------------------
       # Abort if more than this many files would be deleted.
-      # Safety net against catastrophic misconfiguration.
-      max-delete: 100           # [default: unlimited]
+      max-delete: 100                # [default: unlimited]
 
       # ---- check-before-sync ----------------------------------------
       # Run `rclone check` before the real sync to preview differences.
       #   true       — full comparison (checksum + size)
       #   size-only  — compare only file sizes (faster)
       #   false      — skip pre-sync check
-      check-before-sync: size-only  # [default: false]
-      stop-on-check-failure: false   # true = stop if pre-check detects differences
+      check-before-sync: size-only   # [default: false]
+      stop-on-check-failure: false   # true = stop check fails
 
       # ---- notify-after-sync ----------------------------------------
       # Fire a desktop notification when the sync completes.
-      notify-after-sync: true   # [default: false]
+      notify-after-sync: true        # [default: false]
 
       # ---- log-file -------------------------------------------------
       # Write rclone output to this file (--log-file).
-      # Supports path variables.
-      log-file: "{{schema_dir}}/logs/sync.log"  # [default: "" = stdout only]
+      log-file: "{{schema_dir}}/logs/sync.log"  # [default: ""]
 
       # ---- log-level ------------------------------------------------
-      # rclone log verbosity. Empty string = rclone's default (NOTICE).
-      log-level: DEBUG          # ERROR | NOTICE | INFO | DEBUG     [default: ""]
+      # rclone log verbosity.  Empty = rclone default (NOTICE).
+      log-level: DEBUG               # ERROR | NOTICE | INFO | DEBUG  [default: ""]
 
       # ---- additional-args ------------------------------------------
-      # Extra flags passed directly to rclone. Each entry becomes one
-      # argument.  Use --flag=value syntax for flags that take values.
-      additional-args:          # [default: []]
-        - "--bwlimit=2M"        # limit bandwidth to 2 MiB/s
+      # Extra flags passed directly to rclone.
+      additional-args:               # [default: []]
         - "--create-empty-src-dirs"
 
       # ---- sub-tasks ------------------------------------------------
-      # Per-machine overrides, selected by platform / arch / hostname.
-      # Each sub-task inherits from the parent task (merge semantics)
-      # and can override any field. Only sub-tasks matching the current
-      # machine are offered at runtime.
+      # Per-machine overrides.  Only sub-tasks matching the current
+      # machine (platform / arch / hostname) are offered at runtime.
+      #
+      # ``platform``, ``arch``, and ``computer-name`` each accept:
+      #   str       — exact match (case-insensitive)
+      #   list[str] — OR semantics (satisfy any one)
+      #   empty / omitted — match any machine
+      #
+      # ``alternative-remote-host`` can appear at the sub-task level
+      # too, providing machine-specific alternative hosts.
       sub-tasks:
-        # --- Match by computer name (hostname) ---
+        # --- Match by hostname ---
         - name: desktop-pc
-          computer-name: ZL-DESKTOP    # exact hostname              [default: "" = any]
+          computer-name: ZL-DESKTOP
           local-path: "D:\\Projects"
-          remote-path: "myremote:Projects"
+          remote-path: "myremote:/Projects"
+          # At runtime the user can choose:
+          #   [0] myremote:/Projects        (current)
+          #   [1] myremote-backup:/Projects
+          alternative-remote-host:
+            - "myremote"
+            - "myremote-backup"
 
-        # --- Match by platform + architecture ---
+        # --- Match by platform + arch (str) ---
         - name: laptop-x64
-          platform: windows            # all | windows | linux | darwin | macos  [default: all]
-          arch: amd64                  # all | 386 | arm | arm64 | amd64          [default: all]
-          local-path: "C:\\Users\\me\\Projects"
+          platform: windows
+          arch: amd64
+          local-path: "$ENV:HOME\\Projects"
 
         # --- Match by platform only ---
         - name: macbook
           platform: darwin
           local-path: "~/Projects"
 
+        # --- Match by platform OR (list, any satisfy) ---
+        - name: linux-or-macos
+          platform: [linux, darwin]
+          local-path: "~/Projects"
+
     # =================================================================
-    # "minimal" — the simplest possible task
+    # "minimal" — simplest tasks
     # =================================================================
+    # Task-level paths are inherited by all sub-tasks.  Useful when
+    # the same source/destination is shared, with different machines
+    # providing machine-specific alternatives.
     - name: minimal
-      local-path: "~/Documents"
-      remote-path: "myremote:Documents"
+      remote-path: "myremote:Documents"     # inherited by all sub-tasks
+      sub-tasks:
+        - name: macos
+          local-path: "~/Documents"
+          platform: darwin
+        - name: windows
+          local-path: "%USERPROFILE%\\Documents"
+          platform: windows
+
+    # If there's only one sub-task, paths can stay at sub-task level.
+    - name: minimal-single
+      sub-tasks:
+        - name: default
+          local-path: "~/Documents"
+          remote-path: "myremote:Documents"
+
 
   # ---------- grouped tasks ----------
-  # Tasks can be organised into named groups for clarity.
+  # Tasks can be organized into named groups for clarity.
   # Groups are listed alphabetically after ungrouped tasks.
   media:
+    # =================================================================
+    # "photos-sync" — example using inherit with host-webdav
+    # =================================================================
+    #
+    # Inherits:
+    #   bulk        → transfer=24, log-file, log-level=INFO
+    #   host-webdav → alternative-remote-host (4 WebDAV paths)
+    #   default     → mode=sync, progress=true, exclude patterns, …
+    #
+    # At runtime the user will be asked to choose a dav-* host before
+    # the sync runs.  Excludes from default are still active.
     - name: photos-sync
       mode: sync
       check-before-sync: true
-      local-path: "~/Pictures"
-      remote-path: "myremote:Photos"
+      inherit: [bulk, host-webdav]
+      sub-tasks:
+        - name: default
+          local-path: "~/Pictures"
+          remote-path: "myremote:Photos"
+          # At runtime the user can choose:
+          #   [0] dav-ddns4:/Photos     (current)
+          #   [1] dav-ddns6:/Photos     DDNS IPv6 (direct)
+          #   [2] dav-lan:/Photos       local network (same subnet)
+          #   [3] dav-tailscale:/Photos Tailscale mesh
 
+
+    # =================================================================
+    # "music-backup" — simple copy task, no host switching
+    # =================================================================
     - name: music-backup
       mode: copy                  # copy only — never deletes on destination
-      local-path: "~/Music"
-      remote-path: "myremote:Music"
+      sub-tasks:
+        - name: default
+          local-path: "~/Music"
+          remote-path: "myremote:Music"

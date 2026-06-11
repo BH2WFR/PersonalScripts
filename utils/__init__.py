@@ -496,17 +496,6 @@ class Utils:
             sys.exit(1)
 
     @staticmethod
-    def get_platform() -> str:
-        """Return the current platform: ``"windows"``, ``"linux"``, or ``"darwin"``."""
-        if sys.platform == "darwin":
-            return "darwin"
-        if sys.platform == "linux":
-            return "linux"
-        if sys.platform in ("win32", "cygwin", "msys"):
-            return "windows"
-        return sys.platform
-
-    @staticmethod
     def get_arch() -> str:
         """Return the machine architecture (e.g. ``"amd64"``, ``"arm64"``)."""
         m = platform.machine().lower()
@@ -529,20 +518,19 @@ class Utils:
     def get_os_name() -> str:
         """Return a human-readable OS name with version.
 
-        Uses :meth:`get_platform` to determine the platform, then adds
+        Uses :data:`sys.platform` to determine the platform, then adds
         version / release details from :mod:`platform`.
         """
-        plat = Utils.get_platform()
-        if plat == "darwin":
+        if sys.platform == "darwin":
             ver = platform.mac_ver()[0]
             return f"macOS {ver}" if ver else "macOS"
-        if plat == "linux":
+        if sys.platform == "linux":
             return f"Linux ({platform.release()})"
-        if plat == "windows":
+        if sys.platform == "win32":
             edition = platform.win32_edition()
             base = f"Windows {platform.release()} {platform.version()}"
             return f"{base} {edition}" if edition else base
-        return plat
+        return sys.platform
 
     @staticmethod
     def open_with_default_app(path: str) -> None:
@@ -1261,7 +1249,10 @@ class Menu:
 
         all_keys = sorted(key_map.keys())
         sep_line = f"{separator_color}{separator_char * separator_width}{CRst}"
-
+        
+        if not key_color:
+            key_color = CRst
+            
         while True:
             if separator:
                 print(sep_line)
@@ -1272,7 +1263,7 @@ class Menu:
                     k = opt.keys[0]
                     dc = opt.desc_color or default_desc_color
                     parts.append(
-                        f"{indent}{FLYellow}[{key_color}{k}{FLYellow}]{CRst}"
+                        f"{indent}{FGray}[{key_color}{k}{FGray}]{CRst}"
                         f" {dc}{opt.description}{CRst}"
                     )
                 print("  ".join(parts))
@@ -1281,7 +1272,7 @@ class Menu:
                     k = opt.keys[0]
                     dc = opt.desc_color or default_desc_color
                     print(
-                        f"{indent}{FLYellow}[{key_color}{k}{FLYellow}]{CRst}"
+                        f"{indent}{FGray}[{key_color}{k}{FGray}]{CRst}"
                         f" {dc}{opt.description}{CRst}"
                     )
 
