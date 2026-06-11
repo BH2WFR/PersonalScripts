@@ -28,6 +28,9 @@ from utils import *
 ENV_SCHEMA_FILE = "ZL_RCLONE_SYNC_SCHEMA_FILE"
 ENV_CONFIG_PASSWORD = "ZL_RCLONE_CONFIG_PASSWORD"
 DEFAULT_SCHEMA_FILE = "./rclone-sync-default-schema.yaml"
+UNGROUPED_KEY = "ungrouped"
+UNNAMED_TASK = "unnamed"
+DISPLAY_WIDTH = 60
 
 VALID_MODES       = {"sync", "copy", "move", "check", "bisync"}
 VALID_PLATFORMS   = {"all", "windows", "linux", "darwin", "macos"}
@@ -706,6 +709,7 @@ def main() -> int:
     cli_dry_run = parsed.dry_run
     cli_verbose = parsed.verbose
     cli_direction: Optional[str] = parsed.direction
+    cli_auto = cli_task is not None
 
     # ================================================================
     # Step 1: Resolve YAML schema file path
@@ -716,7 +720,7 @@ def main() -> int:
     if cli_schema_file:
         default_schema = cli_schema_file
 
-    if cli_task:
+    if cli_auto:
         schema_file = default_schema
     else:
         schema_file = Input.resolve_input_path(
@@ -747,14 +751,13 @@ def main() -> int:
         return 1
     assert _rclone.path is not None
     rclone_exe: str = _rclone.path
-    cli_auto = cli_task is not None
 
     config_password: Optional[str] = None
     if cli_config_password:
         config_password = cli_config_password
     elif ENV_CONFIG_PASSWORD in os.environ:
         config_password = os.environ[ENV_CONFIG_PASSWORD]
-    elif not cli_auto and _detect_encrypted_config(rclone_exe):
+    elif _detect_encrypted_config(rclone_exe):
         print(f"{FLYellow}  rclone config is encrypted.{CRst}")
         config_password = Input.input_password("Enter rclone config password")
 
@@ -805,7 +808,7 @@ def main() -> int:
         for t in tlist:
             if not isinstance(t, dict):
                 continue
-            if gname == "ungrouped":
+            if gname == UNGROUPED_KEY:
                 ungrouped.append(t)
             else:
                 grouped.append((gname, t))
@@ -822,298 +825,312 @@ def main() -> int:
         print(f"{FLRed}No tasks found in schema.{CRst}")
         return 1
 
-    # ================================================================
-    # Step 4: Select task
-    # ================================================================
-    selected_task_dict: Optional[dict] = None
+    while True:
+        # ================================================================
+        # Step 4: Select task
+        # ================================================================
+        selected_task_dict: Optional[dict] = None
 
-    if cli_task:
-        target_group, target_name = (None, cli_task)
-        if "/" in cli_task:
-            parts = cli_task.split("/", 1)
-            target_group, target_name = parts[0], parts[1]
+        if cli_auto:
+            assert cli_task is not None
+            target_group, target_name = (None, cli_task)
+            if "/" in cli_task:
+                parts = cli_task.split("/", 1)
+                target_group, target_name = parts[0], parts[1]
 
-        for gname, t in all_entries:
-            if t.get("name") == target_name:
-                if target_group is None or gname == target_group:
-                    selected_task_dict = t
-                    break
+            for gname, t in all_entries:
+                if t.get("name") == target_name:
+                    if target_group is None or gname == target_group:
+                        selected_task_dict = t
+                        break
 
-        if selected_task_dict is None:
-            matches = [f"{g}/{t.get('name')}" for g, t in all_entries if t.get("name") == target_name]
-            if matches:
-                print(f"{FLRed}Task '{cli_task}' not found. Did you mean:{CRst}")
-                for m in matches:
-                    print(f"  {FGray}{m}{CRst}")
-            else:
-                print(f"{FLRed}Task '{cli_task}' not found.{CRst}")
-            return 1
-    else:
-        Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
-        print(f"  Available tasks from `{FGray}{schema_file}{CRst}`:\n")
-
-        max_digits = len(str(len(all_entries) - 1)) if len(all_entries) > 0 else 1
-
-        for idx, (gname, t) in enumerate(all_entries):
-            tname = t.get("name", "unnamed")
-            if gname:
-                print(f"  {FGray}[{idx:>{max_digits}}]{CRst}: {FLYellow}{gname}{CRst}/{FLCyan}{tname}{CRst}")
-            else:
-                print(f"  {FGray}[{idx:>{max_digits}}]{CRst}: {FLCyan}{tname}{CRst}")
-
-        Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
-
-        print(f"\n  {FLYellow}Enter number to select{CRst}, {FLCyan}e{CRst} to open YAML, or {FLYellow}Enter{CRst} to exit")
-
-        while True:
-            try:
-                choice = input(f"\n{FLYellow}Select task{CRst} {FGray}[#]{CRst}: ").strip()
-            except EOFError:
-                print()
-                Utils.print_exit_message("Bye.")
-                return 0
-            if not choice:
-                Utils.print_exit_message("Bye.")
-                return 0
-            if choice.lower() == "e":
-                Utils.open_with_default_app(schema_file)
-                continue
-            if choice.isdigit():
-                idx = int(choice)
-                if 0 <= idx < len(all_entries):
-                    _, selected_task_dict = all_entries[idx]
-                    break
-                print(f"{FLRed}Invalid number: {idx}{CRst}")
-                continue
-            print(f"{FLRed}Enter a number, 'e' to open YAML, or Enter to exit.{CRst}")
-
-    assert selected_task_dict is not None
-
-    # ---- Resolve task with inheritance ----
-    merged_task = SyncTask.from_inheritance_chain(settings, selected_task_dict)
-
-    if cli_verbose:
-        print(f"{FGray}Selected: {merged_task.name}{CRst}")
-
-    # ================================================================
-    # Step 5: Sub-task selection
-    # ================================================================
-    # Build sub-task SyncTask instances from the raw dict
-    raw_subs: list[dict] = selected_task_dict.get("sub-tasks") or []
-    all_sub_tasks = [SyncTask.from_dict(st) for st in raw_subs]
-
-    platform_cur = Utils.get_platform()
-    arch_cur = Utils.get_arch()
-    computer_cur = Utils.get_computer_name()
-
-    matching_subs = [st for st in all_sub_tasks if st.matches_machine(platform_cur, arch_cur, computer_cur)]
-    selected_subtask: Optional[SyncTask] = None
-
-    if cli_sub_task:
-        if not matching_subs:
-            print(f"{FLRed}Task has no sub-tasks matching this machine.{CRst}")
-            return 1
-        found = next((st for st in matching_subs if st.name == cli_sub_task), None)
-        if found is None:
-            names = [st.name for st in matching_subs]
-            print(f"{FLRed}Sub-task '{cli_sub_task}' not found. Matching: {', '.join(names)}{CRst}")
-            return 1
-        selected_subtask = found
-    elif matching_subs:
-        if len(matching_subs) == 1:
-            selected_subtask = matching_subs[0]
-            print(f"\n{FLCyan}Auto-selected sub-task:{CRst} {FLGreen}{selected_subtask.name}{CRst}{selected_subtask.display_filters()}")
+            if selected_task_dict is None:
+                matches = [f"{g}/{t.get('name')}" for g, t in all_entries if t.get("name") == target_name]
+                if matches:
+                    print(f"{FLRed}Task '{cli_task}' not found. Did you mean:{CRst}")
+                    for m in matches:
+                        print(f"  {FGray}{m}{CRst}")
+                else:
+                    print(f"{FLRed}Task '{cli_task}' not found.{CRst}")
+                return 1
         else:
-            print(f"\n{FLYellow}Multiple sub-tasks match this machine:{CRst}")
-            for idx, sub in enumerate(matching_subs):
-                print(f"  {FGray}[{idx}]{CRst}: {FLGreen}{sub.name}{CRst}{sub.display_filters()}")
+            Utils.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
+            print(f"  Available tasks from `{FGray}{schema_file}{CRst}`:\n")
+
+            max_digits = len(str(len(all_entries) - 1)) if len(all_entries) > 0 else 1
+            idx = 0
+
+            # Ungrouped tasks first
+            for t in ungrouped:
+                tname = t.get("name", UNNAMED_TASK)
+                print(f"  {FGray}[{idx:>{max_digits}}]{CRst}: {FLCyan}{tname}{CRst}")
+                idx += 1
+
+            # Grouped tasks with blank lines between groups
+            if grouped:
+                print()
+                prev_group = ""
+                for gname, t in grouped:
+                    if prev_group and gname != prev_group:
+                        print()
+                    tname = t.get("name", UNNAMED_TASK)
+                    print(f"  {FGray}[{idx:>{max_digits}}]{CRst}: {FLYellow}{gname}{CRst}/{FLCyan}{tname}{CRst}")
+                    idx += 1
+                    prev_group = gname
+
+            Utils.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
+
+            print(f"\n  {FLYellow}Enter number to select{CRst}, {FLCyan}e{CRst} to open YAML, or {FLYellow}Enter{CRst} to exit")
 
             while True:
                 try:
-                    choice = input(
-                        f"\n{FLYellow}Select sub-task{CRst} {FGray}[# or Enter to go back]{CRst}: "
-                    ).strip()
+                    choice = input(f"\n{FLYellow}Select task{CRst} {FGray}[#]{CRst}: ").strip()
                 except EOFError:
                     print()
+                    Utils.print_exit_message("Bye.")
                     return 0
                 if not choice:
-                    return main()
+                    Utils.print_exit_message("Bye.")
+                    return 0
+                if choice.lower() == "e":
+                    Utils.open_with_default_app(schema_file)
+                    continue
                 if choice.isdigit():
                     idx = int(choice)
-                    if 0 <= idx < len(matching_subs):
-                        selected_subtask = matching_subs[idx]
+                    if 0 <= idx < len(all_entries):
+                        _, selected_task_dict = all_entries[idx]
                         break
                     print(f"{FLRed}Invalid number: {idx}{CRst}")
+                    continue
+                print(f"{FLRed}Enter a number, 'e' to open YAML, or Enter to exit.{CRst}")
 
-    # ---- Merge sub-task into final task, resolve paths ----
-    if selected_subtask:
-        final_task = merged_task.merge(selected_subtask)
-        final_task.name = f"{merged_task.name}/{selected_subtask.name}"
-    else:
-        final_task = merged_task
+        assert selected_task_dict is not None
 
-    final_errors = final_task.validate("selected task")
-    if final_errors:
-        print(f"{FLRed}Resolved task validation failed:{CRst}")
-        for err in final_errors:
-            print(f"  {FLRed}- {err}{CRst}")
-        return 1
+        # ---- Resolve task with inheritance ----
+        merged_task = SyncTask.from_inheritance_chain(settings, selected_task_dict)
 
-    final_task.resolve_paths(schema_dir, script_dir)
+        if cli_verbose:
+            print(f"{FGray}Selected: {merged_task.name}{CRst}")
 
-    if not final_task.local_path or not final_task.remote_path:
-        print(f"{FLRed}Task is missing local-path or remote-path.{CRst}")
-        return 1
+        # ================================================================
+        # Step 5: Sub-task selection
+        # ================================================================
+        # Build sub-task SyncTask instances from the raw dict
+        raw_subs: list[dict] = selected_task_dict.get("sub-tasks") or []
+        all_sub_tasks = [SyncTask.from_dict(st) for st in raw_subs]
 
-    # ================================================================
-    # Step 6: Pre-sync check (if configured)
-    # ================================================================
+        platform_cur = Utils.get_platform()
+        arch_cur = Utils.get_arch()
+        computer_cur = Utils.get_computer_name()
 
-    # Determine direction before pre-sync check so the check uses the same direction
-    directional = final_task.mode in _DIRECTIONAL_MODES
-    direction: str = cli_direction or "push"
+        matching_subs = [st for st in all_sub_tasks if st.matches_machine(platform_cur, arch_cur, computer_cur)]
+        selected_subtask: Optional[SyncTask] = None
 
-    if directional and cli_direction is None:
-        # ---- Interactive direction selection ----
-        print()
-        lp, rp = final_task.local_path, final_task.remote_path
-        direction_options: list[MenuOption] = []
-        if final_task.allow_push:
-            direction_options.append(MenuOption(["0"], f"push   {FLCyan}{lp}{CRst} {FGray}->{CRst} {FLCyan}{rp}{CRst}", value="push"))
-        if final_task.allow_pull:
-            key = "1" if direction_options else "0"
-            direction_options.append(MenuOption([key], f"pull   {FLCyan}{rp}{CRst} {FGray}->{CRst} {FLCyan}{lp}{CRst}", value="pull"))
-        if not direction_options:
-            print(f"{FLRed}Task allows neither push nor pull.{CRst}")
+        if cli_sub_task:
+            if not matching_subs:
+                print(f"{FLRed}Task has no sub-tasks matching this machine.{CRst}")
+                return 1
+            found = next((st for st in matching_subs if st.name == cli_sub_task), None)
+            if found is None:
+                names = [st.name for st in matching_subs]
+                print(f"{FLRed}Sub-task '{cli_sub_task}' not found. Matching: {', '.join(names)}{CRst}")
+                return 1
+            selected_subtask = found
+        elif matching_subs:
+            if len(matching_subs) == 1:
+                selected_subtask = matching_subs[0]
+                print(f"\n{FLCyan}Auto-selected sub-task:{CRst} {FLGreen}{selected_subtask.name}{CRst}{selected_subtask.display_filters()}")
+            else:
+                print(f"\n{FLYellow}Multiple sub-tasks match this machine:{CRst}")
+                for idx, sub in enumerate(matching_subs):
+                    print(f"  {FGray}[{idx}]{CRst}: {FLGreen}{sub.name}{CRst}{sub.display_filters()}")
+
+                while True:
+                    try:
+                        choice = input(
+                            f"\n{FLYellow}Select sub-task{CRst} {FGray}[# or Enter to go back]{CRst}: "
+                        ).strip()
+                    except EOFError:
+                        print()
+                        return 0
+                    if not choice:
+                        continue
+                    if choice.isdigit():
+                        idx = int(choice)
+                        if 0 <= idx < len(matching_subs):
+                            selected_subtask = matching_subs[idx]
+                            break
+                        print(f"{FLRed}Invalid number: {idx}{CRst}")
+
+        # ---- Merge sub-task into final task, resolve paths ----
+        if selected_subtask:
+            final_task = merged_task.merge(selected_subtask)
+            final_task.name = f"{merged_task.name}/{selected_subtask.name}"
+        else:
+            final_task = merged_task
+
+        final_errors = final_task.validate("selected task")
+        if final_errors:
+            print(f"{FLRed}Resolved task validation failed:{CRst}")
+            for err in final_errors:
+                print(f"  {FLRed}- {err}{CRst}")
             return 1
-        result = Menu.select(
-            direction_options,
-            prompt="Sync direction",
-            default_key=direction_options[0].keys[0],
-            separator=False,
-        )
-        if result is None:
-            Utils.print_exit_message("Bye.")
+
+        final_task.resolve_paths(schema_dir, script_dir)
+
+        if not final_task.local_path or not final_task.remote_path:
+            print(f"{FLRed}Task is missing local-path or remote-path.{CRst}")
+            return 1
+
+        # ================================================================
+        # Step 6: Pre-sync check (if configured)
+        # ================================================================
+
+        # Determine direction before pre-sync check so the check uses the same direction
+        directional = final_task.mode in _DIRECTIONAL_MODES
+        direction: str = cli_direction or "push"
+
+        if directional and cli_direction is None:
+            # ---- Interactive direction selection ----
+            print()
+            lp, rp = final_task.local_path, final_task.remote_path
+            direction_options: list[MenuOption] = []
+            if final_task.allow_push:
+                direction_options.append(MenuOption(["0"], f"push   {FLCyan}{lp}{CRst} {FGray}->{CRst} {FLCyan}{rp}{CRst}", value="push"))
+            if final_task.allow_pull:
+                key = "1" if direction_options else "0"
+                direction_options.append(MenuOption([key], f"pull   {FLCyan}{rp}{CRst} {FGray}->{CRst} {FLCyan}{lp}{CRst}", value="pull"))
+            if not direction_options:
+                print(f"{FLRed}Task allows neither push nor pull.{CRst}")
+                return 1
+            result = Menu.select(
+                direction_options,
+                prompt="Sync direction",
+                default_key=direction_options[0].keys[0],
+                separator=False,
+            )
+            if result is None:
+                Utils.print_exit_message("Bye.")
+                return 0
+            direction = result
+        elif not directional and cli_direction:
+            print(f"{FGray}  -> direction 'push/pull' ignored for mode '{final_task.mode}'{CRst}")
+
+        if directional and direction == "push" and not final_task.allow_push:
+            print(f"{FLRed}Task does not allow push direction.{CRst}")
+            return 1
+        if directional and direction == "pull" and not final_task.allow_pull:
+            print(f"{FLRed}Task does not allow pull direction.{CRst}")
+            return 1
+        if directional and direction == "pull" and final_task.backup_dir:
+            print(f"{FLRed}Refusing pull with backup-dir. Use a task-specific pull backup path or disable backup-dir.{CRst}")
+            return 1
+
+        unresolved_path_vars = final_task.find_unresolved_path_vars()
+        if unresolved_path_vars:
+            print(f"{FLRed}Task contains unresolved path variables:{CRst}")
+            for err in unresolved_path_vars:
+                print(f"  {FLRed}- {err}{CRst}")
+            return 1
+
+        if not cli_dry_run and final_task.check_before_sync and final_task.check_before_sync is not False:
+            print(f"\n{FLCyan}Running pre-sync check...{CRst}")
+            check_cmd = final_task.to_check_command(rclone_exe, direction=direction)
+            _print_cmd(check_cmd)
+            result = subprocess.run(check_cmd, check=False)
+            if result.returncode != 0:
+                print(f"{FLYellow}  -> Differences detected between source and destination.{CRst}")
+                if final_task.stop_on_check_failure:
+                    print(f"{FLRed}  -> Stopped because stop-on-check-failure is enabled.{CRst}")
+                    return result.returncode
+
+        # ================================================================
+        # Step 7: Confirm & execute
+        # ================================================================
+        cmd = final_task.to_command(rclone_exe, dry_run=cli_dry_run, direction=direction)
+        _print_cmd(cmd)
+
+        # Auto-execute when both --task and --direction are given
+        auto_execute = cli_task is not None and cli_direction is not None
+
+        if cli_dry_run:
+            print(f"\n{FGray}(dry-run - no changes made){CRst}")
             return 0
-        direction = result
-    elif not directional and cli_direction:
-        print(f"{FGray}  -> direction 'push/pull' ignored for mode '{final_task.mode}'{CRst}")
+        elif auto_execute:
+            pass  # skip confirmation, execute directly
+        else:
+            while True:
+                try:
+                    choice = input(
+                        f"\n{FLYellow}Execute?{CRst} {FGray}[y=yes / n=back / d=dry-run / q=quit]{CRst}: "
+                    ).strip().lower()
+                except EOFError:
+                    print()
+                    Utils.print_exit_message("Bye.")
+                    return 0
 
-    if directional and direction == "push" and not final_task.allow_push:
-        print(f"{FLRed}Task does not allow push direction.{CRst}")
-        return 1
-    if directional and direction == "pull" and not final_task.allow_pull:
-        print(f"{FLRed}Task does not allow pull direction.{CRst}")
-        return 1
-    if directional and direction == "pull" and final_task.backup_dir:
-        print(f"{FLRed}Refusing pull with backup-dir. Use a task-specific pull backup path or disable backup-dir.{CRst}")
-        return 1
+                if choice == "y":
+                    break
+                elif choice == "n":
+                    continue
+                elif choice == "d":
+                    dry_cmd = final_task.to_command(rclone_exe, dry_run=True, direction=direction)
+                    _print_cmd(dry_cmd)
+                    print(f"\n{FGray}(dry-run - no changes made){CRst}")
+                    continue
+                elif choice == "q":
+                    Utils.print_exit_message("Bye.")
+                    return 0
+                else:
+                    print(f"{FLRed}Enter y, n, d, or q.{CRst}")
 
-    unresolved_path_vars = final_task.find_unresolved_path_vars()
-    if unresolved_path_vars:
-        print(f"{FLRed}Task contains unresolved path variables:{CRst}")
-        for err in unresolved_path_vars:
-            print(f"  {FLRed}- {err}{CRst}")
-        return 1
+        # ---- Execute ----
+        print(f"\n{FLYellow}Running...{CRst}\n")
+        exec_result = subprocess.run(cmd, check=False)
 
-    if not cli_dry_run and final_task.check_before_sync and final_task.check_before_sync is not False:
-        print(f"\n{FLCyan}Running pre-sync check...{CRst}")
-        check_cmd = final_task.to_check_command(rclone_exe, direction=direction)
-        _print_cmd(check_cmd)
-        result = subprocess.run(check_cmd, check=False)
-        if result.returncode != 0:
-            print(f"{FLYellow}  -> Differences detected between source and destination.{CRst}")
-            if final_task.stop_on_check_failure:
-                print(f"{FLRed}  -> Stopped because stop-on-check-failure is enabled.{CRst}")
-                return result.returncode
+        if exec_result.returncode == 0:
+            print(f"\n{FLGreen}Sync completed successfully.{CRst}")
+        else:
+            print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
 
-    # ================================================================
-    # Step 7: Confirm & execute
-    # ================================================================
-    cmd = final_task.to_command(rclone_exe, dry_run=cli_dry_run, direction=direction)
-    _print_cmd(cmd)
+        _, sync_dst = final_task.source_dest(direction)
+        if final_task.links and os.path.exists(sync_dst):
+            _fix_windows_symlinkd(sync_dst)
 
-    # Auto-execute when both --task and --direction are given
-    auto_execute = cli_task is not None and cli_direction is not None
+        if final_task.notify_after_sync:
+            status = "completed" if exec_result.returncode == 0 else f"failed (code {exec_result.returncode})"
+            _notify(f"rclone-sync: {final_task.name}", f"Sync {status}")
 
-    if cli_dry_run:
-        print(f"\n{FGray}(dry-run - no changes made){CRst}")
-        return 0
-    elif auto_execute:
-        pass  # skip confirmation, execute directly
-    else:
+        if auto_execute:
+            return exec_result.returncode
+
+        # ================================================================
+        # Step 8: Post-execution menu
+        # ================================================================
         while True:
             try:
                 choice = input(
-                    f"\n{FLYellow}Execute?{CRst} {FGray}[y=yes / n=back / d=dry-run / q=quit]{CRst}: "
+                    f"\n{FLYellow}What next?{CRst} {FGray}[r=re-run / s=select another / q=quit]{CRst}: "
                 ).strip().lower()
             except EOFError:
                 print()
                 Utils.print_exit_message("Bye.")
                 return 0
 
-            if choice == "y":
-                break
-            elif choice == "n":
-                return main()
-            elif choice == "d":
-                dry_cmd = final_task.to_command(rclone_exe, dry_run=True, direction=direction)
-                _print_cmd(dry_cmd)
-                print(f"\n{FGray}(dry-run - no changes made){CRst}")
+            if choice == "r":
+                print(f"\n{FLYellow}Re-running...{CRst}\n")
+                exec_result = subprocess.run(cmd, check=False)
+                if exec_result.returncode == 0:
+                    print(f"\n{FLGreen}Sync completed successfully.{CRst}")
+                else:
+                    print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
+            elif choice == "s":
                 continue
             elif choice == "q":
                 Utils.print_exit_message("Bye.")
                 return 0
             else:
-                print(f"{FLRed}Enter y, n, d, or q.{CRst}")
-
-    # ---- Execute ----
-    print(f"\n{FLYellow}Running...{CRst}\n")
-    exec_result = subprocess.run(cmd, check=False)
-
-    if exec_result.returncode == 0:
-        print(f"\n{FLGreen}Sync completed successfully.{CRst}")
-    else:
-        print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
-
-    _, sync_dst = final_task.source_dest(direction)
-    if final_task.links and os.path.exists(sync_dst):
-        _fix_windows_symlinkd(sync_dst)
-
-    if final_task.notify_after_sync:
-        status = "completed" if exec_result.returncode == 0 else f"failed (code {exec_result.returncode})"
-        _notify(f"rclone-sync: {final_task.name}", f"Sync {status}")
-
-    if auto_execute:
-        return exec_result.returncode
-
-    # ================================================================
-    # Step 8: Post-execution menu
-    # ================================================================
-    while True:
-        try:
-            choice = input(
-                f"\n{FLYellow}What next?{CRst} {FGray}[r=re-run / s=select another / q=quit]{CRst}: "
-            ).strip().lower()
-        except EOFError:
-            print()
-            Utils.print_exit_message("Bye.")
-            return 0
-
-        if choice == "r":
-            print(f"\n{FLYellow}Re-running...{CRst}\n")
-            exec_result = subprocess.run(cmd, check=False)
-            if exec_result.returncode == 0:
-                print(f"\n{FLGreen}Sync completed successfully.{CRst}")
-            else:
-                print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
-        elif choice == "s":
-            return main()
-        elif choice == "q":
-            Utils.print_exit_message("Bye.")
-            return 0
-        else:
-            print(f"{FLRed}Enter r, s, or q.{CRst}")
+                print(f"{FLRed}Enter r, s, or q.{CRst}")
 
 
 if __name__ == "__main__":
