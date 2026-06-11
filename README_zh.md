@@ -26,8 +26,8 @@ python run-script.py <脚本名> [参数...]         # 全平台
 .\run-script.ps1 --list                        # Windows
 python run-script.py --list                    # 全平台
 
-# 将 run-script.py 编译为独立可执行文件（需要 Nuitka）
-python _nuitka-build.py                        # 全平台
+# 将任意 Python 脚本编译为独立可执行文件（Nuitka / PyInstaller）
+python compile-script.py                        # 全平台
 ```
 
 **启动器特性：**
@@ -40,7 +40,7 @@ python _nuitka-build.py                        # 全平台
 - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - 同路径存在同名 `.py` 和 `.sh`/`.ps1` 时，仅显示 `.py`
 - 自动检测 Python：优先使用 `conda info --base`，再尝试已知路径，最后回退到 `python3`
-- `_nuitka-build.py` 可将 `run-script.py` 编译为单个独立可执行文件（内嵌 Python 运行时，需安装 Nuitka）
+- `compile-script.py` 可将项目中任意 Python 脚本编译为独立可执行文件，支持 Nuitka 或 PyInstaller（均为 `--onedir`/`--standalone` 模式，不自解压以避免磨损硬盘）
 
 ---
 
@@ -112,7 +112,7 @@ python _nuitka-build.py                        # 全平台
 | `run-script.py` | Python 启动器，可运行仓库内任意脚本 | 跨平台。`python3` |
 | `run-script.sh` | Bash 启动器，可运行仓库内任意脚本 | Linux/macOS。`bash`、`python3` |
 | `run-script.ps1` | PowerShell 启动器，可运行仓库内任意脚本 | Windows。`PowerShell`、`python` |
-| `_nuitka-build.py` | 编译脚本：将 `run-script.py` 编译为独立可执行文件 | 跨平台。`pip install nuitka` |
+| `compile-script.py` | 交互式编译器：选择任意 Python 脚本，通过 Nuitka 或 PyInstaller 打包为独立可执行文件（均为 `--onedir`/`--standalone`，不自解压） | 跨平台。`pip install nuitka` 和/或 `pip install pyinstaller` |
 | `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | 仅 macOS。无外部依赖 |
 | `windows/script-to-app.py` | 创建 Windows `.cmd` 启动器，将任意 Python 脚本安装到 `Program Files`。自动检测 Python（conda/系统），接收打开的文件路径作为参数，支持"打开方式"关联文件类型 | 仅 Windows。无外部依赖 |
 
@@ -166,3 +166,5 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 - 多行输入使用 EOF（Windows: `Ctrl+Z`，Linux/macOS: `Ctrl+D`）
 - 通过 `utils` ANSI 代码实现彩色输出（`FLYellow`、`FLGreen`、`FLRed` 等）
 - 平台相关脚本放在 `windows/`、`linux/`、`macos/` 子目录中
+- 多路径输入提示支持通配符（``*``/``?``/``[abc]``）批量匹配文件；未匹配到文件的模式按原样字面路径处理
+- 路径输入支持环境变量展开（Linux/macOS: ``$VAR``/``${VAR}``，Windows: ``%VAR%``）—— 仅展开已定义的变量，未定义的变量保留原文

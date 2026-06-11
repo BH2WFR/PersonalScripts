@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import typing
@@ -635,13 +636,23 @@ class Input:
 
 
     @staticmethod
-    def resolve_input_path(default_path: str, prompt: str = "Enter input path", path_type: str = "file") -> str:
+    def resolve_input_path(
+        default_path: str,
+        prompt: str           = "Enter input path",
+        path_type: str        = "file",  # ``"file"``, ``"dir"``, ``"link"``, or ``"any"`` (only checks existence)
+        expand_env_vars: bool = True,    # whether to expand environment variables in the input path, use ``$VAR``/``${VAR}``/``%VAR%`` syntax
+        validate_exists: bool = True    # whether to check that the path exists; if False, accepts any path without validation
+    ) -> str:
         """Interactive input path resolution with existence and type validation.
 
         Args:
             default_path: The base suggested path.
             prompt: Prompt text shown to the user.
             path_type: ``"file"``, ``"dir"``, ``"link"``, or ``"any"`` (only checks existence).
+            expand_env_vars: If True (default), expand ``$VAR``/``%VAR%`` environment variables
+                        in the user input with :func:`os.path.expandvars`.
+            validate_exists: If True (default), check path existence and type.
+                             If False, accept any path including non-existing ones.
 
         Returns the final absolute path, or calls ``sys.exit(0)`` if the user chooses to quit.
         """
@@ -663,9 +674,14 @@ class Input:
                 user_path = user_input.strip("'\"")
 
             user_path = os.path.expanduser(user_path)
+            if expand_env_vars:
+                user_path = os.path.expandvars(user_path)
             if os.path.dirname(user_path) == "":
                 user_path = os.path.join(os.path.dirname(current_default) or ".", user_path)
             user_path = os.path.abspath(user_path)
+
+            if not validate_exists:
+                return user_path
 
             # ----- check existence and type -----
             if path_type == "link":
@@ -722,15 +738,32 @@ class Input:
 
 
     @staticmethod
-    def resolve_input_paths_multi(prompt_text: str = "Enter paths (one per line)", path_type: str = "any") -> list[str]:
+    def resolve_input_paths_multi(
+        prompt_text: str    = "Enter paths (one per line)",
+        path_type: str      = "any",  # `file`, `dir`, `link`, or `any`
+        expand_env_vars: bool = True,   # whether to expand environment variables in the input paths, use `$VAR` `${VAR}` `%VAR%` syntax
+        validate_exists: bool = True, # whether to check that each path exists and matches the specified type; if False, accepts any paths without validation
+        glob: bool          = False   # whether to expand glob patterns (`*` `?` `[abc]`) in the input paths; when True, patterns with no matches are kept as-is, and matched paths are validated individually
+    ) -> list[str]:
         """Read multiple paths interactively from stdin (EOF-terminated).
 
         - De-duplicates input
-        - Validates each path (existence + type unless *path_type* is ``"any"``)
+        - Expands glob patterns (``*``/``?``/``[abc]``) when *glob* is True
+        - Validates each path (existence + type) unless *validate_exists* is False
         - For non-existing or wrong-type paths, prompts to keep or drop each one
         - Prints the final count of accepted paths
         - Exits with ``sys.exit(1)`` if no paths remain
         - Returns list of absolute paths
+
+        Args:
+            prompt_text: Description of what to enter.
+            path_type: ``"file"``, ``"dir"``, ``"link"``, or ``"any"``.
+            expand_env_vars: If True (default), expand ``$VAR``/``%VAR%`` environment variables
+                        in each path with :func:`os.path.expandvars`.
+            validate_exists: If True (default), check path existence and type.
+                If False, accept any path including non-existing ones.
+            glob: If True, expand wildcard patterns (``*``/``?``/``[abc]``).
+                Patterns with no matches are kept as-is.
         """
         _eof_hint = f"{FLYellow}Enter{FGray}→{FLYellow}Ctrl+Z{FGray}→{FLYellow}Enter" if sys.platform == "win32" else f"{FLYellow}Ctrl+D"
         print(f"{FLYellow}{prompt_text}{CRst}")
@@ -752,7 +785,25 @@ class Input:
         accepted: list[str] = []
         for p in paths:
             p = os.path.expanduser(p)
+            if expand_env_vars:
+                p = os.path.expandvars(p)
+
+            # ----- glob expansion -----
+            if glob and any(c in p for c in "*?["):
+                import pathlib
+                matches = sorted(str(m) for m in pathlib.Path().glob(p))
+                if matches:
+                    for m in matches:
+                        if m not in accepted:
+                            accepted.append(m)
+                    continue
+                # pattern matched nothing — fall through to literal handling
+
             p = os.path.abspath(p)
+
+            if not validate_exists:
+                accepted.append(p)
+                continue
 
             # ----- validate existence and type -----
             if path_type == "link":

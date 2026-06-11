@@ -49,7 +49,7 @@ def _get_excluded_dirs() -> set[str]:
     return exclude_dirs
 
 
-_LAUNCHER_NAMES = {"run-script.py", "run-script.sh", "run-script.ps1"}
+_LAUNCHER_NAMES = {"run-script.py", "run-script.sh", "run-script.ps1", "compile-script.py"}
 
 
 def _is_valid_script(script_dir: str, script_path: str) -> bool:

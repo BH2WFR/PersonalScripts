@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Windows 下，将指向目录的 symlink 转换为 symlinkd （为了修复某些工具将文件夹链接成了 symlink 导致链接失效的问题）
 #
 

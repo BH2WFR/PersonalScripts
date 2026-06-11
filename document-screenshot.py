@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 #* 文档（PDF）自动截图工具，适用于没有 DRM 保护的 PDF 文档，或已解密的 PDF 文档。
 # 原理：通过发送 `PgDn` 键翻页，配合鼠标点击激活窗口，自动截图并保存到指定文件夹。
 # 依赖库：mss、pynput、Pillow

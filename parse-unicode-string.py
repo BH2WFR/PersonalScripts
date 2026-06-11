@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Parse and display Unicode character info for each character in the input string
 from utils import *
 try:

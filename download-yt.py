@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 from utils import *
 # 基于 yt-dlp 的 YouTube 视频下载器

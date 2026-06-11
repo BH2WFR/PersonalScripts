@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # 递归删除操作系统生成的垃圾文件（.DS_Store / __MACOSX__ / Thumbs.db 等）
 import sys
 from utils import *

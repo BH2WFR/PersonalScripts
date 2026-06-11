@@ -26,8 +26,8 @@ python run-script.py <script> [args...]        # All platforms
 .\run-script.ps1 --list                        # Windows
 python run-script.py --list                    # All platforms
 
-# Build standalone executable of run-script.py (requires Nuitka)
-python _nuitka-build.py                        # All platforms
+# Compile any Python script to a standalone executable (Nuitka / PyInstaller)
+python compile-script.py                         # All platforms
 ```
 
 **Launcher Features:**
@@ -39,7 +39,7 @@ python _nuitka-build.py                        # All platforms
 - Platform-aware filtering: hides `windows/`/`macos/`/`linux/` scripts that don't match the current OS
 - Interpreter-aware: hides `.sh` scripts if `bash` is not available; hides `.ps1` scripts if `pwsh` is not available
 - Auto-detects Python: prefers `conda info --base`, then known conda paths, falls back to `python3`
-- `_nuitka-build.py` compiles `run-script.py` into a single standalone executable (embeds Python runtime, requires Nuitka)
+- `compile-script.py` compiles any project Python script into a standalone executable via Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear)
 
 ---
 
@@ -111,7 +111,7 @@ python _nuitka-build.py                        # All platforms
 | `run-script.py` | Python launcher for running any script in the repo | Cross-platform. `python3` |
 | `run-script.sh` | Bash launcher for running any script in the repo | Linux/macOS. `bash`, `python3` |
 | `run-script.ps1` | PowerShell launcher for running any script in the repo | Windows. `PowerShell`, `python` |
-| `_nuitka-build.py` | Build script: compile `run-script.py` into a standalone executable | Cross-platform. `pip install nuitka` |
+| `compile-script.py` | Interactive compiler: select any Python script and package it into a standalone executable with Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting) | Cross-platform. `pip install nuitka` and/or `pip install pyinstaller` |
 | `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | macOS only. No external deps |
 | `windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | Windows only. No external deps |
 
@@ -165,3 +165,5 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 - Multi-line input uses EOF (`Ctrl+Z` on Windows, `Ctrl+D` on Linux/macOS)
 - Color output via `utils` ANSI codes (`FLYellow`, `FLGreen`, `FLRed`, etc.)
 - Platform-specific scripts are in `windows/`, `linux/`, `macos/` subdirectories
+- Multi-path input prompts support wildcard patterns (``*``/``?``/``[abc]``) for batch file matching; unmatched patterns are kept as literal paths
+- Path inputs expand environment variables (``$VAR``/``${VAR}`` on Linux/macOS, ``%VAR%`` on Windows) — only defined variables are expanded, undefined ones stay literal

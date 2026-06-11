@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # 软链接/硬链接 创建工具
 # Linux/macos 中，使用 ln 命令创建软链接（符号链接）或硬链接。
 # Windows 中，使用 mklink 命令创建符号链接或硬链接；如目标为文件夹，则支持 symlinkd 和 junction
@@ -64,8 +65,9 @@ def main() -> int:
                 paths.append(p)
     else:
         paths = Input.resolve_input_paths_multi(
-            prompt_text="Enter source paths (one per line)",
+            prompt_text="Enter source paths (one per line, supports wildcards like *.txt)",
             path_type="any",
+            glob=True,
         )
 
     #============ 分类路径 ===========

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -61,8 +62,9 @@ Usage:
                 filepaths.append(p)
     else:
         filepaths = Input.resolve_input_paths_multi(
-            prompt_text="Enter file or directory paths (one per line)",
+            prompt_text="Enter file or directory paths (one per line, supports wildcards like *.app)",
             path_type="any",
+            glob=True,
         )
 
     # dedup (CLI args may have duplicates) and resolve paths

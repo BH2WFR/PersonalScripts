@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 from utils import *
 # 基于 yt-dlp 的 m3u8 流媒体视频下载器

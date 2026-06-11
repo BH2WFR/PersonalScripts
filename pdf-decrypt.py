@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # 对有密码保护的 PDF 进行解密，含能打开但不能编辑/打印的权限保护
 import sys
 from utils import *

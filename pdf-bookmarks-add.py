@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # 给 PDF 书籍添加目录书签（Bookmark/Outline）
 # 从大模型获取目录 JSON 后，写入到 PDF 中
 #

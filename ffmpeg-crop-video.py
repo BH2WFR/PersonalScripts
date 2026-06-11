@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from utils import *
 import sys
 # 基于 ffmpeg 的视频裁剪工具
@@ -53,8 +54,9 @@ Usage:
                 INPUT_PATHS.append(p)
     else:
         INPUT_PATHS = Input.resolve_input_paths_multi(
-            prompt_text="Enter video file paths for cropping... (one per line)",
+            prompt_text="Enter video file paths for cropping... (one per line, supports wildcards like *.mp4)",
             path_type="file",
+            glob=True,
         )
 
     #* 输出到哪里？
