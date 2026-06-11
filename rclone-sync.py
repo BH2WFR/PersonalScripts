@@ -31,6 +31,7 @@ DEFAULT_SCHEMA_FILE = "./rclone-sync-default-schema.yaml"
 UNGROUPED_KEY = "ungrouped"
 UNNAMED_TASK = "unnamed"
 DISPLAY_WIDTH = 60
+MAX_INHERIT_DEPTH = 10  # max recursion depth for profile inheritance chains
 
 VALID_MODES       = {"sync", "copy", "move", "check", "bisync"}
 VALID_PLATFORMS   = {"darwin", "linux", "win32", "macos", "windows"}
@@ -199,12 +200,18 @@ def _normalize_inherit(value) -> list[str]:
     return []
 
 
-def _resolve_profile_chain(settings: dict, profile_name: str, visited: set[str]) -> 'SyncTask':
+def _resolve_profile_chain(settings: dict, profile_name: str, visited: set[str], depth: int = 0) -> 'SyncTask':
     """Recursively resolve a named profile, following its own ``inherit``.
 
     Returns a SyncTask with the profile's fields (and any profiles it
     inherits) resolved.  *visited* prevents infinite recursion on cycles.
+    *depth* guards against excessive nesting.
     """
+    if depth > MAX_INHERIT_DEPTH:
+        raise ValueError(
+            f"Profile inheritance depth exceeded (>{MAX_INHERIT_DEPTH}) at '{profile_name}' — "
+            f"check for circular or overly deep inherit chains in your YAML."
+        )
     if profile_name in visited:
         return SyncTask()
     visited.add(profile_name)
@@ -219,9 +226,9 @@ def _resolve_profile_chain(settings: dict, profile_name: str, visited: set[str])
     if isinstance(inh, list):
         for name in inh:
             if isinstance(name, str):
-                base = base.merge(_resolve_profile_chain(settings, name, visited))
+                base = base.merge(_resolve_profile_chain(settings, name, visited, depth + 1))
     elif isinstance(inh, str) and inh:
-        base = base.merge(_resolve_profile_chain(settings, inh, visited))
+        base = base.merge(_resolve_profile_chain(settings, inh, visited, depth + 1))
 
     # 2. Merge this profile's own fields on top
     return base.merge(SyncTask.from_dict(profile))
@@ -1041,7 +1048,22 @@ def main() -> int:
         config_password = os.environ[ENV_CONFIG_PASSWORD]
     elif _detect_encrypted_config(rclone_exe):
         print(f"{FLYellow}  rclone config is encrypted.{CRst}")
-        config_password = Input.input_password("Enter rclone config password")
+        while True:
+            pwd = Input.input_password("Enter rclone config password")
+            if not pwd:
+                Utils.print_exit_message("Bye.")
+                return 0
+            os.environ["RCLONE_CONFIG_PASS"] = pwd
+            test = subprocess.run(
+                [rclone_exe, "config", "show"],
+                capture_output=True, text=True, timeout=10,
+            )
+            combined = (test.stdout + test.stderr).lower()
+            if test.returncode == 0 and "incorrect password" not in combined and "failed to decrypt" not in combined:
+                config_password = pwd
+                break
+            os.environ.pop("RCLONE_CONFIG_PASS", None)
+            print(f"{FLRed}  Incorrect password, try again (or Enter to exit).{CRst}")
 
     if config_password:
         os.environ["RCLONE_CONFIG_PASS"] = config_password
@@ -1175,18 +1197,29 @@ def main() -> int:
 
     # Pre-compute matching sub-tasks for every task (reused in Steps 4-5).
     # Task-level ``platform`` / ``arch`` / ``computer-name`` are merged
-    # into each sub-task for matching, but the stored SyncTask is the
-    # original sub-task — the full merge happens at execution time.
+    # into each sub-task for matching, and both task-level and sub-task-level
+    # ``inherit`` profiles are resolved so that machine constraints inside
+    # profiles also participate.  The stored SyncTask is the original sub-task
+    # — the full merge happens at execution time.
     _matching_subs_cache: dict[int, list[SyncTask]] = {}
     for i, (_, t) in enumerate(all_entries):
         raw_subs = t.get("sub-tasks") or []
         if raw_subs:
             parent_dict = {k: v for k, v in t.items() if k != "sub-tasks"}
-            parent = SyncTask.from_dict(parent_dict)
+            try:
+                parent = SyncTask.from_dict(parent_dict).resolve_profiles(settings)
+            except ValueError as e:
+                print(f"{FLRed}Inheritance error in task '{t.get('name', UNNAMED_TASK)}': {e}{CRst}")
+                return 1
             matching: list[SyncTask] = []
             for st in raw_subs:
                 sub = SyncTask.from_dict(st)
-                if parent.merge(sub).matches_machine(platform_cur, arch_cur, computer_cur):
+                try:
+                    sub_prof = sub.resolve_profiles(settings)
+                except ValueError as e:
+                    print(f"{FLRed}Inheritance error in sub-task '{st.get('name', '')}': {e}{CRst}")
+                    return 1
+                if parent.merge(sub_prof).matches_machine(platform_cur, arch_cur, computer_cur):
                     matching.append(sub)
             _matching_subs_cache[i] = matching
         else:
@@ -1320,7 +1353,11 @@ def main() -> int:
         assert selected_task_dict is not None
 
         # ---- Resolve task with inheritance ----
-        merged_task = SyncTask.from_inheritance_chain(settings, selected_task_dict)
+        try:
+            merged_task = SyncTask.from_inheritance_chain(settings, selected_task_dict)
+        except ValueError as e:
+            print(f"{FLRed}Inheritance error: {e}{CRst}")
+            return 1
 
         if cli_verbose:
             print(f"{FGray}Selected: {merged_task.name}{CRst}")
@@ -1405,7 +1442,11 @@ def main() -> int:
                 return 1
             # Resolve sub-task's own inherit profiles on top of the sub-task
             # before merging onto the already-resolved task.
-            sub_resolved = selected_subtask.resolve_profiles(settings)
+            try:
+                sub_resolved = selected_subtask.resolve_profiles(settings)
+            except ValueError as e:
+                print(f"{FLRed}Inheritance error in sub-task '{selected_subtask.name}': {e}{CRst}")
+                return 1
             final_task = merged_task.merge(sub_resolved)
             final_task.name = f"{merged_task.name}/{selected_subtask.name}"
         else:
