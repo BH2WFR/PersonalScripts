@@ -1,0 +1,211 @@
+# ============================================================
+# rclone-sync-default-schema.yaml — reference / example schema
+# ============================================================
+#
+# This is the default schema file bundled with rclone-sync.py.
+# It serves as a reference — copy and customise it for your own use.
+#
+# Environment variables recognised by the script:
+#   ZL_RCLONE_SYNC_SCHEMA_FILE   path to the YAML schema file
+#   ZL_RCLONE_CONFIG_PASSWORD    password for an encrypted rclone config
+#
+# ---- Path variables -------------------------------------------------
+# Every path-type field (local-path, remote-path, backup-dir, log-file)
+# supports the following placeholders:
+#
+#   ${ENV_VAR} / %ENV_VAR%     any environment variable
+#   $ENV:VAR / ${ENV:VAR}      PowerShell-style environment variable
+#   {{schema_dir}}             directory containing *this* YAML file
+#   {{script_dir}}             directory containing rclone-sync.py
+#   {{current_dir}}            current working directory (cwd)
+#
+# Examples:
+#   local-path: "~/Documents"
+#   local-path: "%USERPROFILE%\\Documents"          (Windows cmd style)
+#   local-path: "$ENV:APPDATA/Code"                 (PowerShell style)
+#   log-file:  "{{schema_dir}}/rclone-sync.log"     (beside the YAML)
+# ============================================================
+
+
+# -------------------------------------------------------------------
+# settings  —  reusable named profiles (optional section)
+# -------------------------------------------------------------------
+settings:
+  # "default" is special: every task inherits these values automatically.
+  # Any setting can be overridden in profiles or individual tasks.
+  default:
+    mode: sync              # sync | copy | move | check | bisync  [default: sync]
+    progress: true          # show real-time transfer progress     [default: true]
+    transfer: 8             # parallel file transfers (1-64)       [default: 4]
+    exclude:                # glob patterns to skip                [default: []]
+      - ".git/**"
+      - ".DS_Store"
+      - "Desktop.ini"
+      - "Thumbs.db"
+      - "*.bak"
+
+  # Additional named profiles can be referenced via `inherit:` in a task.
+  # They layer on top of `default` — only explicitly set values override.
+  bulk:
+    transfer: 24
+    log-file: "{{schema_dir}}/rclone-sync.log"
+    log-level: INFO         # ERROR | NOTICE | INFO | DEBUG        [default: "" = rclone default]
+
+  cautious:
+    max-delete: 50
+    check-before-sync: true
+    stop-on-check-failure: false
+
+
+# -------------------------------------------------------------------
+# tasks  —  sync task definitions (required section)
+# -------------------------------------------------------------------
+tasks:
+  # ---------- ungrouped tasks ----------
+  ungrouped:
+    # =================================================================
+    # "perfect-task" — demonstrates every available field
+    # =================================================================
+    - name: perfect-task
+
+      # ---- inherit --------------------------------------------------
+      # Pull defaults from a named profile in `settings`.
+      # The inheritance chain is:  default → profile → task → sub-task.
+      # Later layers override fields explicitly set in YAML. This means
+      # `exclude: []` can intentionally clear inherited excludes.
+      inherit: cautious         # [default: "" = no profile]
+
+      # ---- mode -----------------------------------------------------
+      # sync   — make dest match source, one-way (deletes extra files)
+      # copy   — copy source to dest, never deletes
+      # move   — like copy but deletes source files after transfer
+      # check  — compare source vs dest (read-only, no transfer)
+      # bisync — bidirectional sync (experimental, needs rclone ≥ 1.58)
+      mode: sync                # [default: sync]
+
+      # ---- progress -------------------------------------------------
+      progress: true            # show live progress with -P flag    [default: true]
+
+      # ---- transfer -------------------------------------------------
+      transfer: 16              # parallel transfers, 1-64            [default: 4]
+
+      # ---- links / copy-links ---------------------------------------
+      # links      — preserve symlinks as symlinks (--links / -l).
+      # copy-links — follow symlinks and copy target files (--copy-links / -L).
+      # `follow-link` is kept as a deprecated alias for `copy-links`.
+      links: false              # [default: false]
+      copy-links: true          # [default: false]
+
+      # ---- direction safety -----------------------------------------
+      # Disable one direction for tasks that must never be reversed.
+      # Example: a "copy backup" task usually allows push but not pull.
+      allow-push: true          # [default: true]
+      allow-pull: true          # [default: true]
+
+      # ---- exclude --------------------------------------------------
+      # Glob patterns for files/dirs to skip. Passed as --exclude
+      # flags to rclone. Patterns are relative to the sync root.
+      exclude:                  # [default: []]
+        - "*.tmp"
+        - "node_modules/**"
+        - ".venv/**"
+
+      # ---- delete-excluded ------------------------------------------
+      # Also delete excluded files from destination (--delete-excluded).
+      # Only meaningful for sync mode.
+      delete-excluded: true     # [default: false]
+
+      # ---- local-path -----------------------------------------------
+      # Local file or directory. Supports the path variables listed
+      # at the top of this file (${VAR}, {{schema_dir}}, …).
+      local-path: "~/Projects"
+
+      # ---- remote-path ----------------------------------------------
+      # Remote in rclone syntax:  <remote-name>:<path>
+      # Also supports path variables.
+      remote-path: "myremote:Projects"
+
+      # ---- backup-dir -----------------------------------------------
+      # If set, deleted or overwritten files are moved here instead of
+      # being permanently lost (--backup-dir). Supports path variables.
+      # Must be on the same side / backend as the destination. The script
+      # refuses pull when a generic backup-dir is configured.
+      backup-dir: "myremote:Projects/_deleted_backup"   # [default: "" = off]
+
+      # ---- max-delete -----------------------------------------------
+      # Abort if more than this many files would be deleted.
+      # Safety net against catastrophic misconfiguration.
+      max-delete: 100           # [default: unlimited]
+
+      # ---- check-before-sync ----------------------------------------
+      # Run `rclone check` before the real sync to preview differences.
+      #   true       — full comparison (checksum + size)
+      #   size-only  — compare only file sizes (faster)
+      #   false      — skip pre-sync check
+      check-before-sync: size-only  # [default: false]
+      stop-on-check-failure: false   # true = stop if pre-check detects differences
+
+      # ---- notify-after-sync ----------------------------------------
+      # Fire a desktop notification when the sync completes.
+      notify-after-sync: true   # [default: false]
+
+      # ---- log-file -------------------------------------------------
+      # Write rclone output to this file (--log-file).
+      # Supports path variables.
+      log-file: "{{schema_dir}}/logs/sync.log"  # [default: "" = stdout only]
+
+      # ---- log-level ------------------------------------------------
+      # rclone log verbosity. Empty string = rclone's default (NOTICE).
+      log-level: DEBUG          # ERROR | NOTICE | INFO | DEBUG     [default: ""]
+
+      # ---- additional-args ------------------------------------------
+      # Extra flags passed directly to rclone. Each entry becomes one
+      # argument.  Use --flag=value syntax for flags that take values.
+      additional-args:          # [default: []]
+        - "--bwlimit=2M"        # limit bandwidth to 2 MiB/s
+        - "--create-empty-src-dirs"
+
+      # ---- sub-tasks ------------------------------------------------
+      # Per-machine overrides, selected by platform / arch / hostname.
+      # Each sub-task inherits from the parent task (merge semantics)
+      # and can override any field. Only sub-tasks matching the current
+      # machine are offered at runtime.
+      sub-tasks:
+        # --- Match by computer name (hostname) ---
+        - name: desktop-pc
+          computer-name: ZL-DESKTOP    # exact hostname              [default: "" = any]
+          local-path: "D:\\Projects"
+          remote-path: "myremote:Projects"
+
+        # --- Match by platform + architecture ---
+        - name: laptop-x64
+          platform: windows            # all | windows | linux | darwin | macos  [default: all]
+          arch: amd64                  # all | 386 | arm | arm64 | amd64          [default: all]
+          local-path: "C:\\Users\\me\\Projects"
+
+        # --- Match by platform only ---
+        - name: macbook
+          platform: darwin
+          local-path: "~/Projects"
+
+    # =================================================================
+    # "minimal" — the simplest possible task
+    # =================================================================
+    - name: minimal
+      local-path: "~/Documents"
+      remote-path: "myremote:Documents"
+
+  # ---------- grouped tasks ----------
+  # Tasks can be organised into named groups for clarity.
+  # Groups are listed alphabetically after ungrouped tasks.
+  media:
+    - name: photos-sync
+      mode: sync
+      check-before-sync: true
+      local-path: "~/Pictures"
+      remote-path: "myremote:Photos"
+
+    - name: music-backup
+      mode: copy                  # copy only — never deletes on destination
+      local-path: "~/Music"
+      remote-path: "myremote:Music"

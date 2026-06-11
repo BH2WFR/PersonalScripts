@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import ctypes
 import platform
+import socket
 
 #* 控制台颜色
 # Foreground (text) colors
@@ -194,20 +195,6 @@ class Utils:
         if color_ansi_esc is None:
             color_ansi_esc = ""
         print(f"{' ' * indent}{color_ansi_esc}{'─' * width}{CRst}")
-
-    @staticmethod
-    def get_os_name() -> str:
-        """Return a human-readable OS name with version."""
-        if sys.platform == "darwin":
-            ver = platform.mac_ver()[0]
-            return f"macOS {ver}" if ver else "macOS"
-        if sys.platform == "linux":
-            return f"Linux ({platform.release()})"
-        if sys.platform in ("win32", "cygwin", "msys"):
-            edition = platform.win32_edition()
-            base = f"Windows {platform.release()} {platform.version()}"
-            return f"{base} {edition}" if edition else base
-        return sys.platform
 
     @staticmethod
     def get_conda_env() -> typing.Optional[str]:
@@ -485,9 +472,183 @@ class Utils:
                 os.execv("/usr/bin/sudo", ["sudo", sys.executable, script] + args)
             print(f"{FLRed}Cannot elevate: sudo not found in PATH.{CRst}")
             sys.exit(1)
-            
+
+    @staticmethod
+    def get_platform() -> str:
+        """Return the current platform: ``"windows"``, ``"linux"``, or ``"darwin"``."""
+        if sys.platform == "darwin":
+            return "darwin"
+        if sys.platform == "linux":
+            return "linux"
+        if sys.platform in ("win32", "cygwin", "msys"):
+            return "windows"
+        return sys.platform
+
+    @staticmethod
+    def get_arch() -> str:
+        """Return the machine architecture (e.g. ``"amd64"``, ``"arm64"``)."""
+        m = platform.machine().lower()
+        if m in ("x86_64", "amd64"):
+            return "amd64"
+        if m in ("x86", "i386", "i686"):
+            return "386"
+        if m in ("arm64", "aarch64"):
+            return "arm64"
+        if m.startswith("arm"):
+            return "arm"
+        return m
+
+    @staticmethod
+    def get_computer_name() -> str:
+        """Return the computer hostname."""
+        return socket.gethostname()
+
+    @staticmethod
+    def get_os_name() -> str:
+        """Return a human-readable OS name with version.
+
+        Uses :meth:`get_platform` to determine the platform, then adds
+        version / release details from :mod:`platform`.
+        """
+        plat = Utils.get_platform()
+        if plat == "darwin":
+            ver = platform.mac_ver()[0]
+            return f"macOS {ver}" if ver else "macOS"
+        if plat == "linux":
+            return f"Linux ({platform.release()})"
+        if plat == "windows":
+            edition = platform.win32_edition()
+            base = f"Windows {platform.release()} {platform.version()}"
+            return f"{base} {edition}" if edition else base
+        return plat
+
+    @staticmethod
+    def open_with_default_app(path: str) -> None:
+        """Open a file or directory with the OS default application."""
+        abs_path = os.path.abspath(path)
+        if sys.platform == "win32":
+            os.startfile(abs_path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", abs_path], check=False)
+        else:
+            subprocess.run(["xdg-open", abs_path], check=False)
+
+    @staticmethod
+    def which(name: str) -> typing.Optional[str]:
+        """Return the path to an executable, or ``None`` if not found.
+
+        Thin wrapper around :func:`shutil.which`.
+        """
+        return shutil.which(name) or None  # type: ignore[return-value]
+
+    @staticmethod
+    def notify(title: str, body: str) -> None:
+        """Send a desktop notification (best-effort, silently fails)."""
+        plat = Utils.get_platform()
+        try:
+            if plat == "windows":
+                try:
+                    from win10toast import ToastNotifier
+                    ToastNotifier().show_toast(title, body, duration=5, threaded=True)
+                except ImportError:
+                    pass
+            elif plat == "darwin":
+                subprocess.run([
+                    "osascript", "-e",
+                    f'display notification "{body}" with title "{title}"',
+                ], check=False, capture_output=True)
+            else:
+                subprocess.run(["notify-send", title, body], check=False, capture_output=True)
+        except Exception:
+            pass
+
+    @staticmethod
+    def resolve_path_vars(path: str, schema_dir: str = "", script_dir: str = "") -> str:
+        """Resolve variables in a path string.
+
+        Supported placeholders:
+          ``${VAR}`` / ``%VAR%`` — environment variable
+          ``$ENV:VAR`` / ``${ENV:VAR}`` — PowerShell-style environment variable
+          ``{{schema_dir}}``    — directory of the YAML schema file
+          ``{{script_dir}}``    — directory of the script
+          ``{{current_dir}}``   — current working directory
+        """
+        p = os.path.expanduser(path)
+        try:
+            import re
+            p = re.sub(r"\$\{ENV:([^}]+)\}", lambda m: os.environ.get(m.group(1), m.group(0)), p)
+            p = re.sub(r"\$ENV:([A-Za-z_][A-Za-z0-9_]*)", lambda m: os.environ.get(m.group(1), m.group(0)), p)
+        except Exception:
+            pass
+        p = os.path.expandvars(p)
+        if schema_dir:
+            p = p.replace("{{schema_dir}}", schema_dir)
+        if script_dir:
+            p = p.replace("{{script_dir}}", script_dir)
+        p = p.replace("{{current_dir}}", os.getcwd())
+        return p
 
 class Input:
+    #* ============ 密码输入 ============
+    @staticmethod
+    def input_password(prompt: str = "Enter password") -> str:
+        """Read a password from stdin without echoing characters.
+
+        On Windows, falls back to plain ``input()`` when stdin is not a console
+        (e.g. piped input).
+        """
+        if sys.platform == "win32":
+            if not sys.stdin.isatty():
+                return input(f"{FLYellow}{prompt}: {CRst}")
+            import msvcrt
+            print(f"{FLYellow}{prompt}: {CRst}", end="", flush=True)
+            chars: list[str] = []
+            while True:
+                ch = msvcrt.getwch()
+                if ch in ("\r", "\n"):
+                    print()
+                    break
+                if ch == "\x08":  # backspace
+                    if chars:
+                        chars.pop()
+                        print("\b \b", end="", flush=True)
+                elif ch == "\x03":  # Ctrl+C
+                    print("^C")
+                    raise KeyboardInterrupt
+                else:
+                    chars.append(ch)
+                    print("*", end="", flush=True)
+            return "".join(chars)
+        else:
+            import termios
+            import tty
+            print(f"{FLYellow}{prompt}: {CRst}", end="", flush=True)
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                chars: list[str] = []
+                while True:
+                    b = sys.stdin.buffer.read(1)
+                    if not b:
+                        break
+                    ch = b.decode("utf-8", errors="replace")
+                    if ch in ("\r", "\n"):
+                        print()
+                        break
+                    if ch == "\x7f":  # backspace
+                        if chars:
+                            chars.pop()
+                            print("\b \b", end="", flush=True)
+                    elif ord(ch) < 32:  # control char
+                        pass
+                    else:
+                        chars.append(ch)
+                        print("*", end="", flush=True)
+                return "".join(chars)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
     #* ============ 输出路径解析工具 ============
     @staticmethod
     def _find_available_path(base_path: str) -> str:
