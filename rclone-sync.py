@@ -713,6 +713,30 @@ def _detect_encrypted_config(rclone_exe: str) -> bool:
         return False
 
 
+def _verify_config_password(rclone_exe: str) -> bool:
+    """Return True if the current RCLONE_CONFIG_PASS is valid.
+
+    Runs ``rclone config show``; a wrong password produces ``Couldn't decrypt``
+    or ``unable to decrypt`` on stderr, and a missing password still prompts
+    ``Enter configuration password:``.
+    """
+    try:
+        proc = subprocess.run(
+            [rclone_exe, "config", "show"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        output = (proc.stdout + proc.stderr).lower()
+        if "couldn't decrypt" in output or "unable to decrypt" in output:
+            return False
+        if "enter configuration password:" in output:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _print_cmd(cmd: list[str]) -> None:
     display = " ".join(f'"{a}"' if " " in a else a for a in cmd)
     print(f"  {FLYellow}Rclone command:{CRst}")
@@ -1036,15 +1060,26 @@ def main() -> int:
     
     config_password: Optional[str] = None
     if cli_config_password:
+        os.environ["RCLONE_CONFIG_PASS"] = cli_config_password
+        if not _verify_config_password(rclone_exe):
+            Utils.print_error_and_exit("rclone config password is incorrect (from --rclone-config-password)")
         config_password = cli_config_password
     elif ENV_CONFIG_PASSWORD in os.environ:
         config_password = os.environ[ENV_CONFIG_PASSWORD]
+        os.environ["RCLONE_CONFIG_PASS"] = config_password
+        if not _verify_config_password(rclone_exe):
+            Utils.print_error_and_exit(f"rclone config password is incorrect (from {ENV_CONFIG_PASSWORD})")
     elif _detect_encrypted_config(rclone_exe):
         print(f"{FLYellow}  rclone config is encrypted.{CRst}")
-        config_password = Input.input_password("Enter rclone config password")
-
-    if config_password:
-        os.environ["RCLONE_CONFIG_PASS"] = config_password
+        while True:
+            config_password = Input.input_password("Enter rclone config password")
+            if not config_password:
+                Utils.print_exit_message("Bye.")
+                return 0
+            os.environ["RCLONE_CONFIG_PASS"] = config_password
+            if _verify_config_password(rclone_exe):
+                break
+            print(f"{FLRed}  Incorrect password.{CRst}")
     if cli_config_file:
         os.environ["RCLONE_CONFIG"] = cli_config_file
 
