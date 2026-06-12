@@ -550,11 +550,11 @@ def yes_no_text(value: Optional[bool], yes_color: str = FLGreen) -> str:
     return f"{yes_color}yes{CRst}" if value else f"{FGray}no{CRst}"
 
 
-def build_report(verbose: bool, freeze_capacity: bool = False) -> tuple[int, str]:
+def build_report(verbose: bool, freeze_capacity: bool = False) -> tuple[int, str, str]:
     try:
         record = collect_power()
     except Exception as exc:
-        return 1, f"{FLRed}ERROR: {exc}{CRst}"
+        return 1, f"{FLRed}ERROR: {exc}{CRst}", ""
 
     if freeze_capacity:
         freeze_capacity_fields(record)
@@ -566,7 +566,6 @@ def build_report(verbose: bool, freeze_capacity: bool = False) -> tuple[int, str
     full_charge_capacity_wh = record.get("battery_full_charge_capacity_wh")
 
     separator = f"{FLCyan}{'-' * 48}{CRst}"
-    Utils.print_banner(f"POWER CURRENT - {record['platform']}")
     lines = [
         separator,
         f"  Charger connected : {yes_no_text(record.get('connected'))}",
@@ -593,11 +592,13 @@ def build_report(verbose: bool, freeze_capacity: bool = False) -> tuple[int, str
             for key, value in record.get("sources", []):
                 lines.append(f"  {key:<17}: {FGray}{value}{CRst}")
 
-    return 0, "\n".join(lines)
+    return 0, "\n".join(lines), str(record["platform"])
 
 
 def print_report(verbose: bool) -> int:
-    code, report = build_report(verbose)
+    code, report, platform = build_report(verbose)
+    if code == 0:
+        Utils.print_banner(f"POWER CURRENT - {platform}")
     print(report)
     return code
 
@@ -630,10 +631,17 @@ def live_report(verbose: bool, interval: float) -> int:
         tty.setcbreak(sys.stdin.fileno())
 
     try:
+        banner_printed = False
+        blink = False
         while True:
-            code, report = build_report(verbose, freeze_capacity=True)
+            code, report, platform = build_report(verbose, freeze_capacity=True)
             exit_code = code
-            output = f"{report}\n\n{FGray}Press any key to exit. Refresh interval: {interval:g}s{CRst}"
+            if code == 0 and not banner_printed:
+                Utils.print_banner(f"POWER CURRENT - {platform}")
+                banner_printed = True
+            blink_char = "█" if blink else " "
+            blink = not blink
+            output = f"{report}\n\n{FGray}Press any key to exit. Refresh interval: {interval:g}s{CRst} {blink_char}"
             if previous_lines:
                 print(f"{Cursor.prev_line(previous_lines)}{CEraseDisplayToEnd}", end="")
             print(output)
