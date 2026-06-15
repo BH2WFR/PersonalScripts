@@ -30,6 +30,7 @@ HIGHLIGHT_PATTERNS: list[dict[str, str]] = [
     {"pattern": r"\btailscale\b", "color": FLYellow},
     {"pattern": r"\.sh$", "color": FLGreen},
     {"pattern": r"\.ps1$", "color": FLCyan},
+    # {"pattern": r"\.py$", "color": FLBlue},
 ]
 """Highlight rules for script names. Each entry has a ``"pattern"`` (regex) and a
 ``"color"`` (ANSI escape). Matched portions use the entry's color; non-matched
@@ -291,23 +292,36 @@ def _script_color(path: str) -> str:
 def _highlight_filename(fname: str) -> str:
     """Return *fname* with regex-matched portions colored per HIGHLIGHT_PATTERNS.
     Returns empty string when no pattern matches (caller keeps default color).
+
+    All patterns are evaluated; when multiple patterns produce matches they are
+    merged by start position (earlier patterns take priority on overlap).
     """
+    # Collect all matches from all patterns: (start, end, color)
+    all_matches: list[tuple[int, int, str]] = []
     for entry in HIGHLIGHT_PATTERNS:
         pattern: str = entry["pattern"]
         hl_color: str = entry["color"]
-        matches = list(re.finditer(pattern, fname))
-        if matches:
-            parts: list[str] = []
-            last_end = 0
-            for m in matches:
-                if m.start() > last_end:
-                    parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:m.start()]}{CRst}")
-                parts.append(f"{hl_color}{fname[m.start():m.end()]}{CRst}")
-                last_end = m.end()
-            if last_end < len(fname):
-                parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:]}{CRst}")
-            return "".join(parts)
-    return ""
+        for m in re.finditer(pattern, fname):
+            all_matches.append((m.start(), m.end(), hl_color))
+
+    if not all_matches:
+        return ""
+
+    all_matches.sort(key=lambda x: x[0])
+
+    parts: list[str] = []
+    last_end = 0
+    for start, end, color in all_matches:
+        if start < last_end:
+            continue  # skip overlapping region
+        if start > last_end:
+            parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:start]}{CRst}")
+        parts.append(f"{color}{fname[start:end]}{CRst}")
+        last_end = end
+
+    if last_end < len(fname):
+        parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:]}{CRst}")
+    return "".join(parts)
 
 
 def show_scripts(
