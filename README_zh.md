@@ -40,6 +40,10 @@ python compile-script.py                        # 全平台
 - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - 同路径存在同名 `.py` 和 `.sh`/`.ps1` 时，仅显示 `.py`
 - 自动检测 Python：优先使用 `conda info --base`，再尝试已知路径，最后回退到 `python3`
+- **脚本名正则高亮**：通过 `HIGHLIGHT_PATTERNS` 全局变量配置（`{"pattern": 正则, "color": ANSI}` 字典列表），匹配部分使用条目颜色，其余部分保持 `PY_SCRIPT_HIGHLIGHT_COLOR`
+- **可自定义显示颜色**：`SUBFOLDER_HIGHLIGHT_COLOR`、`PY_SCRIPT_HIGHLIGHT_COLOR`、`SH_SCRIPT_HIGHLIGHT_COLOR`、`PS1_SCRIPT_HIGHLIGHT_COLOR`
+- **`ZL_SCRIPT_ADDITIONAL_PATH`** 环境变量（分号分隔）支持从外部目录列出脚本，以 `─── Additional [N] ───`（从 1 开始）区分，使用相同的发现/排除规则
+- **`@N:` 前缀** 跨组解析重名脚本：`@0:` = 主目录、`@1:` = 第一个附加目录等。无前缀的裸名搜索所有分组；存在重名时，通过 `Menu.select()` 交互列出带 `@N:` 标签的候选（默认 `@0`）。支持 CLI（`python run-script.py @1:test.py`）和交互模式
 - `compile-script.py` 可将项目中任意 Python 脚本编译为独立可执行文件，支持 Nuitka 或 PyInstaller（均为 `--onedir`/`--standalone` 模式，不自解压以避免磨损硬盘）
 
 ---
@@ -59,9 +63,9 @@ python compile-script.py                        # 全平台
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `download-bilibili.py` | B 站视频下载器（画质/仅音频/字幕/弹幕/多 API） | 跨平台。`BBDown`、`ffmpeg`、`aria2`（可选） |
-| `download-yt.py` | YouTube 视频下载器（画质/音频/字幕/cookies/播放列表） | 跨平台。`yt-dlp`、`ffmpeg`、`deno`（可选） |
-| `download-m3u8.py` | m3u8/HLS 流媒体下载器，支持自定义请求头 | 跨平台。`yt-dlp`、`ffmpeg` |
+| `download-bilibili.py` | B 站视频下载器（画质/仅音频/字幕/弹幕/多 API），每轮完成后循环继续 | 跨平台。`BBDown`、`ffmpeg`、`aria2`（可选） |
+| `download-yt.py` | YouTube 视频下载器（画质/音频/字幕/cookies/播放列表），每轮完成后循环继续 | 跨平台。`yt-dlp`、`ffmpeg`、`deno`（可选） |
+| `download-m3u8.py` | m3u8/HLS 流媒体下载器，支持自定义请求头，每轮完成后循环继续 | 跨平台。`yt-dlp`、`ffmpeg` |
 
 ### 视频/图片编辑
 
@@ -164,6 +168,8 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 - Python 3.9+ 兼容（使用 `typing` 模块的 `Optional` / `Union`）
 - 命令行参数传入时跳过交互提示（适合批处理）
 - 多行输入使用 EOF（Windows: `Ctrl+Z`，Linux/macOS: `Ctrl+D`）
+- 单行文本输入使用 `Input.prompt()`，支持默认值和 `transform` 回调（如 `str.upper`）
+- `Menu.select()` 配合 `Menu.from_enum()` 提供交互式键盘枚举菜单，支持默认选项键
 - 通过 `utils` ANSI 代码实现彩色输出（`FLYellow`、`FLGreen`、`FLRed` 等）
 - 平台相关脚本放在 `windows/`、`linux/`、`macos/` 子目录中
 - 多路径输入提示支持通配符（``*``/``?``/``[abc]``）批量匹配文件；未匹配到文件的模式按原样字面路径处理

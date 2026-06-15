@@ -49,67 +49,71 @@ Usage:
         return 1
 
 
-    #* 下载到哪里？
-    OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
-
-
-    #* 链接
-    if len(sys.argv) > 1:
-        URLS = []
-        for i in range(1, len(sys.argv)):
-            u = sys.argv[i].strip()
-            if not u.startswith("-") and u:
-                URLS.append(u)
-    else:
-        URLS = Input.read_stdin_multiline(prompt_text="Enter m3u8 URLs (one per line).")
-
-    if not URLS:
-        print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
-        return 1
-
-
-    #* 文件名
     FILENAME_TEMPLATE_DEFAULT = "%(title)s.%(ext)s"
-    FILENAME_TEMPLATE = input(f"{FLYellow}Enter output filename template (default: `{FILENAME_TEMPLATE_DEFAULT}`): {CRst}").strip() or FILENAME_TEMPLATE_DEFAULT
-    if not FILENAME_TEMPLATE:
-        print(f"{FLRed}Invalid filename template. EXIT...{CRst}\n")
-        return 1
 
-    #* Referer / Headers（可选）
-    CUSTOM_HEADER = input(f"{FLYellow}Enter custom Referer or Header (e.g. 'Referer:https://example.com') (default: none): {CRst}").strip() or ""
+    first_iteration = True
+    while True:
+        #* 下载到哪里？
+        OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
-
-    #* 下载
-    print(f"{FLGreen}Starting downloads...{CRst}\n")
-    succeedCnt: int = 0
-    failedCnt: int = 0
-
-    for idx, url in enumerate(URLS):
-        current_output_path = os.path.join(OUTPUT_DIR, FILENAME_TEMPLATE)
-        args = [
-            "yt-dlp",
-            url,
-            "--output", current_output_path,
-            "--restrict-filenames",
-            "--retries", "3",
-            "--embed-metadata",
-        ]
-        if CUSTOM_HEADER:
-            args += ["--add-header", CUSTOM_HEADER]
-
-        print(f"{FLYellow}=====[ Downloading {idx + 1}/{len(URLS)} ]====={CRst}")
-        print(f"{FLYellow}Executing command:{CRst} {' '.join(args)}\n")
-        res = subprocess.run(args).returncode
-
-        if res != 0:
-            print(f"{FLRed}Download failed for URL: {url}{CRst}\n")
-            failedCnt += 1
+        #* 链接
+        if first_iteration and len(sys.argv) > 1:
+            URLS = []
+            for i in range(1, len(sys.argv)):
+                u = sys.argv[i].strip()
+                if not u.startswith("-") and u:
+                    URLS.append(u)
         else:
-            print(f"{FLGreen}Download completed for URL: {url}{CRst}\n")
-            succeedCnt += 1
+            URLS = Input.read_stdin_multiline(prompt_text="Enter m3u8 URLs (one per line).")
 
-    print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
-    return 0 if failedCnt == 0 else 1
+        if not URLS:
+            Utils.print_exit_message("Bye.")
+            return 0
+        first_iteration = False
+
+        #* 文件名
+        FILENAME_TEMPLATE = Input.prompt(
+            f"{FLYellow}Enter output filename template (default: `{FILENAME_TEMPLATE_DEFAULT}`): {CRst}",
+            default=FILENAME_TEMPLATE_DEFAULT,
+        )
+
+        #* Referer / Headers（可选）
+        CUSTOM_HEADER = Input.prompt(
+            f"{FLYellow}Enter custom Referer or Header (e.g. 'Referer:https://example.com') (default: none): {CRst}",
+            default="",
+        )
+
+        #* 下载
+        print(f"{FLGreen}Starting downloads...{CRst}\n")
+        succeedCnt: int = 0
+        failedCnt: int = 0
+
+        for idx, url in enumerate(URLS):
+            current_output_path = os.path.join(OUTPUT_DIR, FILENAME_TEMPLATE)
+            args = [
+                "yt-dlp",
+                url,
+                "--output", current_output_path,
+                "--restrict-filenames",
+                "--retries", "3",
+                "--embed-metadata",
+            ]
+            if CUSTOM_HEADER:
+                args += ["--add-header", CUSTOM_HEADER]
+
+            print(f"{FLYellow}=====[ Downloading {idx + 1}/{len(URLS)} ]====={CRst}")
+            print(f"{FLYellow}Executing command:{CRst} {' '.join(args)}\n")
+            res = subprocess.run(args).returncode
+
+            if res != 0:
+                print(f"{FLRed}Download failed for URL: {url}{CRst}\n")
+                failedCnt += 1
+            else:
+                print(f"{FLGreen}Download completed for URL: {url}{CRst}\n")
+                succeedCnt += 1
+
+        print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
+        Utils.print_separator()
 
 
 if __name__ == "__main__":

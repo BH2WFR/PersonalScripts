@@ -38,7 +38,12 @@ python compile-script.py                         # All platforms
 - When a script name has no extension, `.py` is tried first, then platform-preferred order: Windows → `.ps1` then `.sh`; macOS/Linux → `.sh` then `.ps1`
 - Platform-aware filtering: hides `windows/`/`macos/`/`linux/` scripts that don't match the current OS
 - Interpreter-aware: hides `.sh` scripts if `bash` is not available; hides `.ps1` scripts if `pwsh` is not available
+- When a `.py` and `.sh`/`.ps1` share the same name, only `.py` is shown
 - Auto-detects Python: prefers `conda info --base`, then known conda paths, falls back to `python3`
+- **Script name highlighting** via `HIGHLIGHT_PATTERNS` global (list of `{"pattern": regex, "color": ANSI}` dicts); matched portions use the entry's color, non-matched portions stay `PY_SCRIPT_HIGHLIGHT_COLOR`
+- **Configurable display colors**: `SUBFOLDER_HIGHLIGHT_COLOR`, `PY_SCRIPT_HIGHLIGHT_COLOR`, `SH_SCRIPT_HIGHLIGHT_COLOR`, `PS1_SCRIPT_HIGHLIGHT_COLOR`
+- **`ZL_SCRIPT_ADDITIONAL_PATH`** env var (semicolon-separated) lists scripts from external directories under `─── Additional [N] ───` (1-indexed) with the same discovery / exclude rules
+- **`@N:` prefix** resolves duplicate script names across groups: `@0:` = main dir, `@1:` = first additional dir, etc. Bare names search all groups; when duplicates exist, an interactive `Menu.select()` lists candidates with `@N:` labels (default `@0`). Works in both CLI (`python run-script.py @1:test.py`) and interactive mode
 - `compile-script.py` compiles any project Python script into a standalone executable via Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear)
 
 ---
@@ -58,9 +63,9 @@ python compile-script.py                         # All platforms
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API) | Cross-platform. `BBDown`, `ffmpeg`, `aria2` (optional) |
-| `download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist) | Cross-platform. `yt-dlp`, `ffmpeg`, `deno` (optional) |
-| `download-m3u8.py` | m3u8/HLS stream downloader with custom headers support | Cross-platform. `yt-dlp`, `ffmpeg` |
+| `download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API). Loops after each batch for continuous downloading | Cross-platform. `BBDown`, `ffmpeg`, `aria2` (optional) |
+| `download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist). Loops after each batch | Cross-platform. `yt-dlp`, `ffmpeg`, `deno` (optional) |
+| `download-m3u8.py` | m3u8/HLS stream downloader with custom headers support. Loops after each batch | Cross-platform. `yt-dlp`, `ffmpeg` |
 
 ### Video / Image Editing
 
@@ -163,6 +168,8 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 - Python 3.9+ compatible (uses `typing.Optional` / `typing.Union` from the `typing` module)
 - Command-line arguments suppress interactive prompts (batch-friendly)
 - Multi-line input uses EOF (`Ctrl+Z` on Windows, `Ctrl+D` on Linux/macOS)
+- Single-line text input uses `Input.prompt()` which supports default values and `transform` callables (e.g. `str.upper`)
+- `Menu.select()` with `Menu.from_enum()` provides interactive keyboard-driven enumeration menus with default-key support
 - Color output via `utils` ANSI codes (`FLYellow`, `FLGreen`, `FLRed`, etc.)
 - Platform-specific scripts are in `windows/`, `linux/`, `macos/` subdirectories
 - Multi-path input prompts support wildcard patterns (``*``/``?``/``[abc]``) for batch file matching; unmatched patterns are kept as literal paths

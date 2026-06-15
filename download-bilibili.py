@@ -61,24 +61,6 @@ Usage:
     FFMPEG_PATH = _ffmpeg.path
     ARIA2C_PATH = _aria2c.path
 
-    #* 下载到哪里？
-    OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
-
-
-    #* 链接
-    if len(sys.argv) > 1:
-        URLS = []
-        for i in range(1, len(sys.argv)):
-            u = sys.argv[i].strip()
-            if not u.startswith("-") and u:
-                URLS.append(u)
-    else:
-        URLS = Input.read_stdin_multiline(prompt_text="Enter Bilibili video URLs (one per line).")
-
-    if not URLS:
-        print(f"{FLRed}No URLs provided. EXIT...{CRst}\n")
-        return 1
-
     #* 码率、仅下载音频、仅下载字幕、仅下载弹幕
     class E_DOWNLOAD_TYPE(enum.Enum):
         SHOW_INFO_ONLY = 0
@@ -90,104 +72,120 @@ Usage:
         DANMAKU_ONLY = 6
         SUBTITLE_ONLY = 7
 
-    for item in E_DOWNLOAD_TYPE:
-        print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-    BITRATE = Menu.select(
-        Menu.from_enum(E_DOWNLOAD_TYPE),
-        prompt="Select download mode",
-    )
-    if BITRATE is None:
-        Utils.print_exit_message("Bye.")
-        return 0
-
-
-    #* 分P
-    PART_INPUT = input(f"{FLYellow}Part, e.g. `CURRENT` `1,2` `1,2-5` `3,LATEST` `LAST` (default: ALL): {CRst}").strip().upper() or "ALL"
-
-
     #* 解析
     class E_API_TYPE(enum.Enum):
         DEFAULT = 0
         TV = 1
         APP = 2
         INTL = 3 # 国际版
-    for item in E_API_TYPE:
-        print(f"  {FLMagenta}{item.value}{CRst}: {FLYellow}{item.name}{CRst}")
-    API_TYPE = Menu.select(
-        Menu.from_enum(E_API_TYPE),
-        prompt="Select API type",
-    )
-    if API_TYPE is None:
-        Utils.print_exit_message("Bye.")
-        return 0
 
+    first_iteration = True
+    while True:
+        #* 下载到哪里？
+        OUTPUT_DIR = Input.resolve_output_path("./downloads", prompt="Enter output directory", path_type="dir")
 
-    #* 下载
-    print(f"{FLGreen}Starting downloads...{CRst}\n")
-    succeedCnt : int = 0
-    failedCnt : int = 0
-    for(idx, url) in enumerate(URLS):
-        print(f"{FLYellow}=====[ Downloading video {idx+1}/{len(URLS)} ]====={CRst}")
-        cmd = f'BBDown "{url}" --work-dir "{OUTPUT_DIR}" --skip-ai false --ffmpeg-path "{FFMPEG_PATH}" -mt true --force-http true '
-        if(USE_ARIA2C):
-            cmd += ' --use-aria2c'
-            cmd += f' --aria2c-path "{ARIA2C_PATH}"'
+        #* 链接
+        if first_iteration and len(sys.argv) > 1:
+            URLS = []
+            for i in range(1, len(sys.argv)):
+                u = sys.argv[i].strip()
+                if not u.startswith("-") and u:
+                    URLS.append(u)
+        else:
+            URLS = Input.read_stdin_multiline(prompt_text="Enter Bilibili video URLs (one per line).")
 
-        if(API_TYPE == E_API_TYPE.TV):
-            cmd += ' --use-tv-api'
-        elif(API_TYPE == E_API_TYPE.APP):
-            cmd += ' --use-app-api'
-        elif(API_TYPE == E_API_TYPE.INTL):
-            cmd += ' --use-intl-api'
-        #endif
+        if not URLS:
+            Utils.print_exit_message("Bye.")
+            return 0
+        first_iteration = False
 
-        if(BITRATE == E_DOWNLOAD_TYPE.SHOW_INFO_ONLY): #* 仅查看不下载
-            cmd += ' --only-show-info'
-        elif(BITRATE == E_DOWNLOAD_TYPE.AUDIO_ONLY): # 仅下载音频
-            cmd += ' --audio-only'
-        elif(BITRATE == E_DOWNLOAD_TYPE.DANMAKU_ONLY):
-            cmd += ' --danmaku-only'
-        elif(BITRATE == E_DOWNLOAD_TYPE.SUBTITLE_ONLY):
-            cmd += ' --sub-only'
-        else: # 下载的是正常的视频
-            if(BITRATE == E_DOWNLOAD_TYPE.VIDEO_1080P): #* 视频的清晰度
-                bitrate_arg = '1080P HD'
-            elif(BITRATE == E_DOWNLOAD_TYPE.VIDEO_720P):
-                bitrate_arg = '720P HD'
-            elif(BITRATE == E_DOWNLOAD_TYPE.VIDEO_480P):
-                bitrate_arg = '480P SD'
-            elif(BITRATE == E_DOWNLOAD_TYPE.VIDEO_360P):
-                bitrate_arg = '360P Low'
+        BITRATE = Menu.select(
+            Menu.from_enum(E_DOWNLOAD_TYPE),
+            prompt="Select download mode",
+            default_key="2",
+        )
+        if BITRATE is None:
+            Utils.print_exit_message("Bye.")
+            return 0
+
+        #* 分P
+        PART_INPUT = Input.prompt(
+            f"{FLYellow}Part{CRst}, e.g. `{FLCyan}CURRENT{CRst}` `{FLCyan}1,2{CRst}` `{FLCyan}1,2-5{CRst}` `{FLCyan}3,LATEST{CRst}` `{FLCyan}LAST{CRst}` {FGray}(default: {FLCyan}ALL{FGray}){CRst}: {FLYellow}>{CRst}",
+            default="ALL",
+            transform=str.upper,
+        )
+
+        API_TYPE = Menu.select(
+            Menu.from_enum(E_API_TYPE),
+            prompt="Select API type",
+            default_key="0",
+        )
+        if API_TYPE is None:
+            Utils.print_exit_message("Bye.")
+            return 0
+
+        #* 下载
+        print(f"{FLGreen}Starting downloads...{CRst}\n")
+        succeedCnt: int = 0
+        failedCnt: int = 0
+        for idx, url in enumerate(URLS):
+            print(f"{FLYellow}=====[ Downloading video {idx+1}/{len(URLS)} ]====={CRst}")
+            cmd = f'BBDown "{url}" --work-dir "{OUTPUT_DIR}" --skip-ai false --ffmpeg-path "{FFMPEG_PATH}" -mt true --force-http true '
+            if USE_ARIA2C:
+                cmd += ' --use-aria2c'
+                cmd += f' --aria2c-path "{ARIA2C_PATH}"'
+
+            if API_TYPE == E_API_TYPE.TV:
+                cmd += ' --use-tv-api'
+            elif API_TYPE == E_API_TYPE.APP:
+                cmd += ' --use-app-api'
+            elif API_TYPE == E_API_TYPE.INTL:
+                cmd += ' --use-intl-api'
+
+            if BITRATE == E_DOWNLOAD_TYPE.SHOW_INFO_ONLY:
+                cmd += ' --only-show-info'
+            elif BITRATE == E_DOWNLOAD_TYPE.AUDIO_ONLY:
+                cmd += ' --audio-only'
+            elif BITRATE == E_DOWNLOAD_TYPE.DANMAKU_ONLY:
+                cmd += ' --danmaku-only'
+            elif BITRATE == E_DOWNLOAD_TYPE.SUBTITLE_ONLY:
+                cmd += ' --sub-only'
             else:
-                print(f"{FLRed}Invalid bitrate option. EXIT...{CRst}\n")
-                return 1
-            cmd += f' --dfn-priority "{bitrate_arg}"'
-        #endif
+                if BITRATE == E_DOWNLOAD_TYPE.VIDEO_1080P:
+                    bitrate_arg = '1080P 高码率,1080P 高清,720P 高清,480P 清晰,360P 流畅'
+                elif BITRATE == E_DOWNLOAD_TYPE.VIDEO_720P:
+                    bitrate_arg = '720P 高清,480P 清晰,360P 流畅'
+                elif BITRATE == E_DOWNLOAD_TYPE.VIDEO_480P:
+                    bitrate_arg = '480P 清晰,360P 流畅'
+                elif BITRATE == E_DOWNLOAD_TYPE.VIDEO_360P:
+                    bitrate_arg = '360P 流畅'
+                else:
+                    print(f"{FLRed}Invalid bitrate option. EXIT...{CRst}\n")
+                    return 1
+                cmd += f' --dfn-priority "{bitrate_arg}"'
 
-        if(PART_INPUT == "CURRENT"): #* 分P
-            part_arg = ''
-        elif(PART_INPUT == "ALL"):
-            part_arg = 'ALL'
-        else:
-            part_arg = PART_INPUT
-        #endif
-        if(part_arg):
-            cmd += f' --select-page "{part_arg}"'
+            if PART_INPUT == "CURRENT":
+                part_arg = ''
+            elif PART_INPUT == "ALL":
+                part_arg = 'ALL'
+            else:
+                part_arg = PART_INPUT
+            if part_arg:
+                cmd += f' --select-page "{part_arg}"'
 
-        #* 执行命令
-        print(f"{FLCyan}Executing command:{CRst}\n{cmd}\n")
-        res = os.system(cmd)
+            #* 执行命令
+            print(f"{FLCyan}Executing command:{CRst}\n{cmd}\n")
+            res = os.system(cmd)
 
-        if(res != 0):
-            print(f"{FLRed}Download failed for URL: {url}{CRst}\n")
-            failedCnt += 1
-        else:
-            print(f"{FLGreen}Download completed for URL: {url}{CRst}\n")
-            succeedCnt += 1
+            if res != 0:
+                print(f"{FLRed}Download failed for URL: {url}{CRst}\n")
+                failedCnt += 1
+            else:
+                print(f"{FLGreen}Download completed for URL: {url}{CRst}\n")
+                succeedCnt += 1
 
-
-    print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
-    return 0
+        print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
+        Utils.print_separator()
 
 
 if __name__ == "__main__":

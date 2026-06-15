@@ -658,6 +658,31 @@ class Input:
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
+    #* ============ 通用文本输入 ============
+    @staticmethod
+    def prompt(
+        prompt_text: str,
+        *,
+        default: str = "",
+        transform: typing.Optional[typing.Callable[[str], str]] = None,
+    ) -> str:
+        """Prompt for a single line of text with an optional default value.
+
+        Args:
+            prompt_text: The full prompt string (including formatting).
+            default: Value returned when the user presses Enter without input.
+            transform: Optional callable applied to the input (e.g. ``str.upper``).
+
+        Returns:
+            The user's input, or *default* if empty.
+        """
+        user_input = input(prompt_text).strip()
+        if not user_input:
+            return default
+        if transform is not None:
+            user_input = transform(user_input)
+        return user_input
+
     #* ============ 输出路径解析工具 ============
     @staticmethod
     def _find_available_path(base_path: str) -> str:

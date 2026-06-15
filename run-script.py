@@ -9,11 +9,38 @@ Usage:
 
 import sys
 import os
+import re
 import subprocess
 import importlib.util
 from typing import Optional
 
-from utils import Utils, FLYellow, FLGreen, FLCyan, FLRed, FGray, CRst
+from utils import *
+
+#
+#
+ENV_ADDITIONAL_PATH = "ZL_SCRIPT_ADDITIONAL_PATH"
+
+# ============ Highlight Patterns ============
+
+HIGHLIGHT_PATTERNS: list[dict[str, str]] = [
+    {"pattern": r"\bgit\b",       "color": FLYellow},
+    {"pattern": r"\brclone\b",    "color": FLYellow},
+    {"pattern": r"\bpdf\b",       "color": FLYellow},
+    {"pattern": r"\bffmpeg\b",    "color": FLYellow},
+    {"pattern": r"\btailscale\b", "color": FLYellow},
+    {"pattern": r"\.sh$", "color": FLGreen},
+    {"pattern": r"\.ps1$", "color": FLCyan},
+]
+"""Highlight rules for script names. Each entry has a ``"pattern"`` (regex) and a
+``"color"`` (ANSI escape). Matched portions use the entry's color; non-matched
+portions remain FLCyan. Patterns are tested against the basename only."""
+
+SUBFOLDER_HIGHLIGHT_COLOR = FLCyan
+ADDITIONAL_HIGHLIGHT_COLOR = FLCyan
+PY_SCRIPT_HIGHLIGHT_COLOR = CRst
+SH_SCRIPT_HIGHLIGHT_COLOR = CRst
+PS1_SCRIPT_HIGHLIGHT_COLOR = CRst
+
 
 # ============ Helpers ============
 
@@ -187,66 +214,200 @@ def resolve_script_path(script_dir: str, name: str) -> Optional[str]:
     return final
 
 
+def _resolve_with_groups(
+    name: str,
+    script_dir: str,
+    additional_groups: list[tuple[str, list[str]]],
+) -> Optional[str]:
+    """Resolve a script name with optional ``@N:`` prefix for cross-group selection.
+
+    - ``@0:name`` resolves in main *script_dir*
+    - ``@1:name`` resolves in the first additional group, etc.
+    - Bare names search all groups; when duplicates are found the user is
+      prompted with ``Menu.select()`` (default: ``@0``).
+
+    Returns the absolute path of the resolved script, or ``None``.
+    """
+    # Absolute path that exists → use directly
+    if os.path.isabs(name) and os.path.isfile(name):
+        return name
+
+    # Parse @N: prefix → direct group lookup
+    m = re.match(r'^@(\d+):(.+)$', name)
+    if m:
+        group_idx = int(m.group(1))
+        sub_name = m.group(2)
+        if group_idx == 0:
+            return resolve_script_path(script_dir, sub_name)
+        add_idx = group_idx - 1
+        if 0 <= add_idx < len(additional_groups):
+            return resolve_script_path(additional_groups[add_idx][0], sub_name)
+        return None
+
+    # Bare name — search all groups
+    matches: list[tuple[int, str, str]] = []  # (group_idx, label, full_path)
+
+    resolved = resolve_script_path(script_dir, name)
+    if resolved is not None and os.path.isfile(resolved):
+        label = f"@0:{os.path.relpath(resolved, script_dir).replace(os.sep, '/')}"
+        matches.append((0, label, resolved))
+
+    for add_idx, (add_dir, _) in enumerate(additional_groups):
+        resolved = resolve_script_path(add_dir, name)
+        if resolved is not None and os.path.isfile(resolved):
+            label = f"@{add_idx + 1}:{os.path.relpath(resolved, add_dir).replace(os.sep, '/')}"
+            matches.append((add_idx + 1, label, resolved))
+
+    if not matches:
+        return None
+
+    if len(matches) == 1:
+        return matches[0][2]
+
+    # Multiple matches — interactive disambiguation
+    options: list[MenuOption] = []
+    for i, (_, label, path) in enumerate(matches):
+        options.append(MenuOption(
+            keys=[str(i)],
+            description=label,
+            value=path,
+        ))
+
+    print(f"\n{FLYellow}Multiple scripts match '{name}':{CRst}")
+    selected = Menu.select(options, prompt="Select script", default_key="0", separator=False)
+    return selected
+
+
 # ============ Display ============
 
 def _script_color(path: str) -> str:
     if path.endswith(".py"):
-        return FLCyan
+        return PY_SCRIPT_HIGHLIGHT_COLOR
     if path.endswith(".sh"):
-        return FLGreen
-    return FLGreen  # .ps1
+        return SH_SCRIPT_HIGHLIGHT_COLOR
+    return PS1_SCRIPT_HIGHLIGHT_COLOR  # .ps1
 
 
-def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
-    """Print the numbered script list. Returns the flat list of relative paths."""
-    if not scripts:
+def _highlight_filename(fname: str) -> str:
+    """Return *fname* with regex-matched portions colored per HIGHLIGHT_PATTERNS.
+    Returns empty string when no pattern matches (caller keeps default color).
+    """
+    for entry in HIGHLIGHT_PATTERNS:
+        pattern: str = entry["pattern"]
+        hl_color: str = entry["color"]
+        matches = list(re.finditer(pattern, fname))
+        if matches:
+            parts: list[str] = []
+            last_end = 0
+            for m in matches:
+                if m.start() > last_end:
+                    parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:m.start()]}{CRst}")
+                parts.append(f"{hl_color}{fname[m.start():m.end()]}{CRst}")
+                last_end = m.end()
+            if last_end < len(fname):
+                parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:]}{CRst}")
+            return "".join(parts)
+    return ""
+
+
+def show_scripts(
+    script_dir: str,
+    scripts: list[str],
+    additional_groups: Optional[list[tuple[str, list[str]]]] = None,
+) -> list[str]:
+    """Print the numbered script list. Returns flat list of paths.
+
+    Main-script entries are relative paths from *script_dir*; additional-script
+    entries are absolute paths.
+    """
+    has_additional = bool(additional_groups)
+    if not scripts and not has_additional:
         print(f"No scripts found in: `{script_dir}`")
         return []
 
-    root_scripts = [s for s in scripts if os.sep not in s]
-    sub_scripts = [s for s in scripts if os.sep in s]
-
-    # Build dynamic type label
+    # Build type label
     types: list[str] = []
-    if any(s.endswith(".py") for s in scripts):
-        types.append(f"{FLCyan}python{CRst}")
-    if any(s.endswith(".sh") for s in scripts):
-        types.append(f"{FLGreen}bash{CRst}")
-    if any(s.endswith(".ps1") for s in scripts):
-        types.append(f"{FLGreen}PowerShell{CRst}")
+    has_py = any(s.endswith(".py") for s in scripts)
+    has_sh = any(s.endswith(".sh") for s in scripts)
+    has_ps1 = any(s.endswith(".ps1") for s in scripts)
+    if additional_groups:
+        for _, add_scripts in additional_groups:
+            has_py = has_py or any(s.endswith(".py") for s in add_scripts)
+            has_sh = has_sh or any(s.endswith(".sh") for s in add_scripts)
+            has_ps1 = has_ps1 or any(s.endswith(".ps1") for s in add_scripts)
+    if has_py:
+        types.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}python{CRst}")
+    if has_sh:
+        types.append(f"{SH_SCRIPT_HIGHLIGHT_COLOR}bash{CRst}")
+    if has_ps1:
+        types.append(f"{PS1_SCRIPT_HIGHLIGHT_COLOR}PowerShell{CRst}")
     type_str = "/".join(types) if types else "scripts"
 
-    
     Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
-    
-    print(f"  Available {type_str} scripts in `{FGray}{script_dir}{CRst}`:\n")
-    
-    total = len(scripts)
+
+    print(f"  Available {type_str} scripts in `{FGray}{script_dir}{CRst}`:")
+
+    additional_count = sum(len(g[1]) for g in additional_groups) if additional_groups else 0
+    total = len(scripts) + additional_count
     max_digits = len(str(total - 1)) if total > 0 else 1
 
     all_scripts: list[str] = []
     cnt = 0
 
+    root_scripts = [s for s in scripts if os.sep not in s]
+    sub_scripts = [s for s in scripts if os.sep in s]
+
+    # ── root scripts ──
     for rel in root_scripts:
         color = _script_color(rel)
         fname = os.path.basename(rel)
-        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {color}{fname}{CRst}")
-        all_scripts.append(rel)
+        hl = _highlight_filename(fname)
+        if hl:
+            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {hl}")
+        else:
+            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {color}{fname}{CRst}")
+        all_scripts.append(f"@0:{rel}")
         cnt += 1
 
-    if sub_scripts:
-        print()
-        print(f"  {FLYellow}─── Subfolders ───{CRst}")
-        for rel in sub_scripts:
-            color = _script_color(rel)
-            subdir = os.path.dirname(rel)
-            fname = os.path.basename(rel)
-            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {FLYellow}{subdir}{CRst}/{color}{fname}{CRst}")
-            all_scripts.append(rel)
-            cnt += 1
-    
+    # ── subfolder scripts (no header) ──
+    for rel in sub_scripts:
+        color = _script_color(rel)
+        subdir = os.path.dirname(rel)
+        fname = os.path.basename(rel)
+        hl = _highlight_filename(fname)
+        if hl:
+            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{hl}")
+        else:
+            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{color}{fname}{CRst}")
+        all_scripts.append(f"@0:{rel}")
+        cnt += 1
+
+    # ── additional scripts ──
+    if additional_groups:
+        for group_idx, (_, add_scripts) in enumerate(additional_groups):
+            display_idx = group_idx + 1
+            print()
+            print(f"  {SUBFOLDER_HIGHLIGHT_COLOR}─── Additional [{display_idx}] ───{CRst}")
+            for rel in add_scripts:
+                fname = os.path.basename(rel)
+                subdir = os.path.dirname(rel)
+                color = _script_color(rel)
+                hl = _highlight_filename(fname)
+                if hl:
+                    if subdir:
+                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{hl}")
+                    else:
+                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {hl}")
+                else:
+                    if subdir:
+                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{color}{fname}{CRst}")
+                    else:
+                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {color}{fname}{CRst}")
+                all_scripts.append(f"@{display_idx}:{rel}")
+                cnt += 1
+
     Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
-    
+
     return all_scripts
 
 
@@ -325,6 +486,17 @@ def main() -> int:
 
     script_dir = _get_script_dir()
 
+    #* ZL_SCRIPT_ADDITIONAL_PATH (semicolon-separated)
+    additional_groups: list[tuple[str, list[str]]] = []
+    additional_dirs_raw = os.environ.get(ENV_ADDITIONAL_PATH, "").strip()
+    if additional_dirs_raw:
+        for dir_path in additional_dirs_raw.split(";"):
+            dir_path = dir_path.strip()
+            if dir_path and os.path.isdir(dir_path):
+                scripts_found = find_scripts(dir_path)
+                if scripts_found:
+                    additional_groups.append((dir_path, scripts_found))
+
     script_name: Optional[str] = None
     remaining_args: list[str] = []
 
@@ -336,7 +508,11 @@ def main() -> int:
 
     if show_list:
         scripts = find_scripts(script_dir)
-        all_rel = show_scripts(script_dir, scripts)
+        all_rel = show_scripts(
+            script_dir,
+            scripts,
+            additional_groups if additional_groups else None,
+        )
 
         if script_name == "--list":
             return 0
@@ -351,6 +527,7 @@ def main() -> int:
         print(f"    {FLYellow}5{CRst} {FLCyan}--help{CRst}                       number + passthrough args")
         print(f"    {FLYellow}test/print-argv{CRst} {FLCyan}arg1 arg2{CRst}      name + passthrough args")
 
+        script_path: Optional[str] = None
         while True:
             print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
             try:
@@ -371,43 +548,23 @@ def main() -> int:
             if first_token.isdigit():
                 idx = int(first_token)
                 if idx < 0 or idx >= len(all_rel):
-                    print(f"{FLRed}Invalid selection: {idx} (try .py, .sh or .ps1 extension){CRst}", file=sys.stderr)
+                    print(f"{FLRed}Invalid selection: {idx}{CRst}", file=sys.stderr)
                     continue
-                script_name = all_rel[idx]
-                break
+                first_token = all_rel[idx]
 
-            script_name = first_token
-            resolved = resolve_script_path(script_dir, script_name)
-            if resolved is None or not os.path.isfile(resolved):
-                normalized = script_name.replace("\\", "/").lstrip("/")
-                if not normalized.endswith((".py", ".sh", ".ps1")):
-                    print(f"{FLRed}Cannot find script:{CRst}")
-                    print(f"  `{FGray}{os.path.join(script_dir, normalized + '.py')}{CRst}` (preferred)")
-                    print(f"  `{FGray}{os.path.join(script_dir, normalized + '.sh')}{CRst}`")
-                    print(f"  `{FGray}{os.path.join(script_dir, normalized + '.ps1')}{CRst}`")
-                else:
-                    print(f"{FLRed}Cannot find script: `{os.path.join(script_dir, normalized)}`{CRst}", file=sys.stderr)
+            script_path = _resolve_with_groups(first_token, script_dir, additional_groups)
+            if script_path is None:
+                print(f"{FLRed}Cannot find script: `{first_token}`{CRst}", file=sys.stderr)
                 continue
             break
 
-    assert script_name is not None
-
-    script_path: str
-    if os.path.isfile(script_name):
-        script_path = script_name
     else:
-        resolved = resolve_script_path(script_dir, script_name)
-        if resolved is None or not os.path.isfile(resolved):
-            normalized = script_name.replace("\\", "/").lstrip("/")
-            if not normalized.endswith((".py", ".sh", ".ps1")):
-                print(f"{FLRed}Cannot find script:{CRst}")
-                print(f"  `{FGray}{os.path.join(script_dir, normalized + '.py')}{CRst}` (preferred)")
-                print(f"  `{FGray}{os.path.join(script_dir, normalized + '.sh')}{CRst}`")
-                print(f"  `{FGray}{os.path.join(script_dir, normalized + '.ps1')}{CRst}`")
-            else:
-                print(f"{FLRed}Cannot find script: `{os.path.join(script_dir, normalized)}`{CRst}", file=sys.stderr)
+        # CLI arg provided (not --list)
+        assert script_name is not None  # guaranteed by show_list logic
+        script_path = _resolve_with_groups(script_name, script_dir, additional_groups)
+        if script_path is None:
+            print(f"{FLRed}Cannot find script: `{script_name}`{CRst}", file=sys.stderr)
             return 1
-        script_path = resolved
 
     if os.path.abspath(script_path) == os.path.abspath(__file__):
         print(f"{FLRed}Refusing to run itself: `{script_path}`{CRst}", file=sys.stderr)
