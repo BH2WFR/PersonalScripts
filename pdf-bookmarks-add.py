@@ -73,7 +73,9 @@ Usage:
   -o, --output <path>  output PDF file path
 
 {FLYellow}Description:{CRst}
-  Add table-of-contents bookmarks to PDF books.
+  Add table-of-contents bookmarks to scanned PDF books.
+  Workflow: screenshot the TOC page → feed to a multimodal LLM (e.g. Qwen3-VL) →
+  get structured JSON → use this script to parse the JSON and write bookmarks into the PDF.
   Reads JSON outline (page/level/index/title format) from an LLM and writes it into the PDF.
   `page` supports negative numbers: -1 = the page before page 1, -2 = two pages before page 1, etc.
 

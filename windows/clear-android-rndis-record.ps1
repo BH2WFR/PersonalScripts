@@ -30,10 +30,11 @@ Usage:
   .\$scriptName -Help
 
 Description:
-  Android USB tethering creates a new network profile (e.g. "Network",
-  "Network 1", "网络 2") every time you connect. Over time this clutters
-  the registry and the network list. This script removes those entries
-  from the Windows registry.
+  Every time you enable USB tethering on an Android phone, Windows creates
+  a new network profile (e.g. "Network", "Network 1", "网络 2"). This causes
+  the "Local Area Connection" name to keep incrementing ("Local Area Connection"
+  → "Local Area Connection 1" → "Local Area Connection 2" ...). Over time,
+  stale profiles clutter the registry. This script removes those entries.
 
   Requires Administrator privileges (HKLM write access).
 

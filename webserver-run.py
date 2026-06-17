@@ -125,8 +125,8 @@ def main():
   python {script_name} --help           show this help
 
 {FLYellow}Description:{CRst}
-  Start a local HTTP server to serve static web tools (HTML, JS, images, etc.).
-  Uses Python's built-in http.server with threading enabled.
+  Serve a local folder (or a web directory containing index.html) as an HTTP
+  service. Uses Python's built-in http.server with threading enabled.
 
 {FLYellow}Options:{CRst}
   <PATH>             Directory or index.html file to serve (positional)

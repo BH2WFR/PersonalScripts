@@ -28,11 +28,11 @@ def main() -> int:
 
     {FLYellow}Supported Link Types:{CRst}
       Windows:
-        Files   - Symlink (soft link, relative paths supported) / Hardlink
-        Dirs    - SymlinkD (directory soft link, relative paths) / Junction (no relative paths)
+        Files   - Symlink (absolute or ..\\ relative path) / Hardlink (absolute path)
+        Dirs    - SymlinkD (absolute, ..\\ relative, or \\ root-relative path) / Junction (absolute path)
       Linux/macOS:
-        Files   - Symlink / Hardlink
-        Dirs    - Symlink
+        Files   - Symlink (absolute or ../ relative path) / Hardlink (absolute path)
+        Dirs    - Symlink (absolute or ../ relative path)
 
     {FLYellow}Single Directory Mode{CRst} (when only one directory is provided):
       0  Link the directory itself
@@ -43,7 +43,7 @@ def main() -> int:
       1. Enter source paths (multi-line, Ctrl+Z/Ctrl+D to end)
       2. Choose link type (separately for files and directories)
       3. Enter target directory
-      4. Choose relative or absolute paths
+      4. Choose how target paths are stored in symlinks
       5. Confirm and execute; conflicts can be skip/skip all/overwrite/overwrite all
 
     {FLYellow}Requirements:{CRst}
@@ -110,6 +110,11 @@ def main() -> int:
         JUNCTION = 3      # Windows 目录 junction
         HARDLINK = 4      # 硬链接
 
+    class TargetPathMode(enum.Enum):
+        ABSOLUTE = 1            # C:\path\to\target or /path/to/target
+        RELATIVE = 2            # ..\target on Windows, ../target on POSIX
+        WIN_DRIVE_ROOT = 3      # \path\to\target, Windows SymlinkD only
+
     file_link_type: Optional[LinkType] = None
     dir_link_type: Optional[LinkType] = None
 
@@ -118,7 +123,7 @@ def main() -> int:
         return Menu.select(
             [
                 MenuOption(["1"], f"Symlink (soft link{', supports relative paths' if IS_WIN else ''})", value=LinkType.SYMLINK),
-                MenuOption(["2"], f"Hardlink (hard link{'' if IS_WIN else ', supports relative paths'})", value=LinkType.HARDLINK),
+                MenuOption(["2"], "Hardlink (hard link, always uses absolute source path)", value=LinkType.HARDLINK),
             ],
             prompt="Choose for files", default_key="1",
         )
@@ -243,16 +248,37 @@ def main() -> int:
     print(f"  -> target: {FLYellow}{target_dir}{CRst}")
 
 
-    #============ 使用相对路径？ ===========
-    use_relative = False
+    #============ 链接中保存的目标路径形式 ===========
+    target_path_mode = TargetPathMode.ABSOLUTE
     if IS_WIN:
-        if (file_link_type == LinkType.SYMLINK) or (dir_link_type == LinkType.SYMLINKD):
-            resp = input(f"{FLCyan}Use relative paths for symlinks? (y/n, default n): {CRst}").strip().lower() or "n"
-            use_relative = resp == "y"
+        has_relative_capable_link = (file_link_type == LinkType.SYMLINK) or (dir_link_type == LinkType.SYMLINKD)
     else:
-        if file_link_type != LinkType.HARDLINK or dir_link_type != LinkType.HARDLINK:
-            resp = input(f"{FLCyan}Use relative paths for symlinks? (y/n, default n): {CRst}").strip().lower() or "n"
-            use_relative = resp == "y"
+        has_relative_capable_link = (file_link_type == LinkType.SYMLINK) or (dir_link_type == LinkType.SYMLINK)
+    if has_relative_capable_link:
+        path_mode_options = [
+            MenuOption(["1"], "Absolute path", value=TargetPathMode.ABSOLUTE),
+            MenuOption(["2"], "Relative path from link directory", value=TargetPathMode.RELATIVE),
+        ]
+        selected_relative_link_types = [
+            lt for lt in (file_link_type, dir_link_type)
+            if lt in (LinkType.SYMLINK, LinkType.SYMLINKD)
+        ]
+        supports_win_drive_root = (
+            IS_WIN
+            and len(selected_relative_link_types) > 0
+            and all(lt == LinkType.SYMLINKD for lt in selected_relative_link_types)
+        )
+        if supports_win_drive_root:
+            path_mode_options.append(
+                MenuOption(["3"], r"Windows same-drive root-relative path (\target, SymlinkD only)", value=TargetPathMode.WIN_DRIVE_ROOT)
+            )
+        target_path_mode = Menu.select(
+            path_mode_options,
+            prompt="Choose target path style for symlinks",
+            default_key="1",
+        )
+        if target_path_mode is None:
+            target_path_mode = TargetPathMode.ABSOLUTE
 
 
     #============ 确认 ===========
@@ -261,7 +287,7 @@ def main() -> int:
     print(f"  Directories: {len(dirs)}, link type: {FLGreen}{dir_link_type.name if dir_link_type else 'N/A'}{CRst}")
     print(f"  Others    : {len(others)}")
     print(f"  Target    : {FLYellow}{target_dir}{CRst}")
-    print(f"  Relative  : {FLYellow}{use_relative}{CRst}")
+    print(f"  Path mode : {FLYellow}{target_path_mode.name}{CRst}")
     if mirror_mode:
         print(f"  Mirror    : {FLYellow}mode {mirror_mode}{CRst}")
     confirm = input(f"\n{FLCyan}Proceed? (y/n, default y): {CRst}").strip().lower() or "y"
@@ -274,14 +300,55 @@ def main() -> int:
     conflict_skip_all = False
     conflict_overwrite_all = False
 
-    def resolve_target(source_path: str) -> str:
+    def resolve_target(source_path: str, link_type: LinkType) -> str:
         """返回链接中存储的目标路径（相对或绝对）"""
-        if use_relative:
-            return os.path.relpath(os.path.abspath(source_path), target_dir)
+        if link_type == LinkType.HARDLINK or link_type == LinkType.JUNCTION:
+            return os.path.abspath(source_path)
+        if target_path_mode == TargetPathMode.RELATIVE:
+            source_abs = os.path.abspath(source_path)
+            if IS_WIN:
+                source_drive = os.path.splitdrive(source_abs)[0].lower()
+                target_drive = os.path.splitdrive(target_dir)[0].lower()
+                if source_drive != target_drive:
+                    print(f"  {FLYellow}Relative path skipped across drives:{CRst} {source_abs}")
+                    return source_abs
+                return os.path.relpath(source_abs, target_dir).replace("/", "\\")
+            return os.path.relpath(source_abs, target_dir)
+        if target_path_mode == TargetPathMode.WIN_DRIVE_ROOT:
+            source_abs = os.path.abspath(source_path)
+            if not IS_WIN or link_type != LinkType.SYMLINKD:
+                return source_abs
+            source_drive, source_tail = os.path.splitdrive(source_abs)
+            target_drive = os.path.splitdrive(target_dir)[0]
+            if source_drive.lower() != target_drive.lower():
+                print(f"  {FLYellow}Root-relative path skipped across drives:{CRst} {source_abs}")
+                return source_abs
+            return source_tail.replace("/", "\\")
         return os.path.abspath(source_path)
 
     def link_name(source_path: str) -> str:
         return os.path.basename(os.path.abspath(source_path))
+
+    def remove_existing_link_path(link_path: str) -> bool:
+        if not os.path.lexists(link_path):
+            return True
+        try:
+            if os.path.islink(link_path):
+                try:
+                    os.unlink(link_path)
+                except IsADirectoryError:
+                    os.rmdir(link_path)
+            elif os.name == "nt" and getattr(os.path, "isjunction", lambda _p: False)(link_path):
+                os.rmdir(link_path)
+            elif os.path.isdir(link_path):
+                print(f"  {FLRed}Refuse to overwrite real directory:{CRst} {link_path}")
+                return False
+            else:
+                os.unlink(link_path)
+            return True
+        except Exception as e:
+            print(f"  {FLRed}Failed to remove existing path:{CRst} {link_path} -> {e}")
+            return False
 
     def handle_conflict(link_path: str) -> str:
         """处理已存在的链接/文件。返回 'skip' 'overwrite' 'skip_all' 'overwrite_all'"""
@@ -289,8 +356,7 @@ def main() -> int:
         if conflict_skip_all:
             return "skip"
         if conflict_overwrite_all:
-            os.unlink(link_path) if os.path.lexists(link_path) else None
-            return "overwrite"
+            return "overwrite" if remove_existing_link_path(link_path) else "skip"
 
         print(f"\n{FLYellow}Conflict: {FLRed}{link_path}{FLYellow} already exists.{CRst}")
         choice = Menu.select(
@@ -307,12 +373,9 @@ def main() -> int:
             return "skip"
         elif choice == "overwrite_all":
             conflict_overwrite_all = True
-            os.unlink(link_path) if os.path.lexists(link_path) else None
-            return "overwrite"
+            return "overwrite" if remove_existing_link_path(link_path) else "skip"
         elif choice == "overwrite":
-            if os.path.lexists(link_path):
-                os.unlink(link_path)
-            return "overwrite"
+            return "overwrite" if remove_existing_link_path(link_path) else "skip"
         else:
             return "skip"
 
@@ -356,7 +419,7 @@ def main() -> int:
 
     def process_path(source: str, link_type: LinkType):
         nonlocal succeed_count, fail_count
-        resolved = resolve_target(source)
+        resolved = resolve_target(source, link_type)
         name = link_name(source)
         link_path = os.path.join(target_dir, name)
         if create_link(resolved, link_path, link_type):
@@ -364,20 +427,26 @@ def main() -> int:
         else:
             fail_count += 1
 
-    def process_mirror_flat(source_dir: str, file_lt: LinkType, dir_lt: LinkType):
+    def process_mirror_flat(source_dir: str, file_lt: Optional[LinkType], dir_lt: Optional[LinkType]):
         """模式1：将文件夹内所有内容展平链接到目标"""
         nonlocal succeed_count, fail_count
         for entry in os.listdir(source_dir):
             entry_path = os.path.join(source_dir, entry)
-            resolved = resolve_target(entry_path)
-            link_path = os.path.join(target_dir, entry)
+            if os.path.islink(entry_path):
+                print(f"  {FGray}SKIP (special): {entry_path}{CRst}")
+                continue
             lt = dir_lt if os.path.isdir(entry_path) else file_lt
+            if lt is None:
+                print(f"  {FGray}SKIP (unsupported): {entry_path}{CRst}")
+                continue
+            resolved = resolve_target(entry_path, lt)
+            link_path = os.path.join(target_dir, entry)
             if create_link(resolved, link_path, lt):
                 succeed_count += 1
             else:
                 fail_count += 1
 
-    def process_mirror_recursive(source_dir: str, file_lt: LinkType):
+    def process_mirror_recursive(source_dir: str, file_lt: Optional[LinkType]):
         """模式2：递归镜像目录结构，子目录创建为真实目录，文件创建为链接"""
         nonlocal succeed_count, fail_count
         for dirpath, dirnames, filenames in os.walk(source_dir):
@@ -391,7 +460,10 @@ def main() -> int:
                 src = os.path.join(dirpath, name)
                 if os.path.islink(src):
                     continue
-                resolved = resolve_target(src)
+                if file_lt is None:
+                    print(f"  {FGray}SKIP (unsupported): {src}{CRst}")
+                    continue
+                resolved = resolve_target(src, file_lt)
                 link_path = os.path.join(target_subdir, name)
                 if create_link(resolved, link_path, file_lt):
                     succeed_count += 1
@@ -411,10 +483,8 @@ def main() -> int:
             for d in dirs:
                 process_path(d, dir_link_type)
     elif mirror_mode == 1:
-        assert file_link_type is not None and dir_link_type is not None
         process_mirror_flat(mirror_source_dir, file_link_type, dir_link_type)
     elif mirror_mode == 2:
-        assert file_link_type is not None
         process_mirror_recursive(mirror_source_dir, file_link_type)
 
     print(f"\n{FLGreen}Done. Succeed: {succeed_count}{CRst}, {FLRed}Failed: {fail_count}{CRst}, {FLYellow}Total: {succeed_count + fail_count}{CRst}\n")

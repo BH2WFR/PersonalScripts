@@ -35,7 +35,7 @@ def main() -> int:
 
 
     g_path = ""
-    # g_isFollowSymlinks = False # 是否跟随符号链接修改时间，False 时修改链接本身的时间
+    g_isFollowSymlinks = False # 是否跟随符号链接修改时间，False 时修改链接本身的时间
     g_isRecursive = True
     # 时间格式："YYYY-MM-DD HH:MM:SS", "YYYY-MM-DD HH:MM:SS.zzz" 或 空字符串（不更改）
     g_timeFormatHint : Final = "YYYY-MM-DD HH:MM:SS, or YYYY-MM-DD HH:MM:SS.zzz (milliseconds), or empty to keep unchanged"
@@ -226,17 +226,19 @@ def main() -> int:
     class FileNode():
         path : str
         timeInfo : FileTimeInfo
+        shouldWriteCreatedTime : bool
 
         def __init__(self, path:str):
             self.path = path
+            self.shouldWriteCreatedTime = False
             self.load_file_time_info()
 
         def load_file_time_info(self) -> None:
             timeInfo = FileTimeInfo()
-            if(os.path.exists(self.path) == False):
+            if(os.path.lexists(self.path) == False):
                 print(f"{FLRed}File does not exist: {self.path}{CRst}")
                 return None
-            stat_info = os.stat(self.path)
+            stat_info = os.stat(self.path, follow_symlinks=g_isFollowSymlinks)
             # st_birthtime exists on macOS and some BSDs; it is typically missing on Linux.
             birth = getattr(stat_info, "st_birthtime", None)
             timeInfo.createdTime = datetime.datetime.fromtimestamp(birth) if birth is not None else None
@@ -245,7 +247,7 @@ def main() -> int:
             self.timeInfo = timeInfo
 
         def print_times(self):
-            if(os.path.exists(self.path) == False):
+            if(os.path.lexists(self.path) == False):
                 print(f"{FLRed}File does not exist: {self.path}{CRst}")
                 return
             extra = f"{FLYellow}[LINK]{CRst}" if(os.path.islink(self.path)) else ""
@@ -280,9 +282,10 @@ def main() -> int:
             if timeConfig.createdTime is not None:
                 j = timeConfig.createdTimeJitter
                 self.timeInfo.createdTime = get_jittered_time(timeConfig.createdTime, j) if j is not None else timeConfig.createdTime
+                self.shouldWriteCreatedTime = True
 
         def write_file_time_info(self) -> bool:
-            if(os.path.exists(self.path) == False):
+            if(os.path.lexists(self.path) == False):
                 print(f"{FLRed}File does not exist: {self.path}{CRst}")
                 return False
 
@@ -290,13 +293,13 @@ def main() -> int:
             mtime = self.timeInfo.modifiedTime.timestamp() if self.timeInfo.modifiedTime is not None else None
             ret : bool = True
             if(atime is None):
-                atime = os.stat(self.path).st_atime
+                atime = os.stat(self.path, follow_symlinks=g_isFollowSymlinks).st_atime
             if(mtime is None):
-                mtime = os.stat(self.path).st_mtime
+                mtime = os.stat(self.path, follow_symlinks=g_isFollowSymlinks).st_mtime
 
             if (atime is not None) and (mtime is not None):
                 try:
-                    os.utime(self.path, (atime, mtime))
+                    os.utime(self.path, (atime, mtime), follow_symlinks=g_isFollowSymlinks)
                 except Exception as e:
                     print(f"{FLRed}Failed to set modified and accessed time for file: {self.path}. Error: {e}{CRst}")
                     ret = False
@@ -304,10 +307,10 @@ def main() -> int:
                 print(f"{FLRed}Invalid time info for file: {self.path}. openedTime and modifiedTime must be provided.{CRst}")
                 ret = False
 
-            if(self.timeInfo.createdTime is not None):
+            if self.shouldWriteCreatedTime and self.timeInfo.createdTime is not None:
                 if sys.platform.startswith("win"):
                     try:
-                        _set_creation_time_windows(self.path, self.timeInfo.createdTime, follow_symlinks=False)
+                        _set_creation_time_windows(self.path, self.timeInfo.createdTime, follow_symlinks=g_isFollowSymlinks)
                     except Exception as e:
                         print(f"{FLRed}Failed to set creation time for file: {self.path}. Error: {e}{CRst}")
                         return False
@@ -320,12 +323,13 @@ def main() -> int:
 
     def load_file_nodes_from_directory(directory:str, recursive:bool) -> list[FileNode]:
         fileNodes = []
-        if not os.path.exists(directory):
+        if not os.path.lexists(directory):
             print(f"{FLRed}Directory does not exist: {directory}{CRst}")
             return fileNodes
         if(os.path.isfile(directory)):
             fileNodes.append(FileNode(directory))
             return fileNodes
+        fileNodes.append(FileNode(directory))
         if recursive:
             for root, dirs, files in os.walk(directory):
                 for file in files:
@@ -373,7 +377,7 @@ def main() -> int:
             return 0
         succeedCnt = 0
         for path, times in backupData.items():
-            if not os.path.exists(path):
+            if not os.path.lexists(path):
                 print(f"{FLRed}File does not exist: {path}{CRst}")
                 continue
             node = FileNode(path)
@@ -381,6 +385,7 @@ def main() -> int:
                 node.timeInfo.createdTime = parse_dt(times.get("createdTime"))
                 node.timeInfo.modifiedTime = parse_dt(times.get("modifiedTime"))
                 node.timeInfo.openedTime = parse_dt(times.get("openedTime"))
+                node.shouldWriteCreatedTime = node.timeInfo.createdTime is not None
             except ValueError as e:
                 print(f"{FLRed}Invalid time format in backup for {path}: {e}{CRst}")
                 continue
@@ -421,8 +426,9 @@ def main() -> int:
             g_isRecursive = isRecursiveStr.strip().lower() == 'y'
         print(f" path: {g_path}")
 
-    # followSymlinksStr = input(f"{FLCyan}Follow symbolic links when modifying time? (y/n, default n): {CRst}") or "n"
-    # g_isFollowSymlinks = followSymlinksStr.strip().lower() == 'y'
+    if(g_feature == Feature.MODIFY_TIMES) or g_feature == Feature.BACKUP_TIMES or g_feature == Feature.SHOW_TIMES:
+        followSymlinksStr = input(f"{FLCyan}Follow symbolic links when reading/modifying time? (y/n, default n): {CRst}") or "n"
+        g_isFollowSymlinks = followSymlinksStr.strip().lower() == 'y'
 
     if(g_feature == Feature.MODIFY_TIMES):
         modifyTogetherStr = input(f"{FLCyan}Modify created, modified and opened time together to the same value? (y/n, default n): {CRst}") or "n"
@@ -484,12 +490,13 @@ def main() -> int:
 
         node = FileNode(g_path)
         if(os.path.isdir(g_path)):
-            is_show_recursively = input(f"Path `{g_path}` is a directory, recursively showing times for contained files/directories? (y/n, default y): ") or "n"
+            is_show_recursively = input(f"Path `{g_path}` is a directory, recursively showing times for contained files/directories? (y/n, default y): ") or "y"
             if is_show_recursively.strip().lower() == 'y':
                 nodes = load_file_nodes_from_directory(g_path, recursive=True)
                 for n in nodes:
                     n.print_times()
                 print(f"{FLGreen}Total {len(nodes)} files/directories shown.{CRst}")
+                return 0
 
         node.print_times()
         return 0

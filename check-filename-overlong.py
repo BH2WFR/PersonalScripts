@@ -56,12 +56,11 @@ Usage:
   --encoding=ENC      encoding (default: utf-8)
 
 {FLYellow}Description:{CRst}
-  Recursively scan directory, find filenames exceeding the byte length limit,
-  and provide truncation/rename options. Commonly used for NAS devices
-  (e.g., Synology encrypted shared folder with 143-byte filename limit).
-
-{FLYellow}Requirements:{CRst}
-  No external dependencies.
+  Recursively scan directory for filenames whose UTF-8 byte length exceeds
+  the limit, then truncate them while preserving the file extension.
+  When truncation produces a name collision, appends _1, _2, etc. before
+  the extension to avoid duplicates. Commonly used for NAS devices
+  (e.g., Synology encrypted shared folder has a 143-byte filename limit).
 """)
         return 0
 

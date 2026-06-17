@@ -30,12 +30,12 @@ Usage:
   python {script_name} --help         show this help
 
 {FLYellow}Description:{CRst}
-  macOS NTFS disk manager for mounting NTFS partitions with
-  read-write support via ntfs-3g (macFUSE).
-
-  Menu options:
-    [N] Mount by ntfs-3g    — mount NTFS partition with read-write support
-    [S] Mount by system     — mount with macOS built-in read-only driver
+  Interactive NTFS partition manager for macOS.
+  Scans for NTFS partitions then offers three operations:
+    [N] Mount by ntfs-3g    — read-write mount via ntfs-3g (macFUSE),
+                              auto-detects existing mounts and suggests
+                              alternative directories
+    [S] Mount by system     — read-only mount via macOS built-in driver
     [E] Eject disk          — safely eject the entire disk
 
 {FLYellow}Requirements:{CRst}

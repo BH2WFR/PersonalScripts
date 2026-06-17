@@ -42,8 +42,8 @@ python compile-script.py                         # All platforms
 - Auto-detects Python: prefers `conda info --base`, then known conda paths, falls back to `python3`
 - **Script name highlighting** via `HIGHLIGHT_PATTERNS` global (list of `{"pattern": regex, "color": ANSI}` dicts); matched portions use the entry's color, non-matched portions stay `PY_SCRIPT_HIGHLIGHT_COLOR`
 - **Configurable display colors**: `SUBFOLDER_HIGHLIGHT_COLOR`, `PY_SCRIPT_HIGHLIGHT_COLOR`, `SH_SCRIPT_HIGHLIGHT_COLOR`, `PS1_SCRIPT_HIGHLIGHT_COLOR`
-- **`ZL_SCRIPT_ADDITIONAL_PATH`** env var (semicolon-separated) lists scripts from external directories under `─── Additional [N] ───` (1-indexed) with the same discovery / exclude rules
-- **`@N:` prefix** resolves duplicate script names across groups: `@0:` = main dir, `@1:` = first additional dir, etc. Bare names search all groups; when duplicates exist, an interactive `Menu.select()` lists candidates with `@N:` labels (default `@0`). Works in both CLI (`python run-script.py @1:test.py`) and interactive mode
+- **`ZL_SCRIPT_ADDITIONAL_PATH`** env var (semicolon-separated) **discovers scripts from external directories**, each listed as `─── Additional [N] ───` (1-indexed) with the same discovery / exclude rules. 
+  Paired with the **`@N:` prefix** for precise source targeting: `@0:` = main dir, `@1:` = first additional dir (matching `Additional [1]`), etc. Bare names (no prefix) search all groups; when duplicates exist, an interactive `Menu.select()` lists candidates with `@N:` labels (default `@0:`). Works in CLI too (`python run-script.py @1:test.py`)
 - `compile-script.py` compiles any project Python script into a standalone executable via Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear)
 
 ---
@@ -56,16 +56,16 @@ python compile-script.py                         # All platforms
 |--------|-------------|----------|
 | `pdf-compress.py` | PDF compression with Ebook (standard) and Custom (DPI/quality) modes | Cross-platform. `ghostscript` |
 | `pdf-decrypt.py` | Decrypt password-protected PDFs (including permission-only protection), preserving full document structure | Cross-platform. `pip install pypdf` |
-| `pdf-bookmarks-add.py` | Add table-of-contents bookmarks to PDFs from LLM-generated JSON (page/level/index/title) | Cross-platform. `pip install pypdf` |
-| `document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks) | macOS only. `pip install mss pynput Pillow` |
+| `pdf-bookmarks-add.py` | For scanned PDF books: take a screenshot of the TOC page, send it to a multimodal LLM (e.g. Qwen3-VL) to generate JSON (page/level/index/title), then use this script to parse the JSON and write bookmarks into the PDF | Cross-platform. `pip install pypdf` |
+| `document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks), for DRM-protected or encrypted-USB PDFs | **macOS only**. `pip install mss pynput Pillow` |
 
 ### Video Downloaders
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API). Loops after each batch for continuous downloading | Cross-platform. `BBDown`, `ffmpeg`, `aria2` (optional) |
-| `download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist). Loops after each batch | Cross-platform. `yt-dlp`, `ffmpeg`, `deno` (optional) |
-| `download-m3u8.py` | m3u8/HLS stream downloader with custom headers support. Loops after each batch | Cross-platform. `yt-dlp`, `ffmpeg` |
+| `download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API) | Cross-platform. `BBDown`, `ffmpeg`, `aria2` (optional) |
+| `download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist) | Cross-platform. `yt-dlp`, `ffmpeg`, `deno` (optional) |
+| `download-m3u8.py` | m3u8/HLS stream downloader with custom headers support | Cross-platform. `yt-dlp`, `ffmpeg` |
 
 ### Video / Image Editing
 
@@ -78,14 +78,14 @@ python compile-script.py                         # All platforms
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `link-create.py` | Cross-platform symlink/hardlink creation (Windows: SymlinkD, Junction; Linux/macOS: Symlink, Hardlink). Supports relative paths, mirror modes, conflict handling | Cross-platform. No external deps |
-| `link-scan.py` | Recursively scan directories for symlinks, Junctions, hardlinks. Detect broken links, auto-fix or delete | Cross-platform. No external deps |
-| `windows/link-fix-symlinkd.py` | Windows-only: Convert broken directory symlinks to symlinkd | Windows only. No external deps |
-| `check-filename-overlong.py` | Check and truncate overlong filenames by UTF-8 byte limit (e.g., Synology NAS 143-byte limit) | Cross-platform. No external deps |
-| `remove-os-junk-files.py` | Recursively remove OS-generated junk files (`.DS_Store`, `__MACOSX__`, `Thumbs.db`, etc.) | Cross-platform. No external deps |
-| `modify-file-time.py` | Modify file/folder timestamps (created, modified, accessed) with optional random jitter | Cross-platform. No external deps |
-| `batch-add-chmod-x.sh` | Recursively add `chmod +x` to `.py`/`.sh` files via git (requires sudo) | Linux/macOS. `git`, `sudo` (built-in) |
-| `git-batch-add-chmod-x.ps1` | PowerShell version: mark `.py`/`.sh` files as executable in git index | Windows. `PowerShell`, `git` |
+| `link-create.py` | Cross-platform symlink/hardlink creation (Windows: SymlinkD, Junction; Linux/macOS: Symlink, Hardlink). Supports relative paths, mirror modes, conflict handling | Cross-platform |
+| `link-scan.py` | Recursively scan directories, printing all symlinks, symlinkd, Junctions, and hardlinks. Detects broken links (dead targets), auto-fix or delete; on Windows can convert file symlinks incorrectly pointing to directories into symlinkd | Cross-platform |
+| `windows/link-fix-symlinkd.py` | Windows-only: Convert file symlinks that incorrectly point to directories into proper directory symlinks (symlinkd / SYMLINKD). On Windows, file symlinks and directory symlinks are distinct reparse point types; some tools mistakenly create file symlinks for directory targets, causing traversal failures | **Windows only** |
+| `check-filename-overlong.py` | Truncate filenames exceeding a byte-length limit (default 143, for Synology encrypted folders) measured in UTF-8 encoding. Preserves file extension and intelligently avoids name collisions by appending `_1`, `_2`, etc. before the extension | Cross-platform |
+| `remove-os-junk-files.py` | Recursively remove OS-generated junk files (`.DS_Store`, `__MACOSX__`, `Thumbs.db`, etc.) | Cross-platform |
+| `modify-file-time.py` | Modify file/folder timestamps (created, modified, accessed) with optional random jitter | Cross-platform |
+| `batch-add-chmod-x.sh` | Recursively find files by extension (default `.py`/`.sh`) and add `chmod +x`, auto-elevates via sudo | Linux/macOS. `bash`, `sudo` (built-in) |
+| `git-batch-add-chmod-x.ps1` | Mark `.py`/`.sh` files in the git staging area as executable via `git update-index --chmod=+x`, so files committed on Windows carry +x permissions when cloned on Linux/macOS | Windows. `PowerShell`, `git` |
 
 ### System & Network
 
@@ -93,42 +93,41 @@ python compile-script.py                         # All platforms
 |--------|-------------|--------------|
 | `disk-smart-info.py` | Cross-platform SMART disk health viewer. Lists SMART-capable disks and displays detailed attributes | Cross-platform. `smartmontools` |
 | `tailscale-restart-accept-routes.py` | Restart Tailscale subnet routes by toggling `--accept-routes` off/on | Cross-platform. `tailscale` |
-| `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables | Cross-platform. `pip install boto3` |
-| `macos/ntfs-3g-utils.py` | macOS-only: NTFS disk manager with read-write support via ntfs-3g (macFUSE). Mount, system-mount, eject | macOS only. `brew install ntfs-3g macfuse` |
-| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, brightness (built-in + DDC/CI), toggle internal display. CLI: `--list`, `--toggle`, `--ddc-ci-info`, `--help` | macOS only (Apple Silicon). No external deps; optional `pip install pyobjc` |
-| `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI; Linux uses `/sys/class/power_supply`. Some fields unavailable if firmware/driver does not expose them. | Cross-platform. No external deps |
-| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | macOS only. Uses `xattr` (built-in) |
-| `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry | Windows only. PowerShell (built-in) |
-| `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | Windows only. Built-in tools; optional `scoop install sudo gsudo` |
-| `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | Windows only. PowerShell (built-in) |
-| `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | macOS only. Built-in tools; optional `brew install trash` |
-| `webserver-run.py` | Run a local HTTP server for static web tools. Interactive (dir/bind/port) or CLI (`--dir`, `--bind`, `--port`). Uses Python built-in `http.server` with threading | Cross-platform. No external deps |
-| `webserver-run.bat` | Windows: double-click launcher for webserver-run | Windows. No external deps |
+| `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables: `ZL-IP-ADDRESS-S3-BUCKET`, `ZL-IP-ADDRESS-S3-ENDPOINT`, `ZL-IP-ADDRESS-S3-ID`, `ZL-IP-ADDRESS-S3-SECRET` | Cross-platform. `pip install boto3` |
+| `macos/ntfs-3g-utils.py` | macOS-only: Interactive NTFS partition manager. Scans for NTFS partitions then offers three operations: read-write mount via ntfs-3g, system read-only mount, or eject disk. Auto-detects existing mount points and suggests alternative directories | **macOS only**. `brew install ntfs-3g macfuse` |
+| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, resolution, brightness (built-in + external DDC/CI). Highlight: toggle the MacBook built-in display on/off when external monitors are connected (`--toggle-built-in`); refuses to disable if no external display is active, auto-restores brightness when re-enabling | **macOS only** (Apple Silicon); optional `pip install pyobjc` |
+| `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI; Linux uses `/sys/class/power_supply`. Some fields unavailable if firmware/driver does not expose them | Cross-platform |
+| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | **macOS only**. Uses `xattr` (built-in) |
+| `windows/clear-android-rndis-record.ps1` | Remove stale Android USB tethering/RNDIS network profiles from Windows registry. Each time the phone enables USB hotspot, Windows creates a new profile ("Local Area Connection" → "Local Area Connection 1" → "Local Area Connection 2"…), causing the connection name number to keep incrementing | **Windows only**. PowerShell (built-in) |
+| `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | **Windows only**. Built-in tools; optional `scoop install sudo gsudo` |
+| `windows/show-screen-resolution.ps1` | Display monitor resolution and screen info via Windows API | **Windows only**. PowerShell (built-in) |
+| `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | **macOS only**. Built-in tools; optional `brew install trash` |
+| `webserver-run.py` | Serve a local folder (or a web directory containing index.html) as an HTTP service. Interactive (dir/bind/port) or CLI (`--dir`, `--bind`, `--port`). Uses Python built-in `http.server` with threading | Cross-platform |
 
 ### Utilities
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` | Cross-platform. No external deps; Linux clipboard needs `wl-paste` or `xclip` |
+| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` | Cross-platform; Linux clipboard needs `wl-paste` or `xclip` |
 | `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) | Cross-platform. `pip install numpy matplotlib plotly` |
-| `research/npy-viewer.bat` | Windows: double-click/drag-and-drop launcher for npy viewer | Windows. Requires `npy-viewer.py` deps |
-| `research/npy-viewer.sh` | Linux/macOS: double-click launcher for npy viewer | Linux/macOS. Requires `npy-viewer.py` deps |
-| `run-script.py` | Python launcher for running any script in the repo | Cross-platform. `python3` |
-| `run-script.sh` | Bash launcher for running any script in the repo | Linux/macOS. `bash`, `python3` |
-| `run-script.ps1` | PowerShell launcher for running any script in the repo | Windows. `PowerShell`, `python` |
-| `compile-script.py` | Interactive compiler: select any Python script and package it into a standalone executable with Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting) | Cross-platform. `pip install nuitka` and/or `pip install pyinstaller` |
-| `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | macOS only. No external deps |
-| `windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | Windows only. No external deps |
+| `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | **macOS only** |
+| `windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | **Windows only** |
+
+### Launchers & Compiler
+
+| Script | Description | Requirements |
+|--------|-------------|--------------|
+| `run-script.py` | Unified script launcher. Interactive mode lists all runnable scripts with number/name selection; CLI direct invocation (`python run-script.py <script> [args...]`); `--list` to show available scripts; platform-aware filtering (hides scripts mismatching current OS); interpreter-aware (hides `.sh`/`.ps1` when bash/pwsh unavailable); discovers external scripts via `ZL_SCRIPT_ADDITIONAL_PATH` and targets them precisely with `@N:` prefix | Cross-platform. `python3` |
+| `run-script.sh` | Bash launcher (launcher for the launcher): finds a Python interpreter then delegates all arguments to `run-script.py` | Linux/macOS. `bash`, `python3` |
+| `run-script.ps1` | PowerShell launcher (launcher for the launcher): finds a Python interpreter then delegates all arguments to `run-script.py` | Windows. `PowerShell`, `python` |
+| `compile-script.py` | Interactive compiler: select any Python script and package it into a standalone executable with Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear) | Cross-platform. `pip install nuitka` and/or `pip install pyinstaller` |
 
 ### Test Helpers
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `test/keyboard-hook.py` | Cross-platform global keyboard & mouse hook monitor. Prints key/mouse/scroll events with foreground window tracking. Also serves as an input-control library: `press`, `release`, `tap`, `hotkey`, `send` (sequences), `move`, `click`, `scroll`, `get_foreground_window`. macOS uses native CGEvent tap; Windows uses `SetWindowsHookEx` via ctypes; Linux uses X11 XRecord. | Cross-platform. macOS: `pip install pyobjc-framework-Quartz`. Windows: none (stdlib ctypes). Linux: `pip install python-xlib`. |
-| `test/print-argv.py` | Print all command-line arguments | Cross-platform. No external deps |
-| `test/print-argv.ps1` | PowerShell: print all arguments with color | Windows. PowerShell (built-in) |
-| `test/print-argv.sh` | Bash: print all arguments with color | Linux/macOS. `bash` (built-in) |
-| `test/keyboard-hook.py` | Global keyboard & mouse hook monitor (press/release/click/scroll). Can also send input (press, tap, hotkey, move, click, scroll). Hotkey callbacks via `setup()` API | macOS (pyobjc), Windows (stdlib ctypes), Linux (python-xlib/X11) |
+| `test/keyboard-hook.py` | Cross-platform global keyboard & mouse hook monitor. Prints key/mouse/scroll events with foreground window tracking. Also serves as an input-control library: `press`, `release`, `tap`, `hotkey`, `send` (sequences), `move`, `click`, `scroll`, `get_foreground_window`. macOS uses native CGEvent tap; Windows uses `SetWindowsHookEx` via ctypes; Linux uses X11 XRecord | Cross-platform. macOS: `pip install pyobjc-framework-Quartz`; Windows: none (stdlib ctypes); Linux: `pip install python-xlib` |
+| `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | Print all command-line arguments. Python / Bash / PowerShell implementations — identical functionality | Cross-platform. `.py` needs `python3`; `.sh` needs `bash`; `.ps1` needs `PowerShell` |
 
 ---
 

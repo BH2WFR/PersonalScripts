@@ -137,22 +137,40 @@ def main():
         options.append(MenuOption([str(idx)], "  ".join(parts), value=idx))
     print()
 
-    idx = Menu.select(options, prompt="Select disk number", separator=False)
-    if idx is None:
-        sys.exit(0)
+    while True:
+        Utils.print_separator(width=60, color_ansi_esc=FLCyan)
+        idx = Menu.select(options, prompt="Select disk number (Enter to exit)", separator=False)
+        if idx is None:
+            Utils.print_exit_message("Bye.")
+            sys.exit(0)
 
-    selected = devices[idx]
-    print(f"\n{FLCyan}{'─' * 60}{CRst}")
-    print(f"{FLYellow}  SMART info for {FLGreen}{selected['dev']}{CRst}"
-          f"{FLYellow} ({selected['model']}){CRst}")
-    print(f"{FLCyan}{'─' * 60}{CRst}\n")
+        selected = devices[idx]
+        Utils.print_separator(width=60, color_ansi_esc=FLCyan)
+        print(f"{FLYellow}  SMART info for {FLGreen}{selected['dev']}{CRst}"
+              f"{FLYellow} ({selected['model']}){CRst}")
+        Utils.print_separator(width=60, color_ansi_esc=FLCyan)
+        print()
 
-    # Run smartctl -a and print directly
-    result = subprocess.run(
-        ["smartctl", "-a", selected["dev"], "-d", selected["type"]],
-        capture_output=False,
-    )
-    sys.exit(result.returncode)
+        # Run smartctl -a and print directly
+        result = subprocess.run(
+            ["smartctl", "-a", selected["dev"], "-d", selected["type"]],
+            capture_output=False,
+        )
+        if result.returncode != 0:
+            exit_names = {1: "command line parse error", 2: "device open failed",
+                          4: "ATA command failed (USB bridge may not pass through SMART)",
+                          8: "SMART status check returned DISK FAILING"}
+            desc = exit_names.get(result.returncode, "")
+            note = f" ({desc})" if desc else ""
+            print(f"\n{FLRed}  smartctl returned exit code {result.returncode}{note}{CRst}")
+
+        # Press any key to continue, then loop back
+        print()
+        try:
+            input(f"{FGray}Press Enter to continue...{CRst}")
+        except EOFError:
+            print()
+            sys.exit(0)
 
 
 if __name__ == "__main__":

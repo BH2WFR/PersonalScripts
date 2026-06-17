@@ -27,9 +27,9 @@ Usage:
   python {script_name} --help       show this help
 
 {FLYellow}Description:{CRst}
-  Recursively scan directories, list all symlinks, symlinkd, Junctions and hardlinks.
-  Detect broken links and Windows symlinks incorrectly pointing to directories.
-  Optionally auto-delete broken links or convert incorrect symlinks to symlinkd.
+  Recursively scan directories, printing all symlinks, symlinkd, Junctions and hardlinks.
+  Detect broken links (dead targets) and Windows file symlinks incorrectly pointing
+  to directories. Optionally auto-delete broken links or convert incorrect symlinks to symlinkd.
 
 {FLYellow}Requirements:{CRst}
   No external dependencies. On Windows uses ctypes for reparse-point detection.
@@ -109,7 +109,8 @@ Usage:
                 FSCTL_GET_REPARSE_POINT = 0x000900A8
                 IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
 
-                CreateFileW = ctypes.windll.kernel32.CreateFileW
+                k32 = getattr(ctypes, "windll").kernel32
+                CreateFileW = k32.CreateFileW
                 CreateFileW.argtypes = [
                     wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                     wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE
@@ -137,7 +138,7 @@ Usage:
 
                         buf = REPARSE_DATA_BUFFER()
                         bytes_returned = wintypes.DWORD(0)
-                        DeviceIoControl = ctypes.windll.kernel32.DeviceIoControl
+                        DeviceIoControl = k32.DeviceIoControl
                         ok = DeviceIoControl(
                             h, FSCTL_GET_REPARSE_POINT,
                             None, 0,
@@ -159,7 +160,7 @@ Usage:
                             ret.is_broken = is_broken
                             return ret
                     finally:
-                        ctypes.windll.kernel32.CloseHandle(h)
+                        k32.CloseHandle(h)
             except Exception:
                 return None
         # junction
@@ -189,22 +190,22 @@ Usage:
             print(f"{FLGreen}No symlinks/hardlinks found under the specified path.{CRst}\n")
     else:
         if os.name == "nt":
-            print(f"{FLYellow}Found{CRst} {FLGreen}{len(infos)}{CRst} {FLYellow}symlinks(S)/symlinkd(D)/junctions(J)/hardlinks(H):{CRst}\n")
+            print(f"{FLYellow}Found{CRst} {FLGreen}{len(infos)}{CRst} {FLCyan}symlinks({FLYellow}S{FLCyan})/symlinkd({FLYellow}D{FLCyan})/junctions({FLYellow}J{FLCyan})/hardlinks({FLYellow}H{FLCyan}):{CRst}\n")
         else:
-            print(f"{FLYellow}Found{CRst} {FLGreen}{len(infos)}{CRst} {FLYellow}symlinks(S)/hardlinks(H):{CRst}\n")
+            print(f"{FLYellow}Found{CRst} {FLGreen}{len(infos)}{CRst} {FLCyan}symlinks({FLYellow}S{FLCyan})/hardlinks({FLYellow}H{FLCyan}):{CRst}\n")
 
         for info in infos:
             is_broken_str = f" {FLRed}[BROKEN]{CRst}" if info.is_broken else ""
             if info.type == EType.SYMLINK:
                 if(info.is_symlink_to_dir_win32):
                     is_broken_str += f" {FLRed}[SYMLINK TO DIR]{CRst}"
-                print(f"  {FLYellow}L{CRst}{is_broken_str}: `{FLCyan}{info.path}{CRst}`	-> `{FLGreen}{info.dest}{CRst}`")
+                print(f"  {FLYellow}S{CRst}{is_broken_str}: `{CRst}{info.path}{CRst}`\n  {FGray}->{CRst} `{FBlue}{info.dest}{CRst}`")
             elif info.type == EType.SYMLINKD:
-                print(f"  {FLGreen}D{CRst}{is_broken_str}: `{FLCyan}{info.path}{CRst}`	-> `{FLGreen}{info.dest}{CRst}`")
+                print(f"  {FLGreen}D{CRst}{is_broken_str}: `{CRst}{info.path}{CRst}`\n  {FGray}->{CRst} `{FBlue}{info.dest}{CRst}`")
             elif info.type == EType.JUNCTION:
-                print(f"  {FLBlue}J{CRst}{is_broken_str}: `{FLCyan}{info.path}{CRst}`	-> `{FLGreen}{info.dest}{CRst}`")
+                print(f"  {FLBlue}J{CRst}{is_broken_str}: `{CRst}{info.path}{CRst}`\n  {FGray}->{CRst} `{FBlue}{info.dest}{CRst}`")
             elif info.type == EType.HARDLINK:
-                print(f"  {FLMagenta}H{CRst}{is_broken_str}: `{FLCyan}{info.path}{CRst}`, COUNT=`{FLRed}{info.hardlink_count}{CRst}`")
+                print(f"  {FLMagenta}H{CRst}{is_broken_str}: `{CRst}{info.path}{CRst}`\n      {FBlue}COUNT{CRst}=`{FLYellow}{info.hardlink_count}{CRst}`")
         print("")
 
 
@@ -215,7 +216,10 @@ Usage:
         if IS_FIX:
             for info in brokenInfos:
                 try:
-                    os.unlink(info.path)
+                    if info.type in (EType.SYMLINKD, EType.JUNCTION):
+                        os.rmdir(info.path)
+                    else:
+                        os.unlink(info.path)
                     print(f"  {FLGreen}Removed broken link:{CRst} `{FLCyan}{info.path}{CRst}`")
                 except Exception as e:
                     print(f"  {FLRed}Failed to remove:{CRst} `{FLCyan}{info.path}{CRst}`. Error: {e}")

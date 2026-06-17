@@ -35,8 +35,10 @@ Usage:
 {FLYellow}Description:{CRst}
   macOS display management tool for Apple Silicon.
   Supports screen rotation, brightness control (built-in via
-  DisplayServices, external via DDC/CI), resolution switching,
-  and toggling the built-in display on/off.
+  DisplayServices, external via DDC/CI), and resolution switching.
+  Highlight: toggle the MacBook built-in display on/off when external
+  monitors are connected — refuses to disable if no external display
+  is active, and auto-restores brightness when re-enabling.
 
 {FLYellow}CLI options:{CRst}
   --list, --list-only       print display list and exit

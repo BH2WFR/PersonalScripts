@@ -31,12 +31,14 @@ Usage:
   python {script_name} --help    show this help
 
 {FLYellow}Description:{CRst}
-  Windows only. Scan a directory and convert file symlinks pointing to directories
-  into symlinkd, fixing broken directory links caused by tools that incorrectly
-  create file symlinks for folders.
+  Windows only. Scan a directory tree for file-type symlinks (IO_REPARSE_TAG_SYMLINK)
+  that point to directories, and convert them to directory-type symlinks
+  (symlinkd / IO_REPARSE_TAG_SYMLINKD). On Windows, file symlinks and directory
+  symlinks are distinct reparse point types; some tools incorrectly create file
+  symlinks for directory targets, causing traversal failures in other tools.
 
 {FLYellow}Requirements:{CRst}
-  Windows only. No external dependencies. Uses ctypes for reparse-point detection.
+  Windows only. Uses ctypes for reparse-point detection.
 """)
         return 0
 

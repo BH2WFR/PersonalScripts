@@ -42,8 +42,8 @@ python compile-script.py                        # 全平台
 - 自动检测 Python：优先使用 `conda info --base`，再尝试已知路径，最后回退到 `python3`
 - **脚本名正则高亮**：通过 `HIGHLIGHT_PATTERNS` 全局变量配置（`{"pattern": 正则, "color": ANSI}` 字典列表），匹配部分使用条目颜色，其余部分保持 `PY_SCRIPT_HIGHLIGHT_COLOR`
 - **可自定义显示颜色**：`SUBFOLDER_HIGHLIGHT_COLOR`、`PY_SCRIPT_HIGHLIGHT_COLOR`、`SH_SCRIPT_HIGHLIGHT_COLOR`、`PS1_SCRIPT_HIGHLIGHT_COLOR`
-- **`ZL_SCRIPT_ADDITIONAL_PATH`** 环境变量（分号分隔）支持从外部目录列出脚本，以 `─── Additional [N] ───`（从 1 开始）区分，使用相同的发现/排除规则
-- **`@N:` 前缀** 跨组解析重名脚本：`@0:` = 主目录、`@1:` = 第一个附加目录等。无前缀的裸名搜索所有分组；存在重名时，通过 `Menu.select()` 交互列出带 `@N:` 标签的候选（默认 `@0`）。支持 CLI（`python run-script.py @1:test.py`）和交互模式
+- **`ZL_SCRIPT_ADDITIONAL_PATH`** 环境变量（分号分隔）用于**发现外部目录中的脚本**，每个目录在列表中显示为 `─── Additional [N] ───`（N 从 1 开始），使用与主目录相同的发现/排除规则。
+  配合 **`@N:` 前缀** 可精确指定脚本来源：`@0:` = 主目录，`@1:` = 第一个附加目录（对应 `Additional [1]`），依此类推。无前缀的裸名跨所有分组搜索；存在重名时，`Menu.select()` 交互列出带 `@N:` 标签的候选（默认 `@0:`）。CLI 可直接使用（如 `python run-script.py @1:test.py`）
 - `compile-script.py` 可将项目中任意 Python 脚本编译为独立可执行文件，支持 Nuitka 或 PyInstaller（均为 `--onedir`/`--standalone` 模式，不自解压以避免磨损硬盘）
 
 ---
@@ -56,16 +56,16 @@ python compile-script.py                        # 全平台
 |------|------|------|
 | `pdf-compress.py` | PDF 压缩工具，支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式 | 跨平台。`ghostscript` |
 | `pdf-decrypt.py` | 解密受密码保护的 PDF（含仅权限保护），保留完整文档结构 | 跨平台。`pip install pypdf` |
-| `pdf-bookmarks-add.py` | 通过 LLM 生成的 JSON（页/层级/编号/标题）为 PDF 添加目录书签 | 跨平台。`pip install pypdf` |
-| `document-screenshot.py` | 自动截图 PDF 文档（模拟 PgDn 翻页 + 鼠标点击） | 仅 macOS。`pip install mss pynput Pillow` |
+| `pdf-bookmarks-add.py` | 用于扫描版 PDF 书籍：先将目录页截图发给多模态 LLM（如 Qwen3-VL）生成 JSON（含页码/层级/编号/标题），再用此脚本将 JSON 解析并写入 PDF 书签 | 跨平台。`pip install pypdf` |
+| `document-screenshot.py` | 自动截图 PDF 文档（模拟 PgDn 翻页 + 鼠标点击），适用于 DRM 保护的或加密 USB 中的 PDF | 仅 **macOS**。`pip install mss pynput Pillow` |
 
 ### 视频下载
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `download-bilibili.py` | B 站视频下载器（画质/仅音频/字幕/弹幕/多 API），每轮完成后循环继续 | 跨平台。`BBDown`、`ffmpeg`、`aria2`（可选） |
-| `download-yt.py` | YouTube 视频下载器（画质/音频/字幕/cookies/播放列表），每轮完成后循环继续 | 跨平台。`yt-dlp`、`ffmpeg`、`deno`（可选） |
-| `download-m3u8.py` | m3u8/HLS 流媒体下载器，支持自定义请求头，每轮完成后循环继续 | 跨平台。`yt-dlp`、`ffmpeg` |
+| `download-bilibili.py` | B 站视频下载器（画质/仅音频/字幕/弹幕/多 API） | 跨平台。`BBDown`、`ffmpeg`、`aria2`（可选） |
+| `download-yt.py` | YouTube 视频下载器（画质/音频/字幕/cookies/播放列表） | 跨平台。`yt-dlp`、`ffmpeg`、`deno`（可选） |
+| `download-m3u8.py` | m3u8/HLS 流媒体下载器，支持自定义请求头 | 跨平台。`yt-dlp`、`ffmpeg` |
 
 ### 视频/图片编辑
 
@@ -78,14 +78,14 @@ python compile-script.py                        # 全平台
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `link-create.py` | 跨平台符号链接/硬链接创建（Windows: SymlinkD, Junction；Linux/macOS: Symlink, Hardlink）。支持相对路径、镜像模式、冲突处理 | 跨平台。无外部依赖 |
-| `link-scan.py` | 递归扫描目录中的符号链接、Junction、硬链接。检测死链，自动修复或删除 | 跨平台。无外部依赖 |
-| `windows/link-fix-symlinkd.py` | Windows 专用：将损坏的目录符号链接转换为 SymlinkD | 仅 Windows。无外部依赖 |
-| `check-filename-overlong.py` | 检查并截断超出 UTF-8 字节限制的超长文件名（如群晖 NAS 143 字节限制） | 跨平台。无外部依赖 |
-| `remove-os-junk-files.py` | 递归删除系统生成的垃圾文件（`.DS_Store`、`__MACOSX__`、`Thumbs.db` 等） | 跨平台。无外部依赖 |
-| `modify-file-time.py` | 修改文件/文件夹时间戳（创建/修改/访问时间），支持随机抖动 | 跨平台。无外部依赖 |
-| `batch-add-chmod-x.sh` | 通过 git 递归为 `.py`/`.sh` 文件添加 `chmod +x`（需 sudo） | Linux/macOS。`git`、`sudo`（系统自带） |
-| `git-batch-add-chmod-x.ps1` | PowerShell 版：在 git 索引中标记 `.py`/`.sh` 文件为可执行 | Windows。`PowerShell`、`git` |
+| `link-create.py` | 跨平台符号链接/硬链接创建（Windows: SymlinkD, Junction；Linux/macOS: Symlink, Hardlink）。支持相对路径、镜像模式、冲突处理 | 跨平台 |
+| `link-scan.py` | 递归扫描目录，打印所有符号链接、目录软链接（symlinkd）、Junction 和硬链接。检测死链（目标不存在），自动修复或删除；Windows 下可将错误指向目录的文件软链接转换为 symlinkd | 跨平台 |
+| `windows/link-fix-symlinkd.py` | Windows 专用：将指向目录的文件软链接（file symlink）**修复**为正确的**目录软链接**（symlinkd / SYMLINKD）。Windows 的文件软链接与目录软链接是两种不同的重解析点类型，部分工具可能误建文件软链接指向目录，导致遍历失败 | 仅 **Windows** |
+| `check-filename-overlong.py` | 按 UTF-8 编码统计字节长度，截断超过指定字节数（默认 143，适配群晖加密文件夹）的文件名。截断时保留扩展名，若发生重名则在扩展名前自动加 `_1`、`_2` 等后缀 | 跨平台 |
+| `remove-os-junk-files.py` | 递归删除系统生成的垃圾文件（`.DS_Store`、`__MACOSX__`、`Thumbs.db` 等） | 跨平台 |
+| `modify-file-time.py` | 修改文件/文件夹时间戳（创建/修改/访问时间），支持随机抖动 | 跨平台 |
+| `batch-add-chmod-x.sh` | 递归查找指定扩展名（默认 `.py`/`.sh`）的文件并添加 `chmod +x` 可执行权限，自动 sudo 提权 | Linux/macOS。`bash`、`sudo`（系统自带） |
+| `git-batch-add-chmod-x.ps1` | 将 git 暂存区中 `.py`/`.sh` 文件通过 `git update-index --chmod=+x` 标记为可执行，方便跨平台开发时 Windows 端提交的文件在 Linux/macOS 上 clone 后自带 +x 权限 | Windows。`PowerShell`、`git` |
 
 ### 系统与网络
 
@@ -93,42 +93,41 @@ python compile-script.py                        # 全平台
 |------|------|------|
 | `disk-smart-info.py` | 跨平台 SMART 磁盘健康信息查看器，列出 SMART 磁盘并显示详细属性 | 跨平台。`smartmontools` |
 | `tailscale-restart-accept-routes.py` | 通过切换 `--accept-routes` 开关重启 Tailscale 子网路由 | 跨平台。`tailscale` |
-| `upload-ipaddress.py` | 收集网络信息并上传至腾讯云 COS S3 方便远程访问。凭据来自环境变量 | 跨平台。`pip install boto3` |
-| `macos/ntfs-3g-utils.py` | macOS 专用：通过 ntfs-3g（macFUSE）挂载 NTFS 磁盘，支持读写。挂载/系统挂载/弹出 | 仅 macOS。`brew install ntfs-3g macfuse` |
-| `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、亮度（内建 + DDC/CI）、切换内建显示器。CLI：`--list`、`--toggle`、`--ddc-ci-info`、`--help` | 仅 macOS（Apple Silicon）。无外部依赖；可选 `pip install pyobjc` |
-| `power-current.py` | 跨平台充电器与电池遥测查看器。macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。 | 跨平台。无外部依赖 |
-| `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持递归批量，可选清 provenance，逐文件计数） | 仅 macOS。使用 `xattr`（系统自带） |
-| `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置 | 仅 Windows。PowerShell（系统自带） |
-| `windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负。** | 仅 Windows。系统自带工具；可选 `scoop install sudo gsudo` |
-| `windows/show-screen-resolution.ps1` | 通过 Windows API 显示显示器分辨率和屏幕信息 | 仅 Windows。PowerShell（系统自带） |
-| `macos/clear-privacy.py` | 清除 macOS 隐私痕迹（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。**免责声明：使用风险自负。** | 仅 macOS。系统自带工具；可选 `brew install trash` |
-| `webserver-run.py` | 运行本地 HTTP 服务器以提供静态网页工具。支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`）。使用 Python 内置 `http.server`，支持多线程 | 跨平台。无外部依赖 |
-| `webserver-run.bat` | Windows：webserver-run 的双击启动器 | Windows。无外部依赖 |
+| `upload-ipaddress.py` | 收集网络信息（`ipconfig`/`ip addr`）并上传至腾讯云 COS S3，方便远程访问。凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | 跨平台。`pip install boto3` |
+| `macos/ntfs-3g-utils.py` | macOS 专用：交互式 NTFS 分区管理。扫描 NTFS 分区后提供三种操作：ntfs-3g 读写挂载、系统只读挂载、弹出磁盘。读写挂载支持自动检测已有挂载点并创建备选目录 | **仅 macOS**。`brew install ntfs-3g macfuse` |
+| `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）。特色功能：MacBook 连接外接显示器时，可一键开关笔记本自带屏幕（`--toggle-built-in`），关闭时会校验外接显示器存在、打开时自动恢复过低亮度 | **仅 macOS**（Apple Silicon）；可选 `pip install pyobjc` |
+| `power-current.py` | 跨平台充电器与电池遥测查看器。macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用 | 跨平台 |
+| `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持递归批量，可选清 provenance，逐文件计数） | **仅 macOS**。使用 `xattr`（系统自带） |
+| `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置。每次手机开 USB 热点 Windows 都会创建新的网络配置文件（"本地连接 1" → "本地连接 2" → ...），此脚本可批量删除，避免本地连接名称后数字不断递增 | **仅 Windows**。PowerShell（系统自带） |
+| `windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负。** | **仅 Windows**。系统自带工具；可选 `scoop install sudo gsudo` |
+| `windows/show-screen-resolution.ps1` | 通过 Windows API 显示显示器分辨率和屏幕信息 | **仅 Windows**。PowerShell（系统自带） |
+| `macos/clear-privacy.py` | 清除 macOS 隐私痕迹（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。**免责声明：使用风险自负。** | **仅 macOS**。系统自带工具；可选 `brew install trash` |
+| `webserver-run.py` | 将本地文件夹（或含 index.html 的网页目录）映射为本地 HTTP 服务。支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`），基于 Python 内置 `http.server` 的多线程服务 | 跨平台 |
 
 ### 实用工具
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `parse-unicode-string.py` | 解析并显示 Unicode 字符信息（序号、字符、十六进制、十进制、说明），特殊字符彩色标注。支持 `--clip`（剪贴板读取）、`--pause`（回车后退出）、`--help` | 跨平台。无外部依赖；Linux 剪贴板需 `wl-paste` 或 `xclip` |
+| `parse-unicode-string.py` | 解析并显示 Unicode 字符信息（序号、字符、十六进制、十进制、说明），特殊字符彩色标注。支持 `--clip`（剪贴板读取）、`--pause`（回车后退出）、`--help` | 跨平台；Linux 剪贴板需 `wl-paste` 或 `xclip` |
 | `research/npy-viewer.py` | `.npy`/`.npz` 文件交互式查看器（1D 折线/柱状/散点图，2D 热力图/曲面图） | 跨平台。`pip install numpy matplotlib plotly` |
-| `research/npy-viewer.bat` | Windows：npy 查看器的双击/拖拽启动器 | Windows。需 `npy-viewer.py` 依赖 |
-| `research/npy-viewer.sh` | Linux/macOS：npy 查看器的双击启动器 | Linux/macOS。需 `npy-viewer.py` 依赖 |
-| `run-script.py` | Python 启动器，可运行仓库内任意脚本 | 跨平台。`python3` |
-| `run-script.sh` | Bash 启动器，可运行仓库内任意脚本 | Linux/macOS。`bash`、`python3` |
-| `run-script.ps1` | PowerShell 启动器，可运行仓库内任意脚本 | Windows。`PowerShell`、`python` |
-| `compile-script.py` | 交互式编译器：选择任意 Python 脚本，通过 Nuitka 或 PyInstaller 打包为独立可执行文件（均为 `--onedir`/`--standalone`，不自解压） | 跨平台。`pip install nuitka` 和/或 `pip install pyinstaller` |
-| `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | 仅 macOS。无外部依赖 |
-| `windows/script-to-app.py` | 创建 Windows `.cmd` 启动器，将任意 Python 脚本安装到 `Program Files`。自动检测 Python（conda/系统），接收打开的文件路径作为参数，支持"打开方式"关联文件类型 | 仅 Windows。无外部依赖 |
+| `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | **仅 macOS** |
+| `windows/script-to-app.py` | 创建 Windows `.cmd` 启动器，将任意 Python 脚本安装到 `Program Files`。自动检测 Python（conda/系统），接收打开的文件路径作为参数，支持"打开方式"关联文件类型 | **仅 Windows** |
+
+### 启动器与编译
+
+| 脚本 | 描述 | 依赖 |
+|------|------|------|
+| `run-script.py` | 统一脚本启动器。交互模式下列出全部可运行脚本并按数字或名称选择；支持 CLI 直接调用（`python run-script.py <脚本名> [参数...]`）；`--list` 列出可用脚本；平台感知过滤（隐藏不匹配 OS 的脚本）；解释器感知（bash/pwsh 不可用时隐藏对应脚本）；通过 `ZL_SCRIPT_ADDITIONAL_PATH` 发现外部目录脚本并以 `@N:` 前缀精确指定来源 | 跨平台。`python3` |
+| `run-script.sh` | Bash 启动器（启动器的启动器）：查找 Python 解释器后将所有参数透传给 `run-script.py` | Linux/macOS。`bash`、`python3` |
+| `run-script.ps1` | PowerShell 启动器（启动器的启动器）：查找 Python 解释器后将所有参数透传给 `run-script.py` | Windows。`PowerShell`、`python` |
+| `compile-script.py` | 交互式编译器：选择任意 Python 脚本，通过 Nuitka 或 PyInstaller 打包为独立可执行文件（均为 `--onedir`/`--standalone`，不自解压以避免磨损 SSD） | 跨平台。`pip install nuitka` 和/或 `pip install pyinstaller` |
 
 ### 测试辅助
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `test/keyboard-hook.py` | 跨平台全局键盘鼠标钩子监控器。打印按键/鼠标/滚轮事件并追踪前台窗口。同时可作为输入控制库使用：`press`、`release`、`tap`、`hotkey`、`send`（序列发送）、`move`、`click`、`scroll`、`get_foreground_window`。macOS 使用原生 CGEvent tap；Windows 用 ctypes 调用 `SetWindowsHookEx`；Linux 使用 X11 XRecord。 | 跨平台。macOS: `pip install pyobjc-framework-Quartz`。Windows: 无（标准库 ctypes）。Linux: `pip install python-xlib`。 |
-| `test/print-argv.py` | 打印所有命令行参数 | 跨平台。无外部依赖 |
-| `test/print-argv.ps1` | PowerShell：彩色打印所有参数 | Windows。PowerShell（系统自带） |
-| `test/print-argv.sh` | Bash：彩色打印所有参数 | Linux/macOS。`bash`（系统自带） |
-| `test/keyboard-hook.py` | 全局键盘鼠标钩子监视器（按下/释放/点击/滚轮）。也可发送输入（按下、轻击、组合键、移动、点击、滚轮）。通过 `setup()` API 支持热键回调 | macOS（pyobjc）、Windows（标准库 ctypes）、Linux（python-xlib/X11） |
+| `test/keyboard-hook.py` | 跨平台全局键盘鼠标钩子监控器。打印按键/鼠标/滚轮事件并追踪前台窗口。同时可作为输入控制库使用：`press`、`release`、`tap`、`hotkey`、`send`（序列发送）、`move`、`click`、`scroll`、`get_foreground_window`。macOS 使用原生 CGEvent tap；Windows 用 ctypes 调用 `SetWindowsHookEx`；Linux 使用 X11 XRecord | 跨平台。macOS: `pip install pyobjc-framework-Quartz`；Windows: 无（标准库 ctypes）；Linux: `pip install python-xlib` |
+| `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | 打印所有命令行参数，分别对应 Python / Bash / PowerShell 实现，功能一致 | 跨平台。`.py` 需 `python3`；`.sh` 需 `bash`；`.ps1` 需 `PowerShell` |
 
 ---
 
