@@ -21,3 +21,9 @@ output
 
 .claude/
 BUILD/
+
+/output/
+/generated_patterns/
+
+/3rd/
+/3rdTools/

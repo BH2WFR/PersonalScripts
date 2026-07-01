@@ -60,10 +60,6 @@ Disclaimer:
     )
 
 
-def is_root() -> bool:
-    return sys.platform == "darwin" and os.geteuid() == 0
-
-
 def run(
     cmd: list[str],
     *,
@@ -160,28 +156,6 @@ def confirm_section(args: argparse.Namespace, title: str) -> bool:
     return prompt_yes_no(f"{FLYellow}Run {title}?{CRst}")
 
 
-def try_relaunch_with_sudo() -> bool:
-    sudo_path = shutil.which("sudo")
-    if sudo_path is None:
-        return False
-
-    cmd = [sudo_path, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]
-    try:
-        result = subprocess.run(cmd)
-    except Exception as exc:
-        warn_msg(f"{FGray}sudo{CRst} elevation failed: {FLRed}{exc}{CRst}")
-        return False
-
-    if result.returncode == 0:
-        raise SystemExit(0)
-
-    warn_msg(
-        f"{FGray}sudo{CRst} exited with code {FLRed}{result.returncode}{CRst}; "
-        "continuing without elevation."
-    )
-    return False
-
-
 def clear_recent_items() -> None:
     sfl_dir = LIB / "Application Support/com.apple.sharedfilelist"
     if sfl_dir.is_dir():
@@ -266,20 +240,20 @@ def clear_icon_cache() -> None:
 
 def clear_caches() -> None:
     clear_dir(LIB / "Caches")
-    if is_root():
+    if Utils.is_elevated():
         clear_dir(Path("/Library/Caches"))
 
 
 def clear_temp_files() -> None:
     clear_dir(LIB / "Caches/TemporaryItems")
-    if is_root():
+    if Utils.is_elevated():
         clear_dir(Path("/tmp"))
         clear_dir(Path("/var/tmp"))
 
 
 def clear_font_cache() -> None:
     clear_dir(LIB / "Caches/com.apple.ATS")
-    if is_root():
+    if Utils.is_elevated():
         clear_dir(Path("/Library/Caches/com.apple.ATS"))
         run(["atsutil", "databases", "-remove"])
     run(["atsutil", "server", "-shutdown"])
@@ -376,7 +350,7 @@ def clear_chromium_browsers() -> None:
 
 
 def clear_dns_cache() -> None:
-    if not is_root():
+    if not Utils.is_elevated():
         return
     run(["dscacheutil", "-flushcache"])
     run(["killall", "-HUP", "mDNSResponder"])
@@ -384,7 +358,7 @@ def clear_dns_cache() -> None:
 
 
 def clear_event_logs() -> None:
-    if not is_root():
+    if not Utils.is_elevated():
         return
     run(["log", "erase", "--all"])
     clear_dir(Path("/var/log/asl"))
@@ -393,7 +367,7 @@ def clear_event_logs() -> None:
 
 
 def clear_system_logs() -> None:
-    if not is_root():
+    if not Utils.is_elevated():
         return
     for log_dir in [Path("/var/log"), Path("/private/var/log")]:
         if not log_dir.is_dir():
@@ -409,13 +383,13 @@ def clear_system_logs() -> None:
 def clear_spotlight_history() -> None:
     delete_plist_keys("com.apple.spotlight", ["findItemsLastUsedDateDict"])
     clear_dir(LIB / "Caches/com.apple.helpd")
-    if is_root():
+    if Utils.is_elevated():
         run(["mdutil", "-E", "/"])
     run(["mdutil", "-E", str(HOME)])
 
 
 def clear_arp_cache() -> None:
-    if is_root():
+    if Utils.is_elevated():
         run(["arp", "-ad"])
 
 
@@ -484,7 +458,7 @@ def print_banner(args: argparse.Namespace) -> None:
     if not args.skip_apps:
         print("    5. Application MRU / developer traces")
     print()
-    if not is_root() and not args.skip_system:
+    if not Utils.is_elevated() and not args.skip_system:
         print(f"  {FGray}System cleanup will partially skip root-only steps unless elevation succeeds.{CRst}")
         print()
 
@@ -509,9 +483,9 @@ def main() -> None:
         return
 
     print_banner(args)
-    if not is_root():
+    if not Utils.is_elevated():
         warn_msg(f"Root privileges not detected. Trying {FGray}sudo{CRst}.")
-        elevated = try_relaunch_with_sudo()
+        elevated = Utils.try_restart_elevated()
         if not elevated:
             warn_msg("Elevation unavailable. Root-only cleanup will be skipped.")
 
@@ -555,7 +529,7 @@ def main() -> None:
 
     if not args.skip_system and confirm_section(args, "Section 4: system traces"):
         step("Section 4: System traces")
-        if is_root():
+        if Utils.is_elevated():
             clear_dns_cache()
             clear_event_logs()
             clear_system_logs()

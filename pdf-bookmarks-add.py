@@ -176,14 +176,12 @@ Usage:
 
     page_offset = 10 # pdf 第十页是 书的 第一页, 则写为 10
     bookmarks_text = "" # 按行分隔，格式见上方提示词
-    page_offset_str = input(f"{FLYellow}Enter page offset (default: {page_offset}): {FLCyan}(it means page N of the pdf is the first page of the book) {CRst}\n") or str(page_offset)
-    try:
-        page_offset = int(page_offset_str)
-        if(page_offset < 1):
-            raise ValueError("Page offset must be >= 1")
-    except ValueError:
-        print(f"{FLRed}Invalid page offset. EXIT...{CRst}\n")
-        return 1
+    page_offset = typing.cast(int, Input.input_number(
+        f"Enter page offset {FLCyan}(it means page N of the pdf is the first page of the book){CRst}",
+        default=page_offset,
+        min_value=1,
+        allow_float=False,
+    ))
 
     # 多行文本的输入
     text_prompt = """

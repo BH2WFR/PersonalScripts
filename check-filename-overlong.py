@@ -89,15 +89,12 @@ Usage:
     if _arg_limit is not None:
         LIMIT = _arg_limit
     else:
-        limitStr = input(f"{FLCyan}Enter byte length limit (default: {LIMIT}): {CRst}") or str(LIMIT)
-        try:
-            LIMIT = int(limitStr)
-        except ValueError:
-            print(f"{FLRed}Invalid limit value. EXIT...{CRst}\n")
-            return 1
-    if LIMIT <= 32:
-        print(f"{FLRed}Limit value too small. EXIT...{CRst}\n")
-        return 1
+        LIMIT = Input.input_number(
+            "Enter byte length limit",
+            default=LIMIT,
+            min_value=33,
+            allow_float=False,
+        )
 
     if _arg_encoding is not None:
         ENCODING = _arg_encoding

@@ -156,15 +156,27 @@ Usage:
                 print(f"{FLRed}Failed to create output directory: {e}. EXIT...{CRst}\n")
                 return 1
 
-    try:
-        crop_x1 = int(input(f"Enter crop rectangle {FLYellow}x1{CRst} (default: {crop_rectangle.x1}): ") or crop_rectangle.x1)
-        crop_y1 = int(input(f"Enter crop rectangle {FLYellow}y1{CRst} (default: {crop_rectangle.y1}): ") or crop_rectangle.y1)
-        crop_x2 = int(input(f"Enter crop rectangle {FLYellow}x2{CRst} (default: {crop_rectangle.x2}): ") or crop_rectangle.x2)
-        crop_y2 = int(input(f"Enter crop rectangle {FLYellow}y2{CRst} (default: {crop_rectangle.y2}): ") or crop_rectangle.y2)
-        crop_rectangle = Region(crop_x1, crop_y1, crop_x2, crop_y2)
-    except ValueError:
-        print(f"{FLRed}Invalid crop rectangle coordinates. EXIT...{CRst}\n")
-        return 1
+    crop_x1 = Input.input_number(
+        f"Enter crop rectangle {FLYellow}x1{CRst}",
+        default=crop_rectangle.x1,
+        allow_float=False,
+    )
+    crop_y1 = Input.input_number(
+        f"Enter crop rectangle {FLYellow}y1{CRst}",
+        default=crop_rectangle.y1,
+        allow_float=False,
+    )
+    crop_x2 = Input.input_number(
+        f"Enter crop rectangle {FLYellow}x2{CRst}",
+        default=crop_rectangle.x2,
+        allow_float=False,
+    )
+    crop_y2 = Input.input_number(
+        f"Enter crop rectangle {FLYellow}y2{CRst}",
+        default=crop_rectangle.y2,
+        allow_float=False,
+    )
+    crop_rectangle = Region(crop_x1, crop_y1, crop_x2, crop_y2)
 
     # main execution
     os.system("chcp 65001")

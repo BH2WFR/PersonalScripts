@@ -1980,7 +1980,7 @@ def toggle_modifier(name: str) -> None:
 
 def main():
     Utils.set_locale_utf8()
-    Utils.elevate()
+    Utils.restart_elevated()
 
     print()
     print(f"{FLYellow}╔{'═' * 46}╗{CRst}")

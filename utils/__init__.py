@@ -7,6 +7,7 @@ import string
 import math
 import json
 import enum
+import re
 import random
 import time
 import datetime
@@ -125,13 +126,13 @@ class Utils:
     def get_terminal_width() -> int:
         """Return the current terminal width (columns), or a conservative default.
 
-        Returns ``os.get_terminal_size().columns - 1`` on success, or 119
-        (equivalent to a 120-column terminal) when the size cannot be queried.
+        Returns ``os.get_terminal_size().columns`` on success, or 120 when the
+        size cannot be queried.
         """
         try:
-            return os.get_terminal_size().columns - 1
+            return os.get_terminal_size().columns
         except OSError:
-            return 119
+            return 120
 
     @staticmethod
     def display_width(s: str) -> int:
@@ -462,12 +463,24 @@ class Utils:
                 return False
 
     @staticmethod
-    def elevate() -> None:
+    def restart_elevated() -> None:
         """Re-execute the current script with administrator/root privileges.
 
-        If already elevated, returns immediately. Otherwise tries ``sudo``, then
-        ``gsudo`` (Windows only), then OS-specific elevation APIs. Does not return
-        if elevation succeeds — the current process is replaced.
+        **Must be called at the very beginning of the program**, before any
+        output is written to stdout.  On Windows the Win32 API fallback spawns
+        a fresh console window that cannot render ANSI escape sequences; any
+        prior output will appear garbled or be lost.
+
+        If already elevated, returns immediately.  Does **not** return when
+        elevation succeeds — the current process is replaced via ``os.execv``
+        or ``sys.exit(0)``.
+
+        Elevation order
+            **Linux / macOS** — ``sudo`` only.
+            **Windows** — ``gsudo`` → ``sudo`` → Win32 ``ShellExecuteW``
+            (last resort; spawns a separate Python console window with no ANSI
+            support).  All in-place helpers are called via ``subprocess.run``
+            instead of ``os.execv`` to avoid stdin contention.
         """
         if Utils.is_elevated():
             return
@@ -476,24 +489,92 @@ class Utils:
         args = sys.argv[1:]
 
         if sys.platform == "win32":
-            for tool in ("sudo", "gsudo"):
+            # 1) gsudo — in-place elevation, preserves ANSI escapes.
+            # 2) sudo  — same-terminal elevation fallback.
+            # Use subprocess.run instead of os.execv: scoop's sudo does not
+            # properly detach stdin, causing two processes to compete for input
+            # and producing doubled keystrokes / cursor glitches.
+            for tool in ("gsudo", "sudo"):
                 exe = shutil.which(tool)
                 if exe:
-                    os.execv(exe, [tool, sys.executable, script] + args)
-            # Fallback: ShellExecute with runas verb
+                    try:
+                        result = subprocess.run(
+                            [exe, sys.executable, script] + args,
+                            check=False,
+                        )
+                    except Exception:
+                        continue
+                    if result.returncode == 0:
+                        raise SystemExit(0)
+                    # Non-zero — try the next helper.
+
+            # 3) ShellExecuteW — last resort.  Spawns a fresh console window;
+            #    ANSI escape sequences are not carried over.
+            sys.stdout.flush()
+            print()
             params = subprocess.list2cmdline([script] + args)
             ret = ctypes.windll.shell32.ShellExecuteW(
                 None, "runas", sys.executable, params, None, 1,
             )
-            if ret <= 32:
-                print(f"{FLRed}Elevation failed (ShellExecute error {ret}).{CRst}")
-                sys.exit(1)
-            sys.exit(0)
+            if ret > 32:
+                sys.exit(0)
+
+            print(f"{FLRed}Elevation failed (ShellExecute error {ret}).{CRst}")
+            sys.exit(1)
         else:
             if shutil.which("sudo"):
                 os.execv("/usr/bin/sudo", ["sudo", sys.executable, script] + args)
             print(f"{FLRed}Cannot elevate: sudo not found in PATH.{CRst}")
             sys.exit(1)
+
+    @staticmethod
+    def try_restart_elevated() -> bool:
+        """Re-launch via a helper that waits for the child to finish.
+
+        **Should be called as early as possible**, before significant output,
+        though the in-place helpers (``gsudo`` / ``sudo``) preserve the
+        terminal state and are more forgiving than the Win32 API fallback.
+
+        Unlike :meth:`restart_elevated`, this does **not** fall back to
+        ``ShellExecuteW`` spawning a new window and only returns when every
+        helper is unavailable or fails with a non-zero exit code — the caller
+        can then continue without privileges.
+
+        If already elevated, returns ``True`` immediately so the caller can
+        simply proceed.
+
+        Elevation order
+            **Linux / macOS** — ``sudo`` only.
+            **Windows** — ``gsudo`` → ``sudo`` (both in-place).
+
+        Raises ``SystemExit(0)`` when the child exits successfully.
+        Returns ``False`` if no helper was found or every helper exited with a
+        non-zero code — the caller should continue with reduced privileges.
+        """
+        if Utils.is_elevated():
+            return True
+
+        helpers: list[str] = (
+            ["gsudo", "sudo"] if sys.platform == "win32" else ["sudo"]
+        )
+        script = os.path.abspath(sys.argv[0])
+        args = sys.argv[1:]
+
+        for name in helpers:
+            exe = shutil.which(name)
+            if exe is None:
+                continue
+            try:
+                result = subprocess.run(
+                    [exe, sys.executable, script] + args,
+                    check=False,
+                )
+            except Exception:
+                continue
+            if result.returncode == 0:
+                raise SystemExit(0)
+            # Non-zero exit — try next helper.
+        return False
 
     @staticmethod
     def get_arch() -> str:
@@ -582,7 +663,14 @@ class Utils:
           ``{{script_dir}}``    — directory of the script
           ``{{current_dir}}``   — current working directory
         """
-        p = os.path.expanduser(path)
+        p = path
+        if schema_dir:
+            p = p.replace("{{schema_dir}}", schema_dir)
+        if script_dir:
+            p = p.replace("{{script_dir}}", script_dir)
+        p = p.replace("{{current_dir}}", os.getcwd())
+
+        p = os.path.expanduser(p)
         try:
             import re
             p = re.sub(r"\$\{ENV:([^}]+)\}", lambda m: os.environ.get(m.group(1), m.group(0)), p)
@@ -590,11 +678,6 @@ class Utils:
         except Exception:
             pass
         p = os.path.expandvars(p)
-        if schema_dir:
-            p = p.replace("{{schema_dir}}", schema_dir)
-        if script_dir:
-            p = p.replace("{{script_dir}}", script_dir)
-        p = p.replace("{{current_dir}}", os.getcwd())
         return p
 
 class Input:
@@ -682,6 +765,205 @@ class Input:
         if transform is not None:
             user_input = transform(user_input)
         return user_input
+
+    #* ============ 数字输入 ============
+    @staticmethod
+    def input_number(
+        prompt: str,
+        *,
+        default: typing.Optional[typing.Union[int, float]] = None,
+        min_value: typing.Optional[typing.Union[int, float]] = None,
+        max_value: typing.Optional[typing.Union[int, float]] = None,
+        min_value_allowed: bool = True,
+        max_value_allowed: bool = True,
+        allow_float: bool = True,
+        allow_negative: bool = True,
+        exit_on_empty: bool = True,
+    ) -> typing.Union[int, float]:
+        """Interactively read a number with validation.
+
+        Empty input returns *default* when provided. If there is no default and
+        *exit_on_empty* is True, the process exits cleanly; otherwise it re-prompts.
+        Boundary inclusiveness is controlled by *min_value_allowed* and
+        *max_value_allowed*. By default, bounds are inclusive.
+        """
+        if min_value is not None and max_value is not None and min_value > max_value:
+            raise ValueError("min_value cannot be greater than max_value")
+        if (
+            min_value is not None
+            and max_value is not None
+            and min_value == max_value
+            and (not min_value_allowed or not max_value_allowed)
+        ):
+            raise ValueError("empty numeric range: equal bounds must both be allowed")
+
+        while True:
+            default_hint = f" {FGray}[{default}]{CRst}" if default is not None else ""
+            raw = input(f"{FLYellow}{prompt}{default_hint}: {CRst}").strip()
+
+            if not raw:
+                if default is not None:
+                    value = default
+                elif exit_on_empty:
+                    print(f"{FLRed}Exiting.{CRst}")
+                    sys.exit(0)
+                else:
+                    print(f"{FLRed}Input is required.{CRst}")
+                    continue
+            else:
+                try:
+                    if allow_float:
+                        value = float(raw)
+                    else:
+                        if re.search(r"[.eE]", raw):
+                            raise ValueError
+                        value = int(raw, 10)
+                except ValueError:
+                    expected = "number" if allow_float else "integer"
+                    print(f"{FLRed}Invalid {expected}: {FGray}{raw}{CRst}")
+                    continue
+
+            if not allow_negative and value < 0:
+                print(f"{FLRed}Negative values are not allowed.{CRst}")
+                continue
+            if min_value is not None and (
+                value < min_value or (value == min_value and not min_value_allowed)
+            ):
+                op = ">=" if min_value_allowed else ">"
+                print(f"{FLRed}Value must be {op} {FLYellow}{min_value}{CRst}")
+                continue
+            if max_value is not None and (
+                value > max_value or (value == max_value and not max_value_allowed)
+            ):
+                op = "<=" if max_value_allowed else "<"
+                print(f"{FLRed}Value must be {op} {FLYellow}{max_value}{CRst}")
+                continue
+
+            if allow_float:
+                return float(value)
+            return int(value)
+
+    @staticmethod
+    def input_number_with_unit(
+        prompt: str,
+        *,
+        default: typing.Optional[tuple[typing.Union[int, float], str]] = None,
+        default_unit: typing.Optional[str] = None,
+        allowed_units: typing.Optional[typing.Iterable[str]] = None,
+        min_value: typing.Optional[typing.Union[int, float]] = None,
+        max_value: typing.Optional[typing.Union[int, float]] = None,
+        min_value_allowed: bool = True,
+        max_value_allowed: bool = True,
+        allow_float: bool = True,
+        allow_negative: bool = True,
+        allow_unit_only: bool = True,
+        exit_on_empty: bool = True,
+    ) -> tuple[typing.Union[int, float], str]:
+        """Interactively read a number followed by a unit.
+
+        Accepts inputs with or without a space between number and unit, such as
+        ``90deg`` or ``90 deg``. If *default_unit* is provided, the unit may be
+        omitted. Unit strings may not contain ``,`` or ``.``. Boundary
+        inclusiveness is controlled by *min_value_allowed* and
+        *max_value_allowed*. By default, bounds are inclusive.
+        """
+        if min_value is not None and max_value is not None and min_value > max_value:
+            raise ValueError("min_value cannot be greater than max_value")
+        if (
+            min_value is not None
+            and max_value is not None
+            and min_value == max_value
+            and (not min_value_allowed or not max_value_allowed)
+        ):
+            raise ValueError("empty numeric range: equal bounds must both be allowed")
+
+        allowed: typing.Optional[set[str]] = None
+        if allowed_units is not None:
+            allowed = {u.lower() for u in allowed_units}
+            for unit in allowed:
+                if "," in unit or "." in unit:
+                    raise ValueError("unit must not contain ',' or '.'")
+
+        if default_unit is not None and ("," in default_unit or "." in default_unit):
+            raise ValueError("unit must not contain ',' or '.'")
+
+        number_pattern = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+        full_pattern = re.compile(rf"^\s*({number_pattern})\s*([^\s,.]+)?\s*$")
+        unit_only_pattern = re.compile(r"^\s*([^\s,.]+)\s*$")
+
+        while True:
+            default_hint = ""
+            if default is not None:
+                default_hint = f" {FGray}[{default[0]}{default[1]}]{CRst}"
+            raw = input(f"{FLYellow}{prompt}{default_hint}: {CRst}").strip()
+
+            if not raw:
+                if default is not None:
+                    number, unit = default
+                elif exit_on_empty:
+                    print(f"{FLRed}Exiting.{CRst}")
+                    sys.exit(0)
+                else:
+                    print(f"{FLRed}Input is required.{CRst}")
+                    continue
+            else:
+                match = full_pattern.match(raw)
+                if match:
+                    number_raw = match.group(1)
+                    unit = match.group(2) or default_unit
+                    if unit is None:
+                        print(f"{FLRed}Unit is required.{CRst}")
+                        continue
+                    try:
+                        if allow_float:
+                            number = float(number_raw)
+                        else:
+                            if re.search(r"[.eE]", number_raw):
+                                raise ValueError
+                            number = int(number_raw, 10)
+                    except ValueError:
+                        expected = "number" if allow_float else "integer"
+                        print(f"{FLRed}Invalid {expected}: {FGray}{number_raw}{CRst}")
+                        continue
+                elif allow_unit_only:
+                    unit_match = unit_only_pattern.match(raw)
+                    if not unit_match:
+                        print(f"{FLRed}Invalid number with unit: {FGray}{raw}{CRst}")
+                        continue
+                    number = 1.0 if allow_float else 1
+                    unit = unit_match.group(1)
+                else:
+                    print(f"{FLRed}Invalid number with unit: {FGray}{raw}{CRst}")
+                    continue
+
+            unit = str(unit)
+            if "," in unit or "." in unit:
+                print(f"{FLRed}Unit must not contain ',' or '.': {FGray}{unit}{CRst}")
+                continue
+
+            unit_key = unit.lower()
+            if allowed is not None and unit_key not in allowed:
+                print(f"{FLRed}Invalid unit. Try {FLYellow}{', '.join(sorted(allowed))}{CRst}")
+                continue
+            if not allow_negative and number < 0:
+                print(f"{FLRed}Negative values are not allowed.{CRst}")
+                continue
+            if min_value is not None and (
+                number < min_value or (number == min_value and not min_value_allowed)
+            ):
+                op = ">=" if min_value_allowed else ">"
+                print(f"{FLRed}Value must be {op} {FLYellow}{min_value}{CRst}")
+                continue
+            if max_value is not None and (
+                number > max_value or (number == max_value and not max_value_allowed)
+            ):
+                op = "<=" if max_value_allowed else "<"
+                print(f"{FLRed}Value must be {op} {FLYellow}{max_value}{CRst}")
+                continue
+
+            if allow_float:
+                return float(number), unit_key
+            return int(number), unit_key
 
     #* ============ 输出路径解析工具 ============
     @staticmethod
@@ -844,8 +1126,8 @@ class Input:
             default_path: The base suggested path.
             prompt: Prompt text shown to the user.
             path_type: ``"file"``, ``"dir"``, ``"link"``, or ``"any"`` (only checks existence).
-            expand_env_vars: If True (default), expand ``$VAR``/``%VAR%`` environment variables
-                        in the user input with :func:`os.path.expandvars`.
+            expand_env_vars: If True (default), expand ``$VAR``/``${VAR}``,
+                        ``%VAR%``, ``$ENV:VAR`` and ``${ENV:VAR}`` variables.
             validate_exists: If True (default), check path existence and type.
                              If False, accept any path including non-existing ones.
 
@@ -870,7 +1152,7 @@ class Input:
 
             user_path = os.path.expanduser(user_path)
             if expand_env_vars:
-                user_path = os.path.expandvars(user_path)
+                user_path = Utils.resolve_path_vars(user_path)
             if os.path.dirname(user_path) == "":
                 user_path = os.path.join(os.path.dirname(current_default) or ".", user_path)
             user_path = os.path.abspath(user_path)
@@ -953,8 +1235,8 @@ class Input:
         Args:
             prompt_text: Description of what to enter.
             path_type: ``"file"``, ``"dir"``, ``"link"``, or ``"any"``.
-            expand_env_vars: If True (default), expand ``$VAR``/``%VAR%`` environment variables
-                        in each path with :func:`os.path.expandvars`.
+            expand_env_vars: If True (default), expand ``$VAR``/``${VAR}``,
+                ``%VAR%``, ``$ENV:VAR`` and ``${ENV:VAR}`` variables.
             validate_exists: If True (default), check path existence and type.
                 If False, accept any path including non-existing ones.
             glob: If True, expand wildcard patterns (``*``/``?``/``[abc]``).
@@ -981,7 +1263,7 @@ class Input:
         for p in paths:
             p = os.path.expanduser(p)
             if expand_env_vars:
-                p = os.path.expandvars(p)
+                p = Utils.resolve_path_vars(p)
 
             # ----- glob expansion -----
             if glob and any(c in p for c in "*?["):

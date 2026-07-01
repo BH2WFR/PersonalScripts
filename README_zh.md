@@ -100,6 +100,7 @@ python compile-script.py                        # 全平台
 | `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持递归批量，可选清 provenance，逐文件计数） | **仅 macOS**。使用 `xattr`（系统自带） |
 | `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置。每次手机开 USB 热点 Windows 都会创建新的网络配置文件（"本地连接 1" → "本地连接 2" → ...），此脚本可批量删除，避免本地连接名称后数字不断递增 | **仅 Windows**。PowerShell（系统自带） |
 | `windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负。** | **仅 Windows**。系统自带工具；可选 `scoop install sudo gsudo` |
+| `windows/clear-recycle-bin.py` | 清空 Windows 回收站（逐盘符）。Phase 1 调用 shell API（`SHEmptyRecycleBinW`）正常清空；Phase 2 对残余项（如 OneDrive"始终保存到本地"文件夹）直接遍历 `$Recycle.Bin` 强力删除。回收站内的重解析点（junction/symlink）仅删除链接本身，不会跟随到目标。支持 `--force-run` 无交互自动执行 | **仅 Windows** |
 | `windows/show-screen-resolution.ps1` | 通过 Windows API 显示显示器分辨率和屏幕信息 | **仅 Windows**。PowerShell（系统自带） |
 | `macos/clear-privacy.py` | 清除 macOS 隐私痕迹（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。**免责声明：使用风险自负。** | **仅 macOS**。系统自带工具；可选 `brew install trash` |
 | `webserver-run.py` | 将本地文件夹（或含 index.html 的网页目录）映射为本地 HTTP 服务。支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`），基于 Python 内置 `http.server` 的多线程服务 | 跨平台 |
@@ -110,6 +111,7 @@ python compile-script.py                        # 全平台
 |------|------|------|
 | `parse-unicode-string.py` | 解析并显示 Unicode 字符信息（序号、字符、十六进制、十进制、说明），特殊字符彩色标注。支持 `--clip`（剪贴板读取）、`--pause`（回车后退出）、`--help` | 跨平台；Linux 剪贴板需 `wl-paste` 或 `xclip` |
 | `research/npy-viewer.py` | `.npy`/`.npz` 文件交互式查看器（1D 折线/柱状/散点图，2D 热力图/曲面图） | 跨平台。`pip install numpy matplotlib plotly` |
+| `research/pattern-generator.py` | 交互式结构光投影图案生成器。当前支持正弦条纹图案（可调频率、相位、方向/角度），输出 8 位灰度图像 | 跨平台。`pip install opencv-python numpy` |
 | `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | **仅 macOS** |
 | `windows/script-to-app.py` | 创建 Windows `.cmd` 启动器，将任意 Python 脚本安装到 `Program Files`。自动检测 Python（conda/系统），接收打开的文件路径作为参数，支持"打开方式"关联文件类型 | **仅 Windows** |
 

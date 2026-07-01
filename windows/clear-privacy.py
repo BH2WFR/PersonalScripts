@@ -64,15 +64,6 @@ def is_windows() -> bool:
     return sys.platform == "win32"
 
 
-def is_admin() -> bool:
-    if not is_windows():
-        return False
-    try:
-        return bool(getattr(ctypes, "windll").shell32.IsUserAnAdmin())
-    except Exception:
-        return False
-
-
 def run(
     cmd: list[str],
     *,
@@ -138,28 +129,6 @@ def confirm_section(args: argparse.Namespace, title: str) -> bool:
     if args.force:
         return True
     return prompt_yes_no(f"{FLYellow}Run {title}?{CRst}")
-
-
-def try_relaunch_with_helper(helper: str) -> bool:
-    helper_path = shutil.which(helper)
-    if helper_path is None:
-        return False
-
-    cmd = [helper_path, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]
-    try:
-        result = subprocess.run(cmd)
-    except Exception as exc:
-        warn_msg(f"{FGray}{helper}{CRst} elevation failed: {FLRed}{exc}{CRst}")
-        return False
-
-    if result.returncode == 0:
-        raise SystemExit(0)
-
-    warn_msg(
-        f"{FGray}{helper}{CRst} exited with code {FLRed}{result.returncode}{CRst}; "
-        "continuing without elevation."
-    )
-    return False
 
 
 def env_path(name: str) -> Optional[Path]:
@@ -497,12 +466,12 @@ def main() -> None:
         return
 
     print_banner(args)
-    if not is_admin():
+    if not Utils.is_elevated():
         warn_msg(
             "Administrator privileges not detected. Trying "
-            f"{FGray}sudo{CRst}, then {FGray}gsudo{CRst}."
+            f"{FGray}gsudo{CRst}, then {FGray}sudo{CRst}."
         )
-        elevated = try_relaunch_with_helper("sudo") or try_relaunch_with_helper("gsudo")
+        elevated = Utils.try_restart_elevated()
         if not elevated:
             warn_msg("Elevation unavailable. Admin-only cleanup may be skipped or only partially work.")
 

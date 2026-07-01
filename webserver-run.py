@@ -96,13 +96,13 @@ def _prompt_bind(default_bind="0.0.0.0"):
 
 
 def _prompt_port(default_port=8000):
-    port_str = input(f"{FLYellow}Port {FGray}[{default_port}]{CRst}{FLYellow}: {CRst}").strip()
-    if not port_str:
-        return default_port
-    try:
-        return int(port_str)
-    except ValueError:
-        Utils.print_error_and_exit(f"Invalid port: {port_str}")
+    return Input.input_number(
+        "Port",
+        default=default_port,
+        min_value=1,
+        max_value=65535,
+        allow_float=False,
+    )
 
 
 def _prompt_quiet():
