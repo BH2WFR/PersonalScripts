@@ -95,7 +95,7 @@ python compile-script.py                        # 全平台
 | `tailscale-restart-accept-routes.py` | 通过切换 `--accept-routes` 开关重启 Tailscale 子网路由 | 跨平台。`tailscale` |
 | `upload-ipaddress.py` | 收集网络信息（`ipconfig`/`ip addr`）并上传至腾讯云 COS S3，方便远程访问。凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | 跨平台。`pip install boto3` |
 | `macos/ntfs-3g-utils.py` | macOS 专用：交互式 NTFS 分区管理。扫描 NTFS 分区后提供三种操作：ntfs-3g 读写挂载、系统只读挂载、弹出磁盘。读写挂载支持自动检测已有挂载点并创建备选目录 | **仅 macOS**。`brew install ntfs-3g macfuse` |
-| `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）。特色功能：MacBook 连接外接显示器时，可一键开关笔记本自带屏幕（`--toggle-built-in`），关闭时会校验外接显示器存在、打开时自动恢复过低亮度 | **仅 macOS**（Apple Silicon）；可选 `pip install pyobjc` |
+| `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）、色彩模式诊断、外接显示器强制 RGB 输出覆写。特色功能：MacBook 连接外接显示器时，可一键开关笔记本自带屏幕（`--toggle-built-in`），关闭时会校验外接显示器存在、打开时自动恢复过低亮度。**RGB 覆写**：修补 EDID 清除 YCbCr 标志，将系统显示覆写写入 `/Library/Displays/Contents/Resources/Overrides/`（需 sudo）；重启后持久保留，重新插拔显示器生效 | **仅 macOS**（Apple Silicon）；可选 `pip install pyobjc` |
 | `power-current.py` | 跨平台充电器与电池遥测查看器。macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用 | 跨平台 |
 | `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持递归批量，可选清 provenance，逐文件计数） | **仅 macOS**。使用 `xattr`（系统自带） |
 | `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置。每次手机开 USB 热点 Windows 都会创建新的网络配置文件（"本地连接 1" → "本地连接 2" → ...），此脚本可批量删除，避免本地连接名称后数字不断递增 | **仅 Windows**。PowerShell（系统自带） |
