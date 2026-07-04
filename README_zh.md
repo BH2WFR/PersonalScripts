@@ -2,6 +2,8 @@
 
 [English](./README.md)
 
+GitHub: https://github.com/BH2WFR/PersonalScripts
+
 > 本项目大部分具体代码由 **DeepSeek V4 Pro** 模型在我的反复迭代修改下通过 vibe coding 生成。
 
 跨平台日常实用脚本合集 — PDF 处理、文件链接、视频下载、系统工具等。

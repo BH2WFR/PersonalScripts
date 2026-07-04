@@ -15,7 +15,9 @@ import subprocess
 import copy
 import dataclasses
 import argparse
+import json
 import re
+import datetime
 from typing import Optional, Any, Union, Set
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -752,6 +754,122 @@ def _print_cmd(cmd: list[str]) -> None:
 
 def _notify(title: str, body: str) -> None:
     Utils.notify(title, body)
+
+
+def _get_local_mtime(path: str) -> Optional["datetime.datetime"]:
+    """Return the modification time of a local file or directory as a
+    timezone-aware UTC datetime, or ``None`` if the path does not exist.
+    """
+    try:
+        ts = os.path.getmtime(path)
+    except OSError:
+        return None
+    return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+
+
+def _get_remote_latest_mtime(
+    rclone_exe: str, remote_path: str, timeout: int = 15
+) -> Optional["datetime.datetime"]:
+    """Return the latest modification time of items immediately inside
+    *remote_path* via ``rclone lsjson --max-depth 1``, or ``None`` on failure.
+
+    The path should already be a valid rclone remote reference
+    (e.g. ``myremote:path/to/dir``).
+    """
+    try:
+        proc = subprocess.run(
+            [rclone_exe, "lsjson", "--max-depth", "1", remote_path],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    if proc.returncode != 0:
+        return None
+
+    try:
+        items = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    if not items:
+        return None
+
+    # Each item has an ISO-8601 "ModTime" field, e.g. "2025-07-04T12:30:45+08:00"
+    latest: Optional["datetime.datetime"] = None
+    for item in items:
+        raw = item.get("ModTime")
+        if not raw:
+            continue
+        try:
+            # fromisoformat handles the rclone ISO-8601 output directly
+            mt = datetime.datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+        if latest is None or mt > latest:
+            latest = mt
+
+    return latest
+
+
+def _display_path_mtimes(
+    local_path: str, remote_path: str, rclone_exe: str, direction: str,
+) -> None:
+    """Print the modification times of the local and remote paths in a compact
+    comparison block, suitable for the pre-execution confirmation screen.
+
+    Local mtime comes from the filesystem; remote mtime comes from
+    ``rclone lsjson`` (root directory item or the latest contained item).
+
+    When *direction* is ``"push"`` and local is older than remote, or
+    *direction* is ``"pull"`` and local is newer than remote, a warning is
+    shown — the sync would overwrite newer data with older data.
+    """
+    local_mtime = _get_local_mtime(local_path)
+    remote_mtime = _get_remote_latest_mtime(rclone_exe, remote_path)
+
+    def _fmt(dt: Optional["datetime.datetime"]) -> str:
+        if dt is None:
+            return f"{FGray}(unavailable){CRst}"
+        local_dt = dt.astimezone()  # local timezone
+        return f"{CRst}{local_dt.strftime('%Y-%m-%d %H:%M:%S')}{CRst}"
+
+    print()
+    print(f"  {FLYellow}Path modification times:{CRst}")
+    print(f"  {FLGreen}Local :{CRst}  {_fmt(local_mtime)}  {FGray}{local_path}{CRst}")
+    print(f"  {FLCyan}Remote:{CRst}  {_fmt(remote_mtime)}  {FGray}{remote_path}{CRst}")
+
+    # Show which side is more recent, plus a directional danger warning
+    if local_mtime is not None and remote_mtime is not None:
+        delta = local_mtime - remote_mtime
+        delta_sec = delta.total_seconds()
+        if abs(delta_sec) < 1:
+            print(f"  {FGray}  -> times match (same second){CRst}")
+        elif delta_sec > 0:
+            mins = int(delta_sec // 60) if abs(delta_sec) >= 60 else 0
+            if mins:
+                print(f"  {FGray}  -> {FLGreen}local{FGray} is{CRst} {mins}m {FLYellow}newer{CRst} {FGray}than {FLCyan}remote{CRst}")
+            else:
+                print(f"  {FGray}  -> {FLGreen}local{FGray} is{CRst} {int(delta_sec)}s {FLYellow}newer{CRst} {FGray}than {FLCyan}remote{CRst}")
+            # local newer + pull = danger: would overwrite newer local with older remote
+            if direction == "pull":
+                print(f"  {FLYellow}  ⚠ WARNING: {FLRed}pull would overwrite newer{CRst} {FLGreen}local{CRst}"
+                      f" {FLRed}data with older{CRst} {FLCyan}remote{CRst} {FLRed}data!{CRst}")
+        else:
+            mins = int(abs(delta_sec) // 60) if abs(delta_sec) >= 60 else 0
+            if mins:
+                print(f"  {FGray}  -> {FLCyan}remote{FGray} is{CRst} {mins}m {FLYellow}newer{CRst} {FGray}than {FLGreen}local{CRst}")
+            else:
+                print(f"  {FGray}  -> {FLCyan}remote{FGray} is{CRst} {int(abs(delta_sec))}s {FLYellow}newer{CRst} {FGray}than {FLGreen}local{CRst}")
+            # remote newer + push = danger: would overwrite newer remote with older local
+            if direction == "push":
+                print(f"  {FLRed}  ⚠ WARNING: push would overwrite newer{CRst} {FLCyan}remote{CRst}"
+                      f" {FLRed}data with older{CRst} {FLCyan}local{CRst} {FLRed}data!{CRst}")
+    elif local_mtime is not None:
+        print(f"  {FGray}  -> (remote time unavailable for comparison){CRst}")
+    elif remote_mtime is not None:
+        print(f"  {FGray}  -> (local time unavailable for comparison){CRst}")
+    print()
 
 
 # ---- alternative remote host helpers ----
@@ -1563,6 +1681,13 @@ def main() -> int:
         cmd = final_task.to_command(rclone_exe, dry_run=cli_dry_run, direction=direction)
         _print_cmd(cmd)
 
+        # Show path modification times for user awareness.
+        # Only show directional danger warnings for sync/copy/move (not bisync/check).
+        _display_path_mtimes(
+            final_task.local_path, final_task.remote_path, rclone_exe,
+            direction if directional else "",
+        )
+
         # Auto-execute when both --task and --direction are given
         auto_execute = cli_task is not None and cli_direction is not None
 
@@ -1572,6 +1697,7 @@ def main() -> int:
         elif auto_execute:
             pass  # skip confirmation, execute directly
         else:
+            go_back = False
             while True:
                 try:
                     choice = input(
@@ -1585,7 +1711,8 @@ def main() -> int:
                 if choice == "y":
                     break
                 elif choice == "n":
-                    continue
+                    go_back = True
+                    break
                 elif choice == "d":
                     dry_cmd = final_task.to_command(rclone_exe, dry_run=True, direction=direction)
                     exec_result = subprocess.run(dry_cmd, check=False)
@@ -1599,6 +1726,9 @@ def main() -> int:
                     return 0
                 else:
                     print(f"{FLRed}Enter y, n, d, or q.{CRst}")
+
+            if go_back:
+                continue  # back to outermost task selection loop
 
         # ---- Execute ----
         print(f"\n{FLYellow}Running...{CRst}\n")
