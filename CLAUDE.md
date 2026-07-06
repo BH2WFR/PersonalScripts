@@ -1,11 +1,12 @@
 # CLAUDE.md
 
-> **Context-compression guard**: if the conversation is summarised and
-> context was compressed, re-read this file from
+> **Context-compression guard**: if the visible context contains a summary,
+> compressed-context marker, or you are unsure whether project rules are still
+> loaded, re-read this file from
 > `D:\Projects\Python_Projects\PersonalScripts\CLAUDE.md` (Windows) or
-> the equivalent path on the current platform **before doing anything
-> else**.  Without this rulebook you will make wrong assumptions about
-> conventions, utilities, and environment.
+> the equivalent path on the current platform **before running project commands
+> or editing files**. Without this rulebook you will make wrong assumptions
+> about conventions, utilities, and environment.
 
 A personal cross-platform Python script toolkit. This file is the
 authoritative coding standard for the project — Claude Code loads it
@@ -13,53 +14,30 @@ automatically as a project prompt.
 
 GitHub: https://github.com/BH2WFR/PersonalScripts
 
-## Communication rules — read before doing anything
+## Agent workflow
 
-### First-session bootstrap — PROBE THE ENVIRONMENT FIRST
+General agent behaviour rules live in the shared prompt
+`D:\Data\OneDrive\Backups\prompts\cc-python-programming.md`.  This file should
+only add rules specific to this Python script toolkit.
 
-At the very start of the first session (or the first session after context
-compression), **before doing any real work**:
+Project-specific reminders:
 
-1. Detect the current OS, OS version, and CPU architecture.
-2. Locate critical tools and environment paths: conda, the conda Python
-   executable, bash (or Git Bash on Windows), pwsh, git.
-3. Print a short environment summary so I can confirm everything is correct.
-
-Only after this bootstrap is complete should you start working on the actual
-task.  After context compression, re-probe if the stored summary was dropped
-— do not rely on stale cached paths from before the compression.
-
-### Report as you go
-
-After every meaningful step (file read, edit made, command run, decision taken),
-briefly tell me what was done and what the next step is. Do NOT bury the result
-inside a `<thinking>` block or a tool result — surface it in visible output. I
-should be able to follow your progress without expanding collapsed blocks.
-
-### Respond in my language
-
-- I write in **Chinese** → reply in **Chinese**.
-- I write in **English** → reply in **English**.
-
-### Infinite-loop guard
-
-If you find yourself running the same command more than **twice** with the same
-output (especially `true`, `echo OK`, `echo <message>`, or similar no-op
-commands), **stop immediately**.  Report what went wrong and ask me for
-guidance.  Do not loop retrying a tool that keeps returning the same result.
-
-> Tip: For a permanent, session-level solution, add these communication rules
-> to `~/.claude/settings.json` as well so they apply to every project
-> automatically — then you won't need to re-read them here.
+- Reply in the user's language.
+- Before editing code, read the surrounding file and follow the local style.
+- Keep edits scoped to the requested script or shared utility.
+- After behavioural code changes, run the smallest relevant check available:
+  `--help`, a launcher dry-run, an import check, or a script-specific test.
+- Do not run status-only shell commands such as `echo "done"`; report status in
+  the reply.
 
 ## Environment
 
 ### Python — CRITICAL: conda first, never system Python
 
-- **Always use conda / Anaconda Python.** System Python on Windows points to
-  the Microsoft Store stub and doesn't exist; on macOS it's ancient 3.9.
-  **Never run bare `python` or `python3` — always locate the conda install
-  first.**
+- **Whenever Python is needed, use conda / Anaconda Python.** System Python on
+  Windows points to the Microsoft Store stub and doesn't exist; on macOS it's
+  ancient 3.9. **Never run bare `python` or `python3` — always locate the
+  conda install first.**
 - Lookup order — try each in sequence until one works:
   1. **`conda run -n base python <script>`** — if `conda` is in PATH, this is
      the simplest and most portable method.  No need to know where Python is
@@ -69,9 +47,11 @@ guidance.  Do not loop retrying a tool that keeps returning the same result.
      first invocation fails with a PATH or DLL resolution error.  If that
      happens, retry once — the second run usually succeeds.
 
-  2. **Find conda via `shutil.which("conda")` or `Utils.find_conda()`**, then
-     derive the Python path from its parent directory (e.g.
-     `<conda_root>/python.exe` on Windows, `<conda_root>/bin/python` on Unix).
+  2. **Find conda via `shutil.which("conda")`, `Get-Command conda`, or
+     `command -v conda`**, then run `conda info --base` to locate the base
+     environment. Derive Python from that base path:
+     - Windows: `<base>\python.exe`
+     - macOS / Linux: `<base>/bin/python`
   3. **Check common install paths** (see below) — only fall back to these if
      `conda` itself cannot be found on PATH.
   4. **System Python** — **last resort, ask me first.**  Windows system Python
@@ -84,8 +64,8 @@ guidance.  Do not loop retrying a tool that keeps returning the same result.
     `/opt/miniconda3/bin/python`, `/opt/anaconda3/bin/python`
   - Linux: `~/miniconda3/bin/python`, `~/anaconda3/bin/python`,
     `/opt/miniconda3/bin/python`, `/opt/anaconda3/bin/python`
-- `Utils.find_conda()` already does steps 2 and 3 — prefer it over a manual
-  search.
+- `Utils.find_conda()` already does the project-specific conda search — prefer
+  it over a manual search inside project scripts.
 - Default environment is **`base`**. Install packages into it with `pip`.
 - Target **Python 3.13+**. Use modern syntax freely.
 
@@ -141,7 +121,7 @@ the appropriate package manager — do not install it yourself.
 | Editors | `nano` (preferred over `vim`) |
 | Stats / data | `tokei`, `cloc`, `sqlite3` (SQLite CLI) |
 | Documents | `ghostscript` (gs) |
-| **Windows only** | `gsudo`, `upx`, `nssm`, Visual Studio (C++ workload) |
+| **Windows only** | `gsudo`, `upx`, `nssm` |
 | **macOS only** | `ncdu` |
 
 ### Launcher
@@ -150,15 +130,18 @@ the appropriate package manager — do not install it yourself.
 scripts in the project:
 
 ```bash
-python run-script.py                # interactive — list all scripts, pick one
-python run-script.py --list         # list scripts and exit
-python run-script.py <name>         # run a script by name (fuzzy-matched)
+conda run -n base python run-script.py                # interactive list
+conda run -n base python run-script.py --list         # list scripts and exit
+conda run -n base python run-script.py <name>         # fuzzy-matched run
 ```
 
 ### Plan before implementing
 
-When I ask for a new feature or a non-trivial change, **propose the plan first**
-and wait for my approval before writing any code.  The plan should cover:
+For new features, broad refactors, dependency changes, public API changes, or
+edits touching multiple files, **propose the plan first** and wait for my
+approval before writing any code. For small bug fixes, typo fixes, formatting
+fixes, or clearly requested local edits, proceed directly. The plan should
+cover:
 
 - What files will be created / modified.
 - The approach (algorithm, architecture, libraries).
@@ -181,19 +164,27 @@ I'll confirm or adjust the plan before you start implementing.
   GBK / ANSI.  Python's `os.fsencode` / surrogate-escaping handles this
   correctly on Windows when using modern Python (3.6+).
 
-### Before installing anything — STOP AND ASK
+### Project safety
 
-**Never install Python packages or system tools without explicit confirmation.**
-If a task needs `pip install ...`, `scoop install ...`, `brew install ...`,
-`winget install ...`, or `apt install ...`, pause and tell me what you want to
-install and why. Let me approve it first.
+The shared prompt contains the full rules for installs, git safety, recursive
+delete/move operations, scope control, failure reporting, and secrets.
+
+Project-specific reminders:
+
+- This repository is public. Never add real credentials, private hostnames,
+  account-specific paths, or machine-specific secrets to scripts, docs, or
+  examples.
+- Do not install Python packages or system tools without explicit approval.
+- Keep edits narrowly scoped to the requested script, `utils/__init__.py`, or
+  the relevant README entries.
+- If a change touches `utils`, also update the quick-reference table below.
 
 ## Running scripts
 
 ### Via the launcher
 
 ```bash
-python run-script.py <name> [args...]
+conda run -n base python run-script.py <name> [args...]
 ```
 
 The launcher discovers scripts by walking the project tree. It auto-hides:
@@ -212,7 +203,7 @@ The launcher discovers scripts by walking the project tree. It auto-hides:
 ### Direct invocation
 
 ```bash
-python path/to/script.py [args...]
+conda run -n base python path/to/script.py [args...]
 ```
 
 Prefer the launcher for interactive exploration, direct invocation for
@@ -734,7 +725,17 @@ module docstring, run `--help`, or read the README.
 └── CLAUDE.md              # This file
 ```
 
-- **`./tmp/`** — All temporary, scratch, and one-off scripts go here. Gitignored.
+- **Temporary / scratch files** — Use this order:
+  1. If `./tmp/` exists, use `./tmp/`.
+  2. Otherwise, if `./BUILD/` exists, use `./BUILD/claude-code-tmp/`.
+  3. Otherwise, if `./build/` exists, use `./build/claude-code-tmp/`.
+  4. Otherwise, if `./out/` exists, use `./out/claude-code-tmp/`.
+  5. Otherwise, ask where temporary files should go.
+
+  Do not silently use system temp directories such as `/tmp/claude-code-tmp`,
+  `/var/tmp`, `%TEMP%`, or `%TMP%`; ask first.
+- **`./tmp/`** — Preferred location for temporary, scratch, and one-off
+  scripts. Gitignored.
 - **`./research/`** — Research / experimental scripts. When they generate output
   files, default to `./output/` (or `./research/output/`) unless I specify
   otherwise.
