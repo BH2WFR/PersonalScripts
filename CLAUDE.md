@@ -598,9 +598,23 @@ except Exception as e:
 - **Constrained parameter values** — use `enum.Enum` (or `enum.IntEnum` /
   `enum.StrEnum`), never raw strings like `"horizontal"` / `"vertical"`. This
   gives IDE autocomplete and catches typos.
-- **Type annotations must be rigorous.** The project uses Pylance — keep it
-  clean. Use `typing.Optional`, `typing.Union`, `Protocol`, `dataclasses.dataclass`
-  as appropriate. No `# type: ignore` unless truly unavoidable.
+- **Type annotations must be rigorous.** The project uses Pylance as the
+  primary type-checking signal; new or modified code should not introduce
+  Pylance errors or warnings. Annotate every public function/method signature,
+  non-trivial helper function, callback, dataclass, enum, and module-level
+  structured constant. Use precise standard typing (`Optional`, `Union`,
+  `Literal`, `Protocol`, `TypedDict`, `Callable`, `Iterable`, `Mapping`,
+  `Sequence`, `PathLike`, etc.) and `dataclasses.dataclass` where appropriate.
+  Avoid broad `Any`, untyped containers (`dict`, `list`, `tuple` without
+  parameters), and implicit `None` returns in functions that should return a
+  value. No `# type: ignore` unless truly unavoidable; if used, add a short
+  reason and keep it scoped to one line.
+- **Verify Pylance-relevant changes.** When editing type-heavy code, new
+  helpers, public APIs, or `utils/__init__.py`, check for Pylance diagnostics
+  in the touched files if the environment exposes them. If CLI diagnostics are
+  available (for example via pyright/Pylance-compatible tooling), run the
+  smallest relevant check. If diagnostics cannot be queried from the agent
+  environment, say so and still write code to be Pylance-clean by inspection.
 - **Code must be maintainable.** This is a personal toolkit, but not throwaway
   code. Write for readability, extensibility, and configurability. Prefer more
   CLI flags and interaction options over hardcoded behaviour. Think "what if I
