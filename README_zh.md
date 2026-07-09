@@ -100,10 +100,10 @@ python compile-script.py                        # 全平台
 | `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）、色彩模式诊断、外接显示器强制 RGB 输出覆写。特色功能：MacBook 连接外接显示器时，可一键开关笔记本自带屏幕（`--toggle-built-in`），关闭时会校验外接显示器存在、打开时自动恢复过低亮度。**RGB 覆写**：修补 EDID 清除 YCbCr 标志，将系统显示覆写写入 `/Library/Displays/Contents/Resources/Overrides/`（需 sudo）；重启后持久保留，重新插拔显示器生效 | **仅 macOS**（Apple Silicon）；可选 `pip install pyobjc` |
 | `power-current.py` | 跨平台充电器与电池遥测查看器。macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用 | 跨平台 |
 | `macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持递归批量，可选清 provenance，逐文件计数） | **仅 macOS**。使用 `xattr`（系统自带） |
-| `windows/clear-android-rndis-record.ps1` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 配置。每次手机开 USB 热点 Windows 都会创建新的网络配置文件（"本地连接 1" → "本地连接 2" → ...），此脚本可批量删除，避免本地连接名称后数字不断递增 | **仅 Windows**。PowerShell（系统自带） |
+| `windows/clear-android-rndis-record.py` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 记录。列出所有网络连接，根据网卡元数据标记 USB Remote NDIS 记录，确认后删除选中的注册表记录。支持 `--force` 和 `--match` 额外正则匹配 | **仅 Windows** |
 | `windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负。** | **仅 Windows**。系统自带工具；可选 `scoop install sudo gsudo` |
 | `windows/clear-recycle-bin.py` | 清空 Windows 回收站（逐盘符）。Phase 1 调用 shell API（`SHEmptyRecycleBinW`）正常清空；Phase 2 对残余项（如 OneDrive"始终保存到本地"文件夹）直接遍历 `$Recycle.Bin` 强力删除。回收站内的重解析点（junction/symlink）仅删除链接本身，不会跟随到目标。支持 `--force-run` 无交互自动执行 | **仅 Windows** |
-| `windows/show-screen-resolution.ps1` | 通过 Windows API 显示显示器分辨率和屏幕信息 | **仅 Windows**。PowerShell（系统自带） |
+| `windows/show-screen-resolution.py` | 通过 Windows API 显示显示器分辨率和屏幕信息 | **仅 Windows** |
 | `macos/clear-privacy.py` | 清除 macOS 隐私痕迹（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。**免责声明：使用风险自负。** | **仅 macOS**。系统自带工具；可选 `brew install trash` |
 | `webserver-run.py` | 将本地文件夹（或含 index.html 的网页目录）映射为本地 HTTP 服务。支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`），基于 Python 内置 `http.server` 的多线程服务 | 跨平台 |
 

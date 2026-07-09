@@ -750,6 +750,42 @@ module docstring, run `--help`, or read the README.
   `/var/tmp`, `%TEMP%`, or `%TMP%`; ask first.
 - **`./tmp/`** — Preferred location for temporary, scratch, and one-off
   scripts. Gitignored.
+- **Importing project modules from `./tmp/`** — Scripts under `./tmp/` sit one
+  level deeper than the project root, so `sys.path` needs `../..` instead of
+  `..`.  Additionally, some project Python files have hyphens in their names
+  (e.g. `run-script.py`, `compile-script.py`), which makes them unimportable
+  with a regular `import` statement — Python identifiers cannot contain `-`.
+  Use `importlib.util` to load them instead:
+
+  ```python
+  import importlib.util
+  import sys
+  from pathlib import Path
+
+  PROJECT_ROOT = Path(__file__).resolve().parent.parent
+  MODULE_PATH = PROJECT_ROOT / "run-script.py"
+  MODULE_NAME = "run_script"          # must be a valid Python identifier
+
+  spec = importlib.util.spec_from_file_location(MODULE_NAME, MODULE_PATH)
+  mod = importlib.util.module_from_spec(spec)
+  sys.modules[MODULE_NAME] = mod
+  spec.loader.exec_module(mod)
+  # Now use mod.main(), mod.some_function(), etc.
+  ```
+
+  For `utils/`, use a regular `sys.path` insertion — it has a valid module name:
+
+  ```python
+  sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+  from utils import *  # noqa: E402
+  ```
+
+- **Temporary verification scripts are still code** — Scripts under `./tmp/`
+  may be disposable, but they must still be readable, type-annotated where
+  non-trivial, and safe. Follow the same console-output rules as real scripts:
+  English CLI text, no Chinese output, avoid emoji, and prefer ASCII unless
+  Unicode handling is the subject being tested. Do not use scratch status as an
+  excuse for throwaway-quality code when the script verifies project behaviour.
 - **`./research/`** — Research / experimental scripts. When they generate output
   files, default to `./output/` (or `./research/output/`) unless I specify
   otherwise.
