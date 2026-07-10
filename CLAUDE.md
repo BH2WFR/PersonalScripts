@@ -16,10 +16,6 @@ GitHub: https://github.com/BH2WFR/PersonalScripts
 
 ## Agent workflow
 
-General agent behaviour rules live in the shared prompt
-`D:\Data\OneDrive\Backups\prompts\cc-python-programming.md`.  This file should
-only add rules specific to this Python script toolkit.
-
 Project-specific reminders:
 
 - Reply in the user's language.

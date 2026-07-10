@@ -34,6 +34,13 @@
 # it can execute — task-level paths just reduce repetition when many
 # sub-tasks share the same source or destination.
 #
+# ``remote-path-type`` controls how ``remote-path`` is classified:
+#   auto    — infer from the path string (default)
+#   rclone  — force ``remote-path`` to be treated as a rclone remote
+#   local   — force ``remote-path`` to be treated as a local/UNC path
+# This affects rclone-remote-only features such as alternative host selection
+# and whether remote mtime checks use rclone lsjson or local filesystem APIs.
+#
 # Every path-type field (local-path, remote-path, backup-dir, log-file)
 # supports the following placeholders:
 #
@@ -88,6 +95,9 @@ settings:
   #
   # `alternative-remote-host` is inherited by *append+dedup* — a sub-task
   # that adds its own list will extend the inherited one, not discard it.
+  # It only applies when remote-path is classified as a rclone remote
+  # such as "dav-ddns4:". Local filesystem paths, Windows drive paths,
+  # Unix absolute paths, and UNC paths ignore this setting.
   #
   # Example — if a sub-task has remote-path: "dav-ddns4:/backup/data",
   # the user will see these full paths at runtime:
@@ -182,10 +192,24 @@ tasks:
       ignore-errors: false           # [default: false]
       retries: 3                     # [default: 3]
 
+      # ---- S3 backend -----------------------------------------------
+      # Skip S3 bucket existence/create checks before object operations
+      # (--s3-no-check-bucket).  Useful when the bucket already exists
+      # and credentials can read/write objects but cannot CreateBucket.
+      s3-no-check-bucket: false      # [default: false]
+
       # ---- direction safety -----------------------------------------
       # Disable one direction to prevent accidental reversal.
       allow-push: true               # [default: true]
       allow-pull: true               # [default: true]
+
+      # ---- remote path type -----------------------------------------
+      # auto   — infer rclone vs local/UNC from remote-path
+      # rclone — force remote-path to be treated as a rclone remote
+      # local  — force remote-path to be treated as local/UNC
+      # This mainly controls rclone-remote-only features such as
+      # alternative-remote-host and remote mtime checks.
+      remote-path-type: auto         # auto | rclone | local  [default: auto]
 
       # ---- exclude --------------------------------------------------
       # Appends to inherited excludes (here: default + cautious).
@@ -246,7 +270,8 @@ tasks:
       #   empty / omitted — match any machine
       #
       # ``alternative-remote-host`` can appear at the sub-task level
-      # too, providing machine-specific alternative hosts.
+      # too, providing machine-specific alternative hosts. It is ignored
+      # unless remote-path is classified as a rclone remote.
       sub-tasks:
         # --- Match by hostname ---
         - name: desktop-pc

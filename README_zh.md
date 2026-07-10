@@ -95,6 +95,7 @@ python compile-script.py                        # 全平台
 |------|------|------|
 | `disk-smart-info.py` | 跨平台 SMART 磁盘健康信息查看器，列出 SMART 磁盘并显示详细属性 | 跨平台。`smartmontools` |
 | `tailscale-restart-accept-routes.py` | 通过切换 `--accept-routes` 开关重启 Tailscale 子网路由 | 跨平台。`tailscale` |
+| `rclone-sync.py` | 基于 YAML 的 rclone 同步任务运行器。支持可复用 profile、按机器过滤 sub-task、交互式主机/方向选择、修改时间比较、dry-run、pre-check，以及在 rclone 操作期间用 Ctrl+C 取消（交互模式返回任务菜单；使用 `--task` 时退出码 130） | 跨平台。`rclone`、`pip install pyyaml` |
 | `upload-ipaddress.py` | 收集网络信息（`ipconfig`/`ip addr`）并上传至腾讯云 COS S3，方便远程访问。凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | 跨平台。`pip install boto3` |
 | `macos/ntfs-3g-utils.py` | macOS 专用：交互式 NTFS 分区管理。扫描 NTFS 分区后提供三种操作：ntfs-3g 读写挂载、系统只读挂载、弹出磁盘。读写挂载支持自动检测已有挂载点并创建备选目录 | **仅 macOS**。`brew install ntfs-3g macfuse` |
 | `macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）、色彩模式诊断、外接显示器强制 RGB 输出覆写。特色功能：MacBook 连接外接显示器时，可一键开关笔记本自带屏幕（`--toggle-built-in`），关闭时会校验外接显示器存在、打开时自动恢复过低亮度。**RGB 覆写**：修补 EDID 清除 YCbCr 标志，将系统显示覆写写入 `/Library/Displays/Contents/Resources/Overrides/`（需 sudo）；重启后持久保留，重新插拔显示器生效 | **仅 macOS**（Apple Silicon）；可选 `pip install pyobjc` |

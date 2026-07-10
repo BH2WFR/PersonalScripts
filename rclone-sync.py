@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """Cross-platform rclone sync task runner driven by a YAML schema.
 
+Defines reusable sync tasks in YAML, filters sub-tasks by the current machine,
+shows source/destination modification times, and runs rclone with interactive
+confirmation.  During rclone checks and transfers, Ctrl+C cancels the current
+operation and returns to the task menu instead of exiting the whole script.
+
+Requirements:
+    - pip: PyYAML
+    - system: rclone
+
 Usage:
     python rclone-sync.py                  # interactive
     python rclone-sync.py --help           # show help
@@ -39,6 +48,7 @@ VALID_MODES       = {"sync", "copy", "move", "check", "bisync"}
 VALID_PLATFORMS   = {"darwin", "linux", "win32", "macos", "windows"}
 VALID_ARCHS       = {"386", "arm", "arm64", "amd64", "x86", "x64"}
 VALID_LOG_LEVELS  = {"ERROR", "NOTICE", "INFO", "DEBUG"}
+VALID_REMOTE_PATH_TYPES = {"auto", "rclone", "local"}
 
 _DATA_MODES = {"sync", "copy", "move", "bisync"}
 _DIRECTIONAL_MODES = {"sync", "copy", "move"}  # modes where push/pull makes sense
@@ -149,6 +159,7 @@ _FIELDS: list[FieldDef] = [
     # paths
     FieldDef("local-path",        "local_path",         default=""),
     FieldDef("remote-path",       "remote_path",        default=""),
+    FieldDef("remote-path-type",  "remote_path_type",   default="auto",      allowed=VALID_REMOTE_PATH_TYPES),
     FieldDef("backup-dir",        "backup_dir",         default=""),
     # case sensitivity
     FieldDef("ignore-case",       "ignore_case",        default=False,       check_type=bool),
@@ -161,6 +172,7 @@ _FIELDS: list[FieldDef] = [
     FieldDef("bwlimit",           "bwlimit",            default="",          check_type=str),
     FieldDef("ignore-errors",     "ignore_errors",      default=False,       check_type=bool),
     FieldDef("retries",           "retries",            default=3,           check_type=int),
+    FieldDef("s3-no-check-bucket","s3_no_check_bucket", default=False,       check_type=bool),
     # safety
     FieldDef("max-delete",        "max_delete",         default=None,        check_type=int),
     FieldDef("check-before-sync", "check_before_sync",  default=False,       allowed={False, True, "size-only"}),
@@ -264,11 +276,13 @@ class SyncTask:
     bwlimit:           str = ""
     ignore_errors:     bool = False
     retries:           int = 3
+    s3_no_check_bucket: bool = False
     delete_excluded:   bool = False
     allow_push:        bool = True
     allow_pull:        bool = True
     local_path:        str = ""
     remote_path:       str = ""
+    remote_path_type:  str = "auto"
     backup_dir:        str = ""
     max_delete:        Optional[int] = None
     check_before_sync: Union[bool, str] = False
@@ -554,6 +568,11 @@ class SyncTask:
             if self.retries != 3:
                 cmd.extend(["--retries", str(self.retries)])
 
+    def _append_backend_flags(self, cmd: list[str]) -> None:
+        """Append backend-specific flags supported by the YAML schema."""
+        if self.s3_no_check_bucket:
+            cmd.append("--s3-no-check-bucket")
+
     def to_command(self, rclone_exe: str, dry_run: bool = False, direction: str = "push") -> list[str]:
         """Build the rclone command line list for this task.
 
@@ -576,6 +595,7 @@ class SyncTask:
             cmd.extend(["--max-delete", str(self.max_delete)])
         if is_data and self.delete_excluded:
             cmd.append("--delete-excluded")
+        self._append_backend_flags(cmd)
         self._append_log_flags(cmd)
         cmd.extend(self.additional_args)
         if dry_run:
@@ -594,6 +614,7 @@ class SyncTask:
         if self.check_before_sync == "size-only":
             cmd.append("--size-only")
         self._append_comparison_and_transfer_flags(cmd, False)
+        self._append_backend_flags(cmd)
         self._append_log_flags(cmd)
         return cmd
 
@@ -756,6 +777,73 @@ def _notify(title: str, body: str) -> None:
     Utils.notify(title, body)
 
 
+class OperationCancelled(Exception):
+    """Raised when the user cancels the current rclone operation with Ctrl+C."""
+
+
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    """Terminate a running child process, escalating to kill if needed."""
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _run_interruptible(
+    cmd: list[str],
+    *,
+    capture_output: bool = False,
+    text: bool = True,
+    timeout: Optional[float] = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a subprocess and convert Ctrl+C into a menu-level cancellation.
+
+    Args:
+        cmd: Command and arguments to execute.
+        capture_output: Capture stdout and stderr when True; otherwise inherit
+            the current console streams.
+        text: Decode captured streams as text when True.
+        timeout: Optional maximum number of seconds to wait.
+
+    Returns:
+        Completed process object with return code and optional captured output.
+
+    Raises:
+        OperationCancelled: If the user presses Ctrl+C while the process is
+            running.  The child process is terminated before raising.
+        subprocess.TimeoutExpired: If *timeout* expires.
+        OSError: If the process cannot be started.
+
+    Side effects:
+        Starts a child process and may print a cancellation message.
+    """
+    stdout = subprocess.PIPE if capture_output else None
+    stderr = subprocess.PIPE if capture_output else None
+    popen_kwargs: dict[str, Any] = {
+        "stdout": stdout,
+        "stderr": stderr,
+        "text": text,
+    }
+    if text:
+        popen_kwargs["encoding"] = "utf-8"
+        popen_kwargs["errors"] = "replace"
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except KeyboardInterrupt as exc:
+        _terminate_process(proc)
+        print(f"\n{FLYellow}Cancelled current operation.{CRst}")
+        raise OperationCancelled from exc
+    except subprocess.TimeoutExpired:
+        _terminate_process(proc)
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def _get_local_mtime(path: str) -> Optional["datetime.datetime"]:
     """Return the modification time of a local file or directory as a
     timezone-aware UTC datetime, or ``None`` if the path does not exist.
@@ -777,19 +865,24 @@ def _get_remote_latest_mtime(
     (e.g. ``myremote:path/to/dir``).
     """
     try:
-        proc = subprocess.run(
+        proc = _run_interruptible(
             [rclone_exe, "lsjson", "--max-depth", "1", remote_path],
             capture_output=True, text=True, timeout=timeout,
         )
+    except OperationCancelled:
+        raise
     except (subprocess.TimeoutExpired, OSError):
         return None
 
     if proc.returncode != 0:
         return None
 
+    if proc.stdout is None:
+        return None
+
     try:
         items = json.loads(proc.stdout)
-    except json.JSONDecodeError:
+    except (TypeError, json.JSONDecodeError):
         return None
 
     if not items:
@@ -813,20 +906,29 @@ def _get_remote_latest_mtime(
 
 
 def _display_path_mtimes(
-    local_path: str, remote_path: str, rclone_exe: str, direction: str,
+    local_path: str,
+    remote_path: str,
+    rclone_exe: str,
+    direction: str,
+    remote_path_type: str = "auto",
 ) -> None:
     """Print the modification times of the local and remote paths in a compact
     comparison block, suitable for the pre-execution confirmation screen.
 
-    Local mtime comes from the filesystem; remote mtime comes from
-    ``rclone lsjson`` (root directory item or the latest contained item).
+    Local mtime comes from the filesystem.  Remote mtime comes from
+    ``rclone lsjson`` when ``remote-path`` is classified as a rclone remote,
+    otherwise it comes from the local filesystem (including UNC paths).
 
     When *direction* is ``"push"`` and local is older than remote, or
     *direction* is ``"pull"`` and local is newer than remote, a warning is
     shown — the sync would overwrite newer data with older data.
     """
     local_mtime = _get_local_mtime(local_path)
-    remote_mtime = _get_remote_latest_mtime(rclone_exe, remote_path)
+    remote_is_rclone = _extract_remote_host(remote_path, remote_path_type)[0] is not None
+    if remote_is_rclone:
+        remote_mtime = _get_remote_latest_mtime(rclone_exe, remote_path)
+    else:
+        remote_mtime = _get_local_mtime(remote_path)
 
     def _fmt(dt: Optional["datetime.datetime"]) -> str:
         if dt is None:
@@ -874,33 +976,31 @@ def _display_path_mtimes(
 
 # ---- alternative remote host helpers ----
 
-_HOST_RE = re.compile(
-    r'^(\\\\[^\\]+\\[^\\]+)'     # UNC: \\server\share
-    r'|^([\w][\w.-]*):'           # rclone remote: name:
-    r'|^([A-Za-z]:)'              # Windows drive: X:
-)
+_RCLONE_REMOTE_RE = re.compile(r"^([\w][\w.-]*):")
 
 
-def _extract_path_host(path: str) -> tuple[Optional[str], Optional[str]]:
-    """Extract the host prefix from *path*.
+def _extract_remote_host(
+    path: str, remote_path_type: str = "auto"
+) -> tuple[Optional[str], Optional[str]]:
+    """Extract a rclone remote prefix from *path*.
 
-    Returns ``(full_prefix, host_name)`` where *full_prefix* is the exact
-    leading substring to swap (includes ``:`` for remotes / drives) and
-    *host_name* is the identifier for display and matching.  Returns
-    ``(None, None)`` for plain Unix paths.
+    Returns ``(full_prefix, host_name)`` for paths like ``remote:/dir``.
+    ``remote_path_type`` may be ``"auto"``, ``"rclone"``, or ``"local"``.
+    Local paths, Windows drive paths, Unix paths, and UNC paths return
+    ``(None, None)`` in auto/local mode so inherited
+    ``alternative-remote-host`` settings do not affect non-rclone destinations.
     """
+    if remote_path_type == "local":
+        return None, None
     if not path:
         return None, None
-    m = _HOST_RE.match(path)
+    m = _RCLONE_REMOTE_RE.match(path)
     if m is None:
         return None, None
-    if m.group(1):  # UNC
-        return m.group(1), m.group(1)
-    if m.group(2):  # remote name:  (group 2 = name without colon)
-        return m.group(2) + ':', m.group(2)
-    if m.group(3):  # drive letter
-        return m.group(3), m.group(3)
-    return None, None
+    host = m.group(1)
+    if remote_path_type == "auto" and len(host) == 1 and re.match(r"^[A-Za-z]$", host):
+        return None, None
+    return f"{host}:", host
 
 
 def _replace_path_host(path: str, old_prefix: str, new_prefix: str) -> str:
@@ -921,22 +1021,14 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
     if not alternatives:
         return
 
-    # Determine which path has a recognisable host
-    path_attr: Optional[str] = None
-    current_prefix: Optional[str] = None
-    current_host: Optional[str] = None
-    for attr in ("remote_path", "local_path"):
-        val = getattr(final_task, attr)
-        prefix, name = _extract_path_host(val)
-        if prefix:
-            path_attr = attr
-            current_prefix = prefix
-            current_host = name
-            break
+    # Only remote-path participates. Local/UNC paths skip in auto/local mode.
+    path_attr = "remote_path"
+    current_prefix, current_host = _extract_remote_host(
+        final_task.remote_path,
+        final_task.remote_path_type,
+    )
 
     if path_attr is None or current_host is None or current_prefix is None:
-        print(f"\n  {FLYellow}Warning:{CRst} alternative-remote-host is set but no remote name, drive letter,"
-              f" or UNC host found in local-path or remote-path — skipping host selection.")
         return
 
     # Build choices: current host first, then alternatives.
@@ -996,12 +1088,8 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
 
 def _host_name_to_prefix(name: str, template_prefix: str) -> str:
     """Build a full path prefix from a host *name* using *template_prefix*
-    to determine the format (remote, drive, or UNC)."""
-    if template_prefix.endswith(':'):
-        # remote or drive — keep trailing colon
-        return name if name.endswith(':') else name + ':'
-    # UNC — no colon
-    return name
+    to preserve the rclone remote separator."""
+    return name if name.endswith(':') else name + ':'
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1103,6 +1191,12 @@ def _print_help() -> None:
   When --task and --direction are both specified, the script runs without
   any interactive prompts (provided other requirements are met).
 
+{FLYellow}Cancellation:{CRst}
+  During rclone time checks, dry-runs, checks, and transfers, Ctrl+C cancels
+  the current operation and returns to the task menu in interactive mode.
+  When --task is supplied, cancellation exits with code 130 because there is
+  no interactive task list to return to.
+
 {FLYellow}Environment variables:{CRst}
   {FLCyan}{ENV_SCHEMA_FILE}{CRst}    path to YAML schema file (default: ./rclone-sync-default-schema.yaml)
   {FLCyan}{ENV_CONFIG_PASSWORD}{CRst}  password for encrypted rclone config
@@ -1113,6 +1207,12 @@ def _print_help() -> None:
   {FGray}{{{{schema_dir}}}}{CRst}       directory containing the YAML file
   {FGray}{{{{script_dir}}}}{CRst}       directory containing rclone-sync.py
   {FGray}{{{{current_dir}}}}{CRst}      current working directory
+
+{FLYellow}Remote path type:{CRst}
+  YAML field {FLCyan}remote-path-type{CRst}: auto | rclone | local  (default: auto).
+  It controls whether {FLCyan}remote-path{CRst} should be treated as a rclone remote
+  for features such as {FLCyan}alternative-remote-host{CRst} and remote mtime checks.
+  Local, drive, and UNC paths use filesystem mtime in auto/local mode.
 
 {FLYellow}Modes:{CRst}
   {FLCyan}sync{CRst}     make destination match source (one-way)
@@ -1224,6 +1324,8 @@ def main() -> int:
     if cli_auto:
         schema_file = default_schema
     else:
+        if ENV_SCHEMA_FILE not in os.environ:
+            print(f"{FGray}Tip: set {FLCyan}{ENV_SCHEMA_FILE}{FGray} to your default YAML schema path.{CRst}")
         schema_file = Input.resolve_input_path(
             default_schema,
             prompt="Path to YAML schema file",
@@ -1662,11 +1764,25 @@ def main() -> int:
                 print(f"  {FLRed}- {err}{CRst}")
             return 1
 
+        # Auto-execute when both --task and --direction are given.  When --task
+        # is supplied from the CLI, there is no task list to return to.
+        auto_execute = cli_task is not None and cli_direction is not None
+        cancel_hint = (
+            "Press Ctrl+C to cancel and exit with code 130."
+            if cli_auto else
+            "Press Ctrl+C to cancel and return to the task menu."
+        )
+
         if not cli_dry_run and final_task.check_before_sync and final_task.check_before_sync is not False:
-            print(f"\n{FLCyan}Running pre-sync check...{CRst}")
+            print(f"\n{FLCyan}Running pre-sync check...{CRst} {FGray}{cancel_hint}{CRst}")
             check_cmd = final_task.to_check_command(rclone_exe, direction=direction)
             _print_cmd(check_cmd)
-            result = subprocess.run(check_cmd, check=False)
+            try:
+                result = _run_interruptible(check_cmd)
+            except OperationCancelled:
+                if cli_auto:
+                    return 130
+                continue
             if result.returncode != 0:
                 print(f"{FLYellow}  -> Differences detected between source and destination.{CRst}")
                 if final_task.stop_on_check_failure:
@@ -1683,13 +1799,17 @@ def main() -> int:
 
         # Show path modification times for user awareness.
         # Only show directional danger warnings for sync/copy/move (not bisync/check).
-        _display_path_mtimes(
-            final_task.local_path, final_task.remote_path, rclone_exe,
-            direction if directional else "",
-        )
-
-        # Auto-execute when both --task and --direction are given
-        auto_execute = cli_task is not None and cli_direction is not None
+        print(f"\n{FLCyan}Checking path modification times...{CRst} {FGray}{cancel_hint}{CRst}")
+        try:
+            _display_path_mtimes(
+                final_task.local_path, final_task.remote_path, rclone_exe,
+                direction if directional else "",
+                final_task.remote_path_type,
+            )
+        except OperationCancelled:
+            if cli_auto:
+                return 130
+            continue
 
         if cli_dry_run:
             print(f"\n{FGray}(dry-run - no changes made){CRst}")
@@ -1715,7 +1835,12 @@ def main() -> int:
                     break
                 elif choice == "d":
                     dry_cmd = final_task.to_command(rclone_exe, dry_run=True, direction=direction)
-                    exec_result = subprocess.run(dry_cmd, check=False)
+                    print(f"\n{FLCyan}Running dry-run...{CRst} {FGray}{cancel_hint}{CRst}\n")
+                    try:
+                        exec_result = _run_interruptible(dry_cmd)
+                    except OperationCancelled:
+                        go_back = True
+                        break
                     if exec_result.returncode == 0:
                         print(f"\n{FGray}(dry-run complete — no changes){CRst}")
                     else:
@@ -1731,8 +1856,13 @@ def main() -> int:
                 continue  # back to outermost task selection loop
 
         # ---- Execute ----
-        print(f"\n{FLYellow}Running...{CRst}\n")
-        exec_result = subprocess.run(cmd, check=False)
+        print(f"\n{FLYellow}Running...{CRst} {FGray}{cancel_hint}{CRst}\n")
+        try:
+            exec_result = _run_interruptible(cmd)
+        except OperationCancelled:
+            if cli_auto:
+                return 130
+            continue
 
         if exec_result.returncode == 0:
             print(f"\n{FLGreen}Sync completed successfully.{CRst}")
@@ -1766,8 +1896,11 @@ def main() -> int:
             if not choice or choice == "m":
                 break  # back to task selection menu
             elif choice == "r":
-                print(f"\n{FLYellow}Re-running...{CRst}\n")
-                exec_result = subprocess.run(cmd, check=False)
+                print(f"\n{FLYellow}Re-running...{CRst} {FGray}{cancel_hint}{CRst}\n")
+                try:
+                    exec_result = _run_interruptible(cmd)
+                except OperationCancelled:
+                    break
                 if exec_result.returncode == 0:
                     print(f"\n{FLGreen}Sync completed successfully.{CRst}")
                 else:
@@ -1776,7 +1909,7 @@ def main() -> int:
                 Utils.print_exit_message("Bye.")
                 return 0
             else:
-                print(f"{FLRed}Enter s/Enter, r, or q.{CRst}")
+                print(f"{FLRed}Enter m/Enter, r, or q.{CRst}")
 
 
 if __name__ == "__main__":
