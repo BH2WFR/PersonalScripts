@@ -1084,6 +1084,8 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
                     setattr(final_task, path_attr, _replace_path_host(old_val, current_prefix, new_prefix))
                 return
             print(f"{FLRed}Invalid number: {idx}{CRst}")
+            continue
+        print(f"{FLRed}Enter a number, or Enter to keep current.{CRst}")
 
 
 def _host_name_to_prefix(name: str, template_prefix: str) -> str:
@@ -1326,11 +1328,16 @@ def main() -> int:
     else:
         if ENV_SCHEMA_FILE not in os.environ:
             print(f"{FGray}Tip: set {FLCyan}{ENV_SCHEMA_FILE}{FGray} to your default YAML schema path.{CRst}")
-        schema_file = Input.resolve_input_path(
-            default_schema,
-            prompt="Path to YAML schema file",
-            path_type="file",
-        )
+        try:
+            schema_file = Input.resolve_input_path(
+                default_schema,
+                prompt="Path to YAML schema file",
+                path_type="file",
+            )
+        except EOFError:
+            print()
+            Utils.print_exit_message("Bye.")
+            return 0
 
     schema_file = os.path.abspath(os.path.expanduser(schema_file))
     schema_dir = os.path.dirname(schema_file)
@@ -1611,6 +1618,7 @@ def main() -> int:
         # ================================================================
         matching_subs = _matching_subs_cache[selected_entry_idx]
         selected_subtask: Optional[SyncTask] = None
+        subtask_go_back = False
 
         _task_group = all_entries[selected_entry_idx][0]
         _task_name = selected_task_dict.get("name", UNNAMED_TASK)
@@ -1670,13 +1678,19 @@ def main() -> int:
                         print()
                         return 0
                     if not choice:
-                        continue
+                        subtask_go_back = True
+                        break
                     if choice.isdigit():
                         idx = int(choice)
                         if 0 <= idx < len(matching_subs):
                             selected_subtask = matching_subs[idx]
                             break
                         print(f"{FLRed}Invalid number: {idx}{CRst}")
+                        continue
+                    print(f"{FLRed}Enter a number, or Enter to go back.{CRst}")
+
+            if subtask_go_back:
+                continue  # back to task selection
 
         # ---- Merge sub-task into final task, resolve paths ----
         if selected_subtask:
