@@ -67,7 +67,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 def _get_excluded_dirs() -> set[str]:
     """Return directories excluded from script discovery and resolution."""
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "tmp"}
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -115,7 +115,7 @@ def find_scripts(script_dir: str) -> list[str]:
     Excludes:
       - __init__.py (any depth)
       - run-script.py / run-script.sh / run-script.ps1 (root only)
-      - utils/, BUILD/, __pycache__/, .git/, .venv/, node_modules/, .idea/, dist/
+      - utils/, BUILD/, __pycache__/, .git/, .venv/, node_modules/, .idea/, dist/, tmp/
       - platform directories that don't match the current OS
       - .sh scripts if bash is not available
       - .ps1 scripts if pwsh is not available
