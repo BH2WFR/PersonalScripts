@@ -114,7 +114,7 @@ python compile-script.py                        # 全平台
 |------|------|------|
 | `parse-unicode-string.py` | 解析并显示 Unicode 字符信息（序号、字符、十六进制、十进制、说明），特殊字符彩色标注。支持 `--clip`（剪贴板读取）、`--pause`（回车后退出）、`--help` | 跨平台；Linux 剪贴板需 `wl-paste` 或 `xclip` |
 | `research/npy-viewer.py` | `.npy`/`.npz` 文件交互式查看器（1D 折线/柱状/散点图，2D 热力图/曲面图） | 跨平台。`pip install numpy matplotlib plotly` |
-| `research/pattern-generator.py` | 交互式结构光投影图案生成器。当前支持正弦条纹图案（可调频率、相位、方向/角度），输出 8 位灰度图像 | 跨平台。`pip install opencv-python numpy` |
+| `research/pattern-generator.py` | 交互式结构光投影图案生成器。支持正弦条纹图案和 standard Gray code 序列，可选生成反码图案 | 跨平台。`pip install opencv-python numpy` |
 | `macos/script-to-app.py` | 创建 macOS `.app` 包，将任意 Python 脚本包装为可双击启动的应用程序，用于通过访达"打开方式"关联文件类型 | **仅 macOS** |
 | `windows/script-to-app.py` | 创建 Windows `.cmd` 启动器，将任意 Python 脚本安装到 `Program Files`。自动检测 Python（conda/系统），接收打开的文件路径作为参数，支持"打开方式"关联文件类型 | **仅 Windows** |
 

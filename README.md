@@ -114,7 +114,7 @@ python compile-script.py                         # All platforms
 |--------|-------------|--------------|
 | `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` | Cross-platform; Linux clipboard needs `wl-paste` or `xclip` |
 | `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) | Cross-platform. `pip install numpy matplotlib plotly` |
-| `research/pattern-generator.py` | Interactive structured-light projector pattern generator. Currently supports sinusoidal stripe patterns (customizable frequency, phase, direction/angle) output as 8-bit grayscale images | Cross-platform. `pip install opencv-python numpy` |
+| `research/pattern-generator.py` | Interactive structured-light projector pattern generator. Supports sinusoidal stripe patterns and standard Gray-code sequences with optional inverse patterns | Cross-platform. `pip install opencv-python numpy` |
 | `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | **macOS only** |
 | `windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | **Windows only** |
 
