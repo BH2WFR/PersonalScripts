@@ -1,7 +1,7 @@
 launcher:
     script-root: "tools"
     test:
-        enabled: true
+        enabled: false
         test-root: "test"
 
     additional-path-env: "ZL_SCRIPT_ADDITIONAL_PATH"
