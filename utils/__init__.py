@@ -123,6 +123,33 @@ class Utils:
         return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     @staticmethod
+    def resolve_ansi_color(name: str) -> str:
+        """Resolve an ANSI foreground/background color constant by name.
+
+        Args:
+            name: Exact project color constant name, such as ``"FLYellow"``,
+                ``"BBlue"``, or ``"CRst"``.
+
+        Returns:
+            The ANSI escape sequence stored in the named constant.
+
+        Raises:
+            ValueError: If ``name`` does not identify a supported ANSI color
+                or reset constant.
+        """
+        normalized_name = name.strip()
+        value = globals().get(normalized_name)
+        is_color_name = normalized_name.startswith(("F", "B")) or normalized_name == "CRst"
+        if (
+            not is_color_name
+            or not isinstance(value, str)
+            or not value.startswith("\033[")
+            or not value.endswith("m")
+        ):
+            raise ValueError(f"Unknown ANSI color name: {name}")
+        return value
+
+    @staticmethod
     def get_terminal_width() -> int:
         """Return the current terminal width (columns), or a conservative default.
 

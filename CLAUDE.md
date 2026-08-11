@@ -125,10 +125,13 @@ the appropriate package manager — do not install it yourself.
 `run-script.py` is the unified entry point. Use it to list or launch other
 scripts in the project:
 
+Launcher settings come from `launcher-config.yaml`. An optional Gitignored
+`launcher-config.patch.yaml` deep-merges personal overrides when present.
+
 ```bash
 conda run -n base python run-script.py                # interactive list
 conda run -n base python run-script.py --list         # list scripts and exit
-conda run -n base python run-script.py <name>         # fuzzy-matched run
+conda run -n base python run-script.py <name>         # recursive basename match
 ```
 
 ### Plan before implementing
@@ -151,7 +154,7 @@ I'll confirm or adjust the plan before you start implementing.
 - **All text files must be UTF-8 without BOM** unless I explicitly ask otherwise.
 - **Line endings** — keep the existing LF / CRLF style of each file unchanged.
   - Exception: new cross-platform code defaults to **LF**.  New Windows-only
-    scripts under `windows/` may use CRLF.
+    scripts under `tools/windows/` may use CRLF.
 - **Windows console encoding** — if console output shows garbled characters,
   use `chcp 65001` (UTF-8 codepage) and set the locale to `en-US.UTF-8` via
   `Utils.set_locale_utf8()`.  Prefer Unicode / UTF-8 APIs over ANSI / GBK
@@ -207,16 +210,19 @@ development / debugging.
 
 ## Shared utility library — `utils/__init__.py`
 
-**Every script in this project imports `utils`.** The canonical import block is:
+**Every script in this project imports `utils`.** For scripts in a category
+directory such as `tools/filesystem/`, the canonical import block is:
 
 ```python
 import os
 import sys
 # ... other stdlib imports ...
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 ```
+
+Scripts directly under `tools/` use one `".."` component instead of two.
 
 This makes ALL names from `utils` available: ANSI color constants (`FRed`,
 `FLGreen`, `CRst`, …), classes (`Utils`, `Input`, `Menu`, `MenuOption`,
@@ -247,6 +253,7 @@ canonical implementations live here; do not duplicate them in individual scripts
 | OS name / arch / hostname | `Utils.get_os_name()`, `Utils.get_arch()`, `Utils.get_computer_name()` |
 | Print a box-drawing banner | `Utils.print_banner("TITLE")` |
 | Print a horizontal separator | `Utils.print_separator(width=..., color_ansi_esc=...)` |
+| Resolve an ANSI color constant name | `Utils.resolve_ansi_color("FLYellow")` |
 | Print env info (conda, python, shell) | `Utils.print_env_info()` |
 | Standard KeyboardInterrupt exit | `Utils.print_keyboard_interrupt_message_and_exit()` |
 | Standard exit message | `Utils.print_exit_message_and_exit()` or `Utils.print_error_and_exit()` |
@@ -574,7 +581,7 @@ except Exception as e:
   **`argparse`** with `RawDescriptionHelpFormatter` — embed ANSI codes in
   `description` and `epilog` so the output stays colored.  See the `--help`
   section above for the five required subsections.
-- **Platform guard** — scripts under `windows/`, `macos/`, or `linux/` are
+- **Platform guard** — scripts under `tools/windows/`, `tools/macos/`, or `tools/linux/` are
   platform-specific and **must** validate early.  Check `sys.platform` at the top
   of `main()` (or at module level, before imports of OS-specific modules) and
   call `Utils.print_error_and_exit()` with a clear message stating which platform
@@ -718,18 +725,28 @@ module docstring, run `--help`, or read the README.
 ```text
 ./
 ├── run-script.py          # Unified launcher
+├── launcher-config.yaml   # Launcher paths, script types, colors, patterns, ignores
+├── launcher-config.patch.yaml  # Optional Gitignored personal overrides
 ├── compile-script.py      # Script → standalone exe (Nuitka / PyInstaller)
+├── tools/                 # Runnable scripts discovered by run-script.py
+│   ├── document-processing/
+│   ├── download/
+│   ├── filesystem/
+│   ├── multimedia/
+│   ├── network/
+│   ├── research/
+│   ├── windows/           # Windows-only scripts
+│   ├── macos/             # macOS-only scripts
+│   └── linux/             # Linux-only scripts
 ├── utils/
 │   └── __init__.py         # Shared library (Utils, Input, Menu, Cursor, colors)
-├── windows/               # Windows-only scripts
-├── macos/                 # macOS-only scripts
-├── linux/                 # Linux-only scripts
-├── research/              # Research / experimental scripts
-│   └── output/            # Default output for generated research artifacts
 ├── test/                  # Test helpers (keyboard hook, etc.)
 ├── tmp/                   # Temporary / scratch scripts (GITIGNORED)
 ├── output/                # General output directory (GITIGNORED)
 ├── BUILD/                 # Compiled executables (GITIGNORED)
+├── requirements.txt       # Launcher and ordinary tool dependencies
+├── requirements-research.txt
+├── requirements-optional.txt
 ├── README.md              # English documentation
 ├── README_zh.md           # Chinese documentation
 └── CLAUDE.md              # This file
@@ -782,16 +799,17 @@ module docstring, run `--help`, or read the README.
   English CLI text, no Chinese output, avoid emoji, and prefer ASCII unless
   Unicode handling is the subject being tested. Do not use scratch status as an
   excuse for throwaway-quality code when the script verifies project behaviour.
-- **`./research/`** — Research / experimental scripts. When they generate output
-  files, default to `./output/` (or `./research/output/`) unless I specify
+- **`./tools/research/`** — Research / experimental scripts. When they generate output
+  files, default to `./output/` (or `./tools/research/output/`) unless I specify
   otherwise.
 - **`./output/`** — General output directory, gitignored.
 - **`./BUILD/`** — Compiled executables from `compile-script.py`, gitignored.
-- Non-platform-specific new scripts go in the **project root**.
+- Non-platform-specific new scripts go in `tools/` or the appropriate category
+  under `tools/`.
 
 ## Platform & cross-platform rules
 
-1. Scripts in `windows/`, `macos/`, `linux/` are inherently platform-specific.
+1. Scripts in `tools/windows/`, `tools/macos/`, `tools/linux/` are inherently platform-specific.
 2. All other scripts should work **cross-platform** unless the task itself is
    OS-specific. When a cross-platform script needs OS-specific behaviour, branch
    on `sys.platform` (`"win32"`, `"darwin"`, `"linux"`) rather than creating

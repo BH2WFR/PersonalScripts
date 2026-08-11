@@ -1,0 +1,10 @@
+# Launcher dependencies
+pathspec>=0.12,<2
+PyYAML>=6.0,<7
+
+# Tool runtime dependencies
+boto3
+mss
+Pillow
+pynput
+pypdf

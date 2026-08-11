@@ -29,3 +29,8 @@ BUILD/
 /3rdTools/
 
 /tmp/
+
+/runtime/
+
+*.patch.yaml
+*.patch.json

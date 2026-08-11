@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""Unified script launcher for PersonalScripts.
+"""Discover and run PersonalScripts tools from configured directories.
+
+The primary script directory, optional additional-directory environment
+variable, display highlighting, supported script types, and Gitignore-style
+exclusions are defined in ``launcher-config.yaml``. Bare script names are
+matched recursively; multiple eligible matches are presented as a numbered
+selection before the original arguments are passed through. An optional
+``launcher-config.patch.yaml`` overrides personal settings only when present.
+
+Requirements:
+    - pip: pathspec, PyYAML
 
 Usage:
     python run-script.py                  # interactive: list & select
     python run-script.py --list           # list scripts and exit
-    python run-script.py <script-name>    # run script by name
+    python run-script.py <script-name> [args...]  # run by path or basename
 """
 
 import sys
@@ -12,41 +22,20 @@ import os
 import re
 import subprocess
 import importlib.util
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Protocol
 
 from utils import *
 
-#
-#
-ENV_ADDITIONAL_PATH = "ZL_SCRIPT_ADDITIONAL_PATH"
-
-# ============ Highlight Patterns ============
-
-HIGHLIGHT_PATTERNS: list[dict[str, str]] = [
-    {"pattern": r"\bgit\b",       "color": FLYellow},
-    {"pattern": r"\brclone\b",    "color": FLYellow},
-    {"pattern": r"\bpdf\b",       "color": FLYellow},
-    {"pattern": r"\bffmpeg\b",    "color": FLYellow},
-    {"pattern": r"\btailscale\b", "color": FLYellow},
-    {"pattern": r"\.sh$", "color": FLGreen},
-    {"pattern": r"\.ps1$", "color": FLCyan},
-    # {"pattern": r"\.py$", "color": FLBlue},
-]
-"""Highlight rules for script names. Each entry has a ``"pattern"`` (regex) and a
-``"color"`` (ANSI escape). Matched portions use the entry's color; non-matched
-portions remain FLCyan. Patterns are tested against the basename only."""
-
-SUBFOLDER_HIGHLIGHT_COLOR = FLCyan
-ADDITIONAL_HIGHLIGHT_COLOR = FLCyan
-PY_SCRIPT_HIGHLIGHT_COLOR = CRst
-SH_SCRIPT_HIGHLIGHT_COLOR = CRst
-PS1_SCRIPT_HIGHLIGHT_COLOR = CRst
+CONFIG_FILE_NAME = "launcher-config.yaml"
+PATCH_CONFIG_FILE_NAME = "launcher-config.patch.yaml"
+SCRIPT_TYPE_KEYS = ("python", "bash", "powershell")
 
 
 # ============ Helpers ============
 
-def _get_script_dir() -> str:
-    """Directory containing this launcher (works in source and Nuitka-compiled modes)."""
+def _get_project_dir() -> str:
+    """Return the project directory in source and compiled modes."""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
@@ -64,200 +53,593 @@ def _detect_platform() -> tuple[bool, bool, bool]:
     return False, False, False
 
 
-def _get_excluded_dirs() -> set[str]:
-    """Return directories excluded from script discovery and resolution."""
+class IgnoreSpec(Protocol):
+    """Structural type implemented by ``pathspec.PathSpec``."""
+
+    def match_file(self, file: str) -> bool:
+        """Return whether a normalized relative path is ignored."""
+        ...
+
+
+@dataclass(frozen=True)
+class _ScriptTypeConfig:
+    """One configured script type and its default display color."""
+
+    extension: str
+    color: str
+
+
+@dataclass(frozen=True)
+class _HighlightRule:
+    """One compiled display-highlight rule."""
+
+    pattern: re.Pattern[str]
+    color: str
+
+
+@dataclass(frozen=True)
+class _LauncherConfig:
+    """Validated launcher configuration loaded from YAML."""
+
+    script_root: str
+    test_enabled: bool
+    test_root: Optional[str]
+    test_path_prefix: Optional[str]
+    additional_path_env: str
+    requirements_file: str
+    excluded_paths: frozenset[str]
+    script_types: dict[str, _ScriptTypeConfig]
+    default_folder_color: str
+    test_header_color: str
+    additional_header_color: str
+    script_name_rules: tuple[_HighlightRule, ...]
+    folder_name_rules: tuple[_HighlightRule, ...]
+    ignore_spec: IgnoreSpec
+
+    @property
+    def supported_extensions(self) -> tuple[str, ...]:
+        """Return configured extensions in script-type order."""
+        return tuple(self.script_types[key].extension for key in SCRIPT_TYPE_KEYS)
+
+
+def _platform_key() -> Optional[str]:
+    """Return the current platform key used by the launcher configuration."""
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "tmp"}
-    if not is_win:
-        exclude_dirs.add("windows")
-    if not is_mac:
-        exclude_dirs.add("macos")
-    if not is_linux:
-        exclude_dirs.add("linux")
-    return exclude_dirs
+    if is_win:
+        return "windows"
+    if is_mac:
+        return "macos"
+    if is_linux:
+        return "linux"
+    return None
 
 
-_LAUNCHER_NAMES = {"run-script.py", "run-script.sh", "run-script.ps1", "compile-script.py"}
+def _read_pattern_list(value: object, yaml_key: str) -> list[str]:
+    """Validate and return one list of Gitignore-style patterns.
+
+    Args:
+        value: Parsed YAML value to validate.
+        yaml_key: Human-readable YAML key used in error messages.
+
+    Returns:
+        The validated list of pattern strings.
+
+    Raises:
+        ValueError: If the value is not a list containing only strings.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"'{yaml_key}' must be a list of strings")
+    return [item for item in value if isinstance(item, str)]
 
 
-def _is_valid_script(script_dir: str, script_path: str) -> bool:
-    """Return True if *script_path* is not a launcher file and not in an excluded dir."""
+def _read_mapping(value: object, yaml_key: str) -> dict[str, object]:
+    """Validate and return a string-keyed YAML mapping."""
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise ValueError(f"'{yaml_key}' must be a mapping")
+    return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
+def _read_required_string(
+    mapping: dict[str, object],
+    key: str,
+    yaml_key: str,
+) -> str:
+    """Read one required, non-empty string from a YAML mapping."""
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"'{yaml_key}.{key}' must be a non-empty string")
+    return value.strip()
+
+
+def _resolve_project_path(project_dir: str, configured_path: str) -> str:
+    """Resolve one configured path relative to the project directory."""
+    expanded_path = os.path.expanduser(os.path.expandvars(configured_path))
+    if not os.path.isabs(expanded_path):
+        expanded_path = os.path.join(project_dir, expanded_path)
+    return os.path.abspath(expanded_path)
+
+
+def _resolve_config_color(color_name: str, yaml_key: str) -> str:
+    """Resolve one configured color name with contextual validation errors."""
+    try:
+        return Utils.resolve_ansi_color(color_name)
+    except ValueError as exc:
+        raise ValueError(f"'{yaml_key}' contains unknown color '{color_name}'") from exc
+
+
+def _compile_highlight_rules(value: object, yaml_key: str) -> tuple[_HighlightRule, ...]:
+    """Compile color-grouped regular expressions from launcher YAML."""
+    groups = _read_mapping(value, yaml_key)
+    rules: list[_HighlightRule] = []
+    for color_name, pattern_value in groups.items():
+        color = _resolve_config_color(color_name, yaml_key)
+        for pattern_text in _read_pattern_list(pattern_value, f"{yaml_key}.{color_name}"):
+            try:
+                pattern = re.compile(pattern_text)
+            except re.error as exc:
+                raise ValueError(
+                    f"'{yaml_key}.{color_name}' contains invalid regex "
+                    f"'{pattern_text}': {exc}"
+                ) from exc
+            rules.append(_HighlightRule(pattern=pattern, color=color))
+    return tuple(rules)
+
+
+def _deep_merge_mappings(
+    base: dict[str, object],
+    override: dict[str, object],
+) -> dict[str, object]:
+    """Recursively merge YAML mappings, replacing lists and scalar values."""
+    merged: dict[str, object] = dict(base)
+    for key, override_value in override.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(override_value, dict):
+            merged[key] = _deep_merge_mappings(
+                _read_mapping(base_value, key),
+                _read_mapping(override_value, key),
+            )
+        else:
+            merged[key] = override_value
+    return merged
+
+
+def _load_launcher_config(project_dir: str) -> _LauncherConfig:
+    """Load and validate all launcher settings from YAML.
+
+    Args:
+        project_dir: Directory containing the launcher configuration.
+
+    Returns:
+        Fully validated paths, script types, colors, regexes, and ignore rules.
+
+    Raises:
+        FileNotFoundError: If the launcher configuration does not exist.
+        ImportError: If PyYAML or pathspec is unavailable.
+        ValueError: If the YAML structure is invalid.
+    """
+    try:
+        import yaml
+        from pathspec import PathSpec
+    except ImportError as exc:
+        package_name = "PyYAML" if exc.name == "yaml" else "pathspec"
+        raise ImportError(f"Missing Python dependency: {package_name}") from exc
+
+    config_path = os.path.join(project_dir, CONFIG_FILE_NAME)
+    try:
+        with open(config_path, "r", encoding="utf-8") as stream:
+            document = yaml.safe_load(stream)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid YAML in {CONFIG_FILE_NAME}: {exc}") from exc
+
+    root = _read_mapping(document, "root")
+
+    patch_path = os.path.join(project_dir, PATCH_CONFIG_FILE_NAME)
+    if os.path.isfile(patch_path):
+        try:
+            with open(patch_path, "r", encoding="utf-8") as stream:
+                patch_document = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"invalid YAML in {PATCH_CONFIG_FILE_NAME}: {exc}") from exc
+        if patch_document is not None:
+            patch_root = _read_mapping(patch_document, "patch root")
+            root = _deep_merge_mappings(root, patch_root)
+
+    launcher = _read_mapping(root.get("launcher"), "launcher")
+    display = _read_mapping(root.get("display"), "display")
+
+    script_root = _resolve_project_path(
+        project_dir,
+        _read_required_string(launcher, "script-root", "launcher"),
+    )
+    test_settings = _read_mapping(launcher.get("test"), "launcher.test")
+    test_enabled_value = test_settings.get("enabled")
+    if not isinstance(test_enabled_value, bool):
+        raise ValueError("'launcher.test.enabled' must be a boolean")
+
+    test_root: Optional[str] = None
+    test_path_prefix: Optional[str] = None
+    configured_test_root = test_settings.get("test-root")
+    if test_enabled_value or configured_test_root is not None:
+        if not isinstance(configured_test_root, str) or not configured_test_root.strip():
+            raise ValueError("'launcher.test.test-root' must be a non-empty string")
+        configured_test_root = configured_test_root.strip()
+        test_root = _resolve_project_path(project_dir, configured_test_root)
+        if os.path.isabs(configured_test_root):
+            test_path_prefix = os.path.basename(test_root)
+        else:
+            test_path_prefix = _normalize_relative_path(configured_test_root).rstrip("/")
+
+    requirements_file = _resolve_project_path(
+        project_dir,
+        _read_required_string(launcher, "requirements-file", "launcher"),
+    )
+    additional_path_env = _read_required_string(
+        launcher,
+        "additional-path-env",
+        "launcher",
+    )
+
+    excluded_paths = frozenset(
+        _normalize_relative_path(path)
+        for path in _read_pattern_list(
+            launcher.get("excluded-paths"),
+            "launcher.excluded-paths",
+        )
+    )
+
+    script_type_values = _read_mapping(
+        launcher.get("script-types"),
+        "launcher.script-types",
+    )
+    script_types: dict[str, _ScriptTypeConfig] = {}
+    configured_extensions: set[str] = set()
+    for script_type_key in SCRIPT_TYPE_KEYS:
+        type_mapping = _read_mapping(
+            script_type_values.get(script_type_key),
+            f"launcher.script-types.{script_type_key}",
+        )
+        extension = _read_required_string(
+            type_mapping,
+            "extension",
+            f"launcher.script-types.{script_type_key}",
+        )
+        if not extension.startswith(".") or "/" in extension or "\\" in extension:
+            raise ValueError(
+                f"'launcher.script-types.{script_type_key}.extension' "
+                "must be a file extension"
+            )
+        if extension in configured_extensions:
+            raise ValueError(f"duplicate configured script extension: {extension}")
+        configured_extensions.add(extension)
+        color_name = _read_required_string(
+            type_mapping,
+            "color",
+            f"launcher.script-types.{script_type_key}",
+        )
+        script_types[script_type_key] = _ScriptTypeConfig(
+            extension=extension,
+            color=_resolve_config_color(
+                color_name,
+                f"launcher.script-types.{script_type_key}.color",
+            ),
+        )
+
+    default_folder_color_name = _read_required_string(
+        display,
+        "default-folder-color",
+        "display",
+    )
+    test_header_color_name = _read_required_string(
+        display,
+        "test-header-color",
+        "display",
+    )
+    additional_header_color_name = _read_required_string(
+        display,
+        "additional-header-color",
+        "display",
+    )
+
+    script_name_rules = _compile_highlight_rules(
+        root.get("script-name-highlight-pattern"),
+        "script-name-highlight-pattern",
+    )
+    folder_name_rules = _compile_highlight_rules(
+        root.get("folder-name-highlight-pattern"),
+        "folder-name-highlight-pattern",
+    )
+
+    ignore_list = _read_mapping(root.get("ignore-list"), "ignore-list")
+    patterns = _read_pattern_list(
+        ignore_list.get("all-platforms"),
+        "ignore-list.all-platforms",
+    )
+    platform_rules = _read_mapping(
+        ignore_list.get("platform-specific"),
+        "ignore-list.platform-specific",
+    )
+
+    platform_key = _platform_key()
+    if platform_key is not None:
+        patterns.extend(
+            _read_pattern_list(
+                platform_rules.get(platform_key),
+                f"ignore-list.platform-specific.{platform_key}",
+            )
+        )
+
+    try:
+        ignore_spec = PathSpec.from_lines("gitwildmatch", patterns)
+    except Exception as exc:
+        raise ValueError(f"invalid Gitignore pattern: {exc}") from exc
+
+    return _LauncherConfig(
+        script_root=script_root,
+        test_enabled=test_enabled_value,
+        test_root=test_root,
+        test_path_prefix=test_path_prefix,
+        additional_path_env=additional_path_env,
+        requirements_file=requirements_file,
+        excluded_paths=excluded_paths,
+        script_types=script_types,
+        default_folder_color=_resolve_config_color(
+            default_folder_color_name,
+            "display.default-folder-color",
+        ),
+        test_header_color=_resolve_config_color(
+            test_header_color_name,
+            "display.test-header-color",
+        ),
+        additional_header_color=_resolve_config_color(
+            additional_header_color_name,
+            "display.additional-header-color",
+        ),
+        script_name_rules=script_name_rules,
+        folder_name_rules=folder_name_rules,
+        ignore_spec=ignore_spec,
+    )
+
+
+def _normalize_relative_path(path: str, is_dir: bool = False) -> str:
+    """Normalize a relative path for Gitignore-style matching."""
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    if is_dir and not normalized.endswith("/"):
+        normalized = f"{normalized}/"
+    return normalized
+
+
+def _is_ignored(ignore_spec: IgnoreSpec, relative_path: str, is_dir: bool = False) -> bool:
+    """Return whether a path relative to one discovery root is ignored."""
+    return ignore_spec.match_file(_normalize_relative_path(relative_path, is_dir))
+
+
+def _is_valid_script(
+    script_dir: str,
+    script_path: str,
+    config: _LauncherConfig,
+) -> bool:
+    """Return whether a candidate is a supported, non-ignored script."""
     rel = os.path.relpath(script_path, script_dir)
-    parts = rel.replace("\\", "/").split("/")
-    if len(parts) == 1 and parts[0] in _LAUNCHER_NAMES:
+    normalized = _normalize_relative_path(rel)
+    if normalized in config.excluded_paths:
         return False
-    exclude_dirs = _get_excluded_dirs()
-    for part in parts[:-1]:
-        if part in exclude_dirs:
-            return False
-    return True
+    if os.path.basename(script_path).startswith("_"):
+        return False
+    if not script_path.endswith(config.supported_extensions):
+        return False
+    return not _is_ignored(config.ignore_spec, rel)
 
 
 # ============ Interpreter Discovery ============
 
 # ============ Script Discovery ============
 
-def _prefer_py_over_alt(script_dir: str, paths: list[str], alt_ext: str) -> list[str]:
-    """If both foo.py and foo.<alt_ext> exist, keep only foo.py."""
-    result: list[str] = []
-    for p in paths:
-        if p.endswith(alt_ext):
-            py_path = os.path.join(script_dir, p[: -len(alt_ext)] + ".py")
-            if os.path.isfile(py_path):
-                continue
-        result.append(p)
-    return result
-
-
-def find_scripts(script_dir: str) -> list[str]:
+def find_scripts(script_dir: str, config: _LauncherConfig) -> list[str]:
     """Find all runnable scripts, returning relative paths from script_dir.
 
     Excludes:
-      - __init__.py (any depth)
-      - run-script.py / run-script.sh / run-script.ps1 (root only)
-      - utils/, BUILD/, __pycache__/, .git/, .venv/, node_modules/, .idea/, dist/, tmp/
-      - platform directories that don't match the current OS
+      - paths matched by configured Gitignore-style rules
       - .sh scripts if bash is not available
       - .ps1 scripts if pwsh is not available
-    """
-    exclude_dirs = _get_excluded_dirs()
+      - files whose names start with an underscore
 
+    Gitignore patterns are evaluated relative to ``script_dir``.  All
+    interpreter-supported scripts are retained, including same-stem files with
+    different extensions.
+    """
     has_bash = Utils.find_bash() is not None
     has_pwsh = Utils.find_pwsh() is not None
 
-    extensions: list[str] = [".py"]
+    extensions: list[str] = [config.script_types["python"].extension]
     if has_bash:
-        extensions.append(".sh")
+        extensions.append(config.script_types["bash"].extension)
     if has_pwsh:
-        extensions.append(".ps1")
+        extensions.append(config.script_types["powershell"].extension)
 
     scripts: list[str] = []
 
     for root, dirs, files in os.walk(script_dir):
-        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        dirs[:] = [
+            directory
+            for directory in dirs
+            if not _is_ignored(
+                config.ignore_spec,
+                os.path.relpath(os.path.join(root, directory), script_dir),
+                is_dir=True,
+            )
+        ]
 
-        for f in files:
-            if f.startswith("_"):
+        for filename in files:
+            if filename.startswith("_"):
                 continue
-            if root == script_dir and f in _LAUNCHER_NAMES:
-                continue
-            if any(f.endswith(ext) for ext in extensions):
-                full = os.path.join(root, f)
+            if any(filename.endswith(ext) for ext in extensions):
+                full = os.path.join(root, filename)
                 rel = os.path.relpath(full, script_dir)
-                scripts.append(rel)
+                if _is_valid_script(script_dir, full, config):
+                    scripts.append(rel)
 
     scripts.sort()
-
-    if has_bash:
-        scripts = _prefer_py_over_alt(script_dir, scripts, ".sh")
-    if has_pwsh:
-        scripts = _prefer_py_over_alt(script_dir, scripts, ".ps1")
-
     return scripts
 
 
 # ============ Script Resolution ============
 
-def resolve_script_path(script_dir: str, name: str) -> Optional[str]:
-    """Resolve a user-supplied script name to a full path.
+def _script_name_matches(
+    relative_path: str,
+    query: str,
+    config: _LauncherConfig,
+) -> bool:
+    """Return whether one discovered script matches a user query.
 
-    Handles:
-      - Full path (absolute)
-      - Relative path with extension (e.g. macos/screen-utils.py)
-      - Name without extension → tries .py first, then platform-preferred fallback:
-        Windows: .ps1 → .sh (if bash available)
-        macOS / Linux: .sh → .ps1 (if pwsh available)
+    A query containing a directory separator is matched against the complete
+    relative path. A bare query is matched against the basename in any
+    subdirectory. Omitting the extension matches every supported extension
+    with the same stem.
 
-    Returns ``None`` when the name matches a launcher file or an excluded
-    directory.
+    Args:
+        relative_path: Script path relative to its discovery root.
+        query: User-supplied script name, with or without a path or extension.
+        config: Validated launcher settings, including supported extensions.
+
+    Returns:
+        ``True`` when the discovered script matches the query.
     """
-    name = name.replace("\\", "/").lstrip("/")
+    normalized_path = relative_path.replace("\\", "/").lstrip("/")
+    normalized_query = query.replace("\\", "/").lstrip("/")
+    while normalized_query.startswith("./"):
+        normalized_query = normalized_query[2:]
 
-    if os.path.isabs(name):
-        if os.path.isfile(name) and _is_valid_script(script_dir, name):
-            return name
-        return None
+    if not normalized_query:
+        return False
 
-    if name.endswith((".py", ".sh", ".ps1")):
-        candidate = os.path.join(script_dir, name)
-        if os.path.isfile(candidate) and _is_valid_script(script_dir, candidate):
-            return candidate
-        return None
+    match_path = normalized_path if "/" in normalized_query else os.path.basename(normalized_path)
+    has_supported_extension = normalized_query.lower().endswith(config.supported_extensions)
+    if not has_supported_extension:
+        match_path = os.path.splitext(match_path)[0]
 
-    # No extension → try .py first (always preferred)
-    py_candidate = os.path.join(script_dir, name + ".py")
-    if os.path.isfile(py_candidate) and _is_valid_script(script_dir, py_candidate):
-        return py_candidate
+    if _detect_platform()[0]:
+        return match_path.casefold() == normalized_query.casefold()
+    return match_path == normalized_query
 
-    # Platform-specific fallback
-    is_win, _, _ = _detect_platform()
-    if is_win:
-        ps1_candidate = os.path.join(script_dir, name + ".ps1")
-        if os.path.isfile(ps1_candidate) and _is_valid_script(script_dir, ps1_candidate):
-            return ps1_candidate
-        if Utils.find_bash() is not None:
-            sh_candidate = os.path.join(script_dir, name + ".sh")
-            if os.path.isfile(sh_candidate) and _is_valid_script(script_dir, sh_candidate):
-                return sh_candidate
-    else:
-        sh_candidate = os.path.join(script_dir, name + ".sh")
-        if os.path.isfile(sh_candidate) and _is_valid_script(script_dir, sh_candidate):
-            return sh_candidate
-        if Utils.find_pwsh() is not None:
-            ps1_candidate = os.path.join(script_dir, name + ".ps1")
-            if os.path.isfile(ps1_candidate) and _is_valid_script(script_dir, ps1_candidate):
-                return ps1_candidate
 
-    # Final fallback for error reporting
-    final = os.path.join(script_dir, name + ".py")
-    if os.path.isfile(final) and not _is_valid_script(script_dir, final):
-        return None
-    return final
+def _collect_group_matches(
+    group_selector: str,
+    script_dir: str,
+    scripts: list[str],
+    query: str,
+    config: _LauncherConfig,
+    display_prefix: Optional[str] = None,
+) -> list[tuple[str, str, str]]:
+    """Collect matching scripts from one already-filtered discovery group.
+
+    Args:
+        group_selector: Launcher selector (for example ``"0"`` or ``"test"``).
+        script_dir: Absolute discovery-root path.
+        scripts: Eligible script paths relative to ``script_dir``.
+        query: User-supplied path or basename query.
+        config: Validated launcher settings.
+        display_prefix: Optional path prefix used for Test labels.
+
+    Returns:
+        Tuples containing the group number, display label, and absolute path.
+    """
+    matches: list[tuple[str, str, str]] = []
+    for relative_path in scripts:
+        if not _script_name_matches(relative_path, query, config):
+            continue
+        normalized_path = relative_path.replace("\\", "/")
+        label = (
+            f"{display_prefix}/{normalized_path}"
+            if display_prefix
+            else f"@{group_selector}:{normalized_path}"
+        )
+        full_path = os.path.abspath(os.path.join(script_dir, relative_path))
+        matches.append((group_selector, label, full_path))
+    return matches
 
 
 def _resolve_with_groups(
     name: str,
     script_dir: str,
+    scripts: list[str],
+    test_group: Optional[tuple[str, list[str]]],
     additional_groups: list[tuple[str, list[str]]],
+    config: _LauncherConfig,
 ) -> Optional[str]:
-    """Resolve a script name with optional ``@N:`` prefix for cross-group selection.
+    """Resolve a script query across discovery groups.
 
-    - ``@0:name`` resolves in main *script_dir*
-    - ``@1:name`` resolves in the first additional group, etc.
-    - Bare names search all groups; when duplicates are found the user is
-      prompted with ``Menu.select()`` (default: ``@0``).
+    Bare names match basenames recursively and extensionless names include all
+    supported extensions. ``@N:`` restricts matching to one group. Multiple
+    eligible matches are presented through ``Menu.select()``.
 
-    Returns the absolute path of the resolved script, or ``None``.
+    Args:
+        name: User-supplied script query, optionally prefixed with ``@N:``.
+        script_dir: Configured primary discovery root.
+        scripts: Eligible scripts from the primary discovery root.
+        test_group: Optional Test discovery root and eligible scripts.
+        additional_groups: Additional discovery roots and their eligible
+            relative script paths.
+        config: Validated launcher settings.
+
+    Returns:
+        The selected absolute script path, or ``None`` when nothing matches.
+
+    Side effects:
+        Prints and prompts with a numbered menu when multiple scripts match.
     """
-    # Absolute path that exists → use directly
-    if os.path.isabs(name) and os.path.isfile(name):
-        return name
-
-    # Parse @N: prefix → direct group lookup
-    m = re.match(r'^@(\d+):(.+)$', name)
-    if m:
-        group_idx = int(m.group(1))
-        sub_name = m.group(2)
-        if group_idx == 0:
-            return resolve_script_path(script_dir, sub_name)
-        add_idx = group_idx - 1
-        if 0 <= add_idx < len(additional_groups):
-            return resolve_script_path(additional_groups[add_idx][0], sub_name)
+    if os.path.isabs(name):
+        if os.path.isfile(name) and name.lower().endswith(config.supported_extensions):
+            return os.path.abspath(name)
         return None
 
-    # Bare name — search all groups
-    matches: list[tuple[int, str, str]] = []  # (group_idx, label, full_path)
+    groups: list[tuple[str, str, list[str], Optional[str]]] = [
+        ("0", script_dir, scripts, None)
+    ]
+    if test_group is not None and config.test_path_prefix is not None:
+        groups.append(
+            (
+                "test",
+                test_group[0],
+                test_group[1],
+                config.test_path_prefix,
+            )
+        )
+    groups.extend(
+        (str(group_index), directory, group_scripts, None)
+        for group_index, (directory, group_scripts) in enumerate(additional_groups, start=1)
+    )
 
-    resolved = resolve_script_path(script_dir, name)
-    if resolved is not None and os.path.isfile(resolved):
-        label = f"@0:{os.path.relpath(resolved, script_dir).replace(os.sep, '/')}"
-        matches.append((0, label, resolved))
+    query = name
+    prefix_match = re.match(r"^@([^:]+):(.+)$", name)
+    if prefix_match:
+        requested_group = prefix_match.group(1).casefold()
+        query = prefix_match.group(2)
+        groups = [group for group in groups if group[0] == requested_group]
 
-    for add_idx, (add_dir, _) in enumerate(additional_groups):
-        resolved = resolve_script_path(add_dir, name)
-        if resolved is not None and os.path.isfile(resolved):
-            label = f"@{add_idx + 1}:{os.path.relpath(resolved, add_dir).replace(os.sep, '/')}"
-            matches.append((add_idx + 1, label, resolved))
+    matches: list[tuple[str, str, str]] = []
+    for group_selector, directory, group_scripts, display_prefix in groups:
+        group_query = query
+        normalized_query = query.replace("\\", "/").lstrip("/")
+        if display_prefix and "/" in normalized_query:
+            normalized_prefix = display_prefix.replace("\\", "/").strip("/")
+            expected_prefix = f"{normalized_prefix}/"
+            if not normalized_query.casefold().startswith(expected_prefix.casefold()):
+                continue
+            group_query = normalized_query[len(expected_prefix):]
+        matches.extend(
+            _collect_group_matches(
+                group_selector,
+                directory,
+                group_scripts,
+                group_query,
+                config,
+                display_prefix,
+            )
+        )
 
     if not matches:
         return None
@@ -265,158 +647,182 @@ def _resolve_with_groups(
     if len(matches) == 1:
         return matches[0][2]
 
-    # Multiple matches — interactive disambiguation
-    options: list[MenuOption] = []
-    for i, (_, label, path) in enumerate(matches):
-        options.append(MenuOption(
-            keys=[str(i)],
-            description=label,
-            value=path,
-        ))
-
-    print(f"\n{FLYellow}Multiple scripts match '{name}':{CRst}")
-    selected = Menu.select(options, prompt="Select script", default_key="0", separator=False)
-    return selected
+    options = [
+        MenuOption(keys=[str(index)], description=label, value=path)
+        for index, (_, label, path) in enumerate(matches)
+    ]
+    print(f"\n{FLYellow}Warning: multiple scripts match '{CRst}{name}{FLYellow}'.{CRst}")
+    selected = Menu.select(
+        options,
+        prompt="Select script",
+        default_key="0",
+        separator=False,
+        key_color=FGray,
+        default_desc_color=CRst,
+    )
+    return selected if isinstance(selected, str) else None
 
 
 # ============ Display ============
 
-def _script_color(path: str) -> str:
-    if path.endswith(".py"):
-        return PY_SCRIPT_HIGHLIGHT_COLOR
-    if path.endswith(".sh"):
-        return SH_SCRIPT_HIGHLIGHT_COLOR
-    return PS1_SCRIPT_HIGHLIGHT_COLOR  # .ps1
+def _script_color(path: str, config: _LauncherConfig) -> str:
+    """Return the configured default color for one script path."""
+    for script_type in config.script_types.values():
+        if path.endswith(script_type.extension):
+            return script_type.color
+    return config.script_types["python"].color
 
 
-def _highlight_filename(fname: str) -> str:
-    """Return *fname* with regex-matched portions colored per HIGHLIGHT_PATTERNS.
-    Returns empty string when no pattern matches (caller keeps default color).
+def _highlight_text(
+    text: str,
+    rules: tuple[_HighlightRule, ...],
+    default_color: str,
+) -> str:
+    """Apply ordered non-overlapping highlight rules to one text value."""
+    matches: list[tuple[int, int, str]] = []
+    for rule in rules:
+        for match in rule.pattern.finditer(text):
+            matches.append((match.start(), match.end(), rule.color))
 
-    All patterns are evaluated; when multiple patterns produce matches they are
-    merged by start position (earlier patterns take priority on overlap).
-    """
-    # Collect all matches from all patterns: (start, end, color)
-    all_matches: list[tuple[int, int, str]] = []
-    for entry in HIGHLIGHT_PATTERNS:
-        pattern: str = entry["pattern"]
-        hl_color: str = entry["color"]
-        for m in re.finditer(pattern, fname):
-            all_matches.append((m.start(), m.end(), hl_color))
+    if not matches:
+        return f"{default_color}{text}{CRst}"
 
-    if not all_matches:
-        return ""
-
-    all_matches.sort(key=lambda x: x[0])
-
+    matches.sort(key=lambda item: item[0])
     parts: list[str] = []
     last_end = 0
-    for start, end, color in all_matches:
+    for start, end, color in matches:
         if start < last_end:
-            continue  # skip overlapping region
+            continue
         if start > last_end:
-            parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:start]}{CRst}")
-        parts.append(f"{color}{fname[start:end]}{CRst}")
+            parts.append(f"{default_color}{text[last_end:start]}{CRst}")
+        parts.append(f"{color}{text[start:end]}{CRst}")
         last_end = end
 
-    if last_end < len(fname):
-        parts.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}{fname[last_end:]}{CRst}")
+    if last_end < len(text):
+        parts.append(f"{default_color}{text[last_end:]}{CRst}")
     return "".join(parts)
+
+
+def _highlight_subdirectory(subdirectory: str, config: _LauncherConfig) -> str:
+    """Color a subdirectory and its trailing separator from configured rules."""
+    normalized = subdirectory.replace("\\", "/")
+    normalized = f"{normalized}/"
+    return _highlight_text(
+        normalized,
+        config.folder_name_rules,
+        config.default_folder_color,
+    )
+
+
+def _format_script_path(relative_path: str, config: _LauncherConfig) -> str:
+    """Return one relative script path with configured ANSI highlighting."""
+    normalized = relative_path.replace("\\", "/")
+    subdirectory, separator, filename = normalized.rpartition("/")
+    if not separator:
+        filename = normalized
+
+    highlighted_filename = _highlight_filename(filename, config)
+
+    if subdirectory:
+        return f"{_highlight_subdirectory(subdirectory, config)}{highlighted_filename}"
+    return highlighted_filename
+
+
+def _highlight_filename(filename: str, config: _LauncherConfig) -> str:
+    """Return a filename highlighted by configured regex rules."""
+    return _highlight_text(
+        filename,
+        config.script_name_rules,
+        _script_color(filename, config),
+    )
 
 
 def show_scripts(
     script_dir: str,
     scripts: list[str],
+    config: _LauncherConfig,
+    test_group: Optional[tuple[str, list[str]]] = None,
     additional_groups: Optional[list[tuple[str, list[str]]]] = None,
 ) -> list[str]:
-    """Print the numbered script list. Returns flat list of paths.
-
-    Main-script entries are relative paths from *script_dir*; additional-script
-    entries are absolute paths.
-    """
+    """Print all discovery groups and return their launcher selector tokens."""
+    has_test = bool(test_group and test_group[1])
     has_additional = bool(additional_groups)
-    if not scripts and not has_additional:
+    if not scripts and not has_test and not has_additional:
         print(f"No scripts found in: `{script_dir}`")
         return []
 
     # Build type label
     types: list[str] = []
-    has_py = any(s.endswith(".py") for s in scripts)
-    has_sh = any(s.endswith(".sh") for s in scripts)
-    has_ps1 = any(s.endswith(".ps1") for s in scripts)
+    available_types = {
+        key: any(script.endswith(script_type.extension) for script in scripts)
+        for key, script_type in config.script_types.items()
+    }
+    if test_group:
+        for key, script_type in config.script_types.items():
+            available_types[key] = available_types[key] or any(
+                script.endswith(script_type.extension) for script in test_group[1]
+            )
     if additional_groups:
         for _, add_scripts in additional_groups:
-            has_py = has_py or any(s.endswith(".py") for s in add_scripts)
-            has_sh = has_sh or any(s.endswith(".sh") for s in add_scripts)
-            has_ps1 = has_ps1 or any(s.endswith(".ps1") for s in add_scripts)
-    if has_py:
-        types.append(f"{PY_SCRIPT_HIGHLIGHT_COLOR}python{CRst}")
-    if has_sh:
-        types.append(f"{SH_SCRIPT_HIGHLIGHT_COLOR}bash{CRst}")
-    if has_ps1:
-        types.append(f"{PS1_SCRIPT_HIGHLIGHT_COLOR}PowerShell{CRst}")
+            for key, script_type in config.script_types.items():
+                available_types[key] = available_types[key] or any(
+                    script.endswith(script_type.extension) for script in add_scripts
+                )
+    for key in SCRIPT_TYPE_KEYS:
+        if available_types[key]:
+            label = "PowerShell" if key == "powershell" else key
+            types.append(f"{config.script_types[key].color}{label}{CRst}")
     type_str = "/".join(types) if types else "scripts"
 
     Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
 
     print(f"  Available {type_str} scripts in `{FGray}{script_dir}{CRst}`:")
 
+    test_count = len(test_group[1]) if test_group else 0
     additional_count = sum(len(g[1]) for g in additional_groups) if additional_groups else 0
-    total = len(scripts) + additional_count
+    total = len(scripts) + test_count + additional_count
     max_digits = len(str(total - 1)) if total > 0 else 1
 
     all_scripts: list[str] = []
     cnt = 0
 
-    root_scripts = [s for s in scripts if os.sep not in s]
-    sub_scripts = [s for s in scripts if os.sep in s]
+    root_scripts = [s for s in scripts if "/" not in s.replace("\\", "/")]
+    sub_scripts = [s for s in scripts if "/" in s.replace("\\", "/")]
 
     # ── root scripts ──
     for rel in root_scripts:
-        color = _script_color(rel)
-        fname = os.path.basename(rel)
-        hl = _highlight_filename(fname)
-        if hl:
-            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {hl}")
-        else:
-            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {color}{fname}{CRst}")
+        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {_format_script_path(rel, config)}")
         all_scripts.append(f"@0:{rel}")
         cnt += 1
 
     # ── subfolder scripts (no header) ──
     for rel in sub_scripts:
-        color = _script_color(rel)
-        subdir = os.path.dirname(rel)
-        fname = os.path.basename(rel)
-        hl = _highlight_filename(fname)
-        if hl:
-            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{hl}")
-        else:
-            print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{color}{fname}{CRst}")
+        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {_format_script_path(rel, config)}")
         all_scripts.append(f"@0:{rel}")
         cnt += 1
+
+    # ── configured test scripts ──
+    if test_group and config.test_path_prefix:
+        print()
+        print(f"  {config.test_header_color}─── Test ───{CRst}")
+        for rel in test_group[1]:
+            normalized_rel = rel.replace("\\", "/")
+            display_path = f"{config.test_path_prefix}/{normalized_rel}"
+            print(
+                f"  {FGray}[{cnt:>{max_digits}}]{CRst}: "
+                f"{_format_script_path(display_path, config)}"
+            )
+            all_scripts.append(f"@test:{rel}")
+            cnt += 1
 
     # ── additional scripts ──
     if additional_groups:
         for group_idx, (_, add_scripts) in enumerate(additional_groups):
             display_idx = group_idx + 1
             print()
-            print(f"  {SUBFOLDER_HIGHLIGHT_COLOR}─── Additional [{display_idx}] ───{CRst}")
+            print(f"  {config.additional_header_color}─── Additional [{display_idx}] ───{CRst}")
             for rel in add_scripts:
-                fname = os.path.basename(rel)
-                subdir = os.path.dirname(rel)
-                color = _script_color(rel)
-                hl = _highlight_filename(fname)
-                if hl:
-                    if subdir:
-                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{hl}")
-                    else:
-                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {hl}")
-                else:
-                    if subdir:
-                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {SUBFOLDER_HIGHLIGHT_COLOR}{subdir}{CRst}/{color}{fname}{CRst}")
-                    else:
-                        print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {color}{fname}{CRst}")
+                print(f"  {FGray}[{cnt:>{max_digits}}]{CRst}: {_format_script_path(rel, config)}")
                 all_scripts.append(f"@{display_idx}:{rel}")
                 cnt += 1
 
@@ -494,22 +900,139 @@ def run_ps1_script(script_path: str, args: list[str]) -> int:
 
 # ============ Main ============
 
+def _print_help(config: _LauncherConfig) -> None:
+    """Print launcher usage, configuration, and dependency information."""
+    path_separator = os.pathsep
+    project_dir = _get_project_dir()
+    script_root = os.path.relpath(config.script_root, project_dir).replace("\\", "/")
+    requirements_file = os.path.relpath(
+        config.requirements_file,
+        project_dir,
+    ).replace("\\", "/")
+    print(f"""
+{FLYellow}PERSONAL SCRIPT LAUNCHER{CRst}
+
+{FLYellow}Usage:{CRst}
+  python run-script.py
+  python run-script.py --list
+  python run-script.py <script-name> [args...]
+  python run-script.py @N:<script-name> [args...]
+  python run-script.py @test:<script-name> [args...]
+
+{FLYellow}Description:{CRst}
+  Lists runnable scripts from {FGray}{script_root}{CRst} and optional additional
+  directories, then runs a selection by number or name. A bare name searches
+  every eligible subdirectory and supported extension. Multiple matches are
+  shown as a numbered selection before arguments are passed through. When the
+  configured Test group is enabled, its scripts participate in the same lookup.
+
+{FLYellow}Options:{CRst}
+  {FLCyan}--list{CRst}                   List scripts and exit.
+  {FLCyan}--help, -h{CRst}               Show this help message and exit.
+
+{FLYellow}Configuration:{CRst}
+  {FLCyan}{CONFIG_FILE_NAME}{CRst}         Paths, script types, colors, and ignore rules.
+  {FLCyan}{PATCH_CONFIG_FILE_NAME}{CRst}   Optional personal overrides; ignored when absent.
+  {FLCyan}{config.additional_path_env}{CRst}  Additional directories separated by
+                             {FGray}{path_separator}{CRst}. Relative paths use the project root.
+
+{FLYellow}Requirements:{CRst}
+  Python 3.13+, PyYAML, pathspec
+  Install dependencies with:
+    {FGray}python -m pip install -r {requirements_file}{CRst}
+""")
+
+
+def _resolve_additional_directories(
+    project_dir: str,
+    config: _LauncherConfig,
+) -> list[str]:
+    """Resolve and deduplicate configured additional script directories.
+
+    Args:
+        project_dir: Base directory for resolving relative entries.
+        config: Validated launcher settings containing the environment name.
+
+    Returns:
+        Existing absolute directories in environment-variable order.
+
+    Side effects:
+        Prints a warning for each configured path that is not a directory.
+    """
+    raw_value = os.environ.get(config.additional_path_env, "").strip()
+    if not raw_value:
+        return []
+
+    directories: list[str] = []
+    seen: set[str] = set()
+    for raw_path in raw_value.split(os.pathsep):
+        raw_path = raw_path.strip()
+        if not raw_path:
+            continue
+
+        expanded_path = os.path.expanduser(os.path.expandvars(raw_path))
+        if not os.path.isabs(expanded_path):
+            expanded_path = os.path.join(project_dir, expanded_path)
+        resolved_path = os.path.abspath(expanded_path)
+        normalized_key = os.path.normcase(resolved_path)
+
+        if normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+
+        if not os.path.isdir(resolved_path):
+            print(
+                f"{FLYellow}Ignoring missing additional directory:{CRst} "
+                f"{FGray}{resolved_path}{CRst}",
+                file=sys.stderr,
+            )
+            continue
+        directories.append(resolved_path)
+
+    return directories
+
+
 def main() -> int:
+    project_dir = _get_project_dir()
+    try:
+        config = _load_launcher_config(project_dir)
+    except (FileNotFoundError, ImportError, ValueError) as exc:
+        print(f"{FLRed}Cannot load {CONFIG_FILE_NAME}:{CRst} {exc}", file=sys.stderr)
+        return 1
+
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
+        _print_help(config)
+        return 0
+
     Utils.print_banner("PERSONAL SCRIPT LAUNCHER")
     Utils.print_env_info()
 
-    script_dir = _get_script_dir()
+    script_dir = config.script_root
+    if not os.path.isdir(script_dir):
+        print(f"{FLRed}Script directory not found:{CRst} {FGray}{script_dir}{CRst}", file=sys.stderr)
+        return 1
 
-    #* ZL_SCRIPT_ADDITIONAL_PATH (semicolon-separated)
+    scripts = find_scripts(script_dir, config)
+
+    # ── optional test script directory ────────────────────
+    test_group: Optional[tuple[str, list[str]]] = None
+    if config.test_enabled:
+        assert config.test_root is not None
+        if not os.path.isdir(config.test_root):
+            print(
+                f"{FLRed}Test script directory not found:{CRst} "
+                f"{FGray}{config.test_root}{CRst}",
+                file=sys.stderr,
+            )
+            return 1
+        test_group = (config.test_root, find_scripts(config.test_root, config))
+
+    # ── additional script directories ─────────────────────
     additional_groups: list[tuple[str, list[str]]] = []
-    additional_dirs_raw = os.environ.get(ENV_ADDITIONAL_PATH, "").strip()
-    if additional_dirs_raw:
-        for dir_path in additional_dirs_raw.split(";"):
-            dir_path = dir_path.strip()
-            if dir_path and os.path.isdir(dir_path):
-                scripts_found = find_scripts(dir_path)
-                if scripts_found:
-                    additional_groups.append((dir_path, scripts_found))
+    for directory in _resolve_additional_directories(project_dir, config):
+        scripts_found = find_scripts(directory, config)
+        if scripts_found:
+            additional_groups.append((directory, scripts_found))
 
     script_name: Optional[str] = None
     remaining_args: list[str] = []
@@ -521,10 +1044,11 @@ def main() -> int:
     show_list = script_name is None or script_name == "--list"
 
     if show_list:
-        scripts = find_scripts(script_dir)
         all_rel = show_scripts(
             script_dir,
             scripts,
+            config,
+            test_group,
             additional_groups if additional_groups else None,
         )
 
@@ -539,7 +1063,7 @@ def main() -> int:
         print(f"Examples:")
         print(f"    {FLYellow}5{CRst}                              select by number")
         print(f"    {FLYellow}5{CRst} {FLCyan}--help{CRst}                       number + passthrough args")
-        print(f"    {FLYellow}test/print-argv{CRst} {FLCyan}arg1 arg2{CRst}      name + passthrough args")
+        print(f"    {FLYellow}script-name{CRst} {FLCyan}arg1 arg2{CRst}          name + passthrough args")
 
         script_path: Optional[str] = None
         while True:
@@ -566,7 +1090,14 @@ def main() -> int:
                     continue
                 first_token = all_rel[idx]
 
-            script_path = _resolve_with_groups(first_token, script_dir, additional_groups)
+            script_path = _resolve_with_groups(
+                first_token,
+                script_dir,
+                scripts,
+                test_group,
+                additional_groups,
+                config,
+            )
             if script_path is None:
                 print(f"{FLRed}Cannot find script: `{first_token}`{CRst}", file=sys.stderr)
                 continue
@@ -575,7 +1106,14 @@ def main() -> int:
     else:
         # CLI arg provided (not --list)
         assert script_name is not None  # guaranteed by show_list logic
-        script_path = _resolve_with_groups(script_name, script_dir, additional_groups)
+        script_path = _resolve_with_groups(
+            script_name,
+            script_dir,
+            scripts,
+            test_group,
+            additional_groups,
+            config,
+        )
         if script_path is None:
             print(f"{FLRed}Cannot find script: `{script_name}`{CRst}", file=sys.stderr)
             return 1
@@ -588,17 +1126,17 @@ def main() -> int:
 
     print(f"{FLYellow}Resolved script path:{CRst} {FLGreen}{script_path}{CRst}")
 
-    if script_path.endswith(".py"):
+    if script_path.endswith(config.script_types["python"].extension):
         print()
-        if script_dir not in sys.path:
-            sys.path.insert(0, script_dir)
+        if project_dir not in sys.path:
+            sys.path.insert(0, project_dir)
         return run_py_script(script_path)
 
-    if script_path.endswith(".sh"):
+    if script_path.endswith(config.script_types["bash"].extension):
         print()
         return run_sh_script(script_path, remaining_args)
 
-    if script_path.endswith(".ps1"):
+    if script_path.endswith(config.script_types["powershell"].extension):
         print()
         return run_ps1_script(script_path, remaining_args)
 

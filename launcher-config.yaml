@@ -1,0 +1,73 @@
+launcher:
+    script-root: "tools"
+    test:
+        enabled: true
+        test-root: "test"
+
+    additional-path-env: "ZL_SCRIPT_ADDITIONAL_PATH"
+    requirements-file: "requirements.txt"
+    excluded-paths:
+        - "run-script.py"
+        - "run-script.sh"
+        - "run-script.ps1"
+        - "compile-script.py"
+    script-types:
+        python:
+            extension: ".py"
+            color: "CRst"
+        bash:
+            extension: ".sh"
+            color: "CRst"
+        powershell:
+            extension: ".ps1"
+            color: "CRst"
+
+display:
+    default-folder-color: "FLCyan"
+    test-header-color: "FLCyan"
+    additional-header-color: "FLCyan"
+
+script-name-highlight-pattern:
+    FLYellow:
+        - "\\bgit\\b"
+        - "\\brclone\\b"
+        - "\\bpdf\\b"
+        - "\\bffmpeg\\b"
+        - "\\btailscale\\b"
+    FLGreen:
+        - "\\.sh$"
+    FLCyan:
+        - "\\.ps1$"
+
+folder-name-highlight-pattern:
+    FLGreen:
+        - "^windows/"
+        - "^macos/"
+        - "^linux/"
+
+
+ignore-list:
+    all-platforms:
+        - "tmp/"
+        - "output/"
+        - "__pycache__/"
+        - ".git/"
+        - ".venv/"
+        - "node_modules/"
+        - ".idea/"
+        - "dist/"
+        - "BUILD/"
+        - "INSTALL/"
+    platform-specific:
+        windows:
+            - "macos/"
+            - "linux/"
+            - "filesystem/batch-add-chmod-x.sh"
+        linux:
+            - "windows/"
+            - "macos/"
+            - "filesystem/link-fix-to-symlinkd-windows.py"
+        macos:
+            - "windows/"
+            - "linux/"
+            - "filesystem/link-fix-to-symlinkd-windows.py"

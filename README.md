@@ -37,16 +37,48 @@ python compile-script.py                         # All platforms
 - Interactive selection by **number** or **script name** (e.g. `15`, `macos/ntfs-3g-utils`)
 - Arguments after number/name are **passed through** to the target script (e.g. `15 --help`, `macos/screen-utils --list`)
 - Prints OS version, Python path & version, conda environment, pwsh/bash availability on startup
-- When a script name has no extension, `.py` is tried first, then platform-preferred order: Windows → `.ps1` then `.sh`; macOS/Linux → `.sh` then `.ps1`
-- Platform-aware filtering: hides `windows/`/`macos/`/`linux/` scripts that don't match the current OS
+- A bare script name such as `rclone-sync` searches every eligible subdirectory by basename. If paths or extensions produce multiple matches, the launcher warns, prints every candidate, and prompts for a number before passing through the original arguments
+- When `launcher.test.enabled` is `true`, scripts under the configured test root appear in a separate `Test` group and participate in bare-name lookup; use `test/<name>` or `@test:<name>` to target them explicitly
+- Discovers project scripts from the primary directory configured in `launcher-config.yaml` (`tools` by default)
+- Reads Gitignore-style wildcard rules from `launcher-config.yaml`, including `*`, `**`, `?`, character ranges, and `!` negation
+- Platform-aware filtering is configured under `ignore-list.platform-specific`
 - Interpreter-aware: hides `.sh` scripts if `bash` is not available; hides `.ps1` scripts if `pwsh` is not available
-- When a `.py` and `.sh`/`.ps1` share the same name, only `.py` is shown
+- Lists every interpreter-supported extension; on Windows, `.sh` scripts are listed when Bash is available, even when a same-stem `.py` exists
 - Auto-detects Python: prefers `conda info --base`, then known conda paths, falls back to `python3`
-- **Script name highlighting** via `HIGHLIGHT_PATTERNS` global (list of `{"pattern": regex, "color": ANSI}` dicts); matched portions use the entry's color, non-matched portions stay `PY_SCRIPT_HIGHLIGHT_COLOR`
-- **Configurable display colors**: `SUBFOLDER_HIGHLIGHT_COLOR`, `PY_SCRIPT_HIGHLIGHT_COLOR`, `SH_SCRIPT_HIGHLIGHT_COLOR`, `PS1_SCRIPT_HIGHLIGHT_COLOR`
-- **`ZL_SCRIPT_ADDITIONAL_PATH`** env var (semicolon-separated) **discovers scripts from external directories**, each listed as `─── Additional [N] ───` (1-indexed) with the same discovery / exclude rules. 
-  Paired with the **`@N:` prefix** for precise source targeting: `@0:` = main dir, `@1:` = first additional dir (matching `Additional [1]`), etc. Bare names (no prefix) search all groups; when duplicates exist, an interactive `Menu.select()` lists candidates with `@N:` labels (default `@0:`). Works in CLI too (`python run-script.py @1:test.py`)
+- **Configurable highlighting**: `script-name-highlight-pattern` and `folder-name-highlight-pattern` map ANSI color names to regular-expression lists in `launcher-config.yaml`
+- **Configurable script types and colors**: extensions, default colors, folder color, and additional-group header color are all defined in the YAML file
+- **`ZL_SCRIPT_ADDITIONAL_PATH`** discovers scripts from additional directories. Its environment-variable name is itself configurable. Separate entries with the platform path separator (`;` on Windows, `:` on macOS/Linux). Relative entries are resolved from the project root. Each directory is listed as `─── Additional [N] ───` (1-indexed) and uses the same configured ignore rules.
+  Paired with the **`@N:` prefix** for precise source targeting: `@0:` = main dir, `@1:` = first additional dir (matching `Additional [1]`), etc. Bare names search all groups recursively; `@N:` restricts the same matching rules to one group. Multiple eligible matches are listed with numbered `@N:` paths. Works in CLI too (`python run-script.py @1:test.py`)
 - `compile-script.py` compiles any project Python script into a standalone executable via Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear)
+
+### Launcher Configuration
+
+`launcher-config.yaml` is the primary source for launcher paths, supported script types, colors, highlight patterns, and ignore rules. Configured relative paths are resolved from the project root. Ignore patterns are matched against paths relative to each discovery root:
+
+If the optional, Gitignored `launcher-config.patch.yaml` exists, it is deep-merged over the main configuration. Nested mappings merge recursively; scalar values and lists replace the main value. When the file does not exist, no override is applied.
+
+```yaml
+launcher:
+    script-root: "tools"
+    test:
+        enabled: true
+        test-root: "test"
+    additional-path-env: "ZL_SCRIPT_ADDITIONAL_PATH"
+script-name-highlight-pattern:
+    FLYellow:
+        - "\\brclone\\b"
+folder-name-highlight-pattern:
+    FLGreen:
+        - "^windows/"
+ignore-list:
+    all-platforms:
+        - "**/__pycache__/"
+    platform-specific:
+        windows:
+            - "macos/"
+```
+
+Color names are resolved through `Utils.resolve_ansi_color()`. Invalid colors, regular expressions, or YAML structures stop the launcher with a configuration error; a missing configured script directory is also rejected.
 
 ---
 
@@ -56,73 +88,76 @@ python compile-script.py                         # All platforms
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `pdf-compress.py` | PDF compression with Ebook (standard) and Custom (DPI/quality) modes | Cross-platform. `ghostscript` |
-| `pdf-decrypt.py` | Decrypt password-protected PDFs (including permission-only protection), preserving full document structure | Cross-platform. `pip install pypdf` |
-| `pdf-bookmarks-add.py` | For scanned PDF books: take a screenshot of the TOC page, send it to a multimodal LLM (e.g. Qwen3-VL) to generate JSON (page/level/index/title), then use this script to parse the JSON and write bookmarks into the PDF | Cross-platform. `pip install pypdf` |
-| `document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks), for DRM-protected or encrypted-USB PDFs | **macOS only**. `pip install mss pynput Pillow` |
+| `tools/document-processing/pdf-compress.py` | PDF compression with Ebook (standard) and Custom (DPI/quality) modes | Cross-platform. `ghostscript` |
+| `tools/document-processing/pdf-decrypt.py` | Decrypt password-protected PDFs (including permission-only protection), preserving full document structure | Cross-platform. `pypdf` |
+| `tools/document-processing/pdf-bookmarks-add.py` | For scanned PDF books: take a screenshot of the TOC page, send it to a multimodal LLM (e.g. Qwen3-VL) to generate JSON (page/level/index/title), then use this script to parse the JSON and write bookmarks into the PDF | Cross-platform. `pypdf` |
+| `tools/document-processing/document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks), for DRM-protected or encrypted-USB PDFs | **macOS only**. `mss`, `pynput`, `Pillow` |
 
 ### Video Downloaders
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API) | Cross-platform. `BBDown`, `ffmpeg`, `aria2` (optional) |
-| `download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist) | Cross-platform. `yt-dlp`, `ffmpeg`, `deno` (optional) |
-| `download-m3u8.py` | m3u8/HLS stream downloader with custom headers support | Cross-platform. `yt-dlp`, `ffmpeg` |
+| `tools/download/download-bilibili.py` | Bilibili video downloader (quality, audio-only, subtitles, danmaku, multi-API) | Cross-platform. `BBDown`, `ffmpeg`, `aria2` (optional) |
+| `tools/download/download-yt.py` | YouTube video downloader (quality, audio, subtitles, cookies, playlist) | Cross-platform. `yt-dlp`, `ffmpeg`, `deno` (optional) |
+| `tools/download/download-m3u8.py` | m3u8/HLS stream downloader with custom headers support | Cross-platform. `yt-dlp`, `ffmpeg` |
 
 ### Video / Image Editing
 
 | Script | Description | Requires |
 |--------|-------------|----------|
-| `ffmpeg-crop-video.py` | Trim/cut videos by time range (not frame cropping) | Cross-platform. `ffmpeg` |
-| `research/batch-crop-images.py` | Batch crop images with interactive ROI selection | Cross-platform. `pip install opencv-python numpy` |
+| `tools/multimedia/ffmpeg-crop-video.py` | Trim/cut videos by time range (not frame cropping) | Cross-platform. `ffmpeg` |
+| `tools/research/batch-crop-images.py` | Batch crop images with interactive ROI selection | Cross-platform. `opencv-python`, `numpy` |
 
 ### File System & Links
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `link-create.py` | Cross-platform symlink/hardlink creation (Windows: SymlinkD, Junction; Linux/macOS: Symlink, Hardlink). Supports relative paths, mirror modes, conflict handling | Cross-platform |
-| `link-scan.py` | Recursively scan directories, printing all symlinks, symlinkd, Junctions, and hardlinks. Detects broken links (dead targets), auto-fix or delete; on Windows can convert file symlinks incorrectly pointing to directories into symlinkd | Cross-platform |
-| `windows/link-fix-symlinkd.py` | Windows-only: Convert file symlinks that incorrectly point to directories into proper directory symlinks (symlinkd / SYMLINKD). On Windows, file symlinks and directory symlinks are distinct reparse point types; some tools mistakenly create file symlinks for directory targets, causing traversal failures | **Windows only** |
-| `check-filename-overlong.py` | Truncate filenames exceeding a byte-length limit (default 143, for Synology encrypted folders) measured in UTF-8 encoding. Preserves file extension and intelligently avoids name collisions by appending `_1`, `_2`, etc. before the extension | Cross-platform |
-| `remove-os-junk-files.py` | Recursively remove OS-generated junk files (`.DS_Store`, `__MACOSX__`, `Thumbs.db`, etc.) | Cross-platform |
-| `modify-file-time.py` | Modify file/folder timestamps (created, modified, accessed) with optional random jitter | Cross-platform |
-| `batch-add-chmod-x.sh` | Recursively find files by extension (default `.py`/`.sh`) and add `chmod +x`, auto-elevates via sudo | Linux/macOS. `bash`, `sudo` (built-in) |
-| `git-batch-add-chmod-x.ps1` | Mark `.py`/`.sh` files in the git staging area as executable via `git update-index --chmod=+x`, so files committed on Windows carry +x permissions when cloned on Linux/macOS | Windows. `PowerShell`, `git` |
+| `tools/filesystem/link-create.py` | Cross-platform symlink/hardlink creation (Windows: SymlinkD, Junction; Linux/macOS: Symlink, Hardlink). Supports relative paths, mirror modes, conflict handling | Cross-platform |
+| `tools/filesystem/link-scan.py` | Recursively scan directories, printing all symlinks, symlinkd, Junctions, and hardlinks. Detects broken links (dead targets), auto-fix or delete; on Windows can convert file symlinks incorrectly pointing to directories into symlinkd | Cross-platform |
+| `tools/filesystem/link-fix-to-symlinkd-windows.py` | Windows-only: Convert file symlinks that incorrectly point to directories into proper directory symlinks (symlinkd / SYMLINKD). On Windows, file symlinks and directory symlinks are distinct reparse point types; some tools mistakenly create file symlinks for directory targets, causing traversal failures | **Windows only** |
+| `tools/filesystem/file-hash.py` | Calculate one or more OpenSSL digest algorithms for multiple files entered through multiline input. Shows commonly used algorithms supported by the installed OpenSSL before accepting comma-separated input such as `sha256,md5`; follows file symlinks while identifying their targets, skips directories/broken links/missing paths, and groups results by file | Cross-platform. `openssl` (required) |
+| `tools/filesystem/check-filename-overlong.py` | Truncate filenames exceeding a byte-length limit (default 143, for Synology encrypted folders) measured in UTF-8 encoding. Preserves file extension and intelligently avoids name collisions by appending `_1`, `_2`, etc. before the extension | Cross-platform |
+| `tools/filesystem/remove-os-junk-files.py` | Recursively remove OS-generated junk files (`.DS_Store`, `__MACOSX__`, `Thumbs.db`, etc.) | Cross-platform |
+| `tools/filesystem/modify-file-time.py` | Modify file/folder timestamps (created, modified, accessed) with optional random jitter | Cross-platform |
+| `tools/filesystem/batch-add-chmod-x.sh` | Recursively find files by extension (default `.py`/`.sh`) and add `chmod +x`, auto-elevates via sudo | Linux/macOS. `bash`, `sudo` (built-in) |
+| `tools/git-batch-add-chmod-x.ps1` | Mark `.py`/`.sh` files in the git staging area as executable via `git update-index --chmod=+x`, so files committed on Windows carry +x permissions when cloned on Linux/macOS | Windows. `PowerShell`, `git` |
 
 ### System & Network
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `disk-smart-info.py` | Cross-platform SMART disk health viewer. Lists SMART-capable disks and displays detailed attributes | Cross-platform. `smartmontools` |
-| `tailscale-restart-accept-routes.py` | Restart Tailscale subnet routes by toggling `--accept-routes` off/on | Cross-platform. `tailscale` |
-| `rclone-sync.py` | YAML-driven rclone sync task runner. Supports reusable profiles, machine-filtered sub-tasks, interactive host/direction selection, modification-time comparison, dry-run, pre-check, and Ctrl+C cancellation during rclone operations (back to task menu interactively; exit 130 with `--task`) | Cross-platform. `rclone`, `pip install pyyaml` |
-| `upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables: `ZL-IP-ADDRESS-S3-BUCKET`, `ZL-IP-ADDRESS-S3-ENDPOINT`, `ZL-IP-ADDRESS-S3-ID`, `ZL-IP-ADDRESS-S3-SECRET` | Cross-platform. `pip install boto3` |
-| `macos/ntfs-3g-utils.py` | macOS-only: Interactive NTFS partition manager. Scans for NTFS partitions then offers three operations: read-write mount via ntfs-3g, system read-only mount, or eject disk. Auto-detects existing mount points and suggests alternative directories | **macOS only**. `brew install ntfs-3g macfuse` |
-| `macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, resolution, brightness (built-in + external DDC/CI), color mode diagnostics, and persistent external-display RGB output overrides. Highlight: toggle the MacBook built-in display on/off when external monitors are connected (`--toggle-built-in`); refuses to disable if no external display is active, auto-restores brightness when re-enabling. **RGB override**: patches EDID to clear YCbCr flags and writes a system display override to `/Library/Displays/Contents/Resources/Overrides/` (requires sudo); persists across reboots, apply by replugging the display | **macOS only** (Apple Silicon); optional `pip install pyobjc` |
-| `power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI; Linux uses `/sys/class/power_supply`. Some fields unavailable if firmware/driver does not expose them | Cross-platform |
-| `macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | **macOS only**. Uses `xattr` (built-in) |
-| `windows/clear-android-rndis-record.py` | Remove stale Android USB tethering/RNDIS network records from Windows registry. Lists all network connections, marks USB Remote NDIS records by adapter metadata, then deletes selected records after confirmation. Supports `--force` and extra regex matching via `--match` | **Windows only** |
-| `windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | **Windows only**. Built-in tools; optional `scoop install sudo gsudo` |
-| `windows/clear-recycle-bin.py` | Empty Windows Recycle Bin across all drives. Phase 1 uses the shell API (`SHEmptyRecycleBinW`); Phase 2 forcefully walks `$Recycle.Bin` directly for any stuck items (e.g. OneDrive folders that survive normal emptying). Reparse points (junctions/symlinks) inside the bin are deleted in-place without following targets. Supports `--force-run` for unattended execution | **Windows only** |
-| `windows/show-screen-resolution.py` | Display monitor resolution and screen info via Windows API | **Windows only** |
-| `macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | **macOS only**. Built-in tools; optional `brew install trash` |
-| `webserver-run.py` | Serve a local folder (or a web directory containing index.html) as an HTTP service. Interactive (dir/bind/port) or CLI (`--dir`, `--bind`, `--port`). Uses Python built-in `http.server` with threading | Cross-platform |
+| `tools/disk-smart-info.py` | Cross-platform SMART disk health viewer. Lists SMART-capable disks and displays detailed attributes | Cross-platform. `smartmontools` |
+| `tools/network/tailscale-restart-accept-routes.py` | Restart Tailscale subnet routes by toggling `--accept-routes` off/on | Cross-platform. `tailscale` |
+| `tools/network/rclone-sync.py` | YAML-driven rclone sync task runner. Supports reusable profiles, machine-filtered sub-tasks, interactive host/direction selection, modification-time comparison, dry-run, pre-check, and Ctrl+C cancellation during rclone operations (back to task menu interactively; exit 130 with `--task`) | Cross-platform. `rclone`, `PyYAML` |
+| `tools/network/upload-ipaddress.py` | Collect network info (`ipconfig`/`ip addr`) and upload to Tencent COS S3 for remote access. Credentials from environment variables: `ZL-IP-ADDRESS-S3-BUCKET`, `ZL-IP-ADDRESS-S3-ENDPOINT`, `ZL-IP-ADDRESS-S3-ID`, `ZL-IP-ADDRESS-S3-SECRET` | Cross-platform. `boto3` |
+| `tools/macos/ntfs-3g-utils.py` | macOS-only: Interactive NTFS partition manager. Scans for NTFS partitions then offers three operations: read-write mount via ntfs-3g, system read-only mount, or eject disk. Auto-detects existing mount points and suggests alternative directories | **macOS only**. `brew install ntfs-3g macfuse` |
+| `tools/macos/screen-utils.py` | macOS-only (Apple Silicon): Display management — rotation, resolution, brightness (built-in + external DDC/CI), color mode diagnostics, and persistent external-display RGB output overrides. Highlight: toggle the MacBook built-in display on/off when external monitors are connected (`--toggle-built-in`); refuses to disable if no external display is active, auto-restores brightness when re-enabling. **RGB override**: patches EDID to clear YCbCr flags and writes a system display override to `/Library/Displays/Contents/Resources/Overrides/` (requires sudo); persists across reboots, apply by replugging the display | **macOS only** (Apple Silicon); optional `pyobjc-framework-Cocoa` |
+| `tools/power-current.py` | Cross-platform charger and battery telemetry viewer. macOS uses `ioreg`; Windows uses PowerShell CIM/WMI; Linux uses `/sys/class/power_supply`. Some fields unavailable if firmware/driver does not expose them | Cross-platform |
+| `tools/macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | **macOS only**. Uses `xattr` (built-in) |
+| `tools/windows/clear-android-rndis-record.py` | Remove stale Android USB tethering/RNDIS network records from Windows registry. Lists all network connections, marks USB Remote NDIS records by adapter metadata, then deletes selected records after confirmation. Supports `--force` and extra regex matching via `--match` | **Windows only** |
+| `tools/windows/file-association.py` | Interactive Windows file-association manager. Lists every registry source that advertises a handler for an extension, resolves commands and executable status, and allows exact numbered source deletion followed by an automatic relist. It can register an existing EXE through the recommended Default Apps + Open With entries, OpenWithProgids only, or Applications/SupportedTypes only; validates the EXE, defaults to `"%1"`, supports current-user or elevated machine scope, and relists after registration. It never writes the protected UserChoice default | **Windows only**. Python standard library (`winreg`, `ctypes`) |
+| `tools/windows/clear-all-event-logs.py` | Enumerate every registered Windows Event Log channel with `wevtutil` and clear them in one administrator-elevated operation. Requires confirmation by default; `--force` skips confirmation. Continues after per-channel failures and reports exact success/failure counts. Clearing is irreversible, does not disable future logging, and Windows may immediately record new events | **Windows only**. Built-in `wevtutil` |
+| `tools/windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | **Windows only**. Built-in tools; optional `scoop install sudo gsudo` |
+| `tools/windows/clear-recycle-bin.py` | Empty Windows Recycle Bin across all drives. Phase 1 uses the shell API (`SHEmptyRecycleBinW`); Phase 2 forcefully walks `$Recycle.Bin` directly for any stuck items (e.g. OneDrive folders that survive normal emptying). Reparse points (junctions/symlinks) inside the bin are deleted in-place without following targets. Supports `--force-run` for unattended execution | **Windows only** |
+| `tools/windows/show-screen-resolution.py` | Display monitor resolution and screen info via Windows API | **Windows only** |
+| `tools/macos/clear-privacy.py` | Clear macOS privacy traces (recent items, Finder state, shell history, browser data, caches, logs, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | **macOS only**. Built-in tools; optional `brew install trash` |
+| `tools/network/webserver-run.py` | Serve a local folder (or a web directory containing index.html) as an HTTP service. Interactive (dir/bind/port) or CLI (`--dir`, `--bind`, `--port`). Uses Python built-in `http.server` with threading | Cross-platform |
 
 ### Utilities
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` | Cross-platform; Linux clipboard needs `wl-paste` or `xclip` |
-| `research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) | Cross-platform. `pip install numpy matplotlib plotly` |
-| `research/pattern-generator.py` | Interactive structured-light projector pattern generator. Supports sinusoidal stripe patterns and standard Gray-code sequences with optional inverse patterns | Cross-platform. `pip install opencv-python numpy` |
-| `macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | **macOS only** |
-| `windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | **Windows only** |
+| `tools/parse-unicode-string.py` | Parse and display Unicode character info (index, char, hex, dec, description) with color-coded special characters. Supports `--clip` (read from clipboard), `--pause` (wait for Enter), `--help` | Cross-platform; Linux clipboard needs `wl-paste` or `xclip` |
+| `tools/research/npy-viewer.py` | Interactive viewer for `.npy`/`.npz` files (1D line/bar/scatter, 2D heatmap/surface) | Cross-platform. `numpy`, `matplotlib`, `plotly` |
+| `tools/research/pattern-generator.py` | Interactive structured-light projector pattern generator. Supports sinusoidal stripe patterns and standard Gray-code sequences with optional inverse patterns | Cross-platform. `opencv-python`, `numpy` |
+| `tools/macos/script-to-app.py` | Create a macOS `.app` bundle wrapping any Python script as a double-clickable application, for Finder "Open With" file-type association | **macOS only** |
+| `tools/windows/script-to-app.py` | Create a Windows `.cmd` launcher for any Python script under `Program Files`. The launcher auto-detects Python (conda/system), receives opened file paths as arguments, and supports "Open with" file-type association | **Windows only** |
 
 ### Launchers & Compiler
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `run-script.py` | Unified script launcher. Interactive mode lists all runnable scripts with number/name selection; CLI direct invocation (`python run-script.py <script> [args...]`); `--list` to show available scripts; platform-aware filtering (hides scripts mismatching current OS); interpreter-aware (hides `.sh`/`.ps1` when bash/pwsh unavailable); discovers external scripts via `ZL_SCRIPT_ADDITIONAL_PATH` and targets them precisely with `@N:` prefix | Cross-platform. `python3` |
+| `run-script.py` | Unified script launcher. Loads settings from `launcher-config.yaml` with an optional personal patch; supports a configurable Test group, recursive bare-name lookup, ambiguity selection, additional directories, `@test:`, and `@N:` targeting | Cross-platform. `Python 3.13+`, `PyYAML`, `pathspec` |
 | `run-script.sh` | Bash launcher (launcher for the launcher): finds a Python interpreter then delegates all arguments to `run-script.py` | Linux/macOS. `bash`, `python3` |
 | `run-script.ps1` | PowerShell launcher (launcher for the launcher): finds a Python interpreter then delegates all arguments to `run-script.py` | Windows. `PowerShell`, `python` |
 | `compile-script.py` | Interactive compiler: select any Python script and package it into a standalone executable with Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear) | Cross-platform. `pip install nuitka` and/or `pip install pyinstaller` |
@@ -142,10 +177,24 @@ Core utility module: `utils/` — provides ANSI color codes, cursor/screen contr
 
 ### Python Environment
 
-**Windows / macOS / Linux:** install [Miniconda](https://docs.conda.io/en/latest/miniconda.html), then install packages into the base environment:
+**Windows / macOS / Linux:** install [Miniconda](https://docs.conda.io/en/latest/miniconda.html), then install the dependencies into the base environment:
 
 ```bash
-pip install pypdf boto3 opencv-python mss pynput Pillow matplotlib numpy plotly
+conda run -n base python -m pip install -r requirements.txt
+```
+
+`requirements.txt` contains launcher and ordinary tool runtime dependencies. Launcher libraries use compatible version ranges; general tool libraries use the latest version resolvable by pip.
+
+Research scripts are normally only needed by the project maintainer. Install their dependencies, together with the base requirements, using:
+
+```bash
+conda run -n base python -m pip install -r requirements-research.txt
+```
+
+To install standalone builders and platform-specific optional Python integrations:
+
+```bash
+conda run -n base python -m pip install -r requirements-optional.txt
 ```
 
 The launcher uses `conda info --base` to locate the conda base environment Python first, then falls back to known install paths and `python3`.
@@ -169,12 +218,12 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 
 - All Python scripts support `--help` / `-h` for usage info (English, with color)
 - All scripts use `Utils.print_banner()` with double-line box-drawing characters for uniform title display
-- Python 3.9+ compatible (uses `typing.Optional` / `typing.Union` from the `typing` module)
+- Python 3.13+ is the supported runtime
 - Command-line arguments suppress interactive prompts (batch-friendly)
 - Multi-line input uses EOF (`Ctrl+Z` on Windows, `Ctrl+D` on Linux/macOS)
 - Single-line text input uses `Input.prompt()` which supports default values and `transform` callables (e.g. `str.upper`)
 - `Menu.select()` with `Menu.from_enum()` provides interactive keyboard-driven enumeration menus with default-key support
 - Color output via `utils` ANSI codes (`FLYellow`, `FLGreen`, `FLRed`, etc.)
-- Platform-specific scripts are in `windows/`, `linux/`, `macos/` subdirectories
+- Project tools are under `tools/`; platform-specific scripts are under `tools/windows/`, `tools/linux/`, and `tools/macos/`
 - Multi-path input prompts support wildcard patterns (``*``/``?``/``[abc]``) for batch file matching; unmatched patterns are kept as literal paths
 - Path inputs expand environment variables (``$VAR``/``${VAR}`` on Linux/macOS, ``%VAR%`` on Windows) — only defined variables are expanded, undefined ones stay literal

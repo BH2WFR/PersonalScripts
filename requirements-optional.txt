@@ -1,0 +1,10 @@
+-r requirements.txt
+
+# Standalone executable builders used by compile-script.py
+Nuitka
+PyInstaller
+
+# Platform integrations used by optional/test code
+pyobjc-framework-Cocoa; sys_platform == "darwin"
+pyobjc-framework-Quartz; sys_platform == "darwin"
+python-xlib; sys_platform == "linux"

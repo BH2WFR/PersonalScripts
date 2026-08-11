@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Dependencies used only by tools/research/
+matplotlib
+numpy
+opencv-python
+plotly

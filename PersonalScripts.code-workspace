@@ -17,6 +17,9 @@
 	"settings": {
 		"search.exclude": {
 			"__pycache__/**": true,
-		}
+		},
+		"yaml.disableSchemaDetection": [
+			"file:///d%3A/Projects/Python_Projects/PersonalScripts/launcher-config.patch.yaml"
+		]
     }
 }
