@@ -38,7 +38,7 @@ def get_truncated_filename(name, limit, encoding, de_dupe_idx=0):
 
 def main() -> int:
     #* 交互输入
-    Utils.print_banner("FILENAME LENGTH CHECKING AND TRUNCATING TOOL")
+    Console.print_banner("FILENAME LENGTH CHECKING AND TRUNCATING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -176,4 +176,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

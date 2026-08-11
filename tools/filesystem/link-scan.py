@@ -15,7 +15,7 @@ from utils import *  # noqa: E402
 
 def main() -> int:
     #* 交互输入或 argv[1] 读取
-    Utils.print_banner("LINK SCANNING TOOL")
+    Console.print_banner("LINK SCANNING TOOL")
 
     script_name = os.path.basename(sys.argv[0])
 
@@ -253,4 +253,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

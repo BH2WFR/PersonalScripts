@@ -6,7 +6,6 @@
 import os
 import sys
 import threading
-import platform
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
@@ -20,138 +19,8 @@ from pynput import mouse
 from PIL import Image # pip install Pillow
 
 
-def safe_input(prompt: str = "") -> str:
-    """Read a line from stdin, flushing any stale pynput-injected events first."""
-    # On macOS/Linux, pynput may leave terminal in a state where input() behaves oddly.
-    # Use sys.__stdin__ directly as a fallback.
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    try:
-        return input()
-    except (EOFError, OSError):
-        # Fallback: read directly from the real stdin fd
-        real_stdin = getattr(sys, "__stdin__", sys.stdin)
-        if real_stdin is not None:
-            return real_stdin.readline().rstrip("\n")
-        return ""
-
-
-def check_macos_permissions(timeout_s: float = 60.0) -> bool:
-    """Check both Accessibility and Screen Recording permissions on macOS.
-    Accessibility is needed for mouse/keyboard simulation (pynput).
-    Screen Recording is needed for screenshot capture (mss).
-    """
-    if platform.system() != "Darwin":
-        return True
-
-    accessibility_ok = _check_accessibility_permission()
-    screen_recording_ok = _check_screen_recording_permission()
-
-    if accessibility_ok and screen_recording_ok:
-        return True
-
-    missing = []
-    if not accessibility_ok:
-        missing.append("Accessibility (mouse/keyboard control)")
-    if not screen_recording_ok:
-        missing.append("Screen Recording (screenshot capture)")
-
-    print(f"{FLYellow}============================================{CRst}")
-    print(f"{FLYellow}⚠  Missing required permissions:{CRst}")
-    for m in missing:
-        print(f"{FLYellow}   - {m}{CRst}")
-    print(f"{FLYellow}   Please grant them to your terminal in:{CRst}")
-    print(f"{FLCyan}   System Settings → Privacy & Security{CRst}")
-    print(f"{FLYellow}   Then re-launch this script.{CRst}")
-    print(f"{FLYellow}============================================{CRst}")
-
-    # Open Privacy & Security settings
-    subprocess.run(
-        ["open", "x-apple.systempreferences:com.apple.preference.security"],
-        capture_output=True
-    )
-
-    print(f"{FLCyan}Waiting for permissions... (timeout: {timeout_s}s){CRst}")
-    start = time.time()
-    while time.time() - start < timeout_s:
-        acc_ok = _check_accessibility_permission()
-        scr_ok = _check_screen_recording_permission()
-        if acc_ok and scr_ok:
-            print(f"{FLGreen}✓ All permissions granted.{CRst}")
-            return True
-        time.sleep(1.0)
-
-    print(f"{FLRed}✗ Permissions not granted within timeout. Exiting.{CRst}")
-    return False
-
-
-def _check_accessibility_permission() -> bool:
-    """Check if Accessibility permission is granted via osascript."""
-    try:
-        result = subprocess.run(
-            ["osascript", "-e",
-             'tell application "System Events" to return UI elements enabled'],
-            capture_output=True, text=True, timeout=5
-        )
-        return result.returncode == 0 and result.stdout.strip().lower() == "true"
-    except Exception:
-        return False
-
-
-def _check_screen_recording_permission() -> bool:
-    """Check if Screen Recording permission is granted.
-    We test by attempting an actual screenshot capture via mss — if the
-    captured image contains only the desktop wallpaper and menu bar
-    (no window content), Screen Recording permission is missing.
-    We detect this by checking if the screenshot is effectively empty
-    of application windows: take a small test capture and verify it
-    contains meaningful content beyond just the menu bar.
-    """
-    try:
-        import mss as _mss
-        with _mss.MSS() as sct:
-            # Capture a small region in the center of the screen where windows
-            # normally appear (not the menu bar at top). If we can capture at
-            # all and get non-black pixels, screen recording is likely working.
-            monitor = sct.monitors[1]
-            test_w = min(400, monitor["width"])
-            test_h = min(400, monitor["height"])
-            test_left = (monitor["width"] - test_w) // 2
-            # Skip top 30px (menu bar) to avoid false positives
-            test_top = max(60, (monitor["height"] - test_h) // 2)
-            region = {
-                "left": test_left,
-                "top": test_top,
-                "width": test_w,
-                "height": test_h,
-            }
-            img = sct.grab(region)
-            # If we got here without an error, permission exists.
-            # But also verify: if the entire capture is a single solid color
-            # (desktop wallpaper as one flat color), it might be a false positive.
-            # We check for variance: if >90% of pixels are the same color,
-            # it's probably just desktop with no windows.
-            raw = img.rgb
-            first_pixel = raw[:3]
-            same_count = 0
-            total_pixels = len(raw) // 3
-            # Sample every 100th pixel for performance
-            sample_step = max(1, total_pixels // 500)
-            sample_count = 0
-            for i in range(0, len(raw), 3 * sample_step):
-                if raw[i:i+3] == first_pixel:
-                    same_count += 1
-                sample_count += 1
-            uniformity = same_count / max(sample_count, 1)
-            # If >80% uniform, likely no window content visible
-            return uniformity < 0.80
-    except Exception:
-        return False
-
-
-
 def main() -> int:
-    Utils.print_banner("Automatic Screen Capturing Tool for Document")
+    Console.print_banner("Automatic Screen Capturing Tool for Document")
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
         print(f"""
@@ -170,6 +39,8 @@ def main() -> int:
     {FLYellow}Requirements:{CRst}
       macOS only (uses osascript for window activation).
       Python: {FGray}pip install mss pynput Pillow{CRst}
+      Startup waits for Accessibility, Screen Recording, and the macOS
+      direct-screen-capture confirmation before enabling input control.
     """)
         return 0
 
@@ -198,8 +69,6 @@ def main() -> int:
         compression_level: int = 9 # PIL compression level, 0-9, where 0 is no compression and 9 is maximum compression
 
 
-    mouse_controller = mouse.Controller()
-    keyboard_controller = keyboard.Controller()
     stop_event = threading.Event()
 
 
@@ -238,11 +107,36 @@ def main() -> int:
             return None
 
     # DPI 适应（Windows）
-    Utils.enable_dpi_awareness()
+    System.enable_dpi_awareness()
 
     # macOS: check both Accessibility and Screen Recording permissions
-    if not check_macos_permissions():
+    if not System.ensure_macos_permissions(
+        accessibility=True,
+        screen_recording=True,
+    ):
         return 1
+
+    def probe_screen_capture() -> None:
+        """Perform a tiny capture without saving it to trigger macOS consent."""
+        with mss.MSS() as screenshotter:
+            monitors = screenshotter.monitors
+            if len(monitors) < 2:
+                raise RuntimeError("No physical display was detected.")
+            display = monitors[1]
+            screenshotter.grab({
+                "left": display["left"],
+                "top": display["top"],
+                "width": 1,
+                "height": 1,
+            })
+
+    if not System.wait_for_macos_screen_capture_approval(probe_screen_capture):
+        return 1
+
+    # Do not initialize input-control objects until every permission dialog is
+    # complete, so no click or key event can race with a macOS consent prompt.
+    mouse_controller = mouse.Controller()
+    keyboard_controller = keyboard.Controller()
 
     # 通过热键记录鼠标位置，避免真实点击触发下层窗口。
     def get_click_pos(capture_key: keyboard.Key = keyboard.Key.f8):
@@ -267,12 +161,20 @@ def main() -> int:
 
 
 
-    # print(f"{FLCyan}Select monitor index (default: {Config.monitor_index}, 0 is virtual screen (stitched all screens), 1 is the primary monitor, 2 is the secondary monitor, etc...): {CRst}", end="")
-    # Config.monitor_index = int(input() or Config.monitor_index)
-    print(f"{FLCyan}Enter capturing interval in seconds (default: {FLYellow}{Config.capture_interval_s}{FLCyan}): {CRst}", end="")
-    Config.capture_interval_s = float(safe_input() or Config.capture_interval_s)
-    print(f"{FLCyan}Enter capturing count (default: {FLYellow}{Config.capture_count}{FLCyan}): {CRst}", end="")
-    Config.capture_count = int(safe_input() or Config.capture_count)
+    Config.capture_interval_s = float(Input.input_number(
+        "Enter capturing interval in seconds",
+        default=Config.capture_interval_s,
+        min_value=0,
+        allow_float=True,
+        allow_negative=False,
+    ))
+    Config.capture_count = int(Input.input_number(
+        "Enter capturing count",
+        default=Config.capture_count,
+        min_value=1,
+        allow_float=False,
+        allow_negative=False,
+    ))
     Config.output_dir = Input.resolve_output_path(
         os.path.abspath(Config.output_dir),
         prompt="Enter Output Directory",
@@ -280,14 +182,14 @@ def main() -> int:
     )
 
     # 鼠标点击位置，左键、右键、中键都可以，分别对应不同的功能：
-    print(f"{FLGreen}Move mouse to top-left corner, then press F8 to capture (Esc to cancel)...{CRst}")
+    print(f"{FLGreen}Move mouse to top-left corner, then press {FLYellow}F8{FLGreen} to set the coord (Esc to cancel)...{CRst}")
     click_pos = get_click_pos() # 左上角
     if click_pos is not None:
         Region.left, Region.top = click_pos
         print(f"{FLBlue}  Selected region top-left corner: {click_pos}{CRst}")
     else:
         raise Exception("No click detected. Exiting.")
-    print(f"{FLGreen}Move mouse to bottom-right corner, then press F8 to capture (Esc to cancel)...{CRst}")
+    print(f"{FLGreen}Move mouse to bottom-right corner, then press {FLYellow}F8{FLGreen} to set the coord (Esc to cancel)...{CRst}")
     click_pos = get_click_pos() # 右下角
     if click_pos is not None:
         Region.width = click_pos[0] - Region.left
@@ -295,35 +197,36 @@ def main() -> int:
         print(f"{FLBlue}  Selected region bottom-right corner: {click_pos}{CRst}")
     else:
         raise Exception("No click detected. Exiting.")
-    print(f"{FLGreen}Move mouse to center point, then press F8 to capture (Esc to cancel)...{CRst}")
+    print(f"{FLGreen}Move mouse to center point, then press {FLYellow}F8{FLGreen} to set the coord (Esc to cancel)...{CRst}")
     click_pos = get_click_pos() # 键盘发送 PageDn 键时，激活窗口时点击的位置
     if click_pos is not None:
         Region.center_x, Region.center_y = click_pos
         print(f"{FLBlue}  Selected region center point: {click_pos}{CRst}")
 
-    # 图像压缩模式选择：
-    print(f"{FLCyan}Select image compression mode (default: {FLYellow}{ImageCompressMode.none.name}{FLCyan}): {CRst}")
-    for mode in ImageCompressMode:
-        print(f"{FLMagenta}  {mode.value}. {mode.name}{CRst}")
-    mode_input = safe_input() or str(ImageCompressMode.none.value)
-    try:
-        mode_value = int(mode_input.strip())
-        image_compress_mode = ImageCompressMode(mode_value)
-    except (ValueError, KeyError):
-        print(f"{FLRed}Invalid input for image compression mode. Using default: {ImageCompressMode.none.name}{CRst}")
-        image_compress_mode = ImageCompressMode.none
-    Config.compression_mode = image_compress_mode
+    Input.prompt(
+        f"{FLYellow}Return focus to this terminal, then press Enter to "
+        f"continue to compression settings...{CRst} "
+    )
 
-    print(f"{FLCyan}Enter image compression level (0-9, default: {Config.compression_level}): {CRst}", end="")
-    compression_level_input = input() or str(Config.compression_level)
-    try:
-        compression_level = int(compression_level_input)
-        if 0 <= compression_level <= 9:
-            Config.compression_level = compression_level
-        else:
-            raise ValueError
-    except ValueError:
-        print(f"{FLRed}Invalid input for compression level. Using default: {Config.compression_level}{CRst}")
+    # 图像压缩模式选择：
+    selected_mode = Menu.select(
+        Menu.from_enum(ImageCompressMode, desc_color=FLMagenta),
+        prompt="Select image compression mode",
+        required=True,
+        default_key=str(ImageCompressMode.none.value),
+    )
+    if not isinstance(selected_mode, ImageCompressMode):
+        raise RuntimeError("Compression mode selection returned an invalid value.")
+    Config.compression_mode = selected_mode
+
+    Config.compression_level = int(Input.input_number(
+        "Enter image compression level",
+        default=Config.compression_level,
+        min_value=0,
+        max_value=9,
+        allow_float=False,
+        allow_negative=False,
+    ))
 
     print(f"{FLYellow}WARNING: Please set the DPI scaling of the target monitor to 100% (96 DPI) to ensure correct capturing region. Current DPI scaling may cause incorrect capture results.{CRst}")
 
@@ -334,9 +237,18 @@ def main() -> int:
     print(f"{FLCyan}Final capturing region: left={CRst}{FLYellow}{Region.left}{CRst}, {FLCyan}top={CRst}{FLYellow}{Region.top}{CRst}, "
             f"{FLCyan}width={CRst}{FLYellow}{Region.width}{CRst}, {FLCyan}height={CRst}{FLYellow}{Region.height}{CRst}, "
             f"{FLCyan}center={CRst}{FLYellow}({Region.center_x}, {Region.center_y}){CRst}")
-    print(f"{FLYellow}Confirm to start capturing? (y/n, default: y): {CRst}", end="")
-    confirm = input() or "y"
-    if confirm.lower() != "y":
+    confirmed = Menu.select(
+        [
+            MenuOption(["Y"], "Start capturing", True, FLGreen),
+            MenuOption(["N"], "Cancel", False, FLRed),
+        ],
+        prompt="Confirm to start capturing?",
+        required=True,
+        default_key="Y",
+        inline=True,
+        separator=False,
+    )
+    if not confirmed:
         print(f"{FLRed}Capture cancelled. Exiting.{CRst}")
         return 0
 
@@ -439,4 +351,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

@@ -11,7 +11,7 @@ from typing import Optional
 
 
 def main() -> int:
-    Utils.print_banner("PDF DECRYPTING TOOL")
+    Console.print_banner("PDF DECRYPTING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -130,4 +130,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

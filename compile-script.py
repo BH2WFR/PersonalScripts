@@ -85,7 +85,7 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
     root_scripts = [s for s in scripts if os.sep not in s]
     sub_scripts = [s for s in scripts if os.sep in s]
 
-    Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
+    Console.print_separator(width=60, color_ansi_esc=None, indent=2)
     print(f"  Available Python scripts in `{FGray}{script_dir}{CRst}`:\n")
 
     total = len(scripts)
@@ -110,7 +110,7 @@ def show_scripts(script_dir: str, scripts: list[str]) -> list[str]:
             all_scripts.append(rel)
             cnt += 1
 
-    Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
+    Console.print_separator(width=60, color_ansi_esc=None, indent=2)
 
     return all_scripts
 
@@ -299,8 +299,8 @@ def build_script(script_dir: str, script_rel: str, tool: str) -> int:
 # ============ Main ============
 
 def main() -> int:
-    Utils.print_banner("SCRIPT COMPILER")
-    Utils.print_env_info()
+    Console.print_banner("SCRIPT COMPILER")
+    Environment.print_env_info()
 
     script_dir = _get_script_dir()
     scripts = find_py_scripts(script_dir)
@@ -318,11 +318,11 @@ def main() -> int:
             choice_line = input(f"{FLYellow}Select script{CRst} {FGray}[#]{CRst}: ").strip()
         except EOFError:
             print()
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
 
         if not choice_line:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
 
         if choice_line.isdigit():
@@ -352,4 +352,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

@@ -25,7 +25,7 @@ from utils import *  # noqa: E402
 
 # ============ platform guard ============
 if sys.platform != "win32":
-    Utils.print_error_and_exit(
+    Console.print_error_and_exit(
         f"This script only runs on Windows.  Current platform: {sys.platform}"
     )
 
@@ -300,7 +300,7 @@ Usage:
 """)
         return 0
 
-    Utils.print_banner("SHOW SCREEN RESOLUTION")
+    Console.print_banner("SHOW SCREEN RESOLUTION")
 
     _configure_native_functions()
 
@@ -317,7 +317,7 @@ Usage:
     user32.EnumDisplayMonitors(None, None, _monitor_proc, 0)
 
     if not _collected_monitors:
-        Utils.print_error_and_exit("No monitors detected.")
+        Console.print_error_and_exit("No monitors detected.")
 
     # ── gather per-monitor data ───────────────────────────
     rows: list[dict] = []
@@ -398,4 +398,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

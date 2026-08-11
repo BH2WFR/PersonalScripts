@@ -20,7 +20,7 @@ from utils import *  # noqa: E402
 
 # ============ platform guard ============
 if sys.platform != "win32":
-    Utils.print_error_and_exit(
+    Console.print_error_and_exit(
         f"This script only runs on Windows.  Current platform: {sys.platform}"
     )
 
@@ -77,16 +77,6 @@ def _is_reparse_point(path: str) -> bool:
         pass
     # Fallback: os.path.islink() covers symlinks and symlinkd on Windows.
     return os.path.islink(path)
-
-
-def _format_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    if size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    if size_bytes < 1024 * 1024 * 1024:
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
-    return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
 
 
 def _count_tree_without_following_reparse(path: str) -> tuple[int, int, int]:
@@ -303,15 +293,15 @@ Usage:
 """)
         return 0
 
-    Utils.print_banner("CLEAR RECYCLE BIN")
+    Console.print_banner("CLEAR RECYCLE BIN")
 
     # ── admin check ────────────────────────────────────────────
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         print(
             f"{FLYellow}This operation may require administrator privileges.{CRst}\n"
         )
         if force_run:
-            Utils.restart_elevated()
+            System.restart_elevated()
         else:
             choice = Menu.select(
                 [
@@ -323,14 +313,14 @@ Usage:
                 default_key="Y",
             )
             if choice == "Q" or choice is None:
-                Utils.print_exit_message_and_exit("Cancelled.")
+                Console.print_exit_message_and_exit("Cancelled.")
             if choice == "Y":
-                Utils.restart_elevated()
+                System.restart_elevated()
 
     # ── scan ──────────────────────────────────────────────────
     drives = get_available_drives()
     if not drives:
-        Utils.print_error_and_exit("No fixed or removable drives found.")
+        Console.print_error_and_exit("No fixed or removable drives found.")
 
     print(
         f"\n{FLCyan}Scanning recycle bin on {FLYellow}{len(drives)}{FLCyan}"
@@ -356,7 +346,7 @@ Usage:
                 detail = (
                     f"{FLCyan}{files}{CRst} files  "
                     f"{FLCyan}{folders}{CRst} folders  "
-                    f"{FLCyan}{_format_size(size)}{CRst}"
+                    f"{FLCyan}{Console.format_size(size)}{CRst}"
                 )
                 print(f"  {FLYellow}{drive}{CRst}  {detail}")
             else:
@@ -366,7 +356,7 @@ Usage:
         f"\n  {FLYellow}Total:{CRst}  "
         f"{FLCyan}{total_files}{CRst} files  "
         f"{FLCyan}{total_folders}{CRst} folders  "
-        f"{FLCyan}{_format_size(total_size)}{CRst}"
+        f"{FLCyan}{Console.format_size(total_size)}{CRst}"
     )
 
     if total_files == 0 and total_folders == 0:
@@ -392,7 +382,7 @@ Usage:
             default_key="N",
         )
         if choice != "Y":
-            Utils.print_exit_message_and_exit("Cancelled.")
+            Console.print_exit_message_and_exit("Cancelled.")
 
     # ── Phase 1 ───────────────────────────────────────────────
     print(f"\n{FLYellow}Phase 1: Normal empty {FGray}(SHEmptyRecycleBinW){CRst}\n")
@@ -464,7 +454,7 @@ Usage:
         f"\n  {FLYellow}Remaining:{CRst}  "
         f"{FLCyan}{remaining_total_files}{CRst} files  "
         f"{FLCyan}{remaining_total_folders}{CRst} folders  "
-        f"{FLCyan}{_format_size(remaining_total_size)}{CRst}"
+        f"{FLCyan}{Console.format_size(remaining_total_size)}{CRst}"
     )
 
     # ── Phase 2 confirm ───────────────────────────────────────
@@ -484,7 +474,7 @@ Usage:
             default_key="N",
         )
         if choice != "Y":
-            Utils.print_exit_message_and_exit("Skipped forceful cleanup.")
+            Console.print_exit_message_and_exit("Skipped forceful cleanup.")
     else:
         print(f"\n{FLYellow}--force-run: automatically proceeding with Phase 2.{CRst}")
 
@@ -521,4 +511,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

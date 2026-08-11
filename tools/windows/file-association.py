@@ -697,7 +697,7 @@ def _extract_executable(command: str) -> tuple[Optional[str], Optional[bool]]:
         return None, None
     if os.path.isabs(executable):
         return executable, os.path.isfile(executable)
-    resolved = Utils.which(executable)
+    resolved = Environment.which(executable)
     if resolved is not None:
         return resolved, os.path.isfile(resolved)
     return executable, False
@@ -980,7 +980,7 @@ def _decode_add_spec(encoded_payload: str) -> AddSpec:
 def _restart_elevated(operation_flag: str, encoded_payload: str) -> None:
     """Re-enter this script through the shared in-place elevation helper."""
     sys.argv = [os.path.abspath(sys.argv[0]), operation_flag, encoded_payload]
-    Utils.restart_elevated()
+    System.restart_elevated()
     raise RuntimeError("The elevation helper returned without elevating the process.")
 
 
@@ -1387,12 +1387,12 @@ def _confirm_delete(spec: DeletionSpec) -> bool:
 
 def _execute_deletion(spec: DeletionSpec) -> bool:
     """Elevate when needed, apply an exact deletion, and report its outcome."""
-    if spec.scope is RegistryScope.MACHINE and not Utils.is_elevated():
+    if spec.scope is RegistryScope.MACHINE and not System.is_elevated():
         _restart_elevated("--apply-delete-spec", _encode_deletion_spec(spec))
     try:
         deleted_count = _apply_deletion(spec)
     except PermissionError:
-        if not Utils.is_elevated():
+        if not System.is_elevated():
             _restart_elevated("--apply-delete-spec", _encode_deletion_spec(spec))
         print(f"{FLRed}Deletion failed: the registry entry is protected.{CRst}")
         return False
@@ -1636,7 +1636,7 @@ def _confirm_registration_conflicts(spec: AddSpec) -> bool:
 
 def _execute_registration(spec: AddSpec) -> bool:
     """Elevate for machine scope, apply the plan, and report its outcome."""
-    if spec.scope is RegistryScope.MACHINE and not Utils.is_elevated():
+    if spec.scope is RegistryScope.MACHINE and not System.is_elevated():
         _restart_elevated("--apply-add-spec", _encode_add_spec(spec))
     try:
         changed_count = _apply_registration(spec)
@@ -1736,7 +1736,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     view_extension = args.view if isinstance(args.view, str) else None
 
     if sys.platform != "win32":
-        Utils.print_error_and_exit(
+        Console.print_error_and_exit(
             f"This script only runs on Windows. Current platform: {sys.platform}"
         )
 
@@ -1758,20 +1758,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"{FLRed}Only one elevated operation may be applied at a time.{CRst}")
         return 2
 
-    if deletion_spec is not None and not Utils.is_elevated():
+    if deletion_spec is not None and not System.is_elevated():
         if deletion_payload is None:
             raise RuntimeError("The validated deletion payload is missing.")
         _restart_elevated("--apply-delete-spec", deletion_payload)
     if (
         add_spec is not None
         and add_spec.scope is RegistryScope.MACHINE
-        and not Utils.is_elevated()
+        and not System.is_elevated()
     ):
         if add_payload is None:
             raise RuntimeError("The validated registration payload is missing.")
         _restart_elevated("--apply-add-spec", add_payload)
 
-    Utils.print_banner("WINDOWS FILE ASSOCIATION")
+    Console.print_banner("WINDOWS FILE ASSOCIATION")
     if deletion_spec is not None:
         _execute_deletion(deletion_spec)
         print()
@@ -1788,7 +1788,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     while True:
         action = _interactive_action()
         if action is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
         if action == "add":
             _interactive_add()
@@ -1801,4 +1801,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

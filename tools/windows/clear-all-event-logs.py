@@ -226,18 +226,18 @@ def _print_summary(summary: ClearSummary, elapsed_seconds: float) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     """Enumerate, confirm, and clear all Windows Event Log channels."""
     if sys.platform != "win32":
-        Utils.print_error_and_exit(
+        Console.print_error_and_exit(
             f"This script only runs on Windows. Current platform: {sys.platform}"
         )
     args = _parse_args(argv)
 
     # Elevate before printing operational output so the shared helper can keep
     # the cleanup in the same terminal when gsudo or sudo is available.
-    if not Utils.is_elevated():
-        Utils.restart_elevated()
+    if not System.is_elevated():
+        System.restart_elevated()
 
-    Utils.set_locale_utf8()
-    Utils.print_banner("CLEAR ALL WINDOWS EVENT LOGS")
+    Console.set_locale_utf8()
+    Console.print_banner("CLEAR ALL WINDOWS EVENT LOGS")
 
     wevtutil_check = CmdCheck(
         "wevtutil",
@@ -246,7 +246,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "windows": f"  {FGray}wevtutil is built into supported Windows versions.{CRst}",
         },
     )
-    if not Utils.check_commands(wevtutil_check) or wevtutil_check.path is None:
+    if not Environment.check_commands(wevtutil_check) or wevtutil_check.path is None:
         return 1
 
     try:
@@ -259,7 +259,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.force:
         print(f"  {FLYellow}Force mode:{CRst} confirmation skipped.")
     elif not _confirm_clear(len(log_names)):
-        Utils.print_exit_message("Cancelled.")
+        Console.print_exit_message("Cancelled.")
         return 0
 
     start_time = time.perf_counter()
@@ -273,4 +273,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

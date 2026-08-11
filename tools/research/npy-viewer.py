@@ -573,7 +573,7 @@ def main(argv: typing.Optional[list[str]] = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     file_path = args.npy_file_path
-    Utils.print_banner("NPY/NPZ Interactive Viewer")
+    Console.print_banner("NPY/NPZ Interactive Viewer")
     if not file_path:
         file_path = input(f"{FLYellow}Enter .npy/.npz file path: {CRst}").strip().strip('"')
         if not file_path:
@@ -604,4 +604,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

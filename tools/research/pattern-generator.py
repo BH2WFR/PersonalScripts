@@ -483,7 +483,7 @@ finally:
 
 
 def _launch_detached_preview(image: "np.ndarray", title: str = "Pattern Preview") -> DetachedPreview | None:
-    if Utils.is_headless():
+    if System.is_headless():
         return None
 
     temp_path = ""
@@ -1041,7 +1041,7 @@ def _run_generation_loop(
     defaults = _initial_sinusoidal_defaults(frequency_unit)
     while True:
         print()
-        Utils.print_separator(width=44, color_ansi_esc=FLCyan)
+        Console.print_separator(width=44, color_ansi_esc=FLCyan)
         cfg = _input_sinusoidal_config(frequency_unit, defaults)
         defaults = SinusoidalInputDefaults(
             frequency=cfg.frequency,
@@ -1083,7 +1083,7 @@ def _run_gray_code_workflow(projector: ProjectorSpec) -> None:
     strategy = GrayCodePatternStrategy()
     while True:
         print()
-        Utils.print_separator(width=44, color_ansi_esc=FLCyan)
+        Console.print_separator(width=44, color_ansi_esc=FLCyan)
         try:
             config = _input_gray_code_config(projector)
             output_dir = Input.resolve_output_path(
@@ -1137,7 +1137,7 @@ Usage:
 """)
         return 0
 
-    Utils.print_banner("STRUCTURED LIGHT PATTERN GENERATOR")
+    Console.print_banner("STRUCTURED LIGHT PATTERN GENERATOR")
 
     pattern_type = _select_pattern_type()
     coordinate_system = _select_coordinate_system()
@@ -1157,4 +1157,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

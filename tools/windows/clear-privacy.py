@@ -431,7 +431,7 @@ def clear_additional(args: argparse.Namespace) -> None:
 
 
 def print_banner(args: argparse.Namespace) -> None:
-    Utils.print_banner("PRIVACY CLEANUP - Windows")
+    Console.print_banner("PRIVACY CLEANUP - Windows")
     print("  Enabled sections:")
     if not args.skip_shell_history:
         print("    1. Explorer / Shell history")
@@ -445,7 +445,7 @@ def print_banner(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    Utils.set_locale_utf8()
+    Console.set_locale_utf8()
 
     if not is_windows():
         err_msg(f"This script only runs on Windows. Current platform: {FGray}{sys.platform}{CRst}")
@@ -466,12 +466,12 @@ def main() -> None:
         return
 
     print_banner(args)
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         warn_msg(
             "Administrator privileges not detected. Trying "
             f"{FGray}gsudo{CRst}, then {FGray}sudo{CRst}."
         )
-        elevated = Utils.try_restart_elevated()
+        elevated = System.try_restart_elevated()
         if not elevated:
             warn_msg("Elevation unavailable. Admin-only cleanup may be skipped or only partially work.")
 
@@ -510,4 +510,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

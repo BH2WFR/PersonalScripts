@@ -11,7 +11,7 @@ from utils import *  # noqa: E402
 
 
 # ============ smartctl check ============
-if not Utils.check_commands(CmdCheck("smartctl", hints={
+if not Environment.check_commands(CmdCheck("smartctl", hints={
     "windows": f"{FGray}scoop install smartmontools{CRst}",
     "macos": f"{FGray}brew install smartmontools{CRst}",
     "linux": f"{FGray}sudo apt install smartmontools{CRst}",
@@ -99,7 +99,7 @@ def _get_device_info(dev_path: str, dev_type: str) -> dict:
 
 # ============ main ============
 def main():
-    Utils.print_banner("SMART DISK INFO")
+    Console.print_banner("SMART DISK INFO")
     print()
 
     # Scan for SMART devices
@@ -138,17 +138,17 @@ def main():
     print()
 
     while True:
-        Utils.print_separator(width=60, color_ansi_esc=FLCyan)
+        Console.print_separator(width=60, color_ansi_esc=FLCyan)
         idx = Menu.select(options, prompt="Select disk number (Enter to exit)", separator=False)
         if idx is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             sys.exit(0)
 
         selected = devices[idx]
-        Utils.print_separator(width=60, color_ansi_esc=FLCyan)
+        Console.print_separator(width=60, color_ansi_esc=FLCyan)
         print(f"{FLYellow}  SMART info for {FLGreen}{selected['dev']}{CRst}"
               f"{FLYellow} ({selected['model']}){CRst}")
-        Utils.print_separator(width=60, color_ansi_esc=FLCyan)
+        Console.print_separator(width=60, color_ansi_esc=FLCyan)
         print()
 
         # Run smartctl -a and print directly
@@ -177,4 +177,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

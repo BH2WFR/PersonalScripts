@@ -9,7 +9,7 @@ from utils import *  # noqa: E402
 
 
 def main() -> int:
-    Utils.print_banner("YT-DLP TOOL")
+    Console.print_banner("YT-DLP TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -38,7 +38,7 @@ Usage:
         return 0
 
 
-    if not Utils.check_commands(
+    if not Environment.check_commands(
         CmdCheck("yt-dlp", hints={
             "windows": f"{FGray}scoop install yt-dlp{CRst}",
             "macos": f"{FGray}brew install yt-dlp{CRst}",
@@ -81,7 +81,7 @@ Usage:
             URLS = Input.read_stdin_multiline(prompt_text="Enter YouTube video URLs (one per line).")
 
         if not URLS:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
         first_iteration = False
 
@@ -91,7 +91,7 @@ Usage:
             default_key="2",
         )
         if BITRATE is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
 
         bitrate_option = []
@@ -196,11 +196,11 @@ Usage:
                 succeedCnt += 1
 
         print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
-        Utils.print_separator()
+        Console.print_separator()
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

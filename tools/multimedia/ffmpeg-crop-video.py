@@ -15,7 +15,7 @@ else:
 
 
 def main() -> int:
-    Utils.print_banner("FFMPEG VIDEO CROP TOOL")
+    Console.print_banner("FFMPEG VIDEO CROP TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -38,7 +38,7 @@ Usage:
 """)
         return 0
 
-    if not Utils.check_commands(CmdCheck("ffmpeg", hints={
+    if not Environment.check_commands(CmdCheck("ffmpeg", hints={
         "windows": f"{FGray}scoop install ffmpeg{CRst}",
         "macos": f"{FGray}brew install ffmpeg{CRst}",
         "linux": f"{FGray}sudo apt install ffmpeg{CRst}",
@@ -107,4 +107,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

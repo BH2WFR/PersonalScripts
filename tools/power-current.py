@@ -598,7 +598,7 @@ def build_report(verbose: bool, freeze_capacity: bool = False) -> tuple[int, str
 def print_report(verbose: bool) -> int:
     code, report, platform = build_report(verbose)
     if code == 0:
-        Utils.print_banner(f"POWER CURRENT - {platform}")
+        Console.print_banner(f"POWER CURRENT - {platform}")
     print(report)
     return code
 
@@ -637,7 +637,7 @@ def live_report(verbose: bool, interval: float) -> int:
             code, report, platform = build_report(verbose, freeze_capacity=True)
             exit_code = code
             if code == 0 and not banner_printed:
-                Utils.print_banner(f"POWER CURRENT - {platform}")
+                Console.print_banner(f"POWER CURRENT - {platform}")
                 banner_printed = True
             blink_char = "█" if blink else " "
             blink = not blink
@@ -714,4 +714,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

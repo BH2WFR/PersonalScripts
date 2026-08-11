@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from utils import *  # noqa: E402
 
 if sys.platform != "win32":
-    Utils.print_error_and_exit(
+    Console.print_error_and_exit(
         f"This script only runs on Windows. Current platform: {sys.platform}"
     )
 
@@ -447,18 +447,18 @@ def main() -> int:
         try:
             match_patterns.append(re.compile(raw_pattern, re.IGNORECASE))
         except re.error as exc:
-            Utils.print_error_and_exit(f"Invalid --match regex: {raw_pattern}\n  {exc}")
+            Console.print_error_and_exit(f"Invalid --match regex: {raw_pattern}\n  {exc}")
 
-    Utils.print_banner("CLEAR ANDROID RNDIS NETWORK RECORDS")
+    Console.print_banner("CLEAR ANDROID RNDIS NETWORK RECORDS")
 
     # ── elevation check ────────────────────────────────────
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         print(
             f"{FLYellow}Administrator privileges are required to delete HKLM "
             f"network records.{CRst}\n"
         )
         if args.force:
-            Utils.restart_elevated()
+            System.restart_elevated()
         choice = Menu.select(
             [
                 MenuOption(["Y"], "Elevate and continue"),
@@ -468,8 +468,8 @@ def main() -> int:
             default_key="Y",
         )
         if choice != "Y":
-            Utils.print_exit_message_and_exit("Cancelled.")
-        Utils.restart_elevated()
+            Console.print_exit_message_and_exit("Cancelled.")
+        System.restart_elevated()
 
     # ── scan registry ──────────────────────────────────────
     print(f"\n{FGray}Network records: HKLM\\{NETWORK_CONNECTIONS_KEY}{CRst}")
@@ -481,7 +481,7 @@ def main() -> int:
     try:
         records = _read_network_records(match_patterns)
     except OSError as exc:
-        Utils.print_error_and_exit(f"Cannot read network records:\n  {exc}")
+        Console.print_error_and_exit(f"Cannot read network records:\n  {exc}")
 
     if not records:
         print(f"{FLGreen}No network records found.{CRst}")
@@ -510,7 +510,7 @@ def main() -> int:
             default_key="N",
         )
         if choice != "Y":
-            Utils.print_exit_message_and_exit("Cancelled.")
+            Console.print_exit_message_and_exit("Cancelled.")
 
     # ── delete ─────────────────────────────────────────────
     deleted = 0
@@ -538,4 +538,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

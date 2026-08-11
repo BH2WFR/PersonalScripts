@@ -78,7 +78,7 @@ ignore-list:
             - "macos/"
 ```
 
-Color names are resolved through `Utils.resolve_ansi_color()`. Invalid colors, regular expressions, or YAML structures stop the launcher with a configuration error; a missing configured script directory is also rejected.
+Color names are resolved through `Console.resolve_ansi_color()`. Invalid colors, regular expressions, or YAML structures stop the launcher with a configuration error; a missing configured script directory is also rejected.
 
 ---
 
@@ -91,7 +91,7 @@ Color names are resolved through `Utils.resolve_ansi_color()`. Invalid colors, r
 | `tools/document-processing/pdf-compress.py` | PDF compression with Ebook (standard) and Custom (DPI/quality) modes | Cross-platform. `ghostscript` |
 | `tools/document-processing/pdf-decrypt.py` | Decrypt password-protected PDFs (including permission-only protection), preserving full document structure | Cross-platform. `pypdf` |
 | `tools/document-processing/pdf-bookmarks-add.py` | For scanned PDF books: take a screenshot of the TOC page, send it to a multimodal LLM (e.g. Qwen3-VL) to generate JSON (page/level/index/title), then use this script to parse the JSON and write bookmarks into the PDF | Cross-platform. `pypdf` |
-| `tools/document-processing/document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks), for DRM-protected or encrypted-USB PDFs | **macOS only**. `mss`, `pynput`, `Pillow` |
+| `tools/document-processing/document-screenshot.py` | Auto-capture PDF screenshots (PgDn simulation + mouse clicks), for DRM-protected or encrypted-USB PDFs. Checks and requests Accessibility and Screen Recording through shared macOS system helpers | **macOS only**. `mss`, `pynput`, `Pillow` |
 
 ### Video Downloaders
 
@@ -166,14 +166,14 @@ Color names are resolved through `Utils.resolve_ansi_color()`. Invalid colors, r
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `test/keyboard-hook.py` | Cross-platform global keyboard & mouse hook monitor. Prints key/mouse/scroll events with foreground window tracking. Also serves as an input-control library: `press`, `release`, `tap`, `hotkey`, `send` (sequences), `move`, `click`, `scroll`, `get_foreground_window`. macOS uses native CGEvent tap; Windows uses `SetWindowsHookEx` via ctypes; Linux uses X11 XRecord | Cross-platform. macOS: `pip install pyobjc-framework-Quartz`; Windows: none (stdlib ctypes); Linux: `pip install python-xlib` |
+| `tools/keyboard-hook-viewer.py` | Cross-platform global keyboard & mouse hook monitor. Prints key/mouse/scroll events with foreground window tracking. On macOS, an interactive startup option controls whether keyboard events show their IOHID source device and serial number when available. Also provides input-control APIs: `press`, `release`, `tap`, `hotkey`, `send` (sequences), `move`, `click`, `scroll`, `get_foreground_window`. macOS uses CGEvent tap plus IOHID; Windows uses `SetWindowsHookEx` via ctypes; Linux uses X11 XRecord | Cross-platform. macOS: `pip install pyobjc-framework-Quartz`; Windows: none (stdlib ctypes); Linux: `pip install python-xlib` |
 | `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | Print all command-line arguments. Python / Bash / PowerShell implementations — identical functionality | Cross-platform. `.py` needs `python3`; `.sh` needs `bash`; `.ps1` needs `PowerShell` |
 
 ---
 
 ## Dependencies
 
-Core utility module: `utils/` — provides ANSI color codes, cursor/screen control sequences, and platform utilities.
+Core utility package: `utils/` — separates console, environment, system, path, and interactive responsibilities into dedicated classes and re-exports the public helpers from `utils/__init__.py`.
 
 ### Python Environment
 
@@ -217,7 +217,7 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 ## Conventions
 
 - All Python scripts support `--help` / `-h` for usage info (English, with color)
-- All scripts use `Utils.print_banner()` with double-line box-drawing characters for uniform title display
+- All scripts use `Console.print_banner()` with double-line box-drawing characters for uniform title display
 - Python 3.13+ is the supported runtime
 - Command-line arguments suppress interactive prompts (batch-friendly)
 - Multi-line input uses EOF (`Ctrl+Z` on Windows, `Ctrl+D` on Linux/macOS)

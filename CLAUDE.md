@@ -60,7 +60,7 @@ Project-specific reminders:
     `/opt/miniconda3/bin/python`, `/opt/anaconda3/bin/python`
   - Linux: `~/miniconda3/bin/python`, `~/anaconda3/bin/python`,
     `/opt/miniconda3/bin/python`, `/opt/anaconda3/bin/python`
-- `Utils.find_conda()` already does the project-specific conda search — prefer
+- `Environment.find_conda()` already does the project-specific conda search — prefer
   it over a manual search inside project scripts.
 - Default environment is **`base`**. Install packages into it with `pip`.
 - Target **Python 3.13+**. Use modern syntax freely.
@@ -76,7 +76,7 @@ Project-specific reminders:
      `C:\Program Files\Git\bin\bash.exe`).
   3. Check common install locations: `C:\Program Files\Git\bin\bash.exe`,
      `C:\Program Files (x86)\Git\bin\bash.exe`.
-  4. `Utils.find_bash()` already does this search — prefer it over a manual hunt.
+  4. `Environment.find_bash()` already does this search — prefer it over a manual hunt.
 - **macOS / Linux** — bash is the primary shell, but pwsh can be installed.
 - Scripts should be runnable on at least one platform; **cross-platform is
   preferred** unless the task is inherently OS-specific.
@@ -157,7 +157,7 @@ I'll confirm or adjust the plan before you start implementing.
     scripts under `tools/windows/` may use CRLF.
 - **Windows console encoding** — if console output shows garbled characters,
   use `chcp 65001` (UTF-8 codepage) and set the locale to `en-US.UTF-8` via
-  `Utils.set_locale_utf8()`.  Prefer Unicode / UTF-8 APIs over ANSI / GBK
+  `Console.set_locale_utf8()`.  Prefer Unicode / UTF-8 APIs over ANSI / GBK
   everywhere.
 - **Windows path encoding** — always use Unicode paths; never encode paths as
   GBK / ANSI.  Python's `os.fsencode` / surrogate-escaping handles this
@@ -174,7 +174,7 @@ Project-specific reminders:
   account-specific paths, or machine-specific secrets to scripts, docs, or
   examples.
 - Do not install Python packages or system tools without explicit approval.
-- Keep edits narrowly scoped to the requested script, `utils/__init__.py`, or
+- Keep edits narrowly scoped to the requested script, the relevant `utils/` module, or
   the relevant README entries.
 - If a change touches `utils`, also update the quick-reference table below.
 
@@ -208,7 +208,7 @@ conda run -n base python path/to/script.py [args...]
 Prefer the launcher for interactive exploration, direct invocation for
 development / debugging.
 
-## Shared utility library — `utils/__init__.py`
+## Shared utility library — `utils/`
 
 **Every script in this project imports `utils`.** For scripts in a category
 directory such as `tools/filesystem/`, the canonical import block is:
@@ -225,56 +225,70 @@ from utils import *  # noqa: E402
 Scripts directly under `tools/` use one `".."` component instead of two.
 
 This makes ALL names from `utils` available: ANSI color constants (`FRed`,
-`FLGreen`, `CRst`, …), classes (`Utils`, `Input`, `Menu`, `MenuOption`,
-`Cursor`, `CmdCheck`), and any new additions. Scripts never import from utils
-piecemeal.
+`FLGreen`, `CRst`, …), responsibility classes (`Console`, `Environment`,
+`System`, `Paths`), interactive classes (`Input`, `Menu`, `MenuOption`,
+`Cursor`), `CmdCheck`, and any new additions. Scripts never import from utils
+piecemeal. The former catch-all `Utils` class no longer exists.
 
-### When `utils/__init__.py` gets too large — new sub-modules
+### Utility package structure
+
+Each shared class has one canonical module. Cross-cutting helpers are divided
+by responsibility into `console.py`, `environment.py`, `system.py`, and
+`paths.py`; `system.py` also owns macOS TCC permission checks and requests.
+Interactive helpers live in `input.py`, `cursor.py`, `menu_option.py`, and
+`menu.py`, while `CmdCheck` lives in `cmd_check.py`. ANSI color, style, cursor,
+and screen-control constants live in `ansi.py`. `utils/__init__.py` re-exports
+the public classes and ANSI constants.
 
 If a group of utilities is **domain-specific** (e.g. image processing, network
 tools, PDF helpers), it should become a new file under `utils/` (e.g.
-`utils/pdf_utils.py`, `utils/image_utils.py`).  `utils/__init__.py` stays the
-home for cross-cutting, broadly-used utilities.  **Stop and ask before creating
-a new sub-module** — I (the project owner) will confirm the split.
+`pdf.py`, `image.py`). **Stop and ask before creating another
+sub-module** — I (the project owner) will confirm the split.
 
 ### When to use the wheel — ALWAYS
 
-Before writing anything, check if `utils/__init__.py` already has it. The
-canonical implementations live here; do not duplicate them in individual scripts.
+Before writing anything, check the relevant class module under `utils/`.
+Canonical implementations live there; do not add implementations to the
+`__init__.py` compatibility facade or duplicate them in individual scripts.
 
-#### `Utils` class — static methods
+#### Responsibility classes — static methods
 
 | Need | Use |
 |---|---|
-| Admin / root detection | `Utils.is_elevated() -> bool` |
-| Re-execute as admin (force) | `Utils.restart_elevated()` — never returns on success |
-| Re-execute as admin (soft, can fallback) | `Utils.try_restart_elevated() -> bool` |
-| Check if a CLI tool is in PATH | `Utils.check_commands(*CmdCheck)` or `Utils.which(name)` |
-| OS name / arch / hostname | `Utils.get_os_name()`, `Utils.get_arch()`, `Utils.get_computer_name()` |
-| Print a box-drawing banner | `Utils.print_banner("TITLE")` |
-| Print a horizontal separator | `Utils.print_separator(width=..., color_ansi_esc=...)` |
-| Resolve an ANSI color constant name | `Utils.resolve_ansi_color("FLYellow")` |
-| Print env info (conda, python, shell) | `Utils.print_env_info()` |
-| Standard KeyboardInterrupt exit | `Utils.print_keyboard_interrupt_message_and_exit()` |
-| Standard exit message | `Utils.print_exit_message_and_exit()` or `Utils.print_error_and_exit()` |
-| Desktop notification | `Utils.notify(title, body)` |
-| Open a file in the default app | `Utils.open_with_default_app(path)` |
-| Open a URL safely (headless-safe) | `Utils.open_browser_safe(url)` |
-| Resolve `$VAR` / `{{placeholders}}` in paths | `Utils.resolve_path_vars(path, schema_dir=..., script_dir=...)` |
-| DPI awareness (Windows) | `Utils.enable_dpi_awareness()` |
-| Find bash / pwsh / conda | `Utils.find_bash()`, `Utils.find_pwsh()`, `Utils.find_conda()` |
-| Conda environment name | `Utils.get_conda_env() -> Optional[str]` |
-| Terminal width / CJK display width | `Utils.get_terminal_width()`, `Utils.display_width(s)` |
-| Headless detection | `Utils.is_headless()` |
-| Current time string | `Utils.get_time_str()` |
-| Print argv for debugging | `Utils.print_argv_list()` |
-| Set console to UTF-8 | `Utils.set_locale_utf8()` |
+| Admin / root detection | `System.is_elevated() -> bool` |
+| Re-execute as admin (force) | `System.restart_elevated()` — never returns on success |
+| Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` |
+| Check if a CLI tool is in PATH | `Environment.check_commands(*CmdCheck)` or `Environment.which(name)` |
+| OS name / arch / hostname | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()` |
+| Print a box-drawing banner | `Console.print_banner("TITLE")` |
+| Print a horizontal separator | `Console.print_separator(width=..., color_ansi_esc=...)` |
+| Resolve an ANSI color constant name | `Console.resolve_ansi_color("FLYellow")` |
+| Print env info (conda, python, shell) | `Environment.print_env_info()` |
+| Standard KeyboardInterrupt exit | `Console.print_keyboard_interrupt_message_and_exit()` |
+| Standard exit message | `Console.print_exit_message_and_exit()` or `Console.print_error_and_exit()` |
+| Desktop notification | `System.notify(title, body)` |
+| Open a file in the default app | `System.open_with_default_app(path)` |
+| Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |
+| Resolve `$VAR` / `{{placeholders}}` in paths | `Paths.resolve_vars(path, schema_dir=..., script_dir=...)` |
+| DPI awareness (Windows) | `System.enable_dpi_awareness()` |
+| Find bash / pwsh / conda | `Environment.find_bash()`, `Environment.find_pwsh()`, `Environment.find_conda()` |
+| Conda environment name | `Environment.get_conda_env() -> Optional[str]` |
+| Terminal width / CJK display width | `Console.get_terminal_width()`, `Console.display_width(s)` |
+| Human-readable byte size | `Console.format_size(size_bytes, precision=1)` |
+| Headless detection | `System.is_headless()` |
+| macOS Accessibility permission | `System.check_macos_accessibility_permission(prompt=...)` |
+| macOS Screen Recording permission | `System.check_macos_screen_recording_permission(request=...)` |
+| Ensure required macOS permissions | `System.ensure_macos_permissions(accessibility=..., screen_recording=...)` |
+| Wait for macOS direct-capture approval | `System.wait_for_macos_screen_capture_approval(capture_probe)` |
+| Current time string | `Console.get_time_str()` |
+| Print argv for debugging | `Console.print_argv_list()` |
+| Set console to UTF-8 | `Console.set_locale_utf8()` |
 
 #### `Input` class — interactive prompts (static methods)
 
 | Need | Use |
 |---|---|
-| General text input | `Input.prompt(prompt, default=..., transform=...)` |
+| General text or separated-list input | `Input.prompt(prompt, default=..., transform=..., separator=",", deduplicate=True)` |
 | Numeric input with validation | `Input.input_number(prompt, default=..., min_value=..., allow_float=...)` |
 | Number + unit (e.g. `90deg`) | `Input.input_number_with_unit(prompt, ..., allowed_units=("deg","rad"))` |
 | Password / masked input | `Input.input_password(prompt)` |
@@ -282,6 +296,14 @@ canonical implementations live here; do not duplicate them in individual scripts
 | Input path (existence validation) | `Input.resolve_input_path(default_path, ..., path_type="file")` |
 | Multiple input paths (glob expand) | `Input.resolve_input_paths_multi(..., glob=True)` |
 | Multi-line text from stdin | `Input.read_stdin_multiline(...)` |
+
+Path resolution shares private implementation helpers inside `Input`:
+`_normalize_path()` normalizes one path, `_prompt_and_normalize_path()` handles
+the interactive single-path prompt, `_path_status()` checks existence and type,
+`_describe_path_kind()` produces diagnostics, and `_select_path_action()` owns
+the common action menu. These are internal composition points; scripts call the
+public `resolve_input_path()`, `resolve_output_path()`, or
+`resolve_input_paths_multi()` methods instead.
 
 #### `Menu` + `MenuOption` — interactive selection menus
 
@@ -296,8 +318,10 @@ choice = Menu.select(
 
 #### `Cursor` class — ANSI cursor escapes (returns strings, does not print)
 
-`up`, `down`, `forward`, `back`, `next_line`, `prev_line`, `column`, `position`,
-`erase_display`, `erase_line`, `scroll_up`, `scroll_down`.
+`Cursor.up()`, `Cursor.down()`, `Cursor.forward()`, `Cursor.back()`,
+`Cursor.next_line()`, `Cursor.prev_line()`, `Cursor.column()`,
+`Cursor.position()`, `Cursor.erase_display()`, `Cursor.erase_line()`,
+`Cursor.scroll_up()`, and `Cursor.scroll_down()`.
 
 #### `CmdCheck` dataclass — command-in-PATH descriptor
 
@@ -320,7 +344,7 @@ output stays consistent across scripts:
 | Warning / caution (non-fatal) | `FLYellow` | `f"{FLYellow}Elevation unavailable.{CRst}"` |
 | Secondary info / file paths / defaults | `FGray` | `f"{FGray}C:\\Users\\...{CRst}"` |
 | Step marker / progress label | `FLCyan` | `f"  {FLCyan}[*]{CRst} Section 1"` |
-| Banner / separator / section heading | `FLYellow` | `Utils.print_banner("TITLE")` |
+| Banner / separator / section heading | `FLYellow` | `Console.print_banner("TITLE")` |
 | Key hints in menus | `FLGreen` | `[Y]` inside bracket notation |
 | Important / highlight (sparingly) | `FLCyan` | Highlighting a key value in output |
 
@@ -333,13 +357,41 @@ prompt, what's an error, and what's informational.
 
 If a piece of logic looks like it could be useful in **more than one script**
 (interactive prompts, platform detection, path helpers, formatting, etc.),
-extract it into `utils/__init__.py` rather than duplicating it. Add a new
-`@staticmethod` to `Utils`, `Input`, or another appropriate class following the
-existing patterns. This is encouraged — `utils` is meant to grow.
+extract it into the relevant class module under `utils/` rather than duplicating
+it. Add a new `@staticmethod` to `Console`, `Environment`, `System`, `Paths`,
+`Input`, or another appropriate class following the existing patterns. This is
+encouraged — `utils` is meant to grow.
 
-**After adding to `utils`**, update this `CLAUDE.md` file — add the new method
-to the relevant quick-reference table. An out-of-date table means the AI will
-miss useful utilities or re-implement them.
+### Reuse is mandatory
+
+Before adding a script-local private helper, search both `utils/` and the whole
+repository for equivalent or substantially similar behavior. Reuse or extend
+the existing implementation whenever possible.
+
+- Do **not** maintain multiple private functions that perform the same or
+  nearly the same task in different scripts. Move the shared behavior into the
+  appropriate class under `utils/` and migrate every duplicate caller.
+- Do **not** leave large repeated code blocks in two or more functions. Extract
+  their common normalization, validation, formatting, prompting, or platform
+  handling into one appropriately scoped helper.
+- A script-local private function is appropriate only when its behavior is
+  genuinely specific to that script and is not already represented elsewhere.
+- When discovering an existing duplicate during unrelated work, remove the
+  duplicate within the authorized scope instead of adding another variation.
+
+Code review should treat avoidable duplicate helpers or substantial duplicated
+function bodies as a design defect, not merely a style preference.
+
+**Every new or expanded public `utils` function must update this `CLAUDE.md` in
+the same change.** Add or revise its quick-reference entry with a short purpose,
+the canonical call, important optional parameters, and any non-obvious return
+behavior. A utility change is incomplete until this documentation is current;
+otherwise later work may miss the API and re-implement it.
+
+New private helpers under `utils` must also receive a short architectural note
+when they coordinate shared behavior or define an important reuse boundary.
+Mark them as internal so scripts do not treat them as public API. Trivial local
+implementation details do not need individual quick-reference rows.
 
 ### When a `utils` function is almost right but not quite
 
@@ -407,12 +459,12 @@ except ImportError as e:
     sys.exit(1)
 ```
 
-**System tools** — use `Utils.check_commands()` with `CmdCheck` entries.  This
+**System tools** — use `Environment.check_commands()` with `CmdCheck` entries.  This
 prints per-platform install hints for missing tools and returns `False` when a
 required tool is absent:
 
 ```python
-if not Utils.check_commands(
+if not Environment.check_commands(
     CmdCheck("ffmpeg", required=True, hints={
         "windows": f"  {FGray}scoop install ffmpeg{CRst}",
         "macos":   f"  {FGray}brew install ffmpeg{CRst}",
@@ -420,7 +472,7 @@ if not Utils.check_commands(
         "any":     f"  {FGray}https://ffmpeg.org/download.html{CRst}",
     }),
 ):
-    Utils.print_error_and_exit("Missing required dependencies.")
+    Console.print_error_and_exit("Missing required dependencies.")
 ```
 
 Place these checks right after the banner in `main()`, grouped in a
@@ -454,13 +506,13 @@ def main() -> int:
         # must list: description, usage, all CLI flags, dependencies
         return 0
 
-    Utils.print_banner("SCRIPT TITLE")
+    Console.print_banner("SCRIPT TITLE")
 
     # ── dependency checks ──────────────────────────────────
     # validate hard dependencies here (pip imports / system tools)
 
     # ── elevation check (if needed) ──
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         ...
 
     # ... logic ...
@@ -472,7 +524,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()
 ```
 
 Exceptions:
@@ -517,14 +569,14 @@ first thing** in `main()`, right after the banner. There are two patterns:
 **Force-elevate (the script cannot work without it):**
 
 ```python
-Utils.restart_elevated()  # never returns if already elevated or on success
+System.restart_elevated()  # never returns if already elevated or on success
 ```
 
 **Soft-try (the script can partially work without it):**
 
 ```python
-if not Utils.is_elevated():
-    elevated = Utils.try_restart_elevated()
+if not System.is_elevated():
+    elevated = System.try_restart_elevated()
     if not elevated:
         warn_msg("Elevation unavailable. Some sections will be skipped.")
 ```
@@ -545,7 +597,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()
 ```
 
 This prints `[Exit by Ctrl+C]` in green/yellow and calls `sys.exit(0)`. Do
@@ -584,12 +636,12 @@ except Exception as e:
 - **Platform guard** — scripts under `tools/windows/`, `tools/macos/`, or `tools/linux/` are
   platform-specific and **must** validate early.  Check `sys.platform` at the top
   of `main()` (or at module level, before imports of OS-specific modules) and
-  call `Utils.print_error_and_exit()` with a clear message stating which platform
+  call `Console.print_error_and_exit()` with a clear message stating which platform
   the script requires and what the current platform is:
 
   ```python
   if sys.platform != "win32":
-      Utils.print_error_and_exit(
+      Console.print_error_and_exit(
           f"This script only runs on Windows. Current platform: {sys.platform}"
       )
   ```
@@ -613,7 +665,7 @@ except Exception as e:
   value. No `# type: ignore` unless truly unavoidable; if used, add a short
   reason and keep it scoped to one line.
 - **Verify Pylance-relevant changes.** When editing type-heavy code, new
-  helpers, public APIs, or `utils/__init__.py`, check for Pylance diagnostics
+  helpers, public APIs, or modules under `utils/`, check for Pylance diagnostics
   in the touched files if the environment exposes them. If CLI diagnostics are
   available (for example via pyright/Pylance-compatible tooling), run the
   smallest relevant check. If diagnostics cannot be queried from the agent
@@ -684,7 +736,7 @@ def main() -> int:
         ...
 
     # ── elevation check ────────────────────────────────────
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         ...
 
     # ── gather inputs ──────────────────────────────────────
@@ -739,8 +791,18 @@ module docstring, run `--help`, or read the README.
 │   ├── macos/             # macOS-only scripts
 │   └── linux/             # Linux-only scripts
 ├── utils/
-│   └── __init__.py         # Shared library (Utils, Input, Menu, Cursor, colors)
-├── test/                  # Test helpers (keyboard hook, etc.)
+│   ├── __init__.py         # Compatibility facade; preserves `from utils import *`
+│   ├── ansi.py             # ANSI color/style/cursor constants
+│   ├── cmd_check.py        # CmdCheck
+│   ├── console.py          # Console formatting and terminal interaction
+│   ├── environment.py      # Runtime environment and executable discovery
+│   ├── system.py           # OS integration, privilege, and macOS permissions
+│   ├── paths.py            # Path placeholder and environment expansion
+│   ├── input.py            # Input
+│   ├── cursor.py           # Cursor
+│   ├── menu_option.py      # MenuOption
+│   └── menu.py             # Menu
+├── test/                  # Test helpers
 ├── tmp/                   # Temporary / scratch scripts (GITIGNORED)
 ├── output/                # General output directory (GITIGNORED)
 ├── BUILD/                 # Compiled executables (GITIGNORED)
@@ -816,7 +878,7 @@ module docstring, run `--help`, or read the README.
    platform copies.
 3. **Windows**: prefer PowerShell over cmd.exe. Bash (Git Bash) is also
    available — find via `bash` on PATH, `where git` + derive path, or
-   `Utils.find_bash()`.
+   `Environment.find_bash()`.
 
 ## Privacy & open source
 

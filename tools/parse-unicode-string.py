@@ -74,18 +74,18 @@ DESC_SPECIAL = {
 
 def pad_to_width(s: str, target_width: int) -> str:
     """Pad a string to a fixed display width. Truncates if too long."""
-    current = Utils.display_width(s)
+    current = Console.display_width(s)
     if current > target_width:
         # Truncate character by character until it fits, add "…"
         while current > target_width - 1 and len(s) > 0:
             s = s[:-1]
-            current = Utils.display_width(s)
+            current = Console.display_width(s)
         return s + "…"
     return s + " " * (target_width - current)
 
 
 def main() -> int:
-    Utils.print_banner("UNICODE STRING PARSER")
+    Console.print_banner("UNICODE STRING PARSER")
 
     CLIP_FLAGS = {"--clip", "--from-clipboard"}
     from_clipboard = bool(CLIP_FLAGS & set(sys.argv))
@@ -159,7 +159,7 @@ Usage:
 
 
     #============ 打印表头 ===========
-    term_width = Utils.get_terminal_width()
+    term_width = Console.get_terminal_width()
     desc_width = max(20, term_width - 46)  # 46 = Index(7) + Char(13) + Hex(10) + Dec(9) + 7 separators
     HEX_COL = 23    # 1-based cursor column where Hex starts
     DEC_COL = 34    # 1-based cursor column where Dec starts
@@ -234,4 +234,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

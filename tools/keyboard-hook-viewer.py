@@ -8,7 +8,7 @@ Monitors keyboard and mouse events globally (press/release/click/scroll) and
 prints them to the console. All events are passed through transparently.
 
 Platforms:
-  macOS:   Native CGEvent tap via pyobjc.
+  macOS:   Native CGEvent tap plus IOHID keyboard source tracking.
   Windows: Low-level hooks via ctypes (SetWindowsHookEx).
   Linux:   X11 via python-xlib/XRecord. Wayland reserved for future.
 """
@@ -55,7 +55,9 @@ Usage:
   python {script_name} --help         show this help
 
 {FLYellow}Platform notes:{CRst}
-  macOS:   Requires Accessibility permission. Uses native CGEvent API.
+  macOS:   Requires Accessibility and Input Monitoring permissions.
+           Keyboard events include the physical HID device serial number when
+           the device exposes one; otherwise its IORegistry entry ID is shown.
   Windows: Low-level hooks via SetWindowsHookEx. No dependencies.
   Linux:   X11 via python-xlib/XRecord.
            Wayland is not yet supported (reserved for future).
@@ -70,11 +72,8 @@ Usage:
 
 # ── External API ──────────────────────────────────────────────────────
 # ```
-#   from test.keyboard_hook import (
-#       setup, Hotkey, KeyEvent, MouseEvent, WindowInfo, Key,
-#       press, release, tap, hotkey, send, move, click, mouse_down,
-#       mouse_up, scroll, toggle_modifier, get_foreground_window,
-#   )
+#   The filename contains hyphens, so load it by path with ``importlib`` when
+#   using these APIs from another Python program.
 #
 #   # ── monitoring (keyboard / mouse hooks) ──
 #   setup(
@@ -120,6 +119,9 @@ class KeyEvent:
     pressed: bool
     raw_name: str = ""
     raw_vk: int = 0
+    device_name: str = ""
+    device_serial: str = ""
+    device_id: str = ""
 
 
 @dataclasses.dataclass
@@ -324,7 +326,7 @@ def _check_win_change() -> None:
     label = wi.process_name or f"PID:{wi.pid}"
     title = wi.title[:72] + "…" if len(wi.title) > 72 else wi.title
     wnd_class = wi.window_class
-    ts = f"{FGray}{Utils.get_time_str()}{CRst}"
+    ts = f"{FGray}{Console.get_time_str()}{CRst}"
     cls_str = f"  {FGray}[{FLWhite}{wnd_class}{FGray}]{CRst}" if wnd_class else ""
     print(
         f"{ts} {FLYellow}─── {FLWhite}{CBold}{label}{CRst} "
@@ -332,7 +334,12 @@ def _check_win_change() -> None:
     )
 
 
-def _emit_key(name: str, pressed: bool, raw_vk: int = 0) -> None:
+def _emit_key(
+    name: str,
+    pressed: bool,
+    raw_vk: int = 0,
+    device: "InputDevice | None" = None,
+) -> None:
     """Called by every platform hook for key events.
 
     Normalises the name, updates held/toggled state, checks hotkeys,
@@ -350,11 +357,18 @@ def _emit_key(name: str, pressed: bool, raw_vk: int = 0) -> None:
             _toggled.discard(norm)
         else:
             _toggled.add(norm)
-        _print_key(norm, True)
-        _print_key(norm, False)
+        _print_key(norm, True, device)
+        _print_key(norm, False, device)
         if _on_key_cb:
-            _on_key_cb(KeyEvent(norm, True, name, raw_vk))
-            _on_key_cb(KeyEvent(norm, False, name, raw_vk))
+            event_device = device or InputDevice.empty()
+            _on_key_cb(KeyEvent(
+                norm, True, name, raw_vk,
+                event_device.name, event_device.serial, event_device.path,
+            ))
+            _on_key_cb(KeyEvent(
+                norm, False, name, raw_vk,
+                event_device.name, event_device.serial, event_device.path,
+            ))
         return
 
     if pressed:
@@ -368,9 +382,13 @@ def _emit_key(name: str, pressed: bool, raw_vk: int = 0) -> None:
     else:
         _held.discard(norm)
 
-    _print_key(norm, pressed)
+    _print_key(norm, pressed, device)
     if _on_key_cb:
-        _on_key_cb(KeyEvent(norm, pressed, name, raw_vk))
+        event_device = device or InputDevice.empty()
+        _on_key_cb(KeyEvent(
+            norm, pressed, name, raw_vk,
+            event_device.name, event_device.serial, event_device.path,
+        ))
 
 
 def _emit_mouse(x: int, y: int, btn: str, pressed: bool) -> None:
@@ -460,36 +478,47 @@ class InputDevice:
     serial: str
     path: str
 
+    @classmethod
+    def empty(cls) -> "InputDevice":
+        return cls(0, "", "", "", "", "", "")
+
 
 def _enumerate_devices_macos() -> list[InputDevice]:
     try:
         r = subprocess.run(
-            ["hidutil", "list"], capture_output=True, text=True, timeout=5,
+            ["hidutil", "list", "--ndjson"],
+            capture_output=True, text=True, timeout=5,
         )
         if r.returncode != 0 or not r.stdout.strip():
             return []
-        raw_devices = json.loads(r.stdout)
+        raw_devices = [
+            json.loads(line) for line in r.stdout.splitlines() if line.strip()
+        ]
     except Exception:
         return []
 
     result: list[InputDevice] = []
     for raw in raw_devices:
-        usage_page = str(raw.get("primaryUsagePage", "0x0")).lower()
-        usage = str(raw.get("primaryUsage", "0x0")).lower()
-        if usage_page == "0x1" and usage == "0x6":
+        # A service and its backing device are normally both present.  The
+        # device record is the one IOHIDElementGetDevice identifies later.
+        if raw.get("type") != "device":
+            continue
+        usage_page = int(raw.get("PrimaryUsagePage", 0))
+        usage = int(raw.get("PrimaryUsage", 0))
+        if usage_page == 0x01 and usage == 0x06:
             kind = "KBD"
-        elif usage_page == "0x1" and usage == "0x2":
+        elif usage_page == 0x01 and usage == 0x02:
             kind = "MOU"
         else:
             continue
         result.append(InputDevice(
             idx=0,
-            name=raw.get("product", "") or raw.get("transport", "") or "Unknown",
+            name=raw.get("Product", "") or raw.get("Transport", "") or "Unknown",
             kind=kind,
-            vendor_id=str(raw.get("vendorID", "")),
-            product_id=str(raw.get("productID", "")),
-            serial=str(raw.get("serialNumber", "")),
-            path=str(raw.get("deviceID", "")),
+            vendor_id=str(raw.get("VendorID", "")),
+            product_id=str(raw.get("ProductID", "")),
+            serial=str(raw.get("SerialNumber", "")),
+            path=str(raw.get("IORegistryEntryID", "")),
         ))
     return result
 
@@ -547,6 +576,7 @@ def enumerate_devices() -> list[InputDevice]:
 
 # ============ shared state & formatting ============
 _state: dict[str, list[InputDevice]] = {"kbd_devs": [], "mou_devs": []}
+_show_event_device = True
 
 
 def _device_idx(kind: str) -> str:
@@ -560,7 +590,7 @@ def _device_idx(kind: str) -> str:
 
 
 def _format_event(kind: str, arrow: str, detail: str, extra: str = "") -> str:
-    ts = f"{FGray}{Utils.get_time_str()}{CRst}"
+    ts = f"{FGray}{Console.get_time_str()}{CRst}"
     kind_color = FLCyan if kind == "KBD" else FLMagenta
     arrow_color = FLGreen if arrow == "↓" else FLYellow
     kind_label = f"{kind_color}[{kind}{_device_idx(kind)}]{CRst}"
@@ -580,9 +610,17 @@ def _print_scroll(dx: int, dy: int):
     print(_format_event("MOU", direction, f"scroll ({dx}, {dy})"))
 
 
-def _print_key(key_name: str, pressed: bool):
+def _print_key(
+    key_name: str,
+    pressed: bool,
+    device: "InputDevice | None" = None,
+):
     arrow = "↓" if pressed else "↑"
-    print(_format_event("KBD", arrow, key_name))
+    source = ""
+    if device is not None and _show_event_device:
+        identity = f"S/N:{device.serial}" if device.serial else f"ID:{device.path}"
+        source = f"{device.name}  {identity}" if device.name else identity
+    print(_format_event("KBD", arrow, key_name, source))
 
 
 # ====================================================================
@@ -655,6 +693,275 @@ _MOUSE_BTN_MAP: dict[int, str] = {
     0: "left", 1: "right", 2: "middle", 3: "back", 4: "forward",
 }
 
+# USB HID Usage Tables, Keyboard/Keypad page (0x07).  IOHID reports these
+# before Quartz merges devices into the session-wide CGEvent stream.
+_HID_KEYBOARD_USAGE_MAP: dict[int, str] = {
+    **{usage: chr(ord("a") + usage - 0x04) for usage in range(0x04, 0x1E)},
+    **{
+        usage: str((usage - 0x1D) % 10)
+        for usage in range(0x1E, 0x28)
+    },
+    0x28: "enter", 0x29: "esc", 0x2A: "backspace", 0x2B: "tab",
+    0x2C: "space", 0x2D: "-", 0x2E: "=", 0x2F: "[", 0x30: "]",
+    0x31: "\\", 0x32: "non_us_hash", 0x33: ";", 0x34: "'",
+    0x35: "`", 0x36: ",", 0x37: ".", 0x38: "/",
+    0x39: "caps_lock",
+    **{usage: f"F{usage - 0x39}" for usage in range(0x3A, 0x46)},
+    0x46: "print_screen", 0x47: "scroll_lock", 0x48: "pause",
+    0x49: "insert", 0x4A: "home", 0x4B: "page_up", 0x4C: "delete",
+    0x4D: "end", 0x4E: "page_down", 0x4F: "right", 0x50: "left",
+    0x51: "down", 0x52: "up", 0x53: "num_lock", 0x54: "kp/",
+    0x55: "kp*", 0x56: "kp-", 0x57: "kp+", 0x58: "kp_enter",
+    **{usage: f"kp{usage - 0x58}" for usage in range(0x59, 0x62)},
+    0x62: "kp0", 0x63: "kp.", 0x64: "non_us_backslash", 0x65: "menu",
+    0x66: "power", 0x67: "kp=",
+    **{usage: f"F{usage - 0x5B}" for usage in range(0x68, 0x74)},
+    0xE0: "ctrl", 0xE1: "shift", 0xE2: "alt", 0xE3: "cmd",
+    0xE4: "ctrl_r", 0xE5: "shift_r", 0xE6: "alt_r", 0xE7: "cmd_r",
+}
+
+
+class _MacHIDKeyboardMonitor:
+    """Read physical keyboard values together with their IOHIDDevice source."""
+
+    _CF_STRING_ENCODING_UTF8 = 0x08000100
+    _CF_NUMBER_SINT64_TYPE = 4
+    _IORETURN_EXCLUSIVE_ACCESS = -536870203
+
+    def __init__(self, on_key: Callable[[str, bool, int, InputDevice], None]):
+        self._on_key = on_key
+        self._manager = None
+        self._loop = None
+        self._callback = None
+        self._property_keys: dict[str, int] = {}
+        self._device_cache: dict[int, InputDevice] = {}
+        self._recent_physical: dict[tuple[int, bool], float] = {}
+        self._iokit = None
+        self._cf = None
+        self.open_result = 0
+
+    def _load(self) -> None:
+        self._iokit = ctypes.CDLL(
+            "/System/Library/Frameworks/IOKit.framework/IOKit"
+        )
+        self._cf = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+        )
+        I = self._iokit
+        C = self._cf
+
+        I.IOHIDManagerCreate.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        I.IOHIDManagerCreate.restype = ctypes.c_void_p
+        I.IOHIDManagerSetDeviceMatching.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        I.IOHIDManagerRegisterInputValueCallback.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+        I.IOHIDManagerScheduleWithRunLoop.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+        I.IOHIDManagerUnscheduleFromRunLoop.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+        I.IOHIDManagerOpen.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        I.IOHIDManagerOpen.restype = ctypes.c_int32
+        I.IOHIDManagerClose.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        I.IOHIDValueGetElement.argtypes = [ctypes.c_void_p]
+        I.IOHIDValueGetElement.restype = ctypes.c_void_p
+        I.IOHIDValueGetIntegerValue.argtypes = [ctypes.c_void_p]
+        I.IOHIDValueGetIntegerValue.restype = ctypes.c_longlong
+        I.IOHIDElementGetUsagePage.argtypes = [ctypes.c_void_p]
+        I.IOHIDElementGetUsagePage.restype = ctypes.c_uint32
+        I.IOHIDElementGetUsage.argtypes = [ctypes.c_void_p]
+        I.IOHIDElementGetUsage.restype = ctypes.c_uint32
+        I.IOHIDElementGetDevice.argtypes = [ctypes.c_void_p]
+        I.IOHIDElementGetDevice.restype = ctypes.c_void_p
+        I.IOHIDDeviceGetProperty.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        I.IOHIDDeviceGetProperty.restype = ctypes.c_void_p
+        I.IOHIDDeviceGetService.argtypes = [ctypes.c_void_p]
+        I.IOHIDDeviceGetService.restype = ctypes.c_uint32
+        I.IORegistryEntryGetRegistryEntryID.argtypes = [
+            ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64),
+        ]
+        I.IORegistryEntryGetRegistryEntryID.restype = ctypes.c_int32
+
+        C.CFStringCreateWithCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32,
+        ]
+        C.CFStringCreateWithCString.restype = ctypes.c_void_p
+        C.CFStringGetTypeID.restype = ctypes.c_ulong
+        C.CFNumberGetTypeID.restype = ctypes.c_ulong
+        C.CFBooleanGetTypeID.restype = ctypes.c_ulong
+        C.CFGetTypeID.argtypes = [ctypes.c_void_p]
+        C.CFGetTypeID.restype = ctypes.c_ulong
+        C.CFStringGetCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32,
+        ]
+        C.CFStringGetCString.restype = ctypes.c_bool
+        C.CFNumberGetValue.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+        ]
+        C.CFNumberGetValue.restype = ctypes.c_bool
+        C.CFBooleanGetValue.argtypes = [ctypes.c_void_p]
+        C.CFBooleanGetValue.restype = ctypes.c_bool
+        C.CFRelease.argtypes = [ctypes.c_void_p]
+        C.CFRunLoopGetCurrent.argtypes = []
+        C.CFRunLoopGetCurrent.restype = ctypes.c_void_p
+
+    def _make_property_keys(self) -> None:
+        for key in (
+            "Product", "SerialNumber", "VendorID", "ProductID", "LocationID",
+        ):
+            ref = self._cf.CFStringCreateWithCString(
+                None, key.encode("ascii"), self._CF_STRING_ENCODING_UTF8,
+            )
+            if ref:
+                self._property_keys[key] = ref
+
+    def _property(self, device: int, key: str) -> str:
+        key_ref = self._property_keys.get(key)
+        if not key_ref:
+            return ""
+        value = self._iokit.IOHIDDeviceGetProperty(device, key_ref)
+        if not value:
+            return ""
+        type_id = self._cf.CFGetTypeID(value)
+        if type_id == self._cf.CFStringGetTypeID():
+            buf = ctypes.create_string_buffer(1024)
+            if self._cf.CFStringGetCString(
+                value, buf, len(buf), self._CF_STRING_ENCODING_UTF8,
+            ):
+                return buf.value.decode("utf-8", errors="replace")
+        elif type_id == self._cf.CFNumberGetTypeID():
+            number = ctypes.c_longlong()
+            if self._cf.CFNumberGetValue(
+                value, self._CF_NUMBER_SINT64_TYPE, ctypes.byref(number),
+            ):
+                return str(number.value)
+        elif type_id == self._cf.CFBooleanGetTypeID():
+            return "1" if self._cf.CFBooleanGetValue(value) else "0"
+        return ""
+
+    def _device(self, device_ref: int) -> InputDevice:
+        cache_key = int(device_ref)
+        cached = self._device_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        registry_id = ctypes.c_uint64()
+        service = self._iokit.IOHIDDeviceGetService(device_ref)
+        if service:
+            self._iokit.IORegistryEntryGetRegistryEntryID(
+                service, ctypes.byref(registry_id),
+            )
+        path = f"0x{registry_id.value:x}" if registry_id.value else "unknown"
+        result = InputDevice(
+            idx=0,
+            name=self._property(device_ref, "Product") or "Unknown keyboard",
+            kind="KBD",
+            vendor_id=self._property(device_ref, "VendorID"),
+            product_id=self._property(device_ref, "ProductID"),
+            serial=self._property(device_ref, "SerialNumber"),
+            path=path,
+        )
+        self._device_cache[cache_key] = result
+        return result
+
+    def start(self) -> bool:
+        try:
+            self._load()
+            iokit = self._iokit
+            cf = self._cf
+            if iokit is None or cf is None:
+                return False
+            self._make_property_keys()
+            self._manager = iokit.IOHIDManagerCreate(None, 0)
+            if not self._manager:
+                self.stop()
+                return False
+
+            callback_type = ctypes.CFUNCTYPE(
+                None, ctypes.c_void_p, ctypes.c_int32,
+                ctypes.c_void_p, ctypes.c_void_p,
+            )
+
+            def handle_value(_context, result, _sender, value):
+                if result != 0 or not value:
+                    return
+                try:
+                    element = self._iokit.IOHIDValueGetElement(value)
+                    if not element or self._iokit.IOHIDElementGetUsagePage(element) != 0x07:
+                        return
+                    usage = self._iokit.IOHIDElementGetUsage(element)
+                    # 0x00-0x03 are HID no-event/error codes.  Values beyond
+                    # the Keyboard/Keypad page range are not physical keys.
+                    if usage < 0x04 or usage > 0xE7:
+                        return
+                    name = _HID_KEYBOARD_USAGE_MAP.get(
+                        usage, f"hid_usage(0x{usage:02x})",
+                    )
+                    device_ref = self._iokit.IOHIDElementGetDevice(element)
+                    if not device_ref:
+                        return
+                    pressed = bool(self._iokit.IOHIDValueGetIntegerValue(value))
+                    device = self._device(device_ref)
+                    event_key = (usage, pressed)
+                    now = time.monotonic()
+                    is_virtual = "virtualhidkeyboard" in device.name.lower()
+                    if is_virtual:
+                        # Karabiner commonly re-emits an unchanged physical
+                        # event through its virtual keyboard.  Hide that exact
+                        # duplicate, while retaining genuinely remapped usages.
+                        if now - self._recent_physical.get(event_key, 0.0) < 0.05:
+                            return
+                    else:
+                        self._recent_physical[event_key] = now
+                    self._on_key(name, pressed, usage, device)
+                except Exception:
+                    return
+
+            self._callback = callback_type(handle_value)
+            # Use the CoreFoundation C API on this worker thread.  PyObjC's
+            # CFRunLoopRef wrapper cannot be passed directly to ctypes.
+            self._loop = cf.CFRunLoopGetCurrent()
+            mode = ctypes.c_void_p.in_dll(
+                cf, "kCFRunLoopDefaultMode",
+            ).value
+            self._mode = mode
+            iokit.IOHIDManagerSetDeviceMatching(self._manager, None)
+            iokit.IOHIDManagerRegisterInputValueCallback(
+                self._manager, self._callback, None,
+            )
+            iokit.IOHIDManagerScheduleWithRunLoop(
+                self._manager, self._loop, self._mode,
+            )
+            self.open_result = iokit.IOHIDManagerOpen(self._manager, 0)
+            if self.open_result not in (0, self._IORETURN_EXCLUSIVE_ACCESS):
+                self.stop()
+                return False
+            return True
+        except (AttributeError, OSError):
+            self.stop()
+            return False
+
+    def stop(self) -> None:
+        if self._manager and self._iokit:
+            if self._loop and getattr(self, "_mode", None):
+                self._iokit.IOHIDManagerUnscheduleFromRunLoop(
+                    self._manager, self._loop, self._mode,
+                )
+            self._iokit.IOHIDManagerClose(self._manager, 0)
+            if self._cf:
+                self._cf.CFRelease(self._manager)
+        if self._cf:
+            for key_ref in self._property_keys.values():
+                self._cf.CFRelease(key_ref)
+        self._manager = None
+        self._loop = None
+        self._callback = None
+        self._property_keys.clear()
+        self._device_cache.clear()
+        self._recent_physical.clear()
+
 
 def _key_name_from_event(vk: int, chars: Optional[str]) -> str:
     if vk in _VK_MAP:
@@ -717,10 +1024,18 @@ def _create_macos_hook():
             self._tap = None
             self._loop_source = None
             self._loop = None
+            self._hid_monitor = _MacHIDKeyboardMonitor(self._handle_hid_key_event)
+            self._hid_keyboard_seen = False
             self._ready = threading.Event()
             self.running = False
 
+        def _handle_hid_key_event(self, name, pressed, usage, device):
+            self._hid_keyboard_seen = True
+            _emit_key(name, pressed, usage, device)
+
         def _handle_key_event(self, event_type, event):
+            if self._hid_keyboard_seen:
+                return
             vk = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
             length, chars = CGEventKeyboardGetUnicodeString(event, 100, None, None)
             chars = chars if length > 0 else None
@@ -731,6 +1046,10 @@ def _create_macos_hook():
 
         def _handle_flags_changed(self, event):
             vk = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+            # Fn/Globe is not part of the standard HID keyboard usage page.
+            # Other modifiers arrive through IOHID with their physical source.
+            if self._hid_keyboard_seen and vk not in (63, 179):
+                return
             flags = CGEventGetFlags(event)
             if vk == 0x39:
                 name = _VK_MAP.get(vk, f"key({vk})")
@@ -796,11 +1115,22 @@ def _create_macos_hook():
             if self._tap is None:
                 self._ready.set()
                 raise OSError(
-                    "Failed to create event tap — grant Accessibility permission"
+                    "Failed to create event tap — grant Input Monitoring permission"
                 )
             self._loop_source = CFMachPortCreateRunLoopSource(None, self._tap, 0)
             self._loop = CFRunLoopGetCurrent()
             CFRunLoopAddSource(self._loop, self._loop_source, kCFRunLoopDefaultMode)
+            if self._hid_monitor.start():
+                if self._hid_monitor.open_result:
+                    print(
+                        f"{FLYellow}  HID source tracking is partial: one or more "
+                        f"devices are held exclusively (for example by Karabiner).{CRst}"
+                    )
+            else:
+                print(
+                    f"{FLYellow}  HID source tracking unavailable; keyboard events "
+                    f"will fall back to CGEvent without device identity.{CRst}"
+                )
             CGEventTapEnable(self._tap, True)
             self._ready.set()
             self.running = True
@@ -811,6 +1141,7 @@ def _create_macos_hook():
 
         def stop(self):
             self.running = False
+            self._hid_monitor.stop()
             if self._tap is not None:
                 CGEventTapEnable(self._tap, False)
                 CFRunLoopRemoveSource(
@@ -1979,8 +2310,9 @@ def toggle_modifier(name: str) -> None:
 # ====================================================================
 
 def main():
-    Utils.set_locale_utf8()
-    Utils.restart_elevated()
+    global _show_event_device
+
+    Console.set_locale_utf8()
 
     print()
     print(f"{FLYellow}╔{'═' * 46}╗{CRst}")
@@ -2019,6 +2351,20 @@ def main():
         print(f"  {FGray}Device enumeration not supported on this platform.{CRst}")
         print()
 
+    if _OS == "darwin":
+        show_device_choice = Menu.select(
+            [
+                MenuOption(["Y"], "Yes", True, FLGreen),
+                MenuOption(["N"], "No", False, FLYellow),
+            ],
+            prompt="Show event source device?",
+            default_key="Y",
+            inline=True,
+            separator=False,
+        )
+        _show_event_device = bool(show_device_choice)
+        print()
+
     print(f"{FLYellow}Starting hooks...{CRst}")
     print(f"  {FLGreen}↓{CRst} press/down    {FLYellow}↑{CRst} release/up")
     print(f"  {FLRed}Ctrl+C{CRst} to stop")
@@ -2029,7 +2375,7 @@ def main():
     try:
         hook = _create_hook()
     except (ImportError, OSError, NotImplementedError) as e:
-        Utils.print_error_and_exit(str(e))
+        Console.print_error_and_exit(str(e))
         raise  # unreachable — satisfies the type checker
 
     # --- run hook -------------------------------------------------------------
@@ -2049,11 +2395,11 @@ def main():
     except KeyboardInterrupt:
         pass
     hook.stop()
-    Utils.print_exit_message("Bye.")
+    Console.print_exit_message("Bye.")
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

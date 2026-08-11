@@ -31,7 +31,7 @@ Usage:
 """)
         return 0
 
-    if not Utils.check_commands(CmdCheck("tailscale", hints={
+    if not Environment.check_commands(CmdCheck("tailscale", hints={
         "any": f"Is {FLYellow}Tailscale{CRst} installed?",
     })):
         return 1
@@ -50,4 +50,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

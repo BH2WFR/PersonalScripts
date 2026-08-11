@@ -11,7 +11,7 @@ from utils import *  # noqa: E402
 # 文件/文件夹 时间修改器，支持加抖动
 
 def main() -> int:
-    Utils.print_banner("FILE TIME MODIFICATION TOOL")
+    Console.print_banner("FILE TIME MODIFICATION TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -417,7 +417,7 @@ def main() -> int:
         prompt="Select feature",
     )
     if featureInt is None:
-        Utils.print_exit_message("Bye.")
+        Console.print_exit_message("Bye.")
         return 0
     g_feature = Feature(featureInt)
 
@@ -534,4 +534,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

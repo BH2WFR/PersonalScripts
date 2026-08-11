@@ -1414,7 +1414,7 @@ def _pause():
 
 
 def main():
-    Utils.print_banner("SCREEN UTILS TOOL")
+    Console.print_banner("SCREEN UTILS TOOL")
 
     displays = get_all_displays()
     if not displays:
@@ -1452,7 +1452,7 @@ def main():
     while True:
         choice = Menu.select(_MAIN_OPTIONS, prompt="Choice")
         if choice is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             break
 
         if choice == 'L':
@@ -1479,7 +1479,7 @@ def main():
                 _pause()
 
         elif choice == 'Q':
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             break
 
         # 操作完成后重新打印屏幕信息
@@ -1492,4 +1492,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

@@ -240,20 +240,20 @@ def clear_icon_cache() -> None:
 
 def clear_caches() -> None:
     clear_dir(LIB / "Caches")
-    if Utils.is_elevated():
+    if System.is_elevated():
         clear_dir(Path("/Library/Caches"))
 
 
 def clear_temp_files() -> None:
     clear_dir(LIB / "Caches/TemporaryItems")
-    if Utils.is_elevated():
+    if System.is_elevated():
         clear_dir(Path("/tmp"))
         clear_dir(Path("/var/tmp"))
 
 
 def clear_font_cache() -> None:
     clear_dir(LIB / "Caches/com.apple.ATS")
-    if Utils.is_elevated():
+    if System.is_elevated():
         clear_dir(Path("/Library/Caches/com.apple.ATS"))
         run(["atsutil", "databases", "-remove"])
     run(["atsutil", "server", "-shutdown"])
@@ -350,7 +350,7 @@ def clear_chromium_browsers() -> None:
 
 
 def clear_dns_cache() -> None:
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         return
     run(["dscacheutil", "-flushcache"])
     run(["killall", "-HUP", "mDNSResponder"])
@@ -358,7 +358,7 @@ def clear_dns_cache() -> None:
 
 
 def clear_event_logs() -> None:
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         return
     run(["log", "erase", "--all"])
     clear_dir(Path("/var/log/asl"))
@@ -367,7 +367,7 @@ def clear_event_logs() -> None:
 
 
 def clear_system_logs() -> None:
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         return
     for log_dir in [Path("/var/log"), Path("/private/var/log")]:
         if not log_dir.is_dir():
@@ -383,13 +383,13 @@ def clear_system_logs() -> None:
 def clear_spotlight_history() -> None:
     delete_plist_keys("com.apple.spotlight", ["findItemsLastUsedDateDict"])
     clear_dir(LIB / "Caches/com.apple.helpd")
-    if Utils.is_elevated():
+    if System.is_elevated():
         run(["mdutil", "-E", "/"])
     run(["mdutil", "-E", str(HOME)])
 
 
 def clear_arp_cache() -> None:
-    if Utils.is_elevated():
+    if System.is_elevated():
         run(["arp", "-ad"])
 
 
@@ -445,7 +445,7 @@ def clear_python_pycache() -> None:
 
 
 def print_banner(args: argparse.Namespace) -> None:
-    Utils.print_banner("PRIVACY CLEANUP - macOS")
+    Console.print_banner("PRIVACY CLEANUP - macOS")
     print("  Enabled sections:")
     if not args.skip_recent:
         print("    1. Recent items / Finder state / shell history")
@@ -458,7 +458,7 @@ def print_banner(args: argparse.Namespace) -> None:
     if not args.skip_apps:
         print("    5. Application MRU / developer traces")
     print()
-    if not Utils.is_elevated() and not args.skip_system:
+    if not System.is_elevated() and not args.skip_system:
         print(f"  {FGray}System cleanup will partially skip root-only steps unless elevation succeeds.{CRst}")
         print()
 
@@ -483,9 +483,9 @@ def main() -> None:
         return
 
     print_banner(args)
-    if not Utils.is_elevated():
+    if not System.is_elevated():
         warn_msg(f"Root privileges not detected. Trying {FGray}sudo{CRst}.")
-        elevated = Utils.try_restart_elevated()
+        elevated = System.try_restart_elevated()
         if not elevated:
             warn_msg("Elevation unavailable. Root-only cleanup will be skipped.")
 
@@ -529,7 +529,7 @@ def main() -> None:
 
     if not args.skip_system and confirm_section(args, "Section 4: system traces"):
         step("Section 4: System traces")
-        if Utils.is_elevated():
+        if System.is_elevated():
             clear_dns_cache()
             clear_event_logs()
             clear_system_logs()
@@ -570,4 +570,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

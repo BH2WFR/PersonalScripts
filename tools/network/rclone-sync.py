@@ -505,7 +505,7 @@ class SyncTask:
         for attr in ("local_path", "remote_path", "backup_dir", "log_file"):
             val = getattr(self, attr)
             if val:
-                setattr(self, attr, Utils.resolve_path_vars(val, schema_dir=schema_dir, script_dir=script_dir))
+                setattr(self, attr, Paths.resolve_vars(val, schema_dir=schema_dir, script_dir=script_dir))
 
     def find_unresolved_path_vars(self) -> list[str]:
         """Return path fields that still contain unresolved variable syntax."""
@@ -776,7 +776,7 @@ def _print_cmd(cmd: list[str]) -> None:
 
 
 def _notify(title: str, body: str) -> None:
-    Utils.notify(title, body)
+    System.notify(title, body)
 
 
 class OperationCancelled(Exception):
@@ -1235,7 +1235,7 @@ def _print_help() -> None:
 # ================================================================
 
 def main() -> int:
-    Utils.print_banner("RCLONE SYNC RUNNER")
+    Console.print_banner("RCLONE SYNC RUNNER")
 
     # ---- help (works without any dependencies) ----
     if "--help" in sys.argv or "-h" in sys.argv:
@@ -1245,7 +1245,7 @@ def main() -> int:
     try:
         import yaml as yaml_mod
     except ImportError:
-        Utils.print_error_and_exit("PyYAML is not installed. Run: pip install pyyaml")
+        Console.print_error_and_exit("PyYAML is not installed. Run: pip install pyyaml")
         raise  # unreachable — satisfies the type checker
 
     script_dir = SCRIPT_DIR
@@ -1274,7 +1274,7 @@ def main() -> int:
         "macos":   f"{FGray}brew install rclone{CRst}",
         "linux":   f"{FGray}sudo apt install rclone{CRst}",
     })
-    if not Utils.check_commands(_rclone):
+    if not Environment.check_commands(_rclone):
         return 1
     assert _rclone.path is not None
     rclone_exe: str = _rclone.path
@@ -1291,19 +1291,19 @@ def main() -> int:
     if cli_config_password:
         os.environ["RCLONE_CONFIG_PASS"] = cli_config_password
         if not _verify_config_password(rclone_exe):
-            Utils.print_error_and_exit("rclone config password is incorrect (from --rclone-config-password)")
+            Console.print_error_and_exit("rclone config password is incorrect (from --rclone-config-password)")
         config_password = cli_config_password
     elif ENV_CONFIG_PASSWORD in os.environ:
         config_password = os.environ[ENV_CONFIG_PASSWORD]
         os.environ["RCLONE_CONFIG_PASS"] = config_password
         if not _verify_config_password(rclone_exe):
-            Utils.print_error_and_exit(f"rclone config password is incorrect (from {ENV_CONFIG_PASSWORD})")
+            Console.print_error_and_exit(f"rclone config password is incorrect (from {ENV_CONFIG_PASSWORD})")
     elif _detect_encrypted_config(rclone_exe):
         print(f"{FLYellow}  rclone config is encrypted.{CRst}")
         while True:
             config_password = Input.input_password("Enter rclone config password")
             if not config_password:
-                Utils.print_exit_message("Bye.")
+                Console.print_exit_message("Bye.")
                 return 0
             os.environ["RCLONE_CONFIG_PASS"] = config_password
             if _verify_config_password(rclone_exe):
@@ -1338,7 +1338,7 @@ def main() -> int:
             )
         except EOFError:
             print()
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
 
     schema_file = os.path.abspath(os.path.expanduser(schema_file))
@@ -1445,8 +1445,8 @@ def main() -> int:
         _subtask_name_to_lines[key].append(lineno)
 
     platform_cur = sys.platform
-    arch_cur = Utils.get_arch()
-    computer_cur = Utils.get_computer_name()
+    arch_cur = System.get_arch()
+    computer_cur = System.get_computer_name()
 
     # Pre-compute matching sub-tasks for every task (reused in Steps 4-5).
     # Task-level ``platform`` / ``arch`` / ``computer-name`` are merged
@@ -1521,7 +1521,7 @@ def main() -> int:
                 print(f"{FLRed}Task '{cli_task}' has no sub-tasks matching this machine.{CRst}")
                 return 1
         else:
-            Utils.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
+            Console.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
             print(f"  Available tasks from `{FGray}{schema_file}{CRst}`:\n")
 
             # Build mapping: display index -> all_entries index (only matching tasks)
@@ -1536,7 +1536,7 @@ def main() -> int:
 
             if not selectable_map:
                 print(f"  {FLRed}No tasks have sub-tasks matching this machine.{CRst}")
-                Utils.print_exit_message("Bye.")
+                Console.print_exit_message("Bye.")
                 return 0
 
             max_digits = len(str(display_total - 1))
@@ -1567,7 +1567,7 @@ def main() -> int:
                 if group_name is not None:
                     prev_group = group_name
 
-            Utils.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
+            Console.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
 
             # Warn about duplicate task names
             _dup_task_names = {tn: entries for tn, entries in _task_name_to_lines.items() if len(entries) > 1}
@@ -1585,13 +1585,13 @@ def main() -> int:
                     choice = input(f"\n{FLYellow}Select task{CRst} {FGray}[#]{CRst}: ").strip()
                 except EOFError:
                     print()
-                    Utils.print_exit_message("Bye.")
+                    Console.print_exit_message("Bye.")
                     return 0
                 if not choice:
-                    Utils.print_exit_message("Bye.")
+                    Console.print_exit_message("Bye.")
                     return 0
                 if choice.lower() == "e":
-                    Utils.open_with_default_app(schema_file)
+                    System.open_with_default_app(schema_file)
                     continue
                 if choice.isdigit():
                     sel_idx = int(choice)
@@ -1841,7 +1841,7 @@ def main() -> int:
                     ).strip().lower()
                 except EOFError:
                     print()
-                    Utils.print_exit_message("Bye.")
+                    Console.print_exit_message("Bye.")
                     return 0
 
                 if choice == "y":
@@ -1863,7 +1863,7 @@ def main() -> int:
                         print(f"\n{FLRed}Dry-run failed with exit code {exec_result.returncode}.{CRst}")
                     continue
                 elif choice == "q":
-                    Utils.print_exit_message("Bye.")
+                    Console.print_exit_message("Bye.")
                     return 0
                 else:
                     print(f"{FLRed}Enter y, n, d, or q.{CRst}")
@@ -1906,7 +1906,7 @@ def main() -> int:
                 ).strip().lower()
             except EOFError:
                 print()
-                Utils.print_exit_message("Bye.")
+                Console.print_exit_message("Bye.")
                 return 0
 
             if not choice or choice == "m":
@@ -1922,7 +1922,7 @@ def main() -> int:
                 else:
                     print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
             elif choice == "q":
-                Utils.print_exit_message("Bye.")
+                Console.print_exit_message("Bye.")
                 return 0
             else:
                 print(f"{FLRed}Enter m/Enter, r, or q.{CRst}")
@@ -1932,4 +1932,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

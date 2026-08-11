@@ -14,7 +14,7 @@ if sys.platform != "darwin":
     print(f"{FLRed}ERROR: This script only runs on macOS. Current platform: {sys.platform}{CRst}\n")
     sys.exit(1)
 
-if not Utils.check_commands(CmdCheck("ntfs-3g", hints={
+if not Environment.check_commands(CmdCheck("ntfs-3g", hints={
     "macos": f"{FGray}brew install ntfs-3g{CRst}",
 })):
     sys.exit(1)
@@ -483,7 +483,7 @@ def _print_partitions(partitions: list[dict]):
 
 
 def main():
-    Utils.print_banner("NTFS-3G UTILS")
+    Console.print_banner("NTFS-3G UTILS")
 
     while True:
         partitions = _get_ntfs_partitions()
@@ -493,7 +493,7 @@ def main():
 
         choice = Menu.select(_MAIN_OPTIONS, prompt="Choice")
         if choice is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             break
 
         if choice == "N":
@@ -506,10 +506,10 @@ def main():
             if do_eject(partitions) is False:
                 _pause()
             else:
-                Utils.print_exit_message("Bye.")
+                Console.print_exit_message("Bye.")
                 break
         elif choice == "Q":
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             break
 
 
@@ -524,4 +524,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

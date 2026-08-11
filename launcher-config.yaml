@@ -68,7 +68,10 @@ ignore-list:
             - "windows/"
             - "macos/"
             - "filesystem/link-fix-to-symlinkd-windows.py"
+            - "keyboard-hook-viewer.py"
+            - "filesystem/git-batch-add-chmod-x.ps1"
         macos:
             - "windows/"
             - "linux/"
             - "filesystem/link-fix-to-symlinkd-windows.py"
+            - "filesystem/git-batch-add-chmod-x.ps1"

@@ -69,9 +69,9 @@ def _resolve_target_script(arg_value: Optional[str]) -> str:
     if arg_value:
         p = os.path.abspath(os.path.expanduser(arg_value))
         if not os.path.isfile(p):
-            Utils.print_error_and_exit(f"Target script not found: {p}")
+            Console.print_error_and_exit(f"Target script not found: {p}")
         if os.path.splitext(p)[1].lower() != ".py":
-            Utils.print_error_and_exit(f"Target script must be a .py file: {p}")
+            Console.print_error_and_exit(f"Target script must be a .py file: {p}")
         return p
     p = Input.resolve_input_path(
         default_path=os.path.expanduser("~"),
@@ -79,7 +79,7 @@ def _resolve_target_script(arg_value: Optional[str]) -> str:
         path_type="file",
     )
     if os.path.splitext(p)[1].lower() != ".py":
-        Utils.print_error_and_exit(f"Target script must be a .py file: {p}")
+        Console.print_error_and_exit(f"Target script must be a .py file: {p}")
     return p
 
 
@@ -158,7 +158,7 @@ end open'''
             stderr = _format_process_output(e.stderr)
             stdout = _format_process_output(e.stdout)
             detail = stderr or stdout or str(e)
-            Utils.print_error_and_exit(f"osacompile failed: {detail}")
+            Console.print_error_and_exit(f"osacompile failed: {detail}")
     finally:
         os.unlink(tmp_path)
 
@@ -202,10 +202,10 @@ def _write_info_plist(app_contents: str, app_name: str, bundle_id: str) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    Utils.print_banner("SCRIPT TO APP")
+    Console.print_banner("SCRIPT TO APP")
 
     if sys.platform != "darwin":
-        Utils.print_error_and_exit("This script only works on macOS.")
+        Console.print_error_and_exit("This script only works on macOS.")
 
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -280,4 +280,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

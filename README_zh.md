@@ -78,7 +78,7 @@ ignore-list:
             - "macos/"
 ```
 
-颜色名称通过 `Utils.resolve_ansi_color()` 转换。颜色、正则或 YAML 结构无效时，启动器会报告配置错误并停止；配置的脚本目录不存在时同样拒绝运行。
+颜色名称通过 `Console.resolve_ansi_color()` 转换。颜色、正则或 YAML 结构无效时，启动器会报告配置错误并停止；配置的脚本目录不存在时同样拒绝运行。
 
 ---
 
@@ -91,7 +91,7 @@ ignore-list:
 | `tools/document-processing/pdf-compress.py` | PDF 压缩工具，支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式 | 跨平台。`ghostscript` |
 | `tools/document-processing/pdf-decrypt.py` | 解密受密码保护的 PDF（含仅权限保护），保留完整文档结构 | 跨平台。`pypdf` |
 | `tools/document-processing/pdf-bookmarks-add.py` | 用于扫描版 PDF 书籍：先将目录页截图发给多模态 LLM（如 Qwen3-VL）生成 JSON（含页码/层级/编号/标题），再用此脚本将 JSON 解析并写入 PDF 书签 | 跨平台。`pypdf` |
-| `tools/document-processing/document-screenshot.py` | 自动截图 PDF 文档（模拟 PgDn 翻页 + 鼠标点击），适用于 DRM 保护的或加密 USB 中的 PDF | 仅 **macOS**。`mss`、`pynput`、`Pillow` |
+| `tools/document-processing/document-screenshot.py` | 自动截图 PDF 文档（模拟 PgDn 翻页 + 鼠标点击），适用于 DRM 保护的或加密 USB 中的 PDF；通过共享 macOS 系统工具检查并申请辅助功能与屏幕录制权限 | 仅 **macOS**。`mss`、`pynput`、`Pillow` |
 
 ### 视频下载
 
@@ -166,14 +166,14 @@ ignore-list:
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `test/keyboard-hook.py` | 跨平台全局键盘鼠标钩子监控器。打印按键/鼠标/滚轮事件并追踪前台窗口。同时可作为输入控制库使用：`press`、`release`、`tap`、`hotkey`、`send`（序列发送）、`move`、`click`、`scroll`、`get_foreground_window`。macOS 使用原生 CGEvent tap；Windows 用 ctypes 调用 `SetWindowsHookEx`；Linux 使用 X11 XRecord | 跨平台。macOS: `pip install pyobjc-framework-Quartz`；Windows: 无（标准库 ctypes）；Linux: `pip install python-xlib` |
+| `tools/keyboard-hook-viewer.py` | 跨平台全局键盘鼠标钩子监控器。打印按键、鼠标和滚轮事件并追踪前台窗口；在 macOS 上可于启动时交互选择是否显示键盘事件的 IOHID 来源设备及设备提供的序列号。同时提供输入控制 API：`press`、`release`、`tap`、`hotkey`、`send`（序列发送）、`move`、`click`、`scroll`、`get_foreground_window`。macOS 使用 CGEvent tap 与 IOHID；Windows 用 ctypes 调用 `SetWindowsHookEx`；Linux 使用 X11 XRecord | 跨平台。macOS: `pip install pyobjc-framework-Quartz`；Windows: 无（标准库 ctypes）；Linux: `pip install python-xlib` |
 | `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | 打印所有命令行参数，分别对应 Python / Bash / PowerShell 实现，功能一致 | 跨平台。`.py` 需 `python3`；`.sh` 需 `bash`；`.ps1` 需 `PowerShell` |
 
 ---
 
 ## 依赖
 
-核心工具模块：`utils/` — 提供 ANSI 颜色代码、光标/清屏控制序列和平台工具函数。
+核心工具包：`utils/` — 将控制台、运行环境、系统、路径及交互职责拆分为独立类，并由 `utils/__init__.py` 统一导出公共工具。
 
 ### Python 环境
 
@@ -217,7 +217,7 @@ sudo apt install ffmpeg yt-dlp smartmontools ghostscript tailscale
 ## 约定
 
 - 所有 Python 脚本支持 `--help` / `-h` 查看用法（英文，带颜色）
-- 所有脚本统一使用 `Utils.print_banner()` 绘制双线框标题横幅
+- 所有脚本统一使用 `Console.print_banner()` 绘制双线框标题横幅
 - 支持的运行时版本为 Python 3.13+
 - 命令行参数传入时跳过交互提示（适合批处理）
 - 多行输入使用 EOF（Windows: `Ctrl+Z`，Linux/macOS: `Ctrl+D`）

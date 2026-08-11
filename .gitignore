@@ -23,6 +23,7 @@ output
 BUILD/
 
 /output/
+/output_*/
 /generated_patterns/
 
 /3rd/

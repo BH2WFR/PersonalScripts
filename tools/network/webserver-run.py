@@ -19,7 +19,7 @@ def _resolve_dir(path_str):
         return os.path.dirname(path)
     if os.path.isdir(path):
         return path
-    Utils.print_error_and_exit(f"Path does not exist: {path_str}")
+    Console.print_error_and_exit(f"Path does not exist: {path_str}")
 
 
 def _get_local_ip():
@@ -41,7 +41,7 @@ def _validate_bind(bind):
         ipaddress.ip_address(bind)
         return bind
     except ValueError:
-        Utils.print_error_and_exit(f"Invalid IP address: {bind}")
+        Console.print_error_and_exit(f"Invalid IP address: {bind}")
 
 
 def _run_server(directory, bind, port, url_path="", quiet=False, open_browser=True):
@@ -70,7 +70,7 @@ def _run_server(directory, bind, port, url_path="", quiet=False, open_browser=Tr
     print(f"\n{FGray}Press {FLYellow}Ctrl+C{CRst} to stop.{CRst}\n")
 
     if open_browser:
-        Utils.open_browser_safe(full_url)
+        System.open_browser_safe(full_url)
 
     try:
         httpd.serve_forever()
@@ -139,7 +139,7 @@ def main():
 """)
         sys.exit(0)
 
-    Utils.print_banner("WEBSERVER RUNNING TOOL")
+    Console.print_banner("WEBSERVER RUNNING TOOL")
 
     # ----- parse optional CLI args -----
     serve_dir: Optional[str] = None
@@ -168,7 +168,7 @@ def main():
             try:
                 cli_port = int(sys.argv[i + 1])
             except ValueError:
-                Utils.print_error_and_exit(f"Invalid port number: {sys.argv[i + 1]}")
+                Console.print_error_and_exit(f"Invalid port number: {sys.argv[i + 1]}")
             port_provided = True
             i += 2
         elif a == "--url-path" and i + 1 < len(sys.argv):
@@ -213,4 +213,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

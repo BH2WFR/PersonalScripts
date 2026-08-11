@@ -217,22 +217,19 @@ def _prompt_algorithms(available_algorithms: set[str]) -> list[str]:
         )
         print(f"{FGray}  allow using comma-separated list of algorithms (e.g. `{CRst}sha256,md5{FGray}`){CRst}")
     while True:
-        raw_value = Input.prompt(
+        algorithms = Input.prompt(
             f"{FLYellow}Hash algorithms {FGray}[{DEFAULT_ALGORITHM}]"
             f"{CRst}{FLYellow} > {CRst}",
             default=DEFAULT_ALGORITHM,
+            transform=lambda value: value.removeprefix("-").casefold(),
+            separator=",",
+            deduplicate=True,
         )
-        algorithms: list[str] = []
-        invalid_names: list[str] = []
-        for raw_algorithm in raw_value.split(","):
-            algorithm = raw_algorithm.strip().removeprefix("-").casefold()
-            if not algorithm:
-                continue
-            if not ALGORITHM_PATTERN.fullmatch(algorithm):
-                invalid_names.append(raw_algorithm.strip())
-                continue
-            if algorithm not in algorithms:
-                algorithms.append(algorithm)
+        invalid_names = [
+            algorithm
+            for algorithm in algorithms
+            if not ALGORITHM_PATTERN.fullmatch(algorithm)
+        ]
         if invalid_names:
             print(
                 f"{FLRed}Invalid algorithm name(s):{CRst} "
@@ -348,8 +345,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_argument_parser()
     parser.parse_args(argv)
 
-    Utils.set_locale_utf8()
-    Utils.print_banner("FILE HASH - OpenSSL")
+    Console.set_locale_utf8()
+    Console.print_banner("FILE HASH - OpenSSL")
 
     openssl_check = CmdCheck(
         "openssl",
@@ -360,7 +357,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "linux": f"  {FGray}sudo apt install openssl{CRst}",
         },
     )
-    if not Utils.check_commands(openssl_check) or openssl_check.path is None:
+    if not Environment.check_commands(openssl_check) or openssl_check.path is None:
         return 1
     try:
         available_algorithms = _available_algorithms(openssl_check.path)
@@ -397,4 +394,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

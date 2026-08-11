@@ -50,7 +50,7 @@ Usage:
 """)
         return 0
 
-    Utils.print_banner("UPLOAD IP ADDRESS INFO TO S3 BUCKET")
+    Console.print_banner("UPLOAD IP ADDRESS INFO TO S3 BUCKET")
 
     #============ 环境变量检查 ===========
     _required = [
@@ -133,4 +133,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

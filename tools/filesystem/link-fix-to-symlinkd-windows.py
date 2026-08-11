@@ -16,7 +16,7 @@ def main() -> int:
         return 1
 
     #* 交互输入
-    Utils.print_banner("SYMLINK TO SYMLINKD CONVERTING TOOL")
+    Console.print_banner("SYMLINK TO SYMLINKD CONVERTING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -128,4 +128,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

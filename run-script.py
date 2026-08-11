@@ -164,7 +164,7 @@ def _resolve_project_path(project_dir: str, configured_path: str) -> str:
 def _resolve_config_color(color_name: str, yaml_key: str) -> str:
     """Resolve one configured color name with contextual validation errors."""
     try:
-        return Utils.resolve_ansi_color(color_name)
+        return Console.resolve_ansi_color(color_name)
     except ValueError as exc:
         raise ValueError(f"'{yaml_key}' contains unknown color '{color_name}'") from exc
 
@@ -451,8 +451,8 @@ def find_scripts(script_dir: str, config: _LauncherConfig) -> list[str]:
     interpreter-supported scripts are retained, including same-stem files with
     different extensions.
     """
-    has_bash = Utils.find_bash() is not None
-    has_pwsh = Utils.find_pwsh() is not None
+    has_bash = Environment.find_bash() is not None
+    has_pwsh = Environment.find_pwsh() is not None
 
     extensions: list[str] = [config.script_types["python"].extension]
     if has_bash:
@@ -774,7 +774,7 @@ def show_scripts(
             types.append(f"{config.script_types[key].color}{label}{CRst}")
     type_str = "/".join(types) if types else "scripts"
 
-    Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
+    Console.print_separator(width=60, color_ansi_esc=None, indent=2)
 
     print(f"  Available {type_str} scripts in `{FGray}{script_dir}{CRst}`:")
 
@@ -826,7 +826,7 @@ def show_scripts(
                 all_scripts.append(f"@{display_idx}:{rel}")
                 cnt += 1
 
-    Utils.print_separator(width=60, color_ansi_esc=None, indent=2)
+    Console.print_separator(width=60, color_ansi_esc=None, indent=2)
 
     return all_scripts
 
@@ -877,7 +877,7 @@ def run_py_script(script_path: str) -> int:
 
 def run_sh_script(script_path: str, args: list[str]) -> int:
     """Execute a .sh script via bash."""
-    bash = Utils.find_bash()
+    bash = Environment.find_bash()
     if bash is None:
         print(f"{FLRed}Cannot find bash interpreter{CRst}", file=sys.stderr)
         return 1
@@ -887,7 +887,7 @@ def run_sh_script(script_path: str, args: list[str]) -> int:
 
 def run_ps1_script(script_path: str, args: list[str]) -> int:
     """Execute a .ps1 script via PowerShell."""
-    pwsh = Utils.find_pwsh()
+    pwsh = Environment.find_pwsh()
     if pwsh is None:
         print(f"{FLRed}Cannot find PowerShell interpreter (pwsh/powershell){CRst}", file=sys.stderr)
         return 1
@@ -1004,8 +1004,8 @@ def main() -> int:
         _print_help(config)
         return 0
 
-    Utils.print_banner("PERSONAL SCRIPT LAUNCHER")
-    Utils.print_env_info()
+    Console.print_banner("PERSONAL SCRIPT LAUNCHER")
+    Environment.print_env_info()
 
     script_dir = config.script_root
     if not os.path.isdir(script_dir):
@@ -1072,11 +1072,11 @@ def main() -> int:
                 choice_line = input().strip()
             except EOFError:
                 print()
-                Utils.print_exit_message("Bye.")
+                Console.print_exit_message("Bye.")
                 return 0
 
             if not choice_line:
-                Utils.print_exit_message("Bye.")
+                Console.print_exit_message("Bye.")
                 return 0
 
             parts = choice_line.split()
@@ -1149,4 +1149,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

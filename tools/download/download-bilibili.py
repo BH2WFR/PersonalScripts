@@ -10,7 +10,7 @@ from utils import *  # noqa: E402
 
 
 def main() -> int:
-    Utils.print_banner("BBDOWN TOOL")
+    Console.print_banner("BBDOWN TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
@@ -49,7 +49,7 @@ Usage:
         "macos": f"{FGray}brew install aria2{CRst}",
         "linux": f"{FGray}sudo apt install aria2{CRst}",
     })
-    if not Utils.check_commands(
+    if not Environment.check_commands(
         CmdCheck("BBDown", hints={
             "windows": f"{FGray}scoop install BBDown{CRst}",
             "macos": f"{FGray}Download from https://github.com/nilaoda/BBDown{CRst}",
@@ -98,7 +98,7 @@ Usage:
             URLS = Input.read_stdin_multiline(prompt_text="Enter Bilibili video URLs (one per line).")
 
         if not URLS:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
         first_iteration = False
 
@@ -108,7 +108,7 @@ Usage:
             default_key="2",
         )
         if BITRATE is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
 
         #* 分P
@@ -124,7 +124,7 @@ Usage:
             default_key="0",
         )
         if API_TYPE is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             return 0
 
         #* 下载
@@ -188,11 +188,11 @@ Usage:
                 succeedCnt += 1
 
         print(f"{FLGreen}All downloads completed.{CRst} {FLGreen}Succeed: {succeedCnt}{CRst}, {FLRed}Failed: {failedCnt}{CRst}, {FLYellow}Total: {len(URLS)}{CRst}\n")
-        Utils.print_separator()
+        Console.print_separator()
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()

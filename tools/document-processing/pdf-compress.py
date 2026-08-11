@@ -19,7 +19,7 @@ _gs = CmdCheck(
         "linux": f"{FLCyan}  sudo apt install ghostscript{CRst}",
     },
 )
-if not Utils.check_commands(_gs):
+if not Environment.check_commands(_gs):
     sys.exit(1)
 GS_BIN = _gs.path
 
@@ -51,60 +51,6 @@ Usage:
 
 
 # ============ helpers ============
-def _fmt_size(size_bytes):
-    """Format file size in human-readable form."""
-    for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} TB"
-
-
-def _prompt_numeric(prompt: str, default: int, lo: int, hi: int) -> int:
-    """Prompt for an integer within [lo, hi], return default on empty input."""
-    while True:
-        raw = input(f"{FLCyan}{prompt} {FGray}[{default}]{CRst}: ").strip()
-        if not raw:
-            return default
-        try:
-            val = int(raw)
-            if lo <= val <= hi:
-                return val
-            print(f"{FLRed}Value out of range [{lo}–{hi}].{CRst}")
-        except ValueError:
-            print(f"{FLRed}Invalid number.{CRst}")
-
-
-def _prompt_input_path() -> str:
-    """Prompt for a PDF input path. Returns a valid absolute path, or
-    exits the process via ``sys.exit(0)`` when the user presses Enter."""
-    while True:
-        try:
-            raw = input(
-                f"{FLYellow}Input PDF path {FGray}[Enter to exit]{CRst}: "
-            ).strip()
-        except EOFError:
-            print()
-            Utils.print_exit_message("Bye.")
-            sys.exit(0)
-        if not raw:
-            Utils.print_exit_message("Bye.")
-            sys.exit(0)
-
-        raw = raw.strip("'\"")
-        path = os.path.expanduser(raw)
-        path = os.path.expandvars(path)
-        path = os.path.abspath(path)
-
-        if not os.path.isfile(path):
-            print(f"{FLRed}File does not exist: {FGray}{path}{CRst}\n")
-            continue
-        if not path.lower().endswith(".pdf"):
-            print(f"{FLRed}Not a PDF file:{CRst} {FGray}{path}{CRst}\n")
-            continue
-        return path
-
-
 def _build_ebook_cmd(input_path, output_path):
     """Build the Ghostscript command line for Ebook compression."""
     return [
@@ -120,10 +66,38 @@ def _build_ebook_cmd(input_path, output_path):
 def _build_custom_cmd(input_path, output_path):
     """Prompt for downsampling settings, then build the Ghostscript command line."""
     print(f"\n{FLYellow}Image downsampling settings:{CRst}\n")
-    color_dpi    = _prompt_numeric("Color image DPI", 200, 36, 2400)
-    gray_dpi     = _prompt_numeric("Gray image DPI",  200, 36, 2400)
-    mono_dpi     = _prompt_numeric("Mono image DPI",  300, 36, 2400)
-    jpeg_quality = _prompt_numeric("JPEG quality (1–100)", 50, 1, 100)
+    color_dpi = int(Input.input_number(
+        "Color image DPI",
+        default=200,
+        min_value=36,
+        max_value=2400,
+        allow_float=False,
+        allow_negative=False,
+    ))
+    gray_dpi = int(Input.input_number(
+        "Gray image DPI",
+        default=200,
+        min_value=36,
+        max_value=2400,
+        allow_float=False,
+        allow_negative=False,
+    ))
+    mono_dpi = int(Input.input_number(
+        "Mono image DPI",
+        default=300,
+        min_value=36,
+        max_value=2400,
+        allow_float=False,
+        allow_negative=False,
+    ))
+    jpeg_quality = int(Input.input_number(
+        "JPEG quality",
+        default=50,
+        min_value=1,
+        max_value=100,
+        allow_float=False,
+        allow_negative=False,
+    ))
     print()
     return [
         GS_BIN, "-sDEVICE=pdfwrite",
@@ -155,8 +129,8 @@ def _run_gs(cmd: list[str], input_path: str, output_path: str) -> None:
         out_size = os.path.getsize(output_path)
         ratio = (1 - out_size / in_size) * 100 if in_size > 0 else 0
         print(f"\n{FLGreen}Compressed successfully.{CRst}")
-        print(f"{FGray}Before:{CRst} {FLYellow}{_fmt_size(in_size)}{CRst}")
-        print(f"{FGray}After: {CRst} {FLYellow}{_fmt_size(out_size)}{CRst}  "
+        print(f"{FGray}Before:{CRst} {FLYellow}{Console.format_size(in_size)}{CRst}")
+        print(f"{FGray}After: {CRst} {FLYellow}{Console.format_size(out_size)}{CRst}  "
               f"{FGray}({FLGreen}-{ratio:.1f}%{FGray}){CRst}\n")
     else:
         print(f"\n{FLRed}Ghostscript exited with code {result.returncode}.{CRst}\n")
@@ -164,12 +138,20 @@ def _run_gs(cmd: list[str], input_path: str, output_path: str) -> None:
 
 # ============ main ============
 def main():
-    Utils.print_banner("PDF COMPRESS")
+    Console.print_banner("PDF COMPRESS")
     print()
 
     while True:
         # 1. input file
-        input_path = _prompt_input_path()
+        while True:
+            input_path = Input.resolve_input_path(
+                "",
+                prompt="Input PDF path",
+                path_type="file",
+            )
+            if input_path.casefold().endswith(".pdf"):
+                break
+            print(f"{FLRed}Not a PDF file:{CRst} {FGray}{input_path}{CRst}\n")
         print(f"{FGray}Input:{CRst}  {FLGreen}{input_path}{CRst}")
 
         # 2. output file
@@ -188,7 +170,7 @@ def main():
             prompt="Select mode", separator=False,
         )
         if choice is None:
-            Utils.print_exit_message("Bye.")
+            Console.print_exit_message("Bye.")
             sys.exit(0)
         print()
 
@@ -201,7 +183,7 @@ def main():
         _run_gs(cmd, input_path, output_path)
 
         # Loop back to input step
-        Utils.print_separator(width=60, color_ansi_esc=FLCyan)
+        Console.print_separator(width=60, color_ansi_esc=FLCyan)
         print()
 
 
@@ -209,4 +191,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        Utils.print_keyboard_interrupt_message_and_exit()
+        Console.print_keyboard_interrupt_message_and_exit()
