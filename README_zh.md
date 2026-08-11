@@ -115,7 +115,7 @@ ignore-list:
 | `tools/filesystem/link-create.py` | 跨平台符号链接/硬链接创建（Windows: SymlinkD, Junction；Linux/macOS: Symlink, Hardlink）。支持相对路径、镜像模式、冲突处理 | 跨平台 |
 | `tools/filesystem/link-scan.py` | 递归扫描目录，打印所有符号链接、目录软链接（symlinkd）、Junction 和硬链接。检测死链（目标不存在），自动修复或删除；Windows 下可将错误指向目录的文件软链接转换为 symlinkd | 跨平台 |
 | `tools/filesystem/link-fix-to-symlinkd-windows.py` | Windows 专用：将指向目录的文件软链接（file symlink）**修复**为正确的**目录软链接**（symlinkd / SYMLINKD）。Windows 的文件软链接与目录软链接是两种不同的重解析点类型，部分工具可能误建文件软链接指向目录，导致遍历失败 | 仅 **Windows** |
-| `tools/filesystem/file-hash.py` | 对多行输入的多个文件调用 OpenSSL 计算一种或多种哈希。输入前列出当前 OpenSSL 实际支持的常用算法，再接受 `sha256,md5` 等逗号组合；文件软链接会跟随目标并明确显示，文件夹、失效链接和不存在的路径会被跳过，结果按文件分组输出 | 跨平台。必须安装 `openssl` |
+| `tools/filesystem/openssl-file-hash.py` | 对多行输入的多个文件调用 OpenSSL 计算一种或多种哈希。输入前列出当前 OpenSSL 实际支持的常用算法，再接受 `sha256,md5` 等逗号组合；文件软链接会跟随目标并明确显示，文件夹、失效链接和不存在的路径会被跳过，结果按文件分组输出 | 跨平台。必须安装 `openssl` |
 | `tools/filesystem/check-filename-overlong.py` | 按 UTF-8 编码统计字节长度，截断超过指定字节数（默认 143，适配群晖加密文件夹）的文件名。截断时保留扩展名，若发生重名则在扩展名前自动加 `_1`、`_2` 等后缀 | 跨平台 |
 | `tools/filesystem/remove-os-junk-files.py` | 递归删除系统生成的垃圾文件（`.DS_Store`、`__MACOSX__`、`Thumbs.db` 等） | 跨平台 |
 | `tools/filesystem/modify-file-time.py` | 修改文件/文件夹时间戳（创建/修改/访问时间），支持随机抖动 | 跨平台 |
