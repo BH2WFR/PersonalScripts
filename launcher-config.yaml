@@ -34,6 +34,7 @@ script-name-highlight-pattern:
         - "\\bpdf\\b"
         - "\\bffmpeg\\b"
         - "\\btailscale\\b"
+        - "\\bopenssl\\b"
     FLGreen:
         - "\\.sh$"
     FLCyan:
