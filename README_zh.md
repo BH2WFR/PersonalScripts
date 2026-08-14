@@ -41,12 +41,13 @@ python compile-script.py                        # 全平台
 - 当 `launcher.test.enabled` 为 `true` 时，配置的测试目录会显示为独立 `Test` 分组并参与裸名查找；可用 `test/<名称>` 或 `@test:<名称>` 精确指定
 - 从 `launcher-config.yaml` 指定的主目录发现脚本（默认为 `tools`）
 - 从 `launcher-config.yaml` 读取 Gitignore 风格通配规则，支持 `*`、`**`、`?`、字符范围及 `!` 反向规则
-- 平台相关过滤规则配置在 `ignore-list.platform-specific` 中
+- 环境相关过滤支持操作系统（`ignore-list.platform-specific`）、规范化处理器架构（`ignore-list.arch-specific`）以及无 GUI 的 Linux 会话（`ignore-list.no-gui`）
 - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - 列出解释器支持的所有扩展名；Windows 找到 Bash 时，即使存在同名 `.py` 也会列出 `.sh`
 - 自动检测 Python：优先使用 `conda info --base`，再尝试已知路径，最后回退到 `python3`
 - **可配置高亮**：`launcher-config.yaml` 中的 `script-name-highlight-pattern` 和 `folder-name-highlight-pattern` 将 ANSI 颜色名称映射到正则表达式列表
 - **可配置脚本类型和颜色**：扩展名、默认颜色、目录颜色及附加分组标题颜色均由 YAML 定义
+- `extra-env-paths.all-platforms` 及当前平台键下实际存在的目录会静默前置到启动器的 `PATH`；相对路径以项目根目录为基准
 - **`ZL_SCRIPT_ADDITIONAL_PATH`** 用于发现附加目录，环境变量名本身也可配置。多个目录使用平台路径分隔符分隔（Windows 为 `;`，macOS/Linux 为 `:`）；相对路径以项目根目录为基准。每个目录显示为 `─── Additional [N] ───`（N 从 1 开始），并应用相同的配置化忽略规则。
   配合 **`@N:` 前缀** 可精确指定脚本来源：`@0:` = 主目录，`@1:` = 第一个附加目录（对应 `Additional [1]`），依此类推。裸名递归搜索所有分组；`@N:` 将相同匹配规则限制到指定分组。多个有效匹配会以带编号的 `@N:` 路径列出。CLI 同样可用（如 `python run-script.py @1:test.py`）
 - `compile-script.py` 可将项目中任意 Python 脚本编译为独立可执行文件，支持 Nuitka 或 PyInstaller（均为 `--onedir`/`--standalone` 模式，不自解压以避免磨损硬盘）
@@ -76,9 +77,21 @@ ignore-list:
     platform-specific:
         windows:
             - "macos/"
+    arch-specific:
+        x86_64:
+            macos:
+                - "macos/screen-utils.py"
+    no-gui:
+        linux:
+            - "gui-tools/"
+extra-env-paths:
+    all-platforms:
+        - "./deps/bin"
+    windows:
+        - "./deps/gsudo"
 ```
 
-颜色名称通过 `Console.resolve_ansi_color()` 转换。颜色、正则或 YAML 结构无效时，启动器会报告配置错误并停止；配置的脚本目录不存在时同样拒绝运行。
+能够识别的架构名称统一为 `arm64`、`armv7`、`x86` 或 `x86_64`，未知架构保留小写原名。Linux 环境存在 `DISPLAY`（X11）或 `WAYLAND_DISPLAY`（Wayland）时视为有 GUI。颜色名称通过 `Console.resolve_ansi_color()` 转换。颜色、正则或 YAML 结构无效时，启动器会报告配置错误并停止；配置的脚本目录不存在时同样拒绝运行。
 
 ---
 
@@ -136,6 +149,7 @@ ignore-list:
 | `tools/macos/remove-quarantine.py` | macOS 专用：移除文件/文件夹的 quarantine 隔离属性（支持递归批量，可选清 provenance，逐文件计数） | **仅 macOS**。使用 `xattr`（系统自带） |
 | `tools/windows/clear-android-rndis-record.py` | 清理 Windows 注册表中残留的 Android USB 网络共享/RNDIS 记录。列出所有网络连接，根据网卡元数据标记 USB Remote NDIS 记录，确认后删除选中的注册表记录。支持 `--force` 和 `--match` 额外正则匹配 | **仅 Windows** |
 | `tools/windows/file-association.py` | 交互式 Windows 文件关联管理器。列出某扩展名在各注册表入口中声明的打开方式，解析启动命令并检查可执行文件；可按数字精确删除某个来源项，删除后自动重新列出。添加功能支持推荐的 Default Apps + Open With、仅 OpenWithProgids、仅 Applications/SupportedTypes 三种入口，会检查 EXE，默认参数为 `"%1"`，可选择当前用户或提权后的系统范围，添加后同样重新列出；不会写入受 Windows 保护的 UserChoice 默认项 | **仅 Windows**。Python 标准库（`winreg`、`ctypes`） |
+| `tools/windows/firewall-app-blocker.py` | 为单个 `.exe`/`.com` 文件或递归扫描的目录交互式添加完整出站或入站+出站 Windows 防火墙阻止规则。遇到目录软链接或 Junction 时明确询问进入/忽略；等效规则会跳过。去除屏蔽时只列出精确匹配的完整阻止规则并要求最终批量确认，同时优先建议通过 `wf.msc` 手动处理 | **仅 Windows**。管理员权限；PowerShell NetSecurity 模块 |
 | `tools/windows/clear-all-event-logs.py` | 使用 `wevtutil` 枚举并在管理员权限下依次清除全部已注册的 Windows Event Log 通道。默认要求确认，`--force` 可跳过确认；单个通道失败时继续执行并在结尾报告准确的成功/失败数量。清除不可恢复，不会停止后续日志记录，Windows 也可能立即产生新事件 | **仅 Windows**。系统内置 `wevtutil` |
 | `tools/windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负。** | **仅 Windows**。系统自带工具；可选 `scoop install sudo gsudo` |
 | `tools/windows/clear-recycle-bin.py` | 清空 Windows 回收站（逐盘符）。Phase 1 调用 shell API（`SHEmptyRecycleBinW`）正常清空；Phase 2 对残余项（如 OneDrive"始终保存到本地"文件夹）直接遍历 `$Recycle.Bin` 强力删除。回收站内的重解析点（junction/symlink）仅删除链接本身，不会跟随到目标。支持 `--force-run` 无交互自动执行 | **仅 Windows** |
@@ -157,9 +171,9 @@ ignore-list:
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `run-script.py` | 统一脚本启动器。从 `launcher-config.yaml` 加载配置并支持可选个人 patch；提供可配置 Test 分组、裸名递归查找、重名选择、附加目录以及 `@test:`、`@N:` 定位 | 跨平台。`Python 3.13+`、`PyYAML`、`pathspec` |
-| `run-script.sh` | Bash 启动器（启动器的启动器）：查找 Python 解释器后将所有参数透传给 `run-script.py` | Linux/macOS。`bash`、`python3` |
-| `run-script.ps1` | PowerShell 启动器（启动器的启动器）：查找 Python 解释器后将所有参数透传给 `run-script.py` | Windows。`PowerShell`、`python` |
+| `run-script.py` | 统一脚本启动器。从 `launcher-config.yaml` 加载配置并支持可选个人 patch；支持按平台、架构及 Linux GUI 环境过滤，并提供可配置 Test 分组、裸名递归查找、重名选择、附加目录以及 `@test:`、`@N:` 定位 | 跨平台。`Python 3.13+`、`PyYAML`、`pathspec` |
+| `run-script.sh` | Bash 启动器（启动器的启动器）：优先使用 `deps/python`，否则查找 Conda/系统 Python，再将参数透传给 `run-script.py` | Linux/macOS。`bash`、Python |
+| `run-script.ps1` | PowerShell 启动器（启动器的启动器）：优先使用 `deps/python`，否则查找 Conda/系统 Python，再将参数透传给 `run-script.py` | Windows。`PowerShell`、Python |
 | `compile-script.py` | 交互式编译器：选择任意 Python 脚本，通过 Nuitka 或 PyInstaller 打包为独立可执行文件（均为 `--onedir`/`--standalone`，不自解压以避免磨损 SSD） | 跨平台。`pip install nuitka` 和/或 `pip install pyinstaller` |
 
 ### 测试辅助

@@ -256,7 +256,7 @@ Canonical implementations live there; do not add implementations to the
 | Need | Use |
 |---|---|
 | Admin / root detection | `System.is_elevated() -> bool` |
-| Re-execute as admin (force) | `System.restart_elevated()` — never returns on success |
+| Re-execute as admin (force) | `System.restart_elevated()` — never returns on success; reports why elevation could not start |
 | Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` |
 | Check if a CLI tool is in PATH | `Environment.check_commands(*CmdCheck)` or `Environment.which(name)` |
 | OS name / arch / hostname | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()` |

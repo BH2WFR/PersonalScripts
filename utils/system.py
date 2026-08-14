@@ -132,6 +132,9 @@ class System:
             (last resort; spawns a separate Python console window with no ANSI
             support).  All in-place helpers are called via ``subprocess.run``
             instead of ``os.execv`` to avoid stdin contention.
+
+        Once a helper starts, the parent exits with the child's status instead
+        of trying another helper.
         """
         if System.is_elevated():
             return
@@ -145,32 +148,43 @@ class System:
             # Use subprocess.run instead of os.execv: scoop's sudo does not
             # properly detach stdin, causing two processes to compete for input
             # and producing doubled keystrokes / cursor glitches.
-            for tool in ("gsudo", "sudo"):
-                exe = shutil.which(tool)
-                if exe:
-                    try:
-                        result = subprocess.run(
-                            [exe, sys.executable, script] + args,
-                            check=False,
-                        )
-                    except Exception:
-                        continue
-                    if result.returncode == 0:
-                        raise SystemExit(0)
-                    # Non-zero — try the next helper.
+            failures: list[str] = []
+            for name in ("gsudo", "sudo"):
+                executable = shutil.which(name)
+                if executable is None:
+                    failures.append(f"{name}: not found in PATH")
+                    continue
+                try:
+                    result = subprocess.run(
+                        [executable, sys.executable, script, *args],
+                        check=False,
+                    )
+                except OSError as exc:
+                    failures.append(f"{name}: failed to start ({exc})")
+                    continue
+                raise SystemExit(result.returncode)
 
             # 3) ShellExecuteW — last resort.  Spawns a fresh console window;
             #    ANSI escape sequences are not carried over.
             sys.stdout.flush()
             print()
             params = subprocess.list2cmdline([script] + args)
-            ret = ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", sys.executable, params, None, 1,
-            )
-            if ret > 32:
-                sys.exit(0)
+            try:
+                ret = ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", sys.executable, params, None, 1,
+                )
+            except OSError as exc:
+                failures.append(f"Windows UAC: failed to start ({exc})")
+            else:
+                if ret > 32:
+                    sys.exit(0)
+                failures.append(f"Windows UAC: ShellExecuteW error {ret}")
 
-            print(f"{FLRed}Elevation failed (ShellExecute error {ret}).{CRst}")
+            print(f"{FLRed}Elevation failed: {'; '.join(failures)}.{CRst}")
+            print(
+                f"{FLYellow}Run this script from an Administrator PowerShell "
+                f"window and try again.{CRst}"
+            )
             sys.exit(1)
         else:
             if shutil.which("sudo"):

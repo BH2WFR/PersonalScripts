@@ -17,11 +17,24 @@ case "$_os_name" in
     *)                     _is_windows=false ;;
 esac
 
-# ----- find python: prefer conda command, then known paths, then system python3/python -----
+# ----- find python: prefer bundled runtime, then conda and system candidates -----
 python_cmd=""
 
-# 1. Try conda info --base (most reliable)
-if command -v conda >/dev/null 2>&1; then
+# 1. Bundled Python
+bundled_candidates=(
+    "$script_dir/deps/python/bin/python"
+    "$script_dir/deps/python/python"
+    "$script_dir/deps/python/python.exe"
+)
+for candidate in "${bundled_candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+        python_cmd="$candidate"
+        break
+    fi
+done
+
+# 2. Try conda info --base (most reliable)
+if [[ -z "$python_cmd" ]] && command -v conda >/dev/null 2>&1; then
     conda_base="$(conda info --base 2>/dev/null || true)"
     if [[ -n "$conda_base" ]]; then
         conda_py="$conda_base/bin/python"
@@ -30,7 +43,7 @@ if command -v conda >/dev/null 2>&1; then
     fi
 fi
 
-# 2. Fallback: known paths
+# 3. Fallback: known paths
 if [[ -z "$python_cmd" ]]; then
     python_candidates=(
         "$HOME/miniconda3/bin/python"

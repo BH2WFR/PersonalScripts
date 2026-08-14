@@ -41,12 +41,13 @@ python compile-script.py                         # All platforms
 - When `launcher.test.enabled` is `true`, scripts under the configured test root appear in a separate `Test` group and participate in bare-name lookup; use `test/<name>` or `@test:<name>` to target them explicitly
 - Discovers project scripts from the primary directory configured in `launcher-config.yaml` (`tools` by default)
 - Reads Gitignore-style wildcard rules from `launcher-config.yaml`, including `*`, `**`, `?`, character ranges, and `!` negation
-- Platform-aware filtering is configured under `ignore-list.platform-specific`
+- Context-aware filtering supports the OS (`ignore-list.platform-specific`), normalized processor architecture (`ignore-list.arch-specific`), and headless Linux sessions (`ignore-list.no-gui`)
 - Interpreter-aware: hides `.sh` scripts if `bash` is not available; hides `.ps1` scripts if `pwsh` is not available
 - Lists every interpreter-supported extension; on Windows, `.sh` scripts are listed when Bash is available, even when a same-stem `.py` exists
 - Auto-detects Python: prefers `conda info --base`, then known conda paths, falls back to `python3`
 - **Configurable highlighting**: `script-name-highlight-pattern` and `folder-name-highlight-pattern` map ANSI color names to regular-expression lists in `launcher-config.yaml`
 - **Configurable script types and colors**: extensions, default colors, folder color, and additional-group header color are all defined in the YAML file
+- Existing directories under `extra-env-paths.all-platforms` and the current platform key are silently prepended to the launcher's `PATH`; relative entries use the project root
 - **`ZL_SCRIPT_ADDITIONAL_PATH`** discovers scripts from additional directories. Its environment-variable name is itself configurable. Separate entries with the platform path separator (`;` on Windows, `:` on macOS/Linux). Relative entries are resolved from the project root. Each directory is listed as `─── Additional [N] ───` (1-indexed) and uses the same configured ignore rules.
   Paired with the **`@N:` prefix** for precise source targeting: `@0:` = main dir, `@1:` = first additional dir (matching `Additional [1]`), etc. Bare names search all groups recursively; `@N:` restricts the same matching rules to one group. Multiple eligible matches are listed with numbered `@N:` paths. Works in CLI too (`python run-script.py @1:test.py`)
 - `compile-script.py` compiles any project Python script into a standalone executable via Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear)
@@ -76,9 +77,21 @@ ignore-list:
     platform-specific:
         windows:
             - "macos/"
+    arch-specific:
+        x86_64:
+            macos:
+                - "macos/screen-utils.py"
+    no-gui:
+        linux:
+            - "gui-tools/"
+extra-env-paths:
+    all-platforms:
+        - "./deps/bin"
+    windows:
+        - "./deps/gsudo"
 ```
 
-Color names are resolved through `Console.resolve_ansi_color()`. Invalid colors, regular expressions, or YAML structures stop the launcher with a configuration error; a missing configured script directory is also rejected.
+Architecture names are normalized to `arm64`, `armv7`, `x86`, or `x86_64` when recognized; unknown names remain available in lowercase. Linux counts as GUI-capable when `DISPLAY` (X11) or `WAYLAND_DISPLAY` (Wayland) is present. Color names are resolved through `Console.resolve_ansi_color()`. Invalid colors, regular expressions, or YAML structures stop the launcher with a configuration error; a missing configured script directory is also rejected.
 
 ---
 
@@ -136,6 +149,7 @@ Color names are resolved through `Console.resolve_ansi_color()`. Invalid colors,
 | `tools/macos/remove-quarantine.py` | macOS-only: Remove quarantine attribute from files/folders (recursive batch, optional provenance removal, per-file counting) | **macOS only**. Uses `xattr` (built-in) |
 | `tools/windows/clear-android-rndis-record.py` | Remove stale Android USB tethering/RNDIS network records from Windows registry. Lists all network connections, marks USB Remote NDIS records by adapter metadata, then deletes selected records after confirmation. Supports `--force` and extra regex matching via `--match` | **Windows only** |
 | `tools/windows/file-association.py` | Interactive Windows file-association manager. Lists every registry source that advertises a handler for an extension, resolves commands and executable status, and allows exact numbered source deletion followed by an automatic relist. It can register an existing EXE through the recommended Default Apps + Open With entries, OpenWithProgids only, or Applications/SupportedTypes only; validates the EXE, defaults to `"%1"`, supports current-user or elevated machine scope, and relists after registration. It never writes the protected UserChoice default | **Windows only**. Python standard library (`winreg`, `ctypes`) |
+| `tools/windows/firewall-app-blocker.py` | Interactively add complete outbound or inbound/outbound Windows Firewall block rules for one `.exe`/`.com` file or a recursively scanned directory. Directory symlinks and junctions require explicit enter/ignore decisions. Existing equivalent rules are skipped; removal lists only exact complete block rules and requires a final batch confirmation, with `wf.msc` offered as the recommended manual alternative | **Windows only**. Administrator privileges; PowerShell NetSecurity module |
 | `tools/windows/clear-all-event-logs.py` | Enumerate every registered Windows Event Log channel with `wevtutil` and clear them in one administrator-elevated operation. Requires confirmation by default; `--force` skips confirmation. Continues after per-channel failures and reports exact success/failure counts. Clearing is irreversible, does not disable future logging, and Windows may immediately record new events | **Windows only**. Built-in `wevtutil` |
 | `tools/windows/clear-privacy.py` | Clear Windows privacy traces (Explorer history, event logs, DNS cache, browser data, credentials, temp files, etc.) with per-section confirmation. **Disclaimer: use at your own risk.** | **Windows only**. Built-in tools; optional `scoop install sudo gsudo` |
 | `tools/windows/clear-recycle-bin.py` | Empty Windows Recycle Bin across all drives. Phase 1 uses the shell API (`SHEmptyRecycleBinW`); Phase 2 forcefully walks `$Recycle.Bin` directly for any stuck items (e.g. OneDrive folders that survive normal emptying). Reparse points (junctions/symlinks) inside the bin are deleted in-place without following targets. Supports `--force-run` for unattended execution | **Windows only** |
@@ -157,9 +171,9 @@ Color names are resolved through `Console.resolve_ansi_color()`. Invalid colors,
 
 | Script | Description | Requirements |
 |--------|-------------|--------------|
-| `run-script.py` | Unified script launcher. Loads settings from `launcher-config.yaml` with an optional personal patch; supports a configurable Test group, recursive bare-name lookup, ambiguity selection, additional directories, `@test:`, and `@N:` targeting | Cross-platform. `Python 3.13+`, `PyYAML`, `pathspec` |
-| `run-script.sh` | Bash launcher (launcher for the launcher): finds a Python interpreter then delegates all arguments to `run-script.py` | Linux/macOS. `bash`, `python3` |
-| `run-script.ps1` | PowerShell launcher (launcher for the launcher): finds a Python interpreter then delegates all arguments to `run-script.py` | Windows. `PowerShell`, `python` |
+| `run-script.py` | Unified script launcher. Loads settings from `launcher-config.yaml` with an optional personal patch; supports platform-, architecture-, and Linux-GUI-aware filtering, a configurable Test group, recursive bare-name lookup, ambiguity selection, additional directories, `@test:`, and `@N:` targeting | Cross-platform. `Python 3.13+`, `PyYAML`, `pathspec` |
+| `run-script.sh` | Bash launcher (launcher for the launcher): prefers `deps/python`, otherwise finds Conda/system Python, then delegates all arguments to `run-script.py` | Linux/macOS. `bash`, Python |
+| `run-script.ps1` | PowerShell launcher (launcher for the launcher): prefers `deps/python`, otherwise finds Conda/system Python, then delegates all arguments to `run-script.py` | Windows. `PowerShell`, Python |
 | `compile-script.py` | Interactive compiler: select any Python script and package it into a standalone executable with Nuitka or PyInstaller (both `--onedir`/`--standalone`, no self-extracting to avoid SSD wear) | Cross-platform. `pip install nuitka` and/or `pip install pyinstaller` |
 
 ### Test Helpers

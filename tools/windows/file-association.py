@@ -1705,6 +1705,7 @@ def _interactive_action() -> Optional[str]:
                 "Add an Open With handler",
                 value="add",
             ),
+            MenuOption(["Q"], "Quit Program", value="quit"),
         ],
         prompt="Select action",
         separator=False,
@@ -1787,7 +1788,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     while True:
         action = _interactive_action()
-        if action is None:
+        if action in {None, "quit"}:
             Console.print_exit_message("Bye.")
             return 0
         if action == "add":

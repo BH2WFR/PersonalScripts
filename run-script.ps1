@@ -8,9 +8,17 @@ param(
 
 $scriptDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
-# ----- find python: prefer conda command, then known paths, then system python/python3 -----
+# ----- find python: prefer bundled runtime, then conda and system candidates -----
 $pythonCmd = & {
-    # 1. Try conda info --base (most reliable)
+    # 1. Bundled Python
+    foreach ($candidate in @(
+        (Join-Path $scriptDirectory "deps\python\python.exe"),
+        (Join-Path $scriptDirectory "deps\python\bin\python")
+    )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+
+    # 2. Try conda info --base (most reliable)
     $conda = Get-Command conda -ErrorAction SilentlyContinue
     if ($conda) {
         $condaBase = & conda info --base 2>$null
@@ -20,7 +28,7 @@ $pythonCmd = & {
         }
     }
 
-    # 2. Fallback: known paths
+    # 3. Fallback: known paths
     # Windows conda paths
     $winCandidates = @(
         "$env:USERPROFILE\miniconda3\python.exe",
@@ -53,5 +61,5 @@ if (-not $pythonCmd) {
 
 # ----- delegate to run-script.py -----
 $env:PYTHONPATH = $scriptDirectory
-& python "$scriptDirectory\run-script.py" @RemainingArgs
+& $pythonCmd "$scriptDirectory\run-script.py" @RemainingArgs
 exit $LASTEXITCODE

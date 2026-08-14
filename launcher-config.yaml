@@ -68,10 +68,27 @@ ignore-list:
             - "windows/"
             - "macos/"
             - "filesystem/link-fix-to-symlinkd-windows.py"
-            - "keyboard-hook-viewer.py"
             - "filesystem/git-batch-add-chmod-x.ps1"
+            - "keyboard-hook-viewer.py" # only for windows / macos (linux x11 is reserved, linux Wayland is not supported)
         macos:
             - "windows/"
             - "linux/"
             - "filesystem/link-fix-to-symlinkd-windows.py"
             - "filesystem/git-batch-add-chmod-x.ps1"
+    arch-specific:
+        # 规范：x86, x86_64, armv7, arm64
+        x86_64:
+            macos:
+                - "macos/screen-utils.py"
+    no-gui:
+        linux:
+            - "" # 暂时留空
+
+extra-env-paths:
+    all-platforms:
+        - "./deps/python"
+        - "./deps/bin"
+        - "./deps/ffmpeg"
+        - "./deps/ghostscript/bin"
+    windows:
+        - "./deps/gsudo"

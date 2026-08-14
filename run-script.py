@@ -3,9 +3,12 @@
 
 The primary script directory, optional additional-directory environment
 variable, display highlighting, supported script types, and Gitignore-style
-exclusions are defined in ``launcher-config.yaml``. Bare script names are
-matched recursively; multiple eligible matches are presented as a numbered
-selection before the original arguments are passed through. An optional
+exclusions are defined in ``launcher-config.yaml``. Exclusions can depend on
+the operating system, normalized processor architecture, and Linux GUI
+availability. Existing configured dependency directories are prepended to
+``PATH`` for launched tools. Bare script names are matched recursively;
+multiple eligible matches are presented as a numbered selection before the
+original arguments are passed through. An optional
 ``launcher-config.patch.yaml`` overrides personal settings only when present.
 
 Requirements:
@@ -19,6 +22,7 @@ Usage:
 
 import sys
 import os
+import platform
 import re
 import subprocess
 import importlib.util
@@ -30,6 +34,19 @@ from utils import *
 CONFIG_FILE_NAME = "launcher-config.yaml"
 PATCH_CONFIG_FILE_NAME = "launcher-config.patch.yaml"
 SCRIPT_TYPE_KEYS = ("python", "bash", "powershell")
+ARCHITECTURE_ALIASES = {
+    "amd64": "x86_64",
+    "x86_64": "x86_64",
+    "x86": "x86",
+    "i386": "x86",
+    "i486": "x86",
+    "i586": "x86",
+    "i686": "x86",
+    "arm64": "arm64",
+    "aarch64": "arm64",
+    "armv7": "armv7",
+    "armv7l": "armv7",
+}
 
 
 # ============ Helpers ============
@@ -87,6 +104,7 @@ class _LauncherConfig:
     test_path_prefix: Optional[str]
     additional_path_env: str
     requirements_file: str
+    extra_env_paths: tuple[str, ...]
     excluded_paths: frozenset[str]
     script_types: dict[str, _ScriptTypeConfig]
     default_folder_color: str
@@ -112,6 +130,17 @@ def _platform_key() -> Optional[str]:
     if is_linux:
         return "linux"
     return None
+
+
+def _architecture_key() -> str:
+    """Return a stable configuration key for the current processor architecture."""
+    machine = platform.machine().strip().lower().replace("-", "_")
+    return ARCHITECTURE_ALIASES.get(machine, machine)
+
+
+def _linux_has_gui() -> bool:
+    """Return whether this Linux process can access an X11 or Wayland display."""
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def _read_pattern_list(value: object, yaml_key: str) -> list[str]:
@@ -159,6 +188,27 @@ def _resolve_project_path(project_dir: str, configured_path: str) -> str:
     if not os.path.isabs(expanded_path):
         expanded_path = os.path.join(project_dir, expanded_path)
     return os.path.abspath(expanded_path)
+
+
+def _resolve_existing_directories(
+    project_dir: str,
+    configured_paths: list[str],
+) -> tuple[str, ...]:
+    """Resolve, silently discard missing directories, and deduplicate paths."""
+    directories: dict[str, str] = {}
+    for configured_path in configured_paths:
+        directory = _resolve_project_path(project_dir, configured_path)
+        if os.path.isdir(directory):
+            directories.setdefault(os.path.normcase(directory), directory)
+    return tuple(directories.values())
+
+
+def _prepend_env_paths(paths: tuple[str, ...]) -> None:
+    """Prepend directories to this process's PATH without changing its parent."""
+    if paths:
+        current_path = os.environ.get("PATH")
+        path_entries = (*paths, current_path) if current_path else paths
+        os.environ["PATH"] = os.pathsep.join(path_entries)
 
 
 def _resolve_config_color(color_name: str, yaml_key: str) -> str:
@@ -360,6 +410,14 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         ignore_list.get("platform-specific"),
         "ignore-list.platform-specific",
     )
+    architecture_rules = _read_mapping(
+        ignore_list.get("arch-specific", {}),
+        "ignore-list.arch-specific",
+    )
+    no_gui_rules = _read_mapping(
+        ignore_list.get("no-gui", {}),
+        "ignore-list.no-gui",
+    )
 
     platform_key = _platform_key()
     if platform_key is not None:
@@ -370,10 +428,50 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
             )
         )
 
+        architecture_key = _architecture_key()
+        architecture_platform_rules = _read_mapping(
+            architecture_rules.get(architecture_key, {}),
+            f"ignore-list.arch-specific.{architecture_key}",
+        )
+        patterns.extend(
+            _read_pattern_list(
+                architecture_platform_rules.get(platform_key),
+                f"ignore-list.arch-specific.{architecture_key}.{platform_key}",
+            )
+        )
+
+        if platform_key == "linux" and not _linux_has_gui():
+            patterns.extend(
+                _read_pattern_list(
+                    no_gui_rules.get("linux"),
+                    "ignore-list.no-gui.linux",
+                )
+            )
+
     try:
         ignore_spec = PathSpec.from_lines("gitwildmatch", patterns)
     except Exception as exc:
         raise ValueError(f"invalid Gitignore pattern: {exc}") from exc
+
+    extra_env_path_rules = _read_mapping(
+        root.get("extra-env-paths", {}),
+        "extra-env-paths",
+    )
+    configured_extra_env_paths = _read_pattern_list(
+        extra_env_path_rules.get("all-platforms"),
+        "extra-env-paths.all-platforms",
+    )
+    if platform_key is not None:
+        configured_extra_env_paths.extend(
+            _read_pattern_list(
+                extra_env_path_rules.get(platform_key),
+                f"extra-env-paths.{platform_key}",
+            )
+        )
+    extra_env_paths = _resolve_existing_directories(
+        project_dir,
+        configured_extra_env_paths,
+    )
 
     return _LauncherConfig(
         script_root=script_root,
@@ -382,6 +480,7 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         test_path_prefix=test_path_prefix,
         additional_path_env=additional_path_env,
         requirements_file=requirements_file,
+        extra_env_paths=extra_env_paths,
         excluded_paths=excluded_paths,
         script_types=script_types,
         default_folder_color=_resolve_config_color(
@@ -925,13 +1024,17 @@ def _print_help(config: _LauncherConfig) -> None:
   every eligible subdirectory and supported extension. Multiple matches are
   shown as a numbered selection before arguments are passed through. When the
   configured Test group is enabled, its scripts participate in the same lookup.
+  Ignore rules can depend on the OS, normalized processor architecture, and
+  whether Linux has an X11 or Wayland display. Existing dependency directories
+  configured under extra-env-paths are prepended to PATH without warnings for
+  missing directories.
 
 {FLYellow}Options:{CRst}
   {FLCyan}--list{CRst}                   List scripts and exit.
   {FLCyan}--help, -h{CRst}               Show this help message and exit.
 
 {FLYellow}Configuration:{CRst}
-  {FLCyan}{CONFIG_FILE_NAME}{CRst}         Paths, script types, colors, and ignore rules.
+  {FLCyan}{CONFIG_FILE_NAME}{CRst}         Paths, script types, colors, and context-aware ignore rules.
   {FLCyan}{PATCH_CONFIG_FILE_NAME}{CRst}   Optional personal overrides; ignored when absent.
   {FLCyan}{config.additional_path_env}{CRst}  Additional directories separated by
                              {FGray}{path_separator}{CRst}. Relative paths use the project root.
@@ -999,6 +1102,8 @@ def main() -> int:
     except (FileNotFoundError, ImportError, ValueError) as exc:
         print(f"{FLRed}Cannot load {CONFIG_FILE_NAME}:{CRst} {exc}", file=sys.stderr)
         return 1
+
+    _prepend_env_paths(config.extra_env_paths)
 
     if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
         _print_help(config)
