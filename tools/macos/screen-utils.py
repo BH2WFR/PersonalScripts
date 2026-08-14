@@ -15,6 +15,7 @@ import os
 import ctypes
 import plistlib
 import subprocess
+import time
 from typing import Optional, Union, Tuple
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -49,7 +50,7 @@ Usage:
   macOS display management tool for Apple Silicon.
   Supports screen rotation, brightness control (built-in via
   DisplayServices, external via DDC/CI), resolution switching, and read-only
-  reporting of the current IOAV color mode and available color modes.
+  reporting of current and available IOAV color modes.
   Highlight: toggle the MacBook built-in display on/off when external
   monitors are connected — refuses to disable if no external display
   is active, and auto-restores brightness when re-enabling.
@@ -63,7 +64,7 @@ Usage:
 {FLYellow}Interactive menu:{CRst}
   [L] List displays    [R] Rotate (0/90/180/270)
   [S] Set resolution   [B] Brightness
-  [C] Change color mode (8-bit RGB/YCbCr listing; applying is not implemented)
+  [C] Inspect color modes (read-only RGB/YCbCr report)
   [D] DDC/CI info      [T] Toggle built-in
   [Q] Quit
 
@@ -368,7 +369,7 @@ def _ioreg_get_path(entry: int) -> str:
 
 
 # Read-only IOAV color-mode reporting. Selector 2 returns a 0x100-byte
-# IOAVVideoLinkData structure; no start/update selector is bound here.
+# IOAVVideoLinkData structure; write selectors are intentionally not bound.
 _IOAV_LINK_DATA_SIZE = 0x100
 _IOAV_LINK_SOURCE_UPSTREAM = 0
 _IOAV_GET_LINK_DATA_SELECTOR = 2
@@ -416,6 +417,29 @@ _COLORIMETRY_NAMES = {
 }
 
 
+def _ioav_get_link_data(connection: int) -> tuple[int, Optional[bytes]]:
+    """Read one upstream IOAVVideoLinkData blob from an open connection."""
+    source = (ctypes.c_uint64 * 1)(_IOAV_LINK_SOURCE_UPSTREAM)
+    output = (ctypes.c_uint8 * _IOAV_LINK_DATA_SIZE)()
+    output_size = ctypes.c_size_t(_IOAV_LINK_DATA_SIZE)
+    scalar_output_count = ctypes.c_uint32(0)
+    result = IOConnectCallMethod(
+        connection,
+        _IOAV_GET_LINK_DATA_SELECTOR,
+        source,
+        1,
+        None,
+        0,
+        None,
+        ctypes.byref(scalar_output_count),
+        output,
+        ctypes.byref(output_size),
+    )
+    if result != 0 or output_size.value != _IOAV_LINK_DATA_SIZE:
+        return result, None
+    return result, bytes(output)
+
+
 def _read_ioav_link_data() -> list[bytes]:
     """Read upstream link data from every available video-interface proxy."""
     iterator = ctypes.c_uint32(0)
@@ -435,25 +459,9 @@ def _read_ioav_link_data() -> list[bytes]:
             try:
                 if IOServiceOpen(service, _mach_task_self, 0, ctypes.byref(connection)) != 0:
                     continue
-
-                source = (ctypes.c_uint64 * 1)(_IOAV_LINK_SOURCE_UPSTREAM)
-                output = (ctypes.c_uint8 * _IOAV_LINK_DATA_SIZE)()
-                output_size = ctypes.c_size_t(_IOAV_LINK_DATA_SIZE)
-                scalar_output_count = ctypes.c_uint32(0)
-                result = IOConnectCallMethod(
-                    connection.value,
-                    _IOAV_GET_LINK_DATA_SELECTOR,
-                    source,
-                    1,
-                    None,
-                    0,
-                    None,
-                    ctypes.byref(scalar_output_count),
-                    output,
-                    ctypes.byref(output_size),
-                )
-                if result == 0 and output_size.value == _IOAV_LINK_DATA_SIZE:
-                    results.append(bytes(output))
+                result, link_data = _ioav_get_link_data(connection.value)
+                if result == 0 and link_data is not None:
+                    results.append(link_data)
             finally:
                 if connection.value:
                     IOServiceClose(connection.value)
@@ -635,50 +643,6 @@ def _format_ioav_color_mode(mode: dict, *, colorize_encoding: bool = False) -> s
     suffix = f" [{', '.join(flags)}]" if flags else ""
     return f"{text} (ID {mode.get('ID', '?')}){suffix}"
 
-
-def _is_basic_8bit_color_mode(mode: dict) -> bool:
-    """Return whether a mode is a safe initial RGB/YCbCr switching candidate."""
-    return (
-        mode.get("Depth") == 8
-        and mode.get("PixelEncoding") in (0, 1, 2, 3)
-        and not mode.get("IsVirtual")
-        and not mode.get("IsUnsafe")
-        and not mode.get("RequiresDSC")
-    )
-
-
-def _color_mode_int(mode: dict, key: str, default: int = 0) -> int:
-    """Read an integer ColorElement field with a type-safe fallback."""
-    value = mode.get(key)
-    return value if isinstance(value, int) else default
-
-
-def _preferred_8bit_color_modes(modes: list[dict]) -> list[dict]:
-    """Choose at most one RGB and one YCbCr mode for the initial switcher."""
-    safe_modes = [mode for mode in modes if _is_basic_8bit_color_mode(mode)]
-    rgb_modes = [mode for mode in safe_modes if mode.get("PixelEncoding") == 0]
-    ycbcr_modes = [mode for mode in safe_modes if mode.get("PixelEncoding") in (1, 2, 3)]
-
-    rgb = min(
-        rgb_modes,
-        key=lambda mode: (
-            mode.get("DynamicRange") != 0,
-            {16: 0, 10: 1}.get(_color_mode_int(mode, "Colorimetry"), 2),
-            _color_mode_int(mode, "ID"),
-        ),
-        default=None,
-    )
-    ycbcr = min(
-        ycbcr_modes,
-        key=lambda mode: (
-            {3: 0, 2: 1, 1: 2}.get(_color_mode_int(mode, "PixelEncoding"), 3),
-            mode.get("DynamicRange") != 1,
-            {1: 0, 0: 1}.get(_color_mode_int(mode, "Colorimetry"), 2),
-            _color_mode_int(mode, "ID"),
-        ),
-        default=None,
-    )
-    return [mode for mode in (rgb, ycbcr) if mode is not None]
 
 # DDC/CI constants
 _DDC_7BIT_ADDR = 0x37
@@ -1285,14 +1249,14 @@ def print_ddc_info(displays: list[int]) -> bool:
     return True
 
 
-#============ 功能：列出可用色彩模式 ===========
-def change_color_mode(displays: list[int]) -> bool:
-    """List current-timing color modes; applying a selection is not implemented."""
+#============ 功能：查看色彩模式 ===========
+def inspect_color_modes(displays: list[int]) -> None:
+    """Display current and reported color modes without changing settings."""
     color_mode_map = _get_ioav_color_mode_map(displays)
     while True:
         choice = input(f"{FLYellow}  Select display index (or Enter to cancel): {CRst}").strip()
         if not choice:
-            return False
+            return
         try:
             idx = int(choice)
         except ValueError:
@@ -1307,15 +1271,15 @@ def change_color_mode(displays: list[int]) -> bool:
     info = get_display_info(did)
     if info['is_builtin']:
         print(f"{FLYellow}  Built-in display color modes are not exposed by this IOAV path.{CRst}\n")
-        return False
+        return
     if not info['is_active']:
         print(f"{FLRed}  Display is inactive. Color modes are unavailable.{CRst}\n")
-        return False
+        return
 
     report = color_mode_map.get(did)
     if not report:
         print(f"{FLRed}  No unambiguous IOAV color-mode match for this display.{CRst}\n")
-        return False
+        return
 
     timing = report["current_timing"]
     horizontal = timing.get("HorizontalAttributes", {})
@@ -1327,58 +1291,12 @@ def change_color_mode(displays: list[int]) -> bool:
         f"{vertical.get('Active', '?')}{CRst}  {FGray}(ID {timing.get('ID', '?')}){CRst}"
     )
     print(f"  Current color : {FLCyan}{_format_ioav_color_mode(report['current_color'])}{CRst}\n")
-    selectable_modes = _preferred_8bit_color_modes(report["color_modes"])
-    selectable_ids = {mode["ID"] for mode in selectable_modes}
-    modes = selectable_modes + [
-        mode for mode in report["color_modes"] if mode["ID"] not in selectable_ids
-    ]
     print(f"  {FLYellow}Color modes reported for the current timing:{CRst}")
-    for mode_index, mode in enumerate(modes):
+    for mode in report["color_modes"]:
         marker = f" {FLGreen}[CURRENT]{CRst}" if mode.get("ID") == current_id else ""
         description = _format_ioav_color_mode(mode, colorize_encoding=True)
-        if mode_index < len(selectable_modes):
-            print(f"    {FLYellow}[{mode_index}]{CRst} {description}{marker}")
-        else:
-            plain_description = _format_ioav_color_mode(mode)
-            print(f"    {FGray}[{mode_index}] {plain_description} (unavailable){CRst}{marker}")
-
-    if not selectable_modes:
-        print(f"\n  {FGray}No safe 8-bit RGB/YCbCr modes are available.{CRst}\n")
-        return False
-
-    available_indices = [f"[{index}]" for index in range(len(selectable_modes))]
-    if len(available_indices) == 1:
-        available_text = available_indices[0]
-        verb = "is"
-    else:
-        available_text = " and ".join(available_indices)
-        verb = "are"
-
-    while True:
-        target_choice = input(
-            f"\n{FLYellow}  Select color mode; only {available_text} {verb} available "
-            f"(or Enter to cancel): {CRst}"
-        ).strip()
-        if not target_choice:
-            return False
-        try:
-            target_index = int(target_choice)
-        except ValueError:
-            print(f"{FLRed}  Only {available_text} {verb} available.{CRst}")
-            continue
-        if target_index < 0 or target_index >= len(selectable_modes):
-            print(f"{FLRed}  Only {available_text} {verb} available.{CRst}")
-            continue
-        break
-
-    target_mode = selectable_modes[target_index]
-    print(f"\n  Selected: {_format_ioav_color_mode(target_mode, colorize_encoding=True)}")
-
-    print(
-        f"\n  {FGray}Color-mode application is intentionally not implemented yet; "
-        f"no display settings were changed.{CRst}\n"
-    )
-    return False
+        print(f"    {FGray}-{CRst} {description}{marker}")
+    print()
 
 
 #============ 功能：toggle 内建显示器 ===========
@@ -1894,7 +1812,7 @@ def main():
         MenuOption(["R"], "Rotate display      (0°, 90°, 180°, 270°)"),
         MenuOption(["S"], "Set resolution"),
         MenuOption(["B"], "Adjust brightness"),
-        MenuOption(["C"], "Change color mode   (8-bit RGB/YCbCr)"),
+        MenuOption(["C"], "Inspect color modes (read-only RGB/YCbCr report)"),
         MenuOption(["D"], "Dump DDC info"),
         MenuOption(["T"], "Toggle built-in display"),
         MenuOption(["Q"], "Quit"),
@@ -1922,8 +1840,8 @@ def main():
                 _pause()
 
         elif choice == 'C':
-            if change_color_mode(displays) is False:
-                _pause()
+            inspect_color_modes(displays)
+            _pause()
 
         elif choice == 'D':
             if print_ddc_info(displays) is False:
