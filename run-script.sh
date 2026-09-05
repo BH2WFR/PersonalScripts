@@ -17,7 +17,7 @@ case "$_os_name" in
     *)                     _is_windows=false ;;
 esac
 
-# ----- find python: prefer bundled runtime, then conda and system candidates -----
+# ----- find python: prefer bundled runtime, then cheap conda path derivation -----
 python_cmd=""
 
 # 1. Bundled Python
@@ -33,17 +33,29 @@ for candidate in "${bundled_candidates[@]}"; do
     fi
 done
 
-# 2. Try conda info --base (most reliable)
+# 2. Derive the base environment from CONDA_EXE / command -v conda.
+# Typical layouts place conda under <base>/Scripts, <base>/condabin, or
+# <base>/bin, so no subprocess is needed for the common case.
 if [[ -z "$python_cmd" ]] && command -v conda >/dev/null 2>&1; then
-    conda_base="$(conda info --base 2>/dev/null || true)"
-    if [[ -n "$conda_base" ]]; then
-        conda_py="$conda_base/bin/python"
-        [[ "$_is_windows" == "true" ]] && conda_py="$conda_base/python.exe"
-        [[ -x "$conda_py" ]] && python_cmd="$conda_py"
-    fi
+    conda_locations=("${CONDA_EXE:-}" "$(command -v conda)")
+    for conda_location in "${conda_locations[@]}"; do
+        [[ -f "$conda_location" ]] || continue
+        conda_parent="$(cd -- "$(dirname -- "$conda_location")" && pwd)"
+        case "$(basename -- "$conda_parent")" in
+            Scripts|condabin|bin) conda_base="$(dirname -- "$conda_parent")" ;;
+            *) continue ;;
+        esac
+        [[ -d "$conda_base/conda-meta" ]] || continue
+        for candidate in "$conda_base/bin/python" "$conda_base/python.exe"; do
+            if [[ -x "$candidate" ]]; then
+                python_cmd="$candidate"
+                break 2
+            fi
+        done
+    done
 fi
 
-# 3. Fallback: known paths
+# 3. Check common base-environment locations without starting conda.
 if [[ -z "$python_cmd" ]]; then
     python_candidates=(
         "$HOME/miniconda3/bin/python"
@@ -59,9 +71,30 @@ if [[ -z "$python_cmd" ]]; then
             "${PROGRAMDATA:-}/anaconda3/python.exe"
         )
     fi
-    python_candidates+=(python3 python)
-
     for candidate in "${python_candidates[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            python_cmd="$candidate"
+            break
+        fi
+    done
+fi
+
+# 4. Slow but authoritative fallback for non-standard Conda layouts.
+if [[ -z "$python_cmd" ]] && command -v conda >/dev/null 2>&1; then
+    conda_base="$(conda info --base 2>/dev/null || true)"
+    if [[ -n "$conda_base" ]]; then
+        for candidate in "$conda_base/bin/python" "$conda_base/python.exe"; do
+            if [[ -x "$candidate" ]]; then
+                python_cmd="$candidate"
+                break
+            fi
+        done
+    fi
+fi
+
+# 5. Last-resort system candidates.
+if [[ -z "$python_cmd" ]]; then
+    for candidate in python3 python; do
         if command -v "$candidate" >/dev/null 2>&1; then
             python_cmd="$candidate"
             break

@@ -171,13 +171,20 @@ tasks:
       ignore-case-sync: false        # [default: false]
 
       # ---- comparison strategy ------------------------------------------
-      # checksum  — compare by checksum (MD5/SHA1), not modtime+size
+      # ignore-times — transfer every source file unconditionally
+      #                (--ignore-times).  In interactive mode this only
+      #                makes "force" the default comparison selection.
+      # checksum  — compare by size and checksum (MD5/SHA1), not modtime
       #             (--checksum).  Slower but detects bit-level changes
-      #             that don't update modtime.
+      #             that don't update modtime.  In interactive mode this
+      #             only makes "checksum" the default selection.
       # size-only — compare by file size only, skip checksum AND modtime
-      #             (--size-only).  Fastest but least accurate.
+      #             (--size-only).  Fastest but least accurate.  In
+      #             interactive mode this only makes "size_only" the
+      #             default comparison selection.
       # update    — skip files that are newer on the destination
       #             (--update).  Useful for one-way backups.
+      ignore-times: false            # [default: false]
       checksum: false                # [default: false]
       size-only: false               # [default: false]
       update: false                  # [default: false]

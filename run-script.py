@@ -10,6 +10,8 @@ availability. Existing configured dependency directories are prepended to
 multiple eligible matches are presented as a numbered selection before the
 original arguments are passed through. An optional
 ``launcher-config.patch.yaml`` overrides personal settings only when present.
+Normal startup displays resolved environment paths without starting external
+tools for version discovery; ``--env-info`` enables those slower probes.
 
 Requirements:
     - pip: pathspec, PyYAML
@@ -17,6 +19,7 @@ Requirements:
 Usage:
     python run-script.py                  # interactive: list & select
     python run-script.py --list           # list scripts and exit
+    python run-script.py --env-info        # interactive with tool versions
     python run-script.py <script-name> [args...]  # run by path or basename
 """
 
@@ -33,6 +36,7 @@ from utils import *
 
 CONFIG_FILE_NAME = "launcher-config.yaml"
 PATCH_CONFIG_FILE_NAME = "launcher-config.patch.yaml"
+ENV_INFO_FLAG = "--env-info"
 SCRIPT_TYPE_KEYS = ("python", "bash", "powershell")
 ARCHITECTURE_ALIASES = {
     "amd64": "x86_64",
@@ -1014,6 +1018,7 @@ def _print_help(config: _LauncherConfig) -> None:
 {FLYellow}Usage:{CRst}
   python run-script.py
   python run-script.py --list
+  python run-script.py --env-info [--list | <script-name> [args...]]
   python run-script.py <script-name> [args...]
   python run-script.py @N:<script-name> [args...]
   python run-script.py @test:<script-name> [args...]
@@ -1031,6 +1036,8 @@ def _print_help(config: _LauncherConfig) -> None:
 
 {FLYellow}Options:{CRst}
   {FLCyan}--list{CRst}                   List scripts and exit.
+  {FLCyan}{ENV_INFO_FLAG}{CRst}               Probe and show Conda, PowerShell, and Bash versions.
+                             Must be the first launcher argument.
   {FLCyan}--help, -h{CRst}               Show this help message and exit.
 
 {FLYellow}Configuration:{CRst}
@@ -1096,6 +1103,12 @@ def _resolve_additional_directories(
 
 
 def main() -> int:
+    probe_environment_versions = (
+        len(sys.argv) >= 2 and sys.argv[1] == ENV_INFO_FLAG
+    )
+    if probe_environment_versions:
+        del sys.argv[1]
+
     project_dir = _get_project_dir()
     try:
         config = _load_launcher_config(project_dir)
@@ -1110,7 +1123,7 @@ def main() -> int:
         return 0
 
     Console.print_banner("PERSONAL SCRIPT LAUNCHER")
-    Environment.print_env_info()
+    Environment.print_env_info(probe_versions=probe_environment_versions)
 
     script_dir = config.script_root
     if not os.path.isdir(script_dir):

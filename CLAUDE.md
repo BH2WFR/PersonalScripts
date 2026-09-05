@@ -263,7 +263,7 @@ Canonical implementations live there; do not add implementations to the
 | Print a box-drawing banner | `Console.print_banner("TITLE")` |
 | Print a horizontal separator | `Console.print_separator(width=..., color_ansi_esc=...)` |
 | Resolve an ANSI color constant name | `Console.resolve_ansi_color("FLYellow")` |
-| Print env info (conda, python, shell) | `Environment.print_env_info()` |
+| Print env info (conda, python, shell) | `Environment.print_env_info(probe_versions=...)`; disabling probes avoids starting external tools |
 | Standard KeyboardInterrupt exit | `Console.print_keyboard_interrupt_message_and_exit()` |
 | Standard exit message | `Console.print_exit_message_and_exit()` or `Console.print_error_and_exit()` |
 | Desktop notification | `System.notify(title, body)` |

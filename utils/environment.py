@@ -80,8 +80,18 @@ class Environment:
         return None
 
     @staticmethod
-    def print_env_info() -> None:
-        """Print conda environment, Python version, OS, pwsh, and bash info."""
+    def print_env_info(*, probe_versions: bool = True) -> None:
+        """Print Conda, Python, operating-system, and shell information.
+
+        Args:
+            probe_versions: Whether to start external Conda, PowerShell, and
+                Bash processes to read their versions. When ``False``, their
+                resolved paths are still shown without the version probes.
+
+        Side effects:
+            Prints environment information and, when ``probe_versions`` is
+            enabled, briefly starts each discovered external tool.
+        """
         lines: list[str] = []
 
         lines.append(f"{FLYellow}OS:{CRst}           {System.get_os_name()}")
@@ -95,7 +105,11 @@ class Environment:
             lines.append(f"{FLCyan}Conda env:{CRst}    {FLRed}(no conda){CRst}")
         else:
             conda_exe = Environment.find_conda()
-            conda_ver = Environment._get_shell_version(conda_exe) if conda_exe else None
+            conda_ver = (
+                Environment._get_shell_version(conda_exe)
+                if probe_versions and conda_exe
+                else None
+            )
             ver_part = f"  {FGray}({conda_ver}){CRst}" if conda_ver else ""
             lines.append(f"{FLCyan}Conda env:{CRst}    {FLYellow}{conda_env}{CRst}{ver_part}")
             if conda_exe:
@@ -103,18 +117,22 @@ class Environment:
 
         pwsh = Environment.find_pwsh()
         if pwsh:
-            ver = Environment._get_shell_version(pwsh)
+            ver = Environment._get_shell_version(pwsh) if probe_versions else None
             if ver:
                 lines.append(f"{FLGreen}PowerShell:{CRst}   {ver}")
+            else:
+                lines.append(f"{FLGreen}PowerShell:{CRst}   {FGray}(found){CRst}")
             lines.append(f"              {FGray}{pwsh}{CRst}")
         else:
             lines.append(f"{FLGreen}PowerShell:{CRst}   {FLRed}(not found){CRst}")
 
         bash = Environment.find_bash()
         if bash:
-            ver = Environment._get_shell_version(bash)
+            ver = Environment._get_shell_version(bash) if probe_versions else None
             if ver:
                 lines.append(f"{FLGreen}Bash:{CRst}         {ver}")
+            else:
+                lines.append(f"{FLGreen}Bash:{CRst}         {FGray}(found){CRst}")
             lines.append(f"              {FGray}{bash}{CRst}")
         else:
             lines.append(f"{FLGreen}Bash:{CRst}         {FLRed}(not found){CRst}")

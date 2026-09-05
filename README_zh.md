@@ -141,7 +141,7 @@ extra-env-paths:
 |------|------|------|
 | `tools/disk-smart-info.py` | 跨平台 SMART 磁盘健康信息查看器，列出 SMART 磁盘并显示详细属性 | 跨平台。`smartmontools` |
 | `tools/network/tailscale-restart-accept-routes.py` | 通过切换 `--accept-routes` 开关重启 Tailscale 子网路由 | 跨平台。`tailscale` |
-| `tools/network/rclone-sync.py` | 基于 YAML 的 rclone 同步任务运行器。支持可复用 profile、按机器过滤 sub-task、交互式主机/方向选择、修改时间比较、dry-run、pre-check，以及在 rclone 操作期间用 Ctrl+C 取消（交互模式返回任务菜单；使用 `--task` 时退出码 130） | 跨平台。`rclone`、`PyYAML` |
+| `tools/network/rclone-sync.py` | 基于 YAML 的 rclone 同步任务运行器。支持可复用 profile、按机器过滤 sub-task、适用于 sync/copy/move 的方向选择、适用于 sync/copy/move/bisync 的比较模式选择（`size_and_time`、`size_only`、`force`、`checksum`）、备选远端、修改时间检查、dry-run、pre-check，以及在 rclone 操作期间用 Ctrl+C 取消（交互模式返回任务菜单；使用 `--task` 时退出码 130） | 跨平台。`rclone`、`PyYAML` |
 | `tools/network/upload-ipaddress.py` | 收集网络信息（`ipconfig`/`ip addr`）并上传至腾讯云 COS S3，方便远程访问。凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | 跨平台。`boto3` |
 | `tools/macos/ntfs-3g-utils.py` | macOS 专用：交互式 NTFS 分区管理。扫描 NTFS 分区后提供三种操作：ntfs-3g 读写挂载、系统只读挂载、弹出磁盘。读写挂载支持自动检测已有挂载点并创建备选目录 | **仅 macOS**。`brew install ntfs-3g macfuse` |
 | `tools/macos/screen-utils.py` | macOS 专用（Apple Silicon）：显示器管理 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）、色彩模式诊断、外接显示器强制 RGB 输出覆写。特色功能：MacBook 连接外接显示器时，可一键开关笔记本自带屏幕（`--toggle-built-in`），关闭时会校验外接显示器存在、打开时自动恢复过低亮度。**RGB 覆写**：修补 EDID 清除 YCbCr 标志，将系统显示覆写写入 `/Library/Displays/Contents/Resources/Overrides/`（需 sudo）；重启后持久保留，重新插拔显示器生效 | **仅 macOS**（Apple Silicon）；可选 `pyobjc-framework-Cocoa` |
@@ -151,6 +151,7 @@ extra-env-paths:
 | `tools/windows/file-association.py` | 交互式 Windows 文件关联管理器。列出某扩展名在各注册表入口中声明的打开方式，解析启动命令并检查可执行文件；可按数字精确删除某个来源项，删除后自动重新列出。添加功能支持推荐的 Default Apps + Open With、仅 OpenWithProgids、仅 Applications/SupportedTypes 三种入口，会检查 EXE，默认参数为 `"%1"`，可选择当前用户或提权后的系统范围，添加后同样重新列出；不会写入受 Windows 保护的 UserChoice 默认项 | **仅 Windows**。Python 标准库（`winreg`、`ctypes`） |
 | `tools/windows/firewall-app-blocker.py` | 为单个 `.exe`/`.com` 文件或递归扫描的目录交互式添加完整出站或入站+出站 Windows 防火墙阻止规则。遇到目录软链接或 Junction 时明确询问进入/忽略；等效规则会跳过。去除屏蔽时只列出精确匹配的完整阻止规则并要求最终批量确认，同时优先建议通过 `wf.msc` 手动处理 | **仅 Windows**。管理员权限；PowerShell NetSecurity 模块 |
 | `tools/windows/clear-all-event-logs.py` | 使用 `wevtutil` 枚举并在管理员权限下依次清除全部已注册的 Windows Event Log 通道。默认要求确认，`--force` 可跳过确认；单个通道失败时继续执行并在结尾报告准确的成功/失败数量。清除不可恢复，不会停止后续日志记录，Windows 也可能立即产生新事件 | **仅 Windows**。系统内置 `wevtutil` |
+| `tools/windows/restart-windows-service.py` | 交互选择带用途说明的预设服务，或按准确的 service name / display name 查找自定义服务。确认前解析并显示两种规范名称以及启用/运行状态，然后可选择强制重启并等待恢复为 `Running`，或异步启动重启而不等待。内置 Windows Audio 预设，可用于临时修复部分远程桌面会话中声音未重定向的问题 | **仅 Windows**。管理员权限；系统内置 Windows PowerShell |
 | `tools/windows/clear-privacy.py` | 清除 Windows 隐私痕迹（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。**免责声明：使用风险自负。** | **仅 Windows**。系统自带工具；可选 `scoop install sudo gsudo` |
 | `tools/windows/clear-recycle-bin.py` | 清空 Windows 回收站（逐盘符）。Phase 1 调用 shell API（`SHEmptyRecycleBinW`）正常清空；Phase 2 对残余项（如 OneDrive"始终保存到本地"文件夹）直接遍历 `$Recycle.Bin` 强力删除。回收站内的重解析点（junction/symlink）仅删除链接本身，不会跟随到目标。支持 `--force-run` 无交互自动执行 | **仅 Windows** |
 | `tools/windows/show-screen-resolution.py` | 通过 Windows API 显示显示器分辨率和屏幕信息 | **仅 Windows** |
@@ -171,9 +172,9 @@ extra-env-paths:
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `run-script.py` | 统一脚本启动器。从 `launcher-config.yaml` 加载配置并支持可选个人 patch；支持按平台、架构及 Linux GUI 环境过滤，并提供可配置 Test 分组、裸名递归查找、重名选择、附加目录以及 `@test:`、`@N:` 定位 | 跨平台。`Python 3.13+`、`PyYAML`、`pathspec` |
-| `run-script.sh` | Bash 启动器（启动器的启动器）：优先使用 `deps/python`，否则查找 Conda/系统 Python，再将参数透传给 `run-script.py` | Linux/macOS。`bash`、Python |
-| `run-script.ps1` | PowerShell 启动器（启动器的启动器）：优先使用 `deps/python`，否则查找 Conda/系统 Python，再将参数透传给 `run-script.py` | Windows。`PowerShell`、Python |
+| `run-script.py` | 统一脚本启动器。从 `launcher-config.yaml` 加载配置并支持可选个人 patch；支持按平台、架构及 Linux GUI 环境过滤，并提供可配置 Test 分组、裸名递归查找、重名选择、附加目录以及 `@test:`、`@N:` 定位。默认启动不执行外部版本探测；将 `--env-info` 放在首个参数时才读取 Conda、PowerShell 和 Bash 版本 | 跨平台。`Python 3.13+`、`PyYAML`、`pathspec` |
+| `run-script.sh` | Bash 启动器（启动器的启动器）：优先使用 `deps/python`，尽可能从 Conda 命令路径直接推导 base 解释器，之后才回退到 `conda info --base` 或系统 Python，再将参数透传给 `run-script.py` | Linux/macOS。`bash`、Python |
+| `run-script.ps1` | PowerShell 启动器（启动器的启动器）：优先使用 `deps/python`，尽可能从 `Get-Command conda` / `CONDA_EXE` 直接推导 base 解释器，之后才回退到 `conda info --base` 或系统 Python，再将参数透传给 `run-script.py` | 跨平台。`PowerShell`、Python |
 | `compile-script.py` | 交互式编译器：选择任意 Python 脚本，通过 Nuitka 或 PyInstaller 打包为独立可执行文件（均为 `--onedir`/`--standalone`，不自解压以避免磨损 SSD） | 跨平台。`pip install nuitka` 和/或 `pip install pyinstaller` |
 
 ### 测试辅助

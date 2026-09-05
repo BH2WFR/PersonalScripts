@@ -3,8 +3,10 @@
 
 Defines reusable sync tasks in YAML, filters sub-tasks by the current machine,
 shows source/destination modification times, and runs rclone with interactive
-confirmation.  During rclone checks and transfers, Ctrl+C cancels the current
-operation and returns to the task menu instead of exiting the whole script.
+direction selection for sync/copy/move and comparison-mode selection for
+sync/copy/move/bisync.  During rclone checks and transfers, Ctrl+C cancels the
+current operation and returns to the task menu instead of exiting the whole
+script.
 
 Requirements:
     - pip: PyYAML
@@ -15,6 +17,7 @@ Usage:
     python rclone-sync.py --help           # show help
     python rclone-sync.py --task "group/task-name"
     python rclone-sync.py --task "task-name" --sub-task "sub-name"
+    python rclone-sync.py --task "group/task-name" --push --comparison checksum
     python rclone-sync.py --dry-run
 """
 
@@ -24,6 +27,7 @@ import subprocess
 import copy
 import dataclasses
 import argparse
+import enum
 import json
 import re
 import datetime
@@ -58,6 +62,30 @@ _DIRECTIONAL_MODES = {"sync", "copy", "move"}  # modes where push/pull makes sen
 VALID_DIRECTIONS = {"push", "pull"}
 LIST_STRING_FIELDS = {"exclude", "additional-args", "alternative-remote-host"}
 STRING_OR_LIST_FIELDS = {"platform", "arch", "computer-name"}
+
+
+class ComparisonMode(enum.StrEnum):
+    """Runtime file-comparison strategy for data transfers.
+
+    Attributes:
+        SIZE_AND_TIME: Compare using rclone's normal size and modification-time rules.
+        SIZE_ONLY: Compare using file size only.
+        FORCE: Transfer every source file by enabling ``--ignore-times``.
+        CHECKSUM: Compare using size and an available checksum.
+    """
+
+    SIZE_AND_TIME = "size_and_time"
+    SIZE_ONLY = "size_only"
+    FORCE = "force"
+    CHECKSUM = "checksum"
+
+
+COMPARISON_MENU_KEYS: dict[ComparisonMode, str] = {
+    ComparisonMode.SIZE_AND_TIME: "0",
+    ComparisonMode.SIZE_ONLY: "1",
+    ComparisonMode.FORCE: "2",
+    ComparisonMode.CHECKSUM: "3",
+}
 
 # ================================================================
 # The default schema is at: <script-dir>/rclone-sync-default-schema.yaml
@@ -167,6 +195,7 @@ _FIELDS: list[FieldDef] = [
     FieldDef("ignore-case",       "ignore_case",        default=False,       check_type=bool),
     FieldDef("ignore-case-sync",  "ignore_case_sync",   default=False,       check_type=bool),
     # comparison strategy
+    FieldDef("ignore-times",      "ignore_times",       default=False,       check_type=bool),
     FieldDef("checksum",          "checksum",           default=False,       check_type=bool),
     FieldDef("size-only",         "size_only",          default=False,       check_type=bool),
     FieldDef("update",            "update",             default=False,       check_type=bool),
@@ -272,6 +301,7 @@ class SyncTask:
     copy_links:        bool = False
     ignore_case:       bool = False
     ignore_case_sync:  bool = False
+    ignore_times:      bool = False
     checksum:          bool = False
     size_only:         bool = False
     update:            bool = False
@@ -553,14 +583,28 @@ class SyncTask:
         if self.log_level:
             cmd.extend(["--log-level", self.log_level])
 
-    def _append_comparison_and_transfer_flags(self, cmd: list[str], is_data: bool) -> None:
-        """Append flags shared by sync/copy/move/check: comparison, bwlimit, retries, etc."""
+    def _append_comparison_and_transfer_flags(
+        self,
+        cmd: list[str],
+        is_data: bool,
+        comparison: Optional[ComparisonMode] = None,
+    ) -> None:
+        """Append comparison, bandwidth, retry, and related transfer flags."""
         if is_data:
-            if self.checksum:
+            if comparison is None:
+                if self.ignore_times:
+                    cmd.append("--ignore-times")
+                if self.checksum:
+                    cmd.append("--checksum")
+            elif comparison is ComparisonMode.FORCE:
+                cmd.append("--ignore-times")
+            elif comparison is ComparisonMode.CHECKSUM:
                 cmd.append("--checksum")
-            if self.size_only:
+            elif comparison is ComparisonMode.SIZE_ONLY:
                 cmd.append("--size-only")
-            if self.update:
+            if comparison is None and self.size_only:
+                cmd.append("--size-only")
+            if comparison in (None, ComparisonMode.SIZE_AND_TIME) and self.update:
                 cmd.append("--update")
             if self.bwlimit:
                 cmd.extend(["--bwlimit", self.bwlimit])
@@ -575,11 +619,19 @@ class SyncTask:
         if self.s3_no_check_bucket:
             cmd.append("--s3-no-check-bucket")
 
-    def to_command(self, rclone_exe: str, dry_run: bool = False, direction: str = "push") -> list[str]:
+    def to_command(
+        self,
+        rclone_exe: str,
+        dry_run: bool = False,
+        direction: str = "push",
+        comparison: Optional[ComparisonMode] = None,
+    ) -> list[str]:
         """Build the rclone command line list for this task.
 
         *direction*: ``"push"`` (local→remote) or ``"pull"`` (remote→local).
-        Only affects sync/copy/move modes.
+        *comparison*: runtime comparison strategy; overrides configured
+        ``--ignore-times``, ``--checksum``, and ``--size-only`` flags for this
+        invocation.  Only affects sync/copy/move/bisync modes.
         """
         src, dst = self.source_dest(direction)
         cmd = [rclone_exe, self.mode, src, dst]
@@ -590,7 +642,7 @@ class SyncTask:
         if is_data and self.transfer != 4:
             cmd.extend(["--transfers", str(self.transfer)])
         self._append_filter_flags(cmd)
-        self._append_comparison_and_transfer_flags(cmd, is_data)
+        self._append_comparison_and_transfer_flags(cmd, is_data, comparison)
         if is_data and self.backup_dir:
             cmd.extend(["--backup-dir", self.backup_dir])
         if is_data and self.max_delete is not None:
@@ -599,7 +651,12 @@ class SyncTask:
             cmd.append("--delete-excluded")
         self._append_backend_flags(cmd)
         self._append_log_flags(cmd)
-        cmd.extend(self.additional_args)
+        additional_args = (
+            self.additional_args
+            if comparison is None
+            else _without_comparison_args(self.additional_args)
+        )
+        cmd.extend(additional_args)
         if dry_run:
             cmd.append("--dry-run")
         return cmd
@@ -619,6 +676,51 @@ class SyncTask:
         self._append_backend_flags(cmd)
         self._append_log_flags(cmd)
         return cmd
+
+
+def _comparison_arg_mode(arg: str) -> Optional[ComparisonMode]:
+    """Return the comparison mode represented by one rclone argument."""
+    stripped = arg.strip()
+    if stripped == "-I" or stripped.startswith("--ignore-times="):
+        return ComparisonMode.FORCE
+    if stripped == "--ignore-times":
+        return ComparisonMode.FORCE
+    if stripped == "-c" or stripped.startswith("--checksum="):
+        return ComparisonMode.CHECKSUM
+    if stripped == "--checksum":
+        return ComparisonMode.CHECKSUM
+    if stripped == "--size-only" or stripped.startswith("--size-only="):
+        return ComparisonMode.SIZE_ONLY
+    return None
+
+
+def _comparison_arg_enabled(arg: str) -> bool:
+    """Return whether a recognized boolean comparison argument is enabled."""
+    _, separator, raw_value = arg.strip().partition("=")
+    if not separator:
+        return True
+    return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _without_comparison_args(args: list[str]) -> list[str]:
+    """Remove runtime-selectable comparison flags from an argument list."""
+    return [arg for arg in args if _comparison_arg_mode(arg) is None]
+
+
+def _configured_comparison_modes(task: SyncTask) -> set[ComparisonMode]:
+    """Return comparison modes enabled by resolved YAML fields and arguments."""
+    modes: set[ComparisonMode] = set()
+    if task.ignore_times:
+        modes.add(ComparisonMode.FORCE)
+    if task.checksum:
+        modes.add(ComparisonMode.CHECKSUM)
+    if task.size_only:
+        modes.add(ComparisonMode.SIZE_ONLY)
+    for arg in task.additional_args:
+        mode = _comparison_arg_mode(arg)
+        if mode is not None and _comparison_arg_enabled(arg):
+            modes.add(mode)
+    return modes
 
 
 # ================================================================
@@ -1096,6 +1198,96 @@ def _host_name_to_prefix(name: str, template_prefix: str) -> str:
     return name if name.endswith(':') else name + ':'
 
 
+def _select_comparison_mode(
+    task: SyncTask,
+    cli_comparison: Optional[ComparisonMode],
+    interactive: bool,
+) -> Optional[ComparisonMode]:
+    """Resolve the runtime comparison mode from CLI, task configuration, or input.
+
+    Configured ``--ignore-times``, ``--checksum``, and ``--size-only`` settings
+    only determine the menu's default choice.  Each explicit menu choice has
+    fixed behavior.
+
+    Args:
+        task: Fully resolved task whose comparison settings are inspected.
+        cli_comparison: Explicit CLI comparison mode, or ``None``.
+        interactive: Whether to display the comparison selection menu.
+
+    Returns:
+        The selected comparison mode, or ``None`` when conflicting configured
+        modes cannot be resolved non-interactively.
+
+    Side effects:
+        Prints configured-mode notices, conflict errors, and an interactive
+        menu when appropriate.
+    """
+    if cli_comparison is not None:
+        return cli_comparison
+
+    configured_modes = _configured_comparison_modes(task)
+    if len(configured_modes) > 1:
+        configured_text = ", ".join(sorted(mode.value for mode in configured_modes))
+        print(
+            f"\n{FLRed}Conflicting configured comparison modes:{CRst} "
+            f"{FLYellow}{configured_text}{CRst}"
+        )
+        if not interactive:
+            print(f"{FLRed}Specify --comparison to choose one mode.{CRst}")
+            return None
+        default_mode: Optional[ComparisonMode] = None
+    else:
+        default_mode = next(iter(configured_modes), ComparisonMode.SIZE_AND_TIME)
+        if configured_modes:
+            flag = {
+                ComparisonMode.SIZE_ONLY: "--size-only",
+                ComparisonMode.FORCE: "--ignore-times",
+                ComparisonMode.CHECKSUM: "--checksum",
+            }[default_mode]
+            print(
+                f"\n{FLYellow}Configured comparison mode:{CRst} "
+                f"{FLCyan}{default_mode.value}{CRst} {FGray}({flag}){CRst}"
+            )
+
+    if not interactive:
+        return default_mode
+
+    options = [
+        MenuOption(
+            [COMPARISON_MENU_KEYS[ComparisonMode.SIZE_AND_TIME]],
+            "size_and_time  Compare by size and modified time",
+            value=ComparisonMode.SIZE_AND_TIME,
+            desc_color=FGray,
+        ),
+        MenuOption(
+            [COMPARISON_MENU_KEYS[ComparisonMode.SIZE_ONLY]],
+            "size_only      Compare by size only (--size-only)",
+            value=ComparisonMode.SIZE_ONLY,
+            desc_color=FGray,
+        ),
+        MenuOption(
+            [COMPARISON_MENU_KEYS[ComparisonMode.FORCE]],
+            "force          Transfer all files unconditionally (--ignore-times)",
+            value=ComparisonMode.FORCE,
+            desc_color=FGray,
+        ),
+        MenuOption(
+            [COMPARISON_MENU_KEYS[ComparisonMode.CHECKSUM]],
+            "checksum       Compare by size and checksum (--checksum)",
+            value=ComparisonMode.CHECKSUM,
+            desc_color=FGray,
+        ),
+    ]
+    selected = Menu.select(
+        options,
+        prompt="Comparison mode",
+        required=default_mode is None,
+        default_key=(COMPARISON_MENU_KEYS[default_mode] if default_mode is not None else None),
+        separator=False,
+    )
+    return selected if isinstance(selected, ComparisonMode) else None
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse CLI args. Help is printed by the custom help path before this runs."""
     parser = argparse.ArgumentParser(add_help=False)
@@ -1105,6 +1297,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--task")
     parser.add_argument("--sub-task")
     parser.add_argument("--direction", choices=sorted(VALID_DIRECTIONS))
+    parser.add_argument("--comparison", choices=[mode.value for mode in ComparisonMode])
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--pull", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -1177,6 +1370,7 @@ def _print_help() -> None:
   python {script_name} --task <name>          run task directly
   python {script_name} --task <n> --sub-task <s>
   python {script_name} --task <n> --push      auto-sync (no interaction)
+  python {script_name} --task <n> --push --comparison checksum
   python {script_name} --dry-run              print command only
 
 {FLYellow}Options:{CRst}
@@ -1188,12 +1382,24 @@ def _print_help() -> None:
   --direction <push|pull>      sync direction: push (local -> remote) or pull (remote -> local)
   --push                       shorthand for --direction push
   --pull                       shorthand for --direction pull
+  --comparison <mode>          size_and_time | size_only | force | checksum
+                               (sync/copy/move/bisync only)
   --dry-run                    print command, do not execute
   --verbose                    print additional diagnostics
 
 {FLYellow}Auto-sync:{CRst}
   When --task and --direction are both specified, the script runs without
-  any interactive prompts (provided other requirements are met).
+  any interactive prompts.  If --comparison is omitted, the effective task
+  configuration selects the comparison mode automatically.
+
+{FLYellow}Comparison modes:{CRst}
+  Available for sync, copy, move, and bisync; check uses rclone check behavior.
+  {FLCyan}size_and_time{CRst}  compare by size and modified time
+  {FLCyan}size_only{CRst}      compare by size only (--size-only)
+  {FLCyan}force{CRst}          transfer all files unconditionally (--ignore-times)
+  {FLCyan}checksum{CRst}       compare by size and checksum (--checksum)
+  Configured --ignore-times, --checksum, or --size-only flags only change the
+  interactive default.  Each explicit selection has the behavior shown above.
 
 {FLYellow}Cancellation:{CRst}
   During rclone time checks, dry-runs, checks, and transfers, Ctrl+C cancels
@@ -1264,6 +1470,11 @@ def main() -> int:
     cli_dry_run = parsed.dry_run
     cli_verbose = parsed.verbose
     cli_direction: Optional[str] = parsed.direction
+    cli_comparison: Optional[ComparisonMode] = (
+        ComparisonMode(parsed.comparison)
+        if parsed.comparison is not None
+        else None
+    )
     cli_auto = cli_task is not None
 
     # ================================================================
@@ -1783,6 +1994,23 @@ def main() -> int:
         # Auto-execute when both --task and --direction are given.  When --task
         # is supplied from the CLI, there is no task list to return to.
         auto_execute = cli_task is not None and cli_direction is not None
+        comparison: Optional[ComparisonMode] = None
+        if final_task.mode in _DATA_MODES:
+            comparison = _select_comparison_mode(
+                final_task,
+                cli_comparison,
+                interactive=not auto_execute,
+            )
+            if comparison is None:
+                if cli_auto:
+                    return 1
+                continue
+        elif cli_comparison is not None:
+            print(
+                f"{FGray}  -> comparison '{cli_comparison.value}' ignored "
+                f"for mode '{final_task.mode}'{CRst}"
+            )
+
         cancel_hint = (
             "Press Ctrl+C to cancel and exit with code 130."
             if cli_auto else
@@ -1809,8 +2037,23 @@ def main() -> int:
         # Step 7: Confirm & execute
         # ================================================================
         print("────────────")
-        print(f"  {FLYellow}Task:{CRst} {FLCyan}{final_task.name}{CRst}  {FLYellow}mode:{CRst} {FLCyan}{final_task.mode}{CRst}  {FLYellow}direction:{CRst} {FLCyan}{direction}{CRst}")
-        cmd = final_task.to_command(rclone_exe, dry_run=cli_dry_run, direction=direction)
+        task_summary = (
+            f"  {FLYellow}Task:{CRst} {FLCyan}{final_task.name}{CRst}  "
+            f"{FLYellow}mode:{CRst} {FLCyan}{final_task.mode}{CRst}  "
+            f"{FLYellow}direction:{CRst} {FLCyan}{direction}{CRst}"
+        )
+        if comparison is not None:
+            task_summary += (
+                f"  {FLYellow}comparison:{CRst} "
+                f"{FLCyan}{comparison.value}{CRst}"
+            )
+        print(task_summary)
+        cmd = final_task.to_command(
+            rclone_exe,
+            dry_run=cli_dry_run,
+            direction=direction,
+            comparison=comparison,
+        )
         _print_cmd(cmd)
 
         # Show path modification times for user awareness.
@@ -1850,7 +2093,12 @@ def main() -> int:
                     go_back = True
                     break
                 elif choice == "d":
-                    dry_cmd = final_task.to_command(rclone_exe, dry_run=True, direction=direction)
+                    dry_cmd = final_task.to_command(
+                        rclone_exe,
+                        dry_run=True,
+                        direction=direction,
+                        comparison=comparison,
+                    )
                     print(f"\n{FLCyan}Running dry-run...{CRst} {FGray}{cancel_hint}{CRst}\n")
                     try:
                         exec_result = _run_interruptible(dry_cmd)
