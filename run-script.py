@@ -12,6 +12,9 @@ original arguments are passed through. An optional
 ``launcher-config.patch.yaml`` overrides personal settings only when present.
 Normal startup displays resolved environment paths without starting external
 tools for version discovery; ``--env-info`` enables those slower probes.
+Python targets use the Conda environment selected by a leading ``--env=NAME``,
+then ``ZL_CONDA_ENV``, and finally ``base``. The launcher itself remains in its
+bootstrap environment.
 
 Requirements:
     - pip: pathspec, PyYAML
@@ -20,11 +23,13 @@ Usage:
     python run-script.py                  # interactive: list & select
     python run-script.py --list           # list scripts and exit
     python run-script.py --env-info        # interactive with tool versions
+    python run-script.py --env=test tool   # run tool with Conda env "test"
     python run-script.py <script-name> [args...]  # run by path or basename
 """
 
 import sys
 import os
+import json
 import platform
 import re
 import subprocess
@@ -37,6 +42,10 @@ from utils import *
 CONFIG_FILE_NAME = "launcher-config.yaml"
 PATCH_CONFIG_FILE_NAME = "launcher-config.patch.yaml"
 ENV_INFO_FLAG = "--env-info"
+CONDA_ENV_FLAG_PREFIX = "--env="
+CONDA_ENV_VARIABLE = "ZL_CONDA_ENV"
+DEFAULT_CONDA_ENV = "base"
+CONDA_INFO_TIMEOUT_SECONDS = 15
 SCRIPT_TYPE_KEYS = ("python", "bash", "powershell")
 ARCHITECTURE_ALIASES = {
     "amd64": "x86_64",
@@ -122,6 +131,15 @@ class _LauncherConfig:
     def supported_extensions(self) -> tuple[str, ...]:
         """Return configured extensions in script-type order."""
         return tuple(self.script_types[key].extension for key in SCRIPT_TYPE_KEYS)
+
+
+@dataclass(frozen=True)
+class _LauncherInvocation:
+    """Leading launcher options separated from the script selector."""
+
+    arguments: tuple[str, ...]
+    probe_environment_versions: bool
+    conda_env_name: Optional[str]
 
 
 def _platform_key() -> Optional[str]:
@@ -936,13 +954,197 @@ def show_scripts(
 
 # ============ Script Execution ============
 
-def run_py_script(script_path: str) -> int:
-    """Load and execute a .py script via importlib, calling its main().
+def _parse_conda_env_flag(argument: str) -> str:
+    """Return and validate the environment name in one ``--env=`` option.
 
-    The target script reads arguments from sys.argv, which must be set up
-    by the caller before invoking this function.
+    Args:
+        argument: Complete launcher argument beginning with ``--env=``.
+
+    Returns:
+        Non-empty Conda environment name.
+
+    Raises:
+        ValueError: If the value is empty or resembles a filesystem path.
+    """
+    env_name = argument.removeprefix(CONDA_ENV_FLAG_PREFIX).strip()
+    if not env_name:
+        raise ValueError("--env requires a non-empty environment name")
+    if "/" in env_name or "\\" in env_name:
+        raise ValueError("--env accepts an environment name, not a path")
+    return env_name
+
+
+def _parse_launcher_invocation(arguments: list[str]) -> _LauncherInvocation:
+    """Separate leading launcher options from the target script selector.
+
+    ``--env-info`` and ``--env=<name>`` are recognized only before the target
+    script name, numeric selector, or ``--list``. Options after that selector
+    remain untouched for the target script.
+
+    Args:
+        arguments: Command-line arguments excluding the launcher path.
+
+    Returns:
+        Parsed launcher settings and unconsumed selector/target arguments.
+
+    Raises:
+        ValueError: If ``--env`` is invalid or repeated.
+    """
+    probe_versions = False
+    conda_env_name: Optional[str] = None
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == ENV_INFO_FLAG:
+            probe_versions = True
+        elif argument.startswith(CONDA_ENV_FLAG_PREFIX):
+            if conda_env_name is not None:
+                raise ValueError("--env may be specified only once")
+            conda_env_name = _parse_conda_env_flag(argument)
+        else:
+            break
+        index += 1
+    return _LauncherInvocation(
+        arguments=tuple(arguments[index:]),
+        probe_environment_versions=probe_versions,
+        conda_env_name=conda_env_name,
+    )
+
+
+def _default_conda_env_name(command_line_env: Optional[str]) -> str:
+    """Apply CLI, environment-variable, and base precedence for target Python."""
+    if command_line_env is not None:
+        return command_line_env
+    configured_env = os.environ.get(CONDA_ENV_VARIABLE, "").strip()
+    return configured_env or DEFAULT_CONDA_ENV
+
+
+def _conda_env_names_equal(left: str, right: str) -> bool:
+    """Compare Conda environment names using platform path case semantics."""
+    return os.path.normcase(left) == os.path.normcase(right)
+
+
+def _resolve_conda_python(env_name: str) -> str:
+    """Resolve the Python executable belonging to a named Conda environment.
+
+    The current interpreter is returned without starting Conda when it already
+    belongs to the requested environment. Other environments are discovered
+    through ``conda info --envs --json`` so custom ``envs_dirs`` are honored.
+
+    Args:
+        env_name: Exact Conda environment name, or ``base``.
+
+    Returns:
+        Absolute path to the selected environment's Python executable.
+
+    Raises:
+        RuntimeError: If Conda is unavailable, discovery fails, the environment
+            does not exist or is ambiguous, or it has no Python executable.
+    """
+    current_env = Environment.get_conda_env()
+    if current_env is not None and _conda_env_names_equal(current_env, env_name):
+        return os.path.abspath(sys.executable)
+
+    conda_executable = Environment.find_conda()
+    if conda_executable is None:
+        raise RuntimeError(
+            f"Cannot resolve Conda environment '{env_name}': conda is not in PATH."
+        )
+    try:
+        result = subprocess.run(
+            [conda_executable, "info", "--envs", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=CONDA_INFO_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f"Cannot inspect Conda environments: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = " ".join((result.stderr or result.stdout or "").split())
+        if not detail:
+            detail = f"conda exited with code {result.returncode}"
+        raise RuntimeError(f"Cannot inspect Conda environments: {detail}")
+
+    try:
+        payload: object = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Conda returned invalid environment data.") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Conda returned invalid environment data.")
+
+    root_prefix = payload.get("root_prefix")
+    env_paths = payload.get("envs")
+    if not isinstance(root_prefix, str) or not isinstance(env_paths, list):
+        raise RuntimeError("Conda returned incomplete environment data.")
+
+    if _conda_env_names_equal(env_name, DEFAULT_CONDA_ENV):
+        matching_prefixes = [root_prefix]
+    else:
+        matching_prefixes = [
+            path
+            for path in env_paths
+            if isinstance(path, str)
+            and _conda_env_names_equal(os.path.basename(os.path.normpath(path)), env_name)
+        ]
+    if not matching_prefixes:
+        raise RuntimeError(f"Conda environment '{env_name}' does not exist.")
+    if len(matching_prefixes) > 1:
+        raise RuntimeError(
+            f"Multiple Conda environments are named '{env_name}'; use a unique name."
+        )
+
+    env_prefix = os.path.abspath(matching_prefixes[0])
+    if not os.path.isdir(os.path.join(env_prefix, "conda-meta")):
+        raise RuntimeError(f"Conda environment '{env_name}' is invalid.")
+    python_path = (
+        os.path.join(env_prefix, "python.exe")
+        if _detect_platform()[0]
+        else os.path.join(env_prefix, "bin", "python")
+    )
+    if not os.path.isfile(python_path):
+        raise RuntimeError(
+            f"Conda environment '{env_name}' has no Python executable."
+        )
+    return python_path
+
+
+def run_py_script(
+    script_path: str,
+    args: list[str],
+    python_executable: str,
+) -> int:
+    """Execute a Python script with the selected Conda interpreter.
+
+    Uses the existing in-process ``main()`` path when the selected interpreter
+    is the launcher interpreter. Otherwise, starts the target script as a child
+    process so only the target—not the launcher—uses the selected environment.
+
+    Args:
+        script_path: Absolute or relative path to the target Python script.
+        args: Arguments passed to the target script.
+        python_executable: Interpreter from the requested Conda environment.
+
+    Returns:
+        Target ``main()`` result or child-process exit code.
+
+    Side effects:
+        Imports and invokes the target in-process, or starts a child process
+        when a different Conda environment was selected.
     """
     abs_path = os.path.abspath(script_path)
+    selected_python = os.path.realpath(python_executable)
+    launcher_python = os.path.realpath(sys.executable)
+    if os.path.normcase(selected_python) != os.path.normcase(launcher_python):
+        result = subprocess.run(
+            [python_executable, abs_path, *args],
+            check=False,
+        )
+        return result.returncode
 
     module_name = "_entry_" + abs_path \
         .replace(os.sep, "_") \
@@ -1019,6 +1221,7 @@ def _print_help(config: _LauncherConfig) -> None:
   python run-script.py
   python run-script.py --list
   python run-script.py --env-info [--list | <script-name> [args...]]
+  python run-script.py --env=<name> [<number> | <script-name> [args...]]
   python run-script.py <script-name> [args...]
   python run-script.py @N:<script-name> [args...]
   python run-script.py @test:<script-name> [args...]
@@ -1037,7 +1240,10 @@ def _print_help(config: _LauncherConfig) -> None:
 {FLYellow}Options:{CRst}
   {FLCyan}--list{CRst}                   List scripts and exit.
   {FLCyan}{ENV_INFO_FLAG}{CRst}               Probe and show Conda, PowerShell, and Bash versions.
-                             Must be the first launcher argument.
+                             Must precede the script selector.
+  {FLCyan}{CONDA_ENV_FLAG_PREFIX}<name>{CRst}             Run the selected Python script in this Conda environment.
+                             Must precede the script selector and overrides
+                             {FLCyan}{CONDA_ENV_VARIABLE}{CRst}.
   {FLCyan}--help, -h{CRst}               Show this help message and exit.
 
 {FLYellow}Configuration:{CRst}
@@ -1045,6 +1251,8 @@ def _print_help(config: _LauncherConfig) -> None:
   {FLCyan}{PATCH_CONFIG_FILE_NAME}{CRst}   Optional personal overrides; ignored when absent.
   {FLCyan}{config.additional_path_env}{CRst}  Additional directories separated by
                              {FGray}{path_separator}{CRst}. Relative paths use the project root.
+  {FLCyan}{CONDA_ENV_VARIABLE}{CRst}          Default Conda environment for Python targets.
+                             Empty or unset selects {FGray}{DEFAULT_CONDA_ENV}{CRst}.
 
 {FLYellow}Requirements:{CRst}
   Python 3.13+, PyYAML, pathspec
@@ -1103,11 +1311,13 @@ def _resolve_additional_directories(
 
 
 def main() -> int:
-    probe_environment_versions = (
-        len(sys.argv) >= 2 and sys.argv[1] == ENV_INFO_FLAG
-    )
-    if probe_environment_versions:
-        del sys.argv[1]
+    try:
+        invocation = _parse_launcher_invocation(sys.argv[1:])
+    except ValueError as exc:
+        print(f"{FLRed}Invalid launcher option:{CRst} {exc}", file=sys.stderr)
+        return 2
+    launcher_args = list(invocation.arguments)
+    target_conda_env = _default_conda_env_name(invocation.conda_env_name)
 
     project_dir = _get_project_dir()
     try:
@@ -1118,12 +1328,18 @@ def main() -> int:
 
     _prepend_env_paths(config.extra_env_paths)
 
-    if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
+    if launcher_args and launcher_args[0] in ("--help", "-h"):
         _print_help(config)
         return 0
 
     Console.print_banner("PERSONAL SCRIPT LAUNCHER")
-    Environment.print_env_info(probe_versions=probe_environment_versions)
+    Environment.print_env_info(
+        probe_versions=invocation.probe_environment_versions
+    )
+    print(
+        f"  {FLCyan}Target Conda env:{CRst} "
+        f"{FLYellow}{target_conda_env}{CRst}\n"
+    )
 
     script_dir = config.script_root
     if not os.path.isdir(script_dir):
@@ -1155,11 +1371,15 @@ def main() -> int:
     script_name: Optional[str] = None
     remaining_args: list[str] = []
 
-    if len(sys.argv) >= 2:
-        script_name = sys.argv[1]
-        remaining_args = sys.argv[2:]
+    if launcher_args:
+        script_name = launcher_args[0]
+        remaining_args = launcher_args[1:]
 
-    show_list = script_name is None or script_name == "--list"
+    show_list = (
+        script_name is None
+        or script_name == "--list"
+        or script_name.isdigit()
+    )
 
     if show_list:
         all_rel = show_scripts(
@@ -1180,24 +1400,53 @@ def main() -> int:
         print(f"\nAll of the python scripts support argument {FLCyan}--help{CRst} for usage details.")
         print(f"Examples:")
         print(f"    {FLYellow}5{CRst}                              select by number")
+        print(f"    {FLCyan}--env=test{CRst} {FLYellow}5{CRst}                   select environment + number")
         print(f"    {FLYellow}5{CRst} {FLCyan}--help{CRst}                       number + passthrough args")
         print(f"    {FLYellow}script-name{CRst} {FLCyan}arg1 arg2{CRst}          name + passthrough args")
 
         script_path: Optional[str] = None
+        command_line_parts = (
+            [script_name, *remaining_args]
+            if script_name is not None and script_name.isdigit()
+            else None
+        )
         while True:
-            print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
-            try:
-                choice_line = input().strip()
-            except EOFError:
-                print()
-                Console.print_exit_message("Bye.")
-                return 0
+            noninteractive_choice = command_line_parts is not None
+            if command_line_parts is not None:
+                parts = command_line_parts
+                command_line_parts = None
+            else:
+                print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
+                try:
+                    choice_line = input().strip()
+                except EOFError:
+                    print()
+                    Console.print_exit_message("Bye.")
+                    return 0
 
-            if not choice_line:
-                Console.print_exit_message("Bye.")
-                return 0
+                if not choice_line:
+                    Console.print_exit_message("Bye.")
+                    return 0
+                parts = choice_line.split()
 
-            parts = choice_line.split()
+            if parts[0].startswith(CONDA_ENV_FLAG_PREFIX):
+                try:
+                    target_conda_env = _parse_conda_env_flag(parts[0])
+                except ValueError as exc:
+                    print(f"{FLRed}Invalid launcher option:{CRst} {exc}", file=sys.stderr)
+                    if noninteractive_choice:
+                        return 2
+                    continue
+                parts = parts[1:]
+                if not parts:
+                    print(
+                        f"{FLRed}Missing script number or name after --env.{CRst}",
+                        file=sys.stderr,
+                    )
+                    if noninteractive_choice:
+                        return 2
+                    continue
+
             first_token = parts[0]
             remaining_args = parts[1:]
 
@@ -1205,6 +1454,8 @@ def main() -> int:
                 idx = int(first_token)
                 if idx < 0 or idx >= len(all_rel):
                     print(f"{FLRed}Invalid selection: {idx}{CRst}", file=sys.stderr)
+                    if noninteractive_choice:
+                        return 1
                     continue
                 first_token = all_rel[idx]
 
@@ -1218,6 +1469,8 @@ def main() -> int:
             )
             if script_path is None:
                 print(f"{FLRed}Cannot find script: `{first_token}`{CRst}", file=sys.stderr)
+                if noninteractive_choice:
+                    return 1
                 continue
             break
 
@@ -1246,9 +1499,19 @@ def main() -> int:
 
     if script_path.endswith(config.script_types["python"].extension):
         print()
+        try:
+            target_python = _resolve_conda_python(target_conda_env)
+        except RuntimeError as exc:
+            print(f"{FLRed}Cannot select target Python:{CRst} {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"{FLCyan}Python target environment:{CRst} "
+            f"{FLYellow}{target_conda_env}{CRst}"
+        )
+        print(f"{FGray}{target_python}{CRst}\n")
         if project_dir not in sys.path:
             sys.path.insert(0, project_dir)
-        return run_py_script(script_path)
+        return run_py_script(script_path, remaining_args, target_python)
 
     if script_path.endswith(config.script_types["bash"].extension):
         print()

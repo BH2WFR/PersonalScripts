@@ -172,7 +172,7 @@ extra-env-paths:
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `run-script.py` | 统一脚本启动器。从 `launcher-config.yaml` 加载配置并支持可选个人 patch；支持按平台、架构及 Linux GUI 环境过滤，并提供可配置 Test 分组、裸名递归查找、重名选择、附加目录以及 `@test:`、`@N:` 定位。默认启动不执行外部版本探测；将 `--env-info` 放在首个参数时才读取 Conda、PowerShell 和 Bash 版本 | 跨平台。`Python 3.13+`、`PyYAML`、`pathspec` |
+| `run-script.py` | 统一脚本启动器。从 `launcher-config.yaml` 加载配置并支持可选个人 patch；支持按平台、架构及 Linux GUI 环境过滤，并提供可配置 Test 分组、裸名递归查找、命令行序号直选、重名选择、附加目录以及 `@test:`、`@N:` 定位。Python 目标依次使用前置 `--env=<name>`、`ZL_CONDA_ENV`、`base` 选择环境，交互输入中也可在选择项前指定环境。默认启动不执行外部版本探测；将 `--env-info` 放在选择项前才读取 Conda、PowerShell 和 Bash 版本 | 跨平台。`Python 3.13+`、`PyYAML`、`pathspec`；所选 Conda 环境必须包含 Python |
 | `run-script.sh` | Bash 启动器（启动器的启动器）：优先使用 `deps/python`，尽可能从 Conda 命令路径直接推导 base 解释器，之后才回退到 `conda info --base` 或系统 Python，再将参数透传给 `run-script.py` | Linux/macOS。`bash`、Python |
 | `run-script.ps1` | PowerShell 启动器（启动器的启动器）：优先使用 `deps/python`，尽可能从 `Get-Command conda` / `CONDA_EXE` 直接推导 base 解释器，之后才回退到 `conda info --base` 或系统 Python，再将参数透传给 `run-script.py` | 跨平台。`PowerShell`、Python |
 | `compile-script.py` | 交互式编译器：选择任意 Python 脚本，通过 Nuitka 或 PyInstaller 打包为独立可执行文件（均为 `--onedir`/`--standalone`，不自解压以避免磨损 SSD） | 跨平台。`pip install nuitka` 和/或 `pip install pyinstaller` |

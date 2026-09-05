@@ -121,10 +121,10 @@ class Environment:
             if ver:
                 lines.append(f"{FLGreen}PowerShell:{CRst}   {ver}")
             else:
-                lines.append(f"{FLGreen}PowerShell:{CRst}   {FGray}(found){CRst}")
+                lines.append(f"{FLGreen}PowerShell:{CRst}   [found]")
             lines.append(f"              {FGray}{pwsh}{CRst}")
         else:
-            lines.append(f"{FLGreen}PowerShell:{CRst}   {FLRed}(not found){CRst}")
+            lines.append(f"{FLGreen}PowerShell:{CRst}   {FLRed}[not found]{CRst}")
 
         bash = Environment.find_bash()
         if bash:
@@ -132,10 +132,10 @@ class Environment:
             if ver:
                 lines.append(f"{FLGreen}Bash:{CRst}         {ver}")
             else:
-                lines.append(f"{FLGreen}Bash:{CRst}         {FGray}(found){CRst}")
+                lines.append(f"{FLGreen}Bash:{CRst}         [found]")
             lines.append(f"              {FGray}{bash}{CRst}")
         else:
-            lines.append(f"{FLGreen}Bash:{CRst}         {FLRed}(not found){CRst}")
+            lines.append(f"{FLGreen}Bash:{CRst}         {FLRed}[not found]{CRst}")
 
         print()
         for line in lines:
