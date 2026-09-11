@@ -22,7 +22,7 @@ from .ansi import *
 from .cmd_check import CmdCheck
 from .console import Console
 from .environment import Environment
-from .system import System
+from .system import LinuxGui, System
 from .paths import Paths
 from .input import Input
 from .cursor import Cursor
@@ -45,6 +45,6 @@ __all__ = [
     "CCursorSave", "CCursorRestore", "CCursorHide", "CCursorShow",
     "CEraseDisplay", "CEraseDisplayToEnd", "CEraseDisplayToStart",
     "CEraseDisplayAllScroll", "CEraseLine", "CEraseLineToEnd",
-    "CEraseLineToStart", "CmdCheck", "Console", "Environment", "System",
-    "Paths", "Input", "Cursor", "MenuOption", "Menu",
+    "CEraseLineToStart", "CmdCheck", "Console", "Environment", "LinuxGui",
+    "System", "Paths", "Input", "Cursor", "MenuOption", "Menu",
 ]

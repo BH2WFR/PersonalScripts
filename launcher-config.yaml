@@ -60,16 +60,18 @@ ignore-list:
         - "BUILD/"
         - "INSTALL/"
     platform-specific:
+        # 规范：windows, linux, macos
         windows:
             - "macos/"
             - "linux/"
             - "filesystem/batch-add-chmod-x.sh"
+            - "filesystem/remove-quarantine.py"
         linux:
             - "windows/"
             - "macos/"
             - "filesystem/link-fix-to-symlinkd-windows.py"
             - "filesystem/git-batch-add-chmod-x.ps1"
-            - "keyboard-hook-viewer.py" # only for windows / macos (linux x11 is reserved, linux Wayland is not supported)
+            - "filesystem/remove-quarantine.py"
         macos:
             - "windows/"
             - "linux/"
@@ -80,11 +82,19 @@ ignore-list:
         x86_64:
             macos:
                 - "macos/screen-utils.py"
-    no-gui:
-        linux:
-            - "" # 暂时留空
+    linux-gui-specific:
+        # 规范：no-gui, wayland, x11
+        no-gui:
+            - "keyboard-hook-viewer.py"
+            - "document-processing/document-screenshot.py"
+        wayland:
+            - "keyboard-hook-viewer.py"
+            - "document-processing/document-screenshot.py"
+        x11:
+            # - "keyboard-hook-viewer.py"
 
 extra-env-paths:
+    # 规范：all-platforms, windows, linux, macos
     all-platforms:
         - "./deps/python"
         - "./deps/bin"

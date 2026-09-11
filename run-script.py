@@ -4,14 +4,15 @@
 The primary script directory, optional additional-directory environment
 variable, display highlighting, supported script types, and Gitignore-style
 exclusions are defined in ``launcher-config.yaml``. Exclusions can depend on
-the operating system, normalized processor architecture, and Linux GUI
-availability. Existing configured dependency directories are prepended to
+the operating system, normalized processor architecture, and Linux display
+environment. Existing configured dependency directories are prepended to
 ``PATH`` for launched tools. Bare script names are matched recursively;
 multiple eligible matches are presented as a numbered selection before the
 original arguments are passed through. An optional
 ``launcher-config.patch.yaml`` overrides personal settings only when present.
-Normal startup displays resolved environment paths without starting external
-tools for version discovery; ``--env-info`` enables those slower probes.
+Normal startup displays resolved environment paths and, on Linux, the detected
+display environment without starting external tools for version discovery;
+``--env-info`` enables those slower probes.
 Python targets use the Conda environment selected by a leading ``--env=NAME``,
 then ``ZL_CONDA_ENV``, and finally ``base``. The launcher itself remains in its
 bootstrap environment.
@@ -158,11 +159,6 @@ def _architecture_key() -> str:
     """Return a stable configuration key for the current processor architecture."""
     machine = platform.machine().strip().lower().replace("-", "_")
     return ARCHITECTURE_ALIASES.get(machine, machine)
-
-
-def _linux_has_gui() -> bool:
-    """Return whether this Linux process can access an X11 or Wayland display."""
-    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def _read_pattern_list(value: object, yaml_key: str) -> list[str]:
@@ -436,9 +432,9 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         ignore_list.get("arch-specific", {}),
         "ignore-list.arch-specific",
     )
-    no_gui_rules = _read_mapping(
-        ignore_list.get("no-gui", {}),
-        "ignore-list.no-gui",
+    linux_gui_rules = _read_mapping(
+        ignore_list.get("linux-gui-specific", {}),
+        "ignore-list.linux-gui-specific",
     )
 
     platform_key = _platform_key()
@@ -462,11 +458,13 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
             )
         )
 
-        if platform_key == "linux" and not _linux_has_gui():
+        if platform_key == "linux":
+            linux_gui_key = System.get_linux_gui()
+            assert linux_gui_key is not None
             patterns.extend(
                 _read_pattern_list(
-                    no_gui_rules.get("linux"),
-                    "ignore-list.no-gui.linux",
+                    linux_gui_rules.get(linux_gui_key),
+                    f"ignore-list.linux-gui-specific.{linux_gui_key}",
                 )
             )
 
@@ -1233,9 +1231,9 @@ def _print_help(config: _LauncherConfig) -> None:
   shown as a numbered selection before arguments are passed through. When the
   configured Test group is enabled, its scripts participate in the same lookup.
   Ignore rules can depend on the OS, normalized processor architecture, and
-  whether Linux has an X11 or Wayland display. Existing dependency directories
-  configured under extra-env-paths are prepended to PATH without warnings for
-  missing directories.
+  whether Linux uses X11, Wayland, or no GUI; this detected value is also shown
+  at startup. Existing dependency directories configured under extra-env-paths
+  are prepended to PATH without warnings for missing directories.
 
 {FLYellow}Options:{CRst}
   {FLCyan}--list{CRst}                   List scripts and exit.

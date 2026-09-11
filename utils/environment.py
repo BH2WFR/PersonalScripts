@@ -8,7 +8,7 @@ import typing
 
 from .ansi import *
 from .cmd_check import CmdCheck
-from .system import System
+from .system import LinuxGui, System
 
 
 class Environment:
@@ -81,7 +81,7 @@ class Environment:
 
     @staticmethod
     def print_env_info(*, probe_versions: bool = True) -> None:
-        """Print Conda, Python, operating-system, and shell information.
+        """Print Conda, Python, operating-system, display, and shell information.
 
         Args:
             probe_versions: Whether to start external Conda, PowerShell, and
@@ -96,6 +96,13 @@ class Environment:
 
         lines.append(f"{FLYellow}OS:{CRst}           {System.get_os_name()}")
         lines.append(f"{FLYellow}Arch:{CRst}         {FGray}{System.get_arch()}{CRst}")
+        linux_gui = System.get_linux_gui()
+        if linux_gui is not None:
+            gui_color = FLRed if linux_gui is LinuxGui.NO_GUI else FGray
+            lines.append(
+                f"{FLCyan}Linux GUI:{CRst}    "
+                f"{gui_color}{linux_gui.value}{CRst}"
+            )
 
         lines.append(f"{FLCyan}Python:{CRst}       {sys.version.split()[0]}")
         lines.append(f"              {FGray}{sys.executable}{CRst}")

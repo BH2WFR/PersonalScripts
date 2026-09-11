@@ -1,5 +1,7 @@
 -r requirements.txt
 
+#* FOR INTERNAL USE ONLY, DO NOT INSTALL THESE PACKAGES UNLESS YOU KNOW WHAT YOU ARE DOING
+
 # Standalone executable builders used by compile-script.py
 Nuitka
 PyInstaller

@@ -10,8 +10,17 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from enum import StrEnum
 
 from .ansi import *
+
+
+class LinuxGui(StrEnum):
+    """Linux display environments recognized by the launcher."""
+
+    NO_GUI = "no-gui"
+    X11 = "x11"
+    WAYLAND = "wayland"
 
 
 class System:
@@ -49,10 +58,29 @@ class System:
         return sys.platform
 
     @staticmethod
+    def get_linux_gui() -> LinuxGui | None:
+        """Return the Linux display environment inferred from process variables.
+
+        Returns:
+            The detected Wayland, X11, or headless environment on Linux;
+            ``None`` on other operating systems. Wayland takes precedence when
+            both display variables are present.
+        """
+        if sys.platform != "linux":
+            return None
+        if os.environ.get("WAYLAND_DISPLAY"):
+            return LinuxGui.WAYLAND
+        if os.environ.get("DISPLAY"):
+            return LinuxGui.X11
+        return LinuxGui.NO_GUI
+
+    @staticmethod
     def is_headless() -> bool:
         """Return True if the environment likely has no GUI/display available."""
         if sys.platform == "darwin":
             return False
+        if sys.platform == "linux":
+            return System.get_linux_gui() is LinuxGui.NO_GUI
         if sys.platform != "win32":
             return not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
         return False

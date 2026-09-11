@@ -259,7 +259,7 @@ Canonical implementations live there; do not add implementations to the
 | Re-execute as admin (force) | `System.restart_elevated()` — never returns on success; reports why elevation could not start |
 | Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` |
 | Check if a CLI tool is in PATH | `Environment.check_commands(*CmdCheck)` or `Environment.which(name)` |
-| OS name / arch / hostname | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()` |
+| OS name / arch / hostname / Linux GUI | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()`, `System.get_linux_gui() -> LinuxGui \| None` |
 | Print a box-drawing banner | `Console.print_banner("TITLE")` |
 | Print a horizontal separator | `Console.print_separator(width=..., color_ansi_esc=...)` |
 | Resolve an ANSI color constant name | `Console.resolve_ansi_color("FLYellow")` |
@@ -808,7 +808,6 @@ module docstring, run `--help`, or read the README.
 ├── BUILD/                 # Compiled executables (GITIGNORED)
 ├── requirements.txt       # Launcher and ordinary tool dependencies
 ├── requirements-research.txt
-├── requirements-optional.txt
 ├── README.md              # English documentation
 ├── README_zh.md           # Chinese documentation
 └── CLAUDE.md              # This file

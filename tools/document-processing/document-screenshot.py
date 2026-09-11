@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#* 文档（PDF）自动截图工具，适用于没有 DRM 保护的 PDF 文档，或已解密的 PDF 文档。
+#* 文档（PDF）自动截图工具，适用于有 DRM 保护或加密 U 盘中的 PDF 文档
 # 原理：通过发送 `PgDn` 键翻页，配合鼠标点击激活窗口，自动截图并保存到指定文件夹。
 # 依赖库：mss、pynput、Pillow
 
@@ -37,9 +37,10 @@ def main() -> int:
       and auto-saving screenshots to a folder.
 
     {FLYellow}Requirements:{CRst}
-      macOS only (uses osascript for window activation).
+      Windows, macOS, or Linux with X11. Wayland and headless sessions are not
+      supported.
       Python: {FGray}pip install mss pynput Pillow{CRst}
-      Startup waits for Accessibility, Screen Recording, and the macOS
+      On macOS, startup waits for Accessibility, Screen Recording, and the
       direct-screen-capture confirmation before enabling input control.
     """)
         return 0
