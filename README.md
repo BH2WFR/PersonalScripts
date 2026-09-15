@@ -8,33 +8,38 @@
 
 **A collection of cross-platform utility scripts for personal use**, covering PDF processing, file links, video downloads, system tools, and more.
 
-**Highlights** (see [Script List](#script-list) for the complete list):
+**Highlights** (see [Script List](#script-list) for the complete list; bold entries are key features):
 
 > - **Research**
 >   - Interactive `.npy`/`.npz` viewer with line charts, heatmaps, 3D surfaces, and other visualizations
+>   - Batch image cropping tool
 > - **Windows**
->   - Clear all Windows event logs in batches
->   - Remove Android USB tethering records to stop local connection numbers from increasing each time USB tethering is enabled
+>   - **One-click Windows event log clearing tool**
+>   - **Android USB tethering history cleaner**, which stops local connection numbers from increasing each time USB tethering is enabled
 >   - Force-restart `Windows Audio` or other system services, which can temporarily fix audio redirection failures in RDP sessions
->   - Force-**empty the Recycle Bin** to remove undeletable 0 KB items sometimes left behind by OneDrive
->   - Add every `.exe`/`.com` file under a directory to Windows Firewall blocking rules
->   - Register an application as an Open With handler for specified file extensions
+>   - Force-**empty the Recycle Bin** to remove undeletable 0 KB items sometimes left there after deleting OneDrive files
+>   - **Add every `.exe`/`.com` file under a specified directory to Windows Firewall blocking rules**
+>   - Toolset for registering applications as Open With handlers for specified file extensions
 >   - Wrap any Python script in a CMD launcher suitable for use as a file association
 > - **macOS**
->   - NTFS **read-write mounting tool** based on ntfs-3g-mac
->   - Display utilities for disabling a MacBook's built-in screen while an external display is connected, rotating displays, and adjusting external-display brightness
+>   - **NTFS read-write mounting tool** based on ntfs-3g-mac
+>   - Display utilities for **disabling a MacBook's built-in screen while an external display is connected**, rotating displays, and adjusting external-display brightness
 >   - Wrap any Python script as a `.app` suitable for use as a file association
 > - **File system**
->   - Create symbolic links and hard links, and recursively inspect links in a directory
+>   - **Symbolic-link tools** for creating symbolic or hard links and recursively inspecting links in a directory
 >   - Repair Windows file symlinks that incorrectly point to directories by converting them to directory symlinks (SYMLINKD)
->   - Modify file timestamps in batches, with backup, restore, and random jitter support
->   - Truncate overlong filenames in batches while preserving extensions
->   - Calculate file hashes in batches
+>   - **Batch file timestamp editor** with timestamp backup and restore, plus per-file random jitter during modification
+>   - **Batch truncation of overlong filenames** while preserving extensions
+>   - **Batch file hash calculation**
 > - **Document tools**
 >   - PDF decryption and editing-restriction removal
->   - PDF table-of-contents (bookmark) injection
->   - PDF compression
->   - Save documents that cannot be downloaded or are stored on encrypted media by automatically turning pages and taking screenshots
+>   - **PDF table-of-contents (bookmark) injector** that uses a vision LLM to read a book's table of contents and adds the resulting entries to the PDF
+>   - PDF compression using Ghostscript
+>   - **Automated document screenshot tool** that extracts documents unavailable for download or stored on encrypted media by automatically turning pages and taking screenshots
+> - **Video tools**
+>   - Bilibili video downloader based on BBDown
+>   - Web video downloader based on yt-dlp, including m3u8 streams
+>   - Video time-trimming tool based on FFmpeg
 > - Unicode character inspector
 > - Global keyboard and mouse hook tester
 
