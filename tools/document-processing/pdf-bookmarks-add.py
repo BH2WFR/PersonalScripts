@@ -33,13 +33,18 @@ Output one valid JSON array in the following format. Put each complete table-of-
 
 ```json
 [
+{"page": 1, "level": 1, "index": "", "title": "Preface"},
+{"page": 3, "level": 1, "index": "Chapter 1", "title": "Discipline Overview"},
+{"page": 3, "level": 2, "index": "1.1", "title": "Historical Development"},
+{"page": 3, "level": 3, "index": "1.1.1", "title": "1920-1950: Emergence"},
+{"page": 7, "level": 3, "index": "1.1.2", "title": "1950-2000: Growth"},
+{"page": 10, "level": 2, "index": "1.2", "title": "Basic Concepts"},
 {"page": 10, "level": 3, "index": "1.2.1", "title": "Politics"},
-{"page": 12, "level": 3, "index": "1.2.2", "title": "State"},
-{"page": 14, "level": 3, "index": "1.2.3", "title": "Government"},
-{"page": 16, "level": 2, "index": "1.3", "title": "Research Methods"},
-{"page": 16, "level": 3, "index": "1.3.1", "title": "Qualitative Analysis"},
-{"page": 18, "level": 3, "index": "1.3.2", "title": "Quantitative Analysis"},
-{"page": 20, "level": 1, "index": "Chapter 2", "title": "Camera Calibration and Imaging Model"}
+{"page": 20, "level": 1, "index": "Chapter 2", "title": "Camera Calibration and Imaging Model"},
+{"page": 20, "level": 2, "index": "2.1", "title": "Camera Calibration Parameters"},
+{"page": 20, "level": 3, "index": "2.1.1", "title": "Intrinsic Parameters"},
+{"page": 100, "level": 1, "index": "", "title": "Afterword"},
+{"page": 102, "level": 1, "index": "", "title": "References"}
 ]
 ```
 
