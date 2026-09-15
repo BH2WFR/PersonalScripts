@@ -31,11 +31,15 @@
 >   - **Batch file timestamp editor** with timestamp backup and restore, plus per-file random jitter during modification
 >   - **Batch truncation of overlong filenames** while preserving extensions
 >   - **Batch file hash calculation**
+>   - Recursive cleanup tool for files such as `Thumbs.db` and `.DS_Store`
 > - **Document tools**
 >   - PDF decryption and editing-restriction removal
 >   - **PDF table-of-contents (bookmark) injector** that uses a vision LLM to read a book's table of contents and adds the resulting entries to the PDF
 >   - PDF compression using Ghostscript
 >   - **Automated document screenshot tool** that extracts documents unavailable for download or stored on encrypted media by automatically turning pages and taking screenshots
+> - **Network tools**
+>   - **Interactive manual rclone synchronization tool** with reusable profile support
+>   - Tool for serving a local website project containing `index.html` as a web service
 > - **Video tools**
 >   - Bilibili video downloader based on BBDown
 >   - Web video downloader based on yt-dlp, including m3u8 streams
@@ -285,7 +289,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
 | `tools/windows/show-screen-resolution.py` | Windows-only **screen resolution/scaling viewer:**<br />Shows the remote computer's current resolution and scaling in RDP sessions, where this information is unavailable in Windows Settings. | **Windows only** |
-| `tools/macos/screen-utils.py` | Display management tool for Apple Silicon Macs: rotation, resolution, built-in and external-display brightness via DDC/CI, color-mode diagnostics, and forced RGB-output overrides for external displays.<br />**Highlight:** When a MacBook is connected to an external display, toggle its built-in screen with one command (`--toggle-built-in`). Also supports rotating display orientation and changing external-display brightness. | **macOS only** (Apple Silicon)<br />**Optional Python pkg:** `pyobjc-framework-Cocoa` |
+| `tools/macos/screen-utils.py` | Display management tool for Apple Silicon Macs: rotation, resolution, built-in and external-display brightness via DDC/CI, color-mode diagnostics, and forced RGB-output overrides for external displays.<br />**Highlight:** When a MacBook is connected to an external display, toggle its built-in screen with one command (`--toggle-built-in`). Also supports rotating display orientation and changing external-display brightness.<br />Verified working on macOS 26.x Tahoe. Because it uses private macOS APIs, compatibility with other macOS versions is not guaranteed. | **macOS only** (Apple Silicon)<br />**Optional Python pkg:** `pyobjc-framework-Cocoa` |
 
 ### Privacy and Cleanup
 
