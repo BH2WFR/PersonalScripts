@@ -246,6 +246,37 @@ class ExecutionTests(unittest.TestCase):
                 patch("builtins.input", side_effect=EOFError), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(runner.main(), 0)
 
+    def test_execution_separator_follows_confirmation_and_precedes_execution(self) -> None:
+        self.config.write_text(yaml.safe_dump(schema({"run": code_run()})), encoding="utf-8")
+        for flags, answer, expected in (
+            ([], "y", ["confirm", "separator", "execute"]),
+            ([], "n", ["confirm"]),
+            ([], "", ["confirm"]),
+            (["--yes"], "n", ["separator", "execute"]),
+            (["--dry-run"], "y", []),
+        ):
+            events: list[str] = []
+
+            def confirm(prompt: str) -> str:
+                self.assertIn("Execute?", prompt)
+                events.append("confirm")
+                return answer
+
+            def execute(plan: object) -> int:
+                events.append("execute")
+                return 0
+
+            with self.subTest(flags=flags, answer=answer), \
+                    patch.object(runner.sys, "argv", [str(RUNNER), "--schema-file", str(self.config),
+                                                     "--task", "examples/test", *flags]), \
+                    patch.object(runner.Console, "has_interactive_input", return_value=True), \
+                    patch.object(runner.Input, "prompt", side_effect=confirm), \
+                    patch.object(runner.Console, "print_separator", side_effect=lambda: events.append("separator")), \
+                    patch.object(runner, "_execute", side_effect=execute), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(runner.main(), 0)
+                self.assertEqual(events, expected)
+
     def test_default_cwd_is_literal_not_a_template(self) -> None:
         literal_cwd = self.work / "${UNDEFINED_CWD_VARIABLE}"
         literal_cwd.mkdir()

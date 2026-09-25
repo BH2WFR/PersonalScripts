@@ -746,6 +746,7 @@ def main() -> int:
                 raise ValueError("Non-interactive execution requires --yes")
             if Input.prompt(f"{FLYellow}Execute? [y/N] {CRst}").lower() != "y":
                 return 0
+        Console.print_separator()
         sys.stdout.flush()
         code = _execute(plan)
         print(f"{FLGreen if code == 0 else FLRed}Process exited with code {code}.{CRst}")
