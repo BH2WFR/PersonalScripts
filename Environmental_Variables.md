@@ -12,11 +12,14 @@ This project uses the following project-specific environment variables.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `ZL_RCLONE_SYNC_SCHEMA_FILE` | No | Overrides the YAML schema path. The default is `tools/network/rclone-sync-default-schema.yaml`. |
+| `ZL_RCLONE_SYNC_SCHEMA_FILE` | With `--task`, unless `--schema-file` is supplied | Selects the actual YAML configuration; `--schema-file` takes precedence. Interactive startup prompts for a path if neither is set. There is no bundled default configuration. |
 | `ZL_RCLONE_CONFIG_PASSWORD` | Only for encrypted configurations | Supplies the password for an encrypted rclone configuration. |
 
 Paths in the rclone YAML schema may also reference ordinary system environment
 variables.
+
+`tools/network/rclone-sync-schema-sample.yaml` is detailed configuration
+documentation for agents and users, not a runtime configuration or fallback.
 
 ## `tools/network/upload-ipaddress.py`
 

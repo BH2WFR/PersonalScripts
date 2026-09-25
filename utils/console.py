@@ -10,6 +10,31 @@ from .ansi import *
 
 class Console:
     @staticmethod
+    def has_interactive_input() -> bool:
+        """Return whether stdin can receive interactive terminal input.
+
+        Windows NUL can report isatty() == True, so verify the underlying
+        console handle as well. Redirected, closed, or missing stdin is false.
+        This performs no reads and does not change terminal state.
+        """
+        if sys.stdin is None or sys.stdin.closed or not sys.stdin.isatty():
+            return False
+        if os.name != "nt":
+            return True
+        import ctypes
+        import msvcrt
+
+        try:
+            handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+            mode = ctypes.c_ulong()
+            get_mode = ctypes.windll.kernel32.GetConsoleMode
+            get_mode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+            get_mode.restype = ctypes.c_int
+            return bool(get_mode(ctypes.c_void_p(handle), ctypes.byref(mode)))
+        except (OSError, ValueError):
+            return False
+
+    @staticmethod
     def format_size(size_bytes: typing.Union[int, float], precision: int = 1) -> str:
         """Format a byte count using binary units from B through PB."""
         if size_bytes < 0:

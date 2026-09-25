@@ -270,10 +270,19 @@ Canonical implementations live there; do not add implementations to the
 | Open a file in the default app | `System.open_with_default_app(path)` |
 | Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |
 | Resolve `$VAR` / `{{placeholders}}` in paths | `Paths.resolve_vars(path, schema_dir=..., script_dir=...)` |
+| Resolve a path against an explicit base directory | `Paths.resolve_path(path, base_dir, expand_environment=True, resolve_symlinks=False) -> str`; native variable expansion preserves undefined references, False avoids re-expanding literal/template results |
+| Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |
 | DPI awareness (Windows) | `System.enable_dpi_awareness()` |
 | Find bash / pwsh / conda | `Environment.find_bash()`, `Environment.find_pwsh()`, `Environment.find_conda()` |
+| Discover a strict runtime and verify its version | `Environment.resolve_runtime(RuntimeKind, executable=..., environment=..., cwd=...) -> tuple[str, str]`; `runtime_candidates(kind, environment, cwd=...)` discovers paths without probes; relative PATH uses cwd, launch paths preserve symlinks |
+| Find a program using a child environment | `Environment.which(name, environment=..., cwd=...) -> str \| None`; explicit PATH/PATHEXT search relative to cwd, absolute result preserves symlinks; no options retains native shutil.which behavior |
+| Expand templates using an explicit environment | `Paths.expand_template(text, environment, placeholders)`; one pass, undefined references are errors |
+| Resolve dependent child environment values | `Paths.resolve_environment(inherited, overrides, literals, placeholders)`; cycles rejected, literal inputs win, self-reference reads inherited value |
 | Conda environment name | `Environment.get_conda_env() -> Optional[str]` |
+| Resolve a named Conda environment's Python | `Environment.resolve_conda_python(env_name, timeout=15) -> str`; current-environment fast path, otherwise Conda JSON discovery with ambiguity/existence checks; resolves only, does not activate |
+| Prepend literal directories to this process's PATH | `Environment.prepend_path(paths)`; preserves order and the previous PATH, no expansion/deduplication, no trailing empty entry for unset/empty PATH |
 | Terminal width / CJK display width | `Console.get_terminal_width()`, `Console.display_width(s)` |
+| Detect interactive stdin (including Windows NUL) | `Console.has_interactive_input() -> bool` |
 | Human-readable byte size | `Console.format_size(size_bytes, precision=1)` |
 | Headless detection | `System.is_headless()` |
 | macOS Accessibility permission | `System.check_macos_accessibility_permission(prompt=...)` |
@@ -768,9 +777,27 @@ ALL of these** so they stay consistent:
    category table.
 4. **[README_zh.md](README_zh.md)** — Chinese. Same as above.
 
-These four places describe the same script; they must not drift apart. A reader
-should get the same dependency list and usage examples whether they look at the
-module docstring, run `--help`, or read the README.
+These four places must agree on the script's purpose and requirements, but
+their level of detail differs. Keep detailed usage examples, options, and
+technical behavior in the module docstring, `--help`, or example configuration,
+not in the README.
+
+### README scope and Highlights ownership
+
+- **`README.md` and `README_zh.md` are quick overviews for first-time users.
+  They are not technical documentation or API documentation.**
+- Introduce each script **only in its category table**, using **no more than
+  two sentences** to describe its purpose and key highlights. Do not add
+  standalone detailed script explanations outside the table.
+- Do not include implementation details, API descriptions, special parameters,
+  or interaction details that do not help a new user understand what the script
+  does. Detailed command options, prompt/menu behavior, configuration precedence,
+  inheritance rules, and other technical specifics belong in script-level
+  documentation or example configuration files.
+- **The Highlights section in either language is authored exclusively by the
+  project owner.** Do not independently add, remove, rewrite, reorder, or polish
+  its content. Only translate owner-written content into the other language,
+  faithfully preserving the owner's wording, style, structure, and meaning.
 
 ## Directory layout
 

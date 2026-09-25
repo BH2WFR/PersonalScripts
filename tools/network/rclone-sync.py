@@ -2,11 +2,42 @@
 """Cross-platform rclone sync task runner driven by a YAML schema.
 
 Defines reusable sync tasks in YAML, filters sub-tasks by the current machine,
-shows source/destination modification times, and runs rclone with interactive
-direction selection for sync/copy/move and comparison-mode selection for
-sync/copy/move/bisync.  During rclone checks and transfers, Ctrl+C cancels the
-current operation and returns to the task menu instead of exiting the whole
-script.
+shows source/destination modification times, and offers push/pull sync, copy,
+move, bisync, and check actions for directories. File tasks offer only
+push-copy-file/pull-copy-file (copyto) and push-move-file/pull-move-file (moveto).
+The inherited path-type defaults to directory; allow-actions defaults to all
+supported actions, or accepts an exact allowlist replaced during inheritance.
+An explicit null or scalar all clears inherited action restrictions; all is not
+an action name and cannot appear in a list. Optional YAML
+preferred-mode puts matching actions first in yellow; otherwise directory push/pull or
+file copy actions are highlighted in the standard order. Comparison
+choices depend on the selected action. Empty operation/confirmation input retries;
+menus end with Q to return or quit. Task labels retain the group/task prefix;
+sub-task menus show this parent label, and later prompts append /sub-task.
+Alternative hosts show that full name in yellow. Operation paths use
+blue for local and green for remote.
+Final confirmation groups warnings, then shows
+the command and task summary before prompting with the action name in cyan.
+Move actions warn that source files will be deleted. Circular profile inheritance
+is rejected with its reference chain. During rclone checks and transfers, Ctrl+C
+cancels the current operation and returns to the task menu instead of exiting
+the whole script.
+File endpoints are checked before every transfer; no file check or bisync is
+provided. File tasks require full filenames on both sides, not parent directories.
+The inherited do-not-check-modified-time flag defaults to false; true skips
+the advisory time comparison without changing transfer comparisons or file guards.
+Missing endpoints show first-upload/download guidance, distinct from read errors.
+Directory time notices are advisory and do not guarantee individual file age.
+Optional max-delete-count limits sync deletions by count (-1 means unlimited);
+max-delete-percent independently limits bisync deletions by percentage (0..100).
+Re-runs reuse the selected command without repeating menus or advisory checks.
+Duplicate YAML keys are rejected with both definition locations. Task paths use
+strict, single-pass environment/placeholder expansion; undefined references stop
+the selected task before any path checks or transfers.
+The adjacent rclone-sync-schema-sample.yaml is detailed documentation for agents
+and users, never a default runtime configuration. Select a personal schema through
+--schema-file, ZL_RCLONE_SYNC_SCHEMA_FILE, or the interactive path prompt; --task
+requires one of the first two sources.
 
 Requirements:
     - pip: PyYAML
@@ -18,6 +49,9 @@ Usage:
     python rclone-sync.py --task "group/task-name"
     python rclone-sync.py --task "task-name" --sub-task "sub-name"
     python rclone-sync.py --task "group/task-name" --push --comparison checksum
+    python rclone-sync.py --task "group/task-name" --action pull-copy
+    python rclone-sync.py --task "group/file-task" --action pull-copy-file
+    python rclone-sync.py --task "group/task-name" --action bisync --resync
     python rclone-sync.py --dry-run
 """
 
@@ -31,7 +65,8 @@ import enum
 import json
 import re
 import datetime
-from typing import Optional, Any, Union, Set
+import stat
+from typing import Optional, Any, Union, Set, TextIO
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
@@ -44,7 +79,6 @@ from utils import *
 
 ENV_SCHEMA_FILE = "ZL_RCLONE_SYNC_SCHEMA_FILE"
 ENV_CONFIG_PASSWORD = "ZL_RCLONE_CONFIG_PASSWORD"
-DEFAULT_SCHEMA_FILE = os.path.join(SCRIPT_DIR, "rclone-sync-default-schema.yaml")
 UNGROUPED_KEY = "ungrouped"
 UNNAMED_TASK = "unnamed"
 DISPLAY_WIDTH = 60
@@ -62,6 +96,88 @@ _DIRECTIONAL_MODES = {"sync", "copy", "move"}  # modes where push/pull makes sen
 VALID_DIRECTIONS = {"push", "pull"}
 LIST_STRING_FIELDS = {"exclude", "additional-args", "alternative-remote-host"}
 STRING_OR_LIST_FIELDS = {"platform", "arch", "computer-name"}
+FILE_STAT_TIMEOUT = 15
+RCLONE_NOT_FOUND_CODES: set[int] = {3, 4}  # directory not found / file not found
+METADATA_FILTER_FLAGS: set[str] = {
+    "--exclude", "--exclude-from", "--exclude-if-present", "--include", "--include-from",
+    "--filter", "-f", "--filter-from", "--files-from", "--files-from-raw", "--files-from0",
+    "--hash-filter", "--max-age", "--min-age", "--max-size", "--min-size", "--max-depth",
+    "--metadata-exclude", "--metadata-exclude-from", "--metadata-include",
+    "--metadata-include-from", "--metadata-filter", "--metadata-filter-from",
+}
+
+
+class PathType(enum.StrEnum):
+    """Kind of both task endpoints; independent of local versus rclone storage."""
+
+    DIRECTORY = "directory"
+    FILE = "file"
+
+
+class PathState(enum.StrEnum):
+    """Result of inspecting an endpoint, independent of timestamp availability."""
+
+    PRESENT = "present"
+    MISSING = "missing"
+    UNKNOWN = "unknown"
+
+
+@dataclasses.dataclass(frozen=True)
+class PathInfo:
+    """Endpoint metadata used for advisory display and file safety checks.
+
+    Attributes:
+        state: Confirmed existence, confirmed absence, or a failed inspection.
+        path_type: File/directory when known; absent for an unreadable/missing path.
+        mtime: A timezone-aware timestamp, or None when omitted/unavailable.
+        detail: Non-secret diagnostic text for a failed inspection.
+    """
+
+    state: PathState
+    path_type: Optional[PathType] = None
+    mtime: Optional[datetime.datetime] = None
+    detail: str = ""
+
+
+class SyncAction(enum.StrEnum):
+    """User-facing operation, mapping to a command and optional direction."""
+
+    PUSH = "push"
+    PULL = "pull"
+    PUSH_COPY = "push-copy"
+    PULL_COPY = "pull-copy"
+    PUSH_MOVE = "push-move"
+    PULL_MOVE = "pull-move"
+    BISYNC = "bisync"
+    CHECK = "check"
+    PUSH_COPY_FILE = "push-copy-file"
+    PULL_COPY_FILE = "pull-copy-file"
+    PUSH_MOVE_FILE = "push-move-file"
+    PULL_MOVE_FILE = "pull-move-file"
+
+
+ACTION_COMMANDS: dict[SyncAction, tuple[str, Optional[str]]] = {
+    SyncAction.PUSH: ("sync", "push"),
+    SyncAction.PULL: ("sync", "pull"),
+    SyncAction.PUSH_COPY: ("copy", "push"),
+    SyncAction.PULL_COPY: ("copy", "pull"),
+    SyncAction.PUSH_MOVE: ("move", "push"),
+    SyncAction.PULL_MOVE: ("move", "pull"),
+    SyncAction.BISYNC: ("bisync", None),
+    SyncAction.CHECK: ("check", None),
+    SyncAction.PUSH_COPY_FILE: ("copy", "push"),
+    SyncAction.PULL_COPY_FILE: ("copy", "pull"),
+    SyncAction.PUSH_MOVE_FILE: ("move", "push"),
+    SyncAction.PULL_MOVE_FILE: ("move", "pull"),
+}
+FILE_ACTIONS: tuple[SyncAction, ...] = (
+    SyncAction.PUSH_COPY_FILE, SyncAction.PULL_COPY_FILE,
+    SyncAction.PUSH_MOVE_FILE, SyncAction.PULL_MOVE_FILE,
+)
+PATH_ACTIONS: dict[PathType, tuple[SyncAction, ...]] = {
+    PathType.FILE: FILE_ACTIONS,
+    PathType.DIRECTORY: tuple(action for action in SyncAction if action not in FILE_ACTIONS),
+}
 
 
 class ComparisonMode(enum.StrEnum):
@@ -86,11 +202,25 @@ COMPARISON_MENU_KEYS: dict[ComparisonMode, str] = {
     ComparisonMode.FORCE: "2",
     ComparisonMode.CHECKSUM: "3",
 }
+MODE_COMPARISONS: dict[str, tuple[ComparisonMode, ...]] = {
+    "sync": tuple(ComparisonMode),
+    "copy": tuple(ComparisonMode),
+    "move": tuple(ComparisonMode),
+    "bisync": (
+        ComparisonMode.SIZE_AND_TIME, ComparisonMode.SIZE_ONLY, ComparisonMode.CHECKSUM,
+    ),
+    "check": (ComparisonMode.SIZE_ONLY, ComparisonMode.CHECKSUM),
+}
+BISYNC_COMPARE_VALUES: dict[ComparisonMode, str] = {
+    ComparisonMode.SIZE_AND_TIME: "size,modtime",
+    ComparisonMode.SIZE_ONLY: "size",
+    ComparisonMode.CHECKSUM: "size,checksum",
+}
 
 # ================================================================
-# The default schema is at: <script-dir>/rclone-sync-default-schema.yaml
-# This file is stored alongside this script and is the fallback when
-# neither the environment variable nor CLI argument specifies a schema.
+# Schema reference: <script-dir>/rclone-sync-schema-sample.yaml
+# This agent-facing documentation is not a runtime configuration or fallback.
+# The actual schema is selected by CLI, environment variable, or user input.
 # ================================================================
 
 
@@ -127,6 +257,28 @@ class FieldDef:
         if self.check_type is not None and not isinstance(value, self.check_type):
             return f"{path}: '{self.yaml_key}' must be {self.check_type.__name__}"
 
+        if self.yaml_key == "inherit":
+            try:
+                _normalize_inherit(value)
+            except ValueError as exc:
+                return f"{path}: {exc}"
+            return None
+
+        if self.yaml_key == "preferred-mode" and isinstance(value, str) and not value.strip():
+            return None
+
+        if self.yaml_key == "allow-actions":
+            if value == "all":
+                return None
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                return f"{path}: 'allow-actions' must be null, 'all', or a list of action names"
+            for item in value:
+                if item == "all":
+                    return f"{path}: use 'allow-actions: all', not 'all' inside a list"
+                if item not in {action.value for action in SyncAction}:
+                    return f"{path}: unknown action '{item}' in 'allow-actions'"
+            return None
+
         # Fields that accept str or list[str] (OR semantics)
         if self.yaml_key in STRING_OR_LIST_FIELDS:
             if isinstance(value, list):
@@ -157,6 +309,10 @@ class FieldDef:
 
         if self.yaml_key == "transfer" and isinstance(value, int) and not (1 <= value <= 64):
             return f"{path}: 'transfer' must be in range 1..64"
+        if self.yaml_key == "max-delete-count" and isinstance(value, int) and value < -1:
+            return f"{path}: 'max-delete-count' must be -1 (unlimited) or a non-negative integer"
+        if self.yaml_key == "max-delete-percent" and isinstance(value, int) and not (0 <= value <= 100):
+            return f"{path}: 'max-delete-percent' must be in range 0..100"
         return None
 
     def is_non_default(self, value: Any) -> bool:
@@ -177,15 +333,15 @@ _FIELDS: list[FieldDef] = [
     FieldDef("name",              "name",               default="",          required=True),
     FieldDef("inherit",           "inherit_profile",    default=""),
     # mode & behaviour
-    FieldDef("mode",              "mode",               default="sync",      allowed=VALID_MODES),
+    FieldDef("preferred-mode",    "preferred_mode",     default="",          allowed=VALID_MODES | {""}, check_type=str),
+    FieldDef("path-type",         "path_type",          default=PathType.DIRECTORY, allowed=set(PathType), check_type=str),
+    FieldDef("allow-actions",     "allow_actions",      default=None),
     FieldDef("progress",          "progress",           default=True,        check_type=bool),
     FieldDef("transfer",          "transfer",           default=4,           check_type=int),
     FieldDef("links",             "links",              default=False,       check_type=bool),
     FieldDef("copy-links",        "copy_links",         default=False,       check_type=bool),
     FieldDef("follow-link",       "copy_links",         default=False,       check_type=bool),
     FieldDef("delete-excluded",   "delete_excluded",    default=False,       check_type=bool),
-    FieldDef("allow-push",        "allow_push",         default=True,        check_type=bool),
-    FieldDef("allow-pull",        "allow_pull",         default=True,        check_type=bool),
     # paths
     FieldDef("local-path",        "local_path",         default=""),
     FieldDef("remote-path",       "remote_path",        default=""),
@@ -205,7 +361,9 @@ _FIELDS: list[FieldDef] = [
     FieldDef("retries",           "retries",            default=3,           check_type=int),
     FieldDef("s3-no-check-bucket","s3_no_check_bucket", default=False,       check_type=bool),
     # safety
-    FieldDef("max-delete",        "max_delete",         default=None,        check_type=int),
+    FieldDef("do-not-check-modified-time", "do_not_check_modified_time", default=False, check_type=bool),
+    FieldDef("max-delete-count",  "max_delete_count",   default=None,        check_type=int),
+    FieldDef("max-delete-percent","max_delete_percent", default=None,       check_type=int),
     FieldDef("check-before-sync", "check_before_sync",  default=False,       allowed={False, True, "size-only"}),
     FieldDef("stop-on-check-failure", "stop_on_check_failure", default=False, check_type=bool),
     # logging & notification
@@ -236,44 +394,49 @@ for fd in _FIELDS:
 _STRUCTURAL_KEYS = {"sub-tasks"}
 
 
-def _normalize_inherit(value) -> list[str]:
+def _normalize_inherit(value: object) -> list[str]:
     """Normalize an inherit value (str or list) to a list of profile names."""
     if isinstance(value, list):
-        return [v for v in value if isinstance(v, str) and v]
-    if isinstance(value, str) and value:
-        return [value]
-    return []
+        if not all(isinstance(v, str) and v for v in value):
+            raise ValueError("'inherit' must contain only non-empty profile names")
+        return list(value)
+    if isinstance(value, str):
+        return [value] if value else []
+    if value is None:
+        return []
+    raise ValueError("'inherit' must be a profile name or a list of profile names")
 
 
-def _resolve_profile_chain(settings: dict, profile_name: str, visited: set[str], depth: int = 0) -> 'SyncTask':
+def _resolve_profile_chain(
+    settings: dict[str, Any],
+    profile_name: str,
+    chain: tuple[str, ...] = (),
+) -> 'SyncTask':
     """Recursively resolve a named profile, following its own ``inherit``.
 
     Returns a SyncTask with the profile's fields (and any profiles it
-    inherits) resolved.  *visited* prevents infinite recursion on cycles.
-    *depth* guards against excessive nesting.
+    inherits) resolved. Only names on the current *chain* count as a cycle;
+    shared ancestors are reapplied in list order. Raises ValueError for a
+    cycle, a missing profile, or nesting beyond MAX_INHERIT_DEPTH.
     """
-    if depth > MAX_INHERIT_DEPTH:
+    reference_chain = (*chain, profile_name)
+    if profile_name in chain:
+        raise ValueError(f"Circular profile inheritance: {' -> '.join(reference_chain)}")
+    if len(chain) > MAX_INHERIT_DEPTH:
         raise ValueError(
-            f"Profile inheritance depth exceeded (>{MAX_INHERIT_DEPTH}) at '{profile_name}' — "
+            f"Profile inheritance depth exceeded (>{MAX_INHERIT_DEPTH}): "
+            f"{' -> '.join(reference_chain)}; "
             f"check for circular or overly deep inherit chains in your YAML."
         )
-    if profile_name in visited:
-        return SyncTask()
-    visited.add(profile_name)
 
     profile = settings.get(profile_name)
     if not isinstance(profile, dict):
-        return SyncTask()
+        raise ValueError(f"Missing or invalid profile in chain: {' -> '.join(reference_chain)}")
 
     # 1. Resolve profiles that THIS profile inherits (base layer)
-    inh = profile.get("inherit")
     base = SyncTask()
-    if isinstance(inh, list):
-        for name in inh:
-            if isinstance(name, str):
-                base = base.merge(_resolve_profile_chain(settings, name, visited, depth + 1))
-    elif isinstance(inh, str) and inh:
-        base = base.merge(_resolve_profile_chain(settings, inh, visited, depth + 1))
+    for name in _normalize_inherit(profile.get("inherit")):
+        base = base.merge(_resolve_profile_chain(settings, name, reference_chain))
 
     # 2. Merge this profile's own fields on top
     return base.merge(SyncTask.from_dict(profile))
@@ -293,8 +456,11 @@ class SyncTask:
     to produce the rclone command line.
     """
     name:              str = ""
-    inherit_profile:   str = ""
-    mode:              str = "sync"
+    inherit_profile:   Union[str, list[str]] = ""
+    preferred_mode:    str = ""
+    mode:              str = ""  # Selected runtime command; not a YAML field.
+    path_type:         PathType = PathType.DIRECTORY
+    allow_actions:     Optional[list[SyncAction]] = None
     progress:          bool = True
     transfer:          int = 4
     links:             bool = False
@@ -310,13 +476,13 @@ class SyncTask:
     retries:           int = 3
     s3_no_check_bucket: bool = False
     delete_excluded:   bool = False
-    allow_push:        bool = True
-    allow_pull:        bool = True
     local_path:        str = ""
     remote_path:       str = ""
     remote_path_type:  str = "auto"
     backup_dir:        str = ""
-    max_delete:        Optional[int] = None
+    do_not_check_modified_time: bool = False
+    max_delete_count:  Optional[int] = None
+    max_delete_percent: Optional[int] = None
     check_before_sync: Union[bool, str] = False
     stop_on_check_failure: bool = False
     log_file:          str = ""
@@ -347,7 +513,18 @@ class SyncTask:
             if yk in _STRUCTURAL_KEYS:
                 continue
             attr = _YAML_TO_ATTR.get(yk)
-            if attr is not None and val is not None:
+            if yk in {"path-type", "allow-actions"}:
+                error = _validate_field_in_dict(yk, val, "task")
+                if error:
+                    raise ValueError(error)
+                if yk == "path-type":
+                    val = PathType(val)
+                else:
+                    val = None if val is None or val == "all" else [SyncAction(item) for item in val]
+            if yk == "preferred-mode" and (val is None or isinstance(val, str) and not val.strip()):
+                # An explicit empty mode clears an inherited menu preference.
+                val = ""
+            if attr is not None and (val is not None or yk == "allow-actions"):
                 kwargs[attr] = val
                 explicit_fields.add(attr)
 
@@ -373,17 +550,11 @@ class SyncTask:
         # 1. global default
         defaults = settings.get("default")
         if isinstance(defaults, dict):
-            result = result.merge(cls.from_dict(defaults))
+            result = result.merge(_resolve_profile_chain(settings, "default"))
 
         # 2. named profile(s) (inherit) — resolved recursively
-        inh = task_dict.get("inherit")
-        if isinstance(inh, list):
-            visited: set[str] = set()
-            for profile_name in inh:
-                if isinstance(profile_name, str):
-                    result = result.merge(_resolve_profile_chain(settings, profile_name, visited))
-        elif isinstance(inh, str) and inh:
-            result = result.merge(_resolve_profile_chain(settings, inh, set()))
+        for profile_name in _normalize_inherit(task_dict.get("inherit")):
+            result = result.merge(_resolve_profile_chain(settings, profile_name))
 
         # 3. task itself (preserve sub-tasks for later filtering)
         task_only = {k: v for k, v in task_dict.items() if k != "sub-tasks"}
@@ -392,7 +563,7 @@ class SyncTask:
     # ---- inheritance merge ----
 
     def resolve_profiles(self, settings: dict) -> 'SyncTask':
-        """Apply named profiles from ``inherit_profile`` on top of this task.
+        """Resolve named profiles, then apply this task's explicit fields.
 
         Does NOT apply ``default`` — only profiles named in this task's
         ``inherit`` field.  Profiles are resolved recursively (a profile
@@ -401,11 +572,10 @@ class SyncTask:
         profiles = _normalize_inherit(self.inherit_profile)
         if not profiles:
             return self
-        result = copy.deepcopy(self)
-        visited: set[str] = set()
+        result = SyncTask()
         for name in profiles:
-            result = result.merge(_resolve_profile_chain(settings, name, visited))
-        return result
+            result = result.merge(_resolve_profile_chain(settings, name))
+        return result.merge(self)
 
     def merge(self, override: 'SyncTask') -> 'SyncTask':
         """Return a new SyncTask with non-default fields from *override* layered on top."""
@@ -458,8 +628,13 @@ class SyncTask:
             errors.append(f"{path}: 'name' is required")
         if self.links and self.copy_links:
             errors.append(f"{path}: 'links' and 'copy-links' cannot both be true")
-        if not self.allow_push and not self.allow_pull:
-            errors.append(f"{path}: at least one of 'allow-push' or 'allow-pull' must be true")
+        if self.path_type == PathType.FILE:
+            if self.preferred_mode not in {"", "copy", "move"}:
+                errors.append(f"{path}: file tasks only support a copy/move menu preference")
+            if self.mode not in {"", "copy", "move"}:
+                errors.append(f"{path}: file tasks only support copy/move commands")
+            if self.check_before_sync:
+                errors.append(f"{path}: 'check-before-sync' is not supported for file tasks")
 
         if not is_subtask:
             for j, st in enumerate(self.sub_tasks or []):
@@ -530,36 +705,43 @@ class SyncTask:
     # ---- path resolution ----
 
     def resolve_paths(self, schema_dir: str, script_dir: str) -> None:
-        """Resolve ``${VAR}`` / ``{{schema_dir}}`` / ``{{script_dir}}`` /
-        ``{{current_dir}}`` in all path-type fields in-place."""
+        """Expand all task paths once, applying changes only if every path is valid.
+
+        Args:
+            schema_dir: Directory containing the selected YAML schema.
+            script_dir: Directory containing this script.
+
+        Raises:
+            ValueError: A referenced environment variable or placeholder is
+                undefined. The message identifies the YAML field.
+
+        Side effects:
+            Updates path fields in-place after successful validation. Supports
+            $VAR, ${VAR}, %VAR%, $ENV:VAR, ${ENV:VAR}, and the schema_dir,
+            script_dir, current_dir placeholders. Substituted values stay literal;
+            leading ~ is expanded, but remote/UNC and relative paths stay intact.
+        """
+        placeholders = {
+            "schema_dir": schema_dir, "script_dir": script_dir,
+            "current_dir": os.getcwd(),
+        }
+        resolved: dict[str, str] = {}
         for attr in ("local_path", "remote_path", "backup_dir", "log_file"):
             val = getattr(self, attr)
             if val:
-                setattr(self, attr, Paths.resolve_vars(val, schema_dir=schema_dir, script_dir=script_dir))
-
-    def find_unresolved_path_vars(self) -> list[str]:
-        """Return path fields that still contain unresolved variable syntax."""
-        errors: list[str] = []
-        patterns = (
-            re.compile(r"\$\{[^}]+\}"),
-            re.compile(r"\$ENV:[A-Za-z_][A-Za-z0-9_]*"),
-            re.compile(r"%[A-Za-z_][A-Za-z0-9_]*%"),
-            re.compile(r"\{\{(?:schema_dir|script_dir|current_dir)\}\}"),
-        )
-        for attr in ("local_path", "remote_path", "backup_dir", "log_file"):
-            val = getattr(self, attr)
-            if not val:
-                continue
-            if any(p.search(val) for p in patterns):
-                errors.append(f"{attr.replace('_', '-')}: unresolved variable in '{val}'")
-        return errors
+                try:
+                    resolved[attr] = os.path.expanduser(Paths.expand_template(val, os.environ, placeholders))
+                except ValueError as exc:
+                    raise ValueError(f"{attr.replace('_', '-')}: {exc}") from exc
+        for attr, val in resolved.items():
+            setattr(self, attr, val)
 
     # ---- rclone command building ----
 
     def source_dest(self, direction: str = "push") -> tuple[str, str]:
         """Return source/destination paths after applying the requested direction."""
         src, dst = self.local_path, self.remote_path
-        if direction == "pull" and self.mode in _DIRECTIONAL_MODES:
+        if direction == "pull" and (self.mode or self.preferred_mode or "sync") in _DIRECTIONAL_MODES:
             src, dst = dst, src
         return src, dst
 
@@ -590,7 +772,12 @@ class SyncTask:
         comparison: Optional[ComparisonMode] = None,
     ) -> None:
         """Append comparison, bandwidth, retry, and related transfer flags."""
-        if is_data:
+        if self.mode == "check":
+            if comparison is ComparisonMode.SIZE_ONLY or (comparison is None and self.size_only):
+                cmd.append("--size-only")
+        elif self.mode == "bisync" and comparison is not None:
+            cmd.extend(["--compare", BISYNC_COMPARE_VALUES[comparison]])
+        elif is_data:
             if comparison is None:
                 if self.ignore_times:
                     cmd.append("--ignore-times")
@@ -604,7 +791,11 @@ class SyncTask:
                 cmd.append("--size-only")
             if comparison is None and self.size_only:
                 cmd.append("--size-only")
-            if comparison in (None, ComparisonMode.SIZE_AND_TIME) and self.update:
+        if is_data:
+            if (
+                self.mode in _DIRECTIONAL_MODES
+                and comparison in (None, ComparisonMode.SIZE_AND_TIME) and self.update
+            ):
                 cmd.append("--update")
             if self.bwlimit:
                 cmd.extend(["--bwlimit", self.bwlimit])
@@ -625,16 +816,45 @@ class SyncTask:
         dry_run: bool = False,
         direction: str = "push",
         comparison: Optional[ComparisonMode] = None,
+        resync: bool = False,
     ) -> list[str]:
         """Build the rclone command line list for this task.
 
         *direction*: ``"push"`` (local→remote) or ``"pull"`` (remote→local).
         *comparison*: runtime comparison strategy; overrides configured
         ``--ignore-times``, ``--checksum``, and ``--size-only`` flags for this
-        invocation.  Only affects sync/copy/move/bisync modes.
+        invocation. Check supports size_only/checksum; bisync excludes force.
+        *resync*: explicitly initialize/rebuild bisync state for this run.
+        Raises ValueError for a comparison or resync incompatible with mode.
+        An unset runtime mode uses preferred-mode, or sync for directories and
+        copy for files when no preference is set. File tasks
+        map copy/move to copyto/moveto. Permissions also apply to this API.
         """
+        if not self.mode:
+            default_mode = self.preferred_mode or ("copy" if self.path_type == PathType.FILE else "sync")
+            return dataclasses.replace(self, mode=default_mode).to_command(
+                rclone_exe, dry_run=dry_run, direction=direction,
+                comparison=comparison, resync=resync,
+            )
+        if direction not in VALID_DIRECTIONS:
+            raise ValueError(f"Unknown direction '{direction}'")
+        selected = next((
+            action for action in _available_actions(self)
+            if ACTION_COMMANDS[action] == (
+                self.mode, direction if self.mode in _DIRECTIONAL_MODES else None,
+            )
+        ), None)
+        if selected is None:
+            raise ValueError(f"Task does not allow mode '{self.mode}' with direction '{direction}'")
+        if self.path_type == PathType.FILE and self.check_before_sync:
+            raise ValueError("'check-before-sync' is not supported for file tasks")
+        if comparison is not None and comparison not in MODE_COMPARISONS[self.mode]:
+            raise ValueError(f"Comparison '{comparison.value}' is not supported by '{self.mode}'")
+        if resync and self.mode != "bisync":
+            raise ValueError("--resync requires the bisync action")
         src, dst = self.source_dest(direction)
-        cmd = [rclone_exe, self.mode, src, dst]
+        command_mode = f"{self.mode}to" if self.path_type == PathType.FILE else self.mode
+        cmd = [rclone_exe, command_mode, src, dst]
         is_data = self.mode in _DATA_MODES
 
         if is_data and self.progress:
@@ -643,11 +863,13 @@ class SyncTask:
             cmd.extend(["--transfers", str(self.transfer)])
         self._append_filter_flags(cmd)
         self._append_comparison_and_transfer_flags(cmd, is_data, comparison)
-        if is_data and self.backup_dir:
+        if self.mode in _DIRECTIONAL_MODES and self.backup_dir:
             cmd.extend(["--backup-dir", self.backup_dir])
-        if is_data and self.max_delete is not None:
-            cmd.extend(["--max-delete", str(self.max_delete)])
-        if is_data and self.delete_excluded:
+        if self.mode == "sync" and self.max_delete_count is not None:
+            cmd.extend(["--max-delete", str(self.max_delete_count)])
+        if self.mode == "bisync" and self.max_delete_percent is not None:
+            cmd.extend(["--max-delete", str(self.max_delete_percent)])
+        if self.mode == "sync" and self.delete_excluded:
             cmd.append("--delete-excluded")
         self._append_backend_flags(cmd)
         self._append_log_flags(cmd)
@@ -656,7 +878,9 @@ class SyncTask:
             if comparison is None
             else _without_comparison_args(self.additional_args)
         )
-        cmd.extend(additional_args)
+        cmd.extend(_mode_specific_args(additional_args, self.mode))
+        if resync:
+            cmd.append("--resync")
         if dry_run:
             cmd.append("--dry-run")
         return cmd
@@ -665,6 +889,8 @@ class SyncTask:
 
     def to_check_command(self, rclone_exe: str, direction: str = "push") -> list[str]:
         """Build an ``rclone check`` command (pre-sync validation)."""
+        if self.path_type == PathType.FILE:
+            raise ValueError("File tasks do not support check")
         src, dst = self.local_path, self.remote_path
         if direction == "pull":
             src, dst = dst, src
@@ -672,6 +898,8 @@ class SyncTask:
         self._append_filter_flags(cmd)
         if self.check_before_sync == "size-only":
             cmd.append("--size-only")
+        if self.mode in {"copy", "move"}:
+            cmd.append("--one-way")
         self._append_comparison_and_transfer_flags(cmd, False)
         self._append_backend_flags(cmd)
         self._append_log_flags(cmd)
@@ -680,16 +908,12 @@ class SyncTask:
 
 def _comparison_arg_mode(arg: str) -> Optional[ComparisonMode]:
     """Return the comparison mode represented by one rclone argument."""
-    stripped = arg.strip()
-    if stripped == "-I" or stripped.startswith("--ignore-times="):
+    stripped = arg.strip().partition("=")[0]
+    if stripped in {"-I", "--ignore-times"}:
         return ComparisonMode.FORCE
-    if stripped == "--ignore-times":
-        return ComparisonMode.FORCE
-    if stripped == "-c" or stripped.startswith("--checksum="):
+    if stripped in {"-c", "--checksum"}:
         return ComparisonMode.CHECKSUM
-    if stripped == "--checksum":
-        return ComparisonMode.CHECKSUM
-    if stripped == "--size-only" or stripped.startswith("--size-only="):
+    if stripped == "--size-only":
         return ComparisonMode.SIZE_ONLY
     return None
 
@@ -704,7 +928,65 @@ def _comparison_arg_enabled(arg: str) -> bool:
 
 def _without_comparison_args(args: list[str]) -> list[str]:
     """Remove runtime-selectable comparison flags from an argument list."""
-    return [arg for arg in args if _comparison_arg_mode(arg) is None]
+    result: list[str] = []
+    tokens = iter(args)
+    for arg in tokens:
+        flag, separator, _ = arg.partition("=")
+        if flag == "--compare":
+            if not separator:
+                next(tokens, None)
+        elif _comparison_arg_mode(arg) is None:
+            result.append(arg)
+    return result
+
+
+def _mode_specific_args(args: list[str], mode: str) -> list[str]:
+    """Drop known command-specific extra flags when switching action modes.
+
+    Value-taking flags consume their following token even when omitted.
+    Unrecognized flags are left for rclone to validate.
+    """
+    rules: dict[str, tuple[set[str], bool]] = {
+        "--delete-excluded": ({"sync"}, False),
+        "--delete-before": ({"sync"}, False),
+        "--delete-during": ({"sync"}, False),
+        "--delete-after": ({"sync"}, False),
+        "--max-delete": ({"sync", "bisync"}, True),
+        "--backup-dir": (_DIRECTIONAL_MODES, True),
+        "--resync": ({"bisync"}, False),
+        "--resync-mode": ({"bisync"}, True),
+        "--workdir": ({"bisync"}, True),
+        "--backup-dir1": ({"bisync"}, True),
+        "--backup-dir2": ({"bisync"}, True),
+        "--conflict-resolve": ({"bisync"}, True),
+        "--conflict-loser": ({"bisync"}, True),
+        "--conflict-suffix": ({"bisync"}, True),
+        "--check-sync": ({"bisync"}, True),
+        "--check-access": ({"bisync"}, False),
+        "--recover": ({"bisync"}, False),
+        "--resilient": ({"bisync"}, False),
+        "--one-way": ({"check"}, False),
+        "--download": ({"check"}, False),
+        "--update": (_DIRECTIONAL_MODES, False),
+        "-u": (_DIRECTIONAL_MODES, False),
+    }
+    result: list[str] = []
+    tokens = iter(args)
+    for arg in tokens:
+        flag, separator, _ = arg.partition("=")
+        if mode == "stat" and flag in METADATA_FILTER_FLAGS:
+            if not separator:
+                next(tokens, None)
+            continue
+        if mode == "stat" and flag in {"--dirs-only", "--files-only"}:
+            continue
+        rule = rules.get(flag)
+        if rule is not None and mode not in rule[0]:
+            if rule[1] and not separator:
+                next(tokens, None)
+            continue
+        result.append(arg)
+    return result
 
 
 def _configured_comparison_modes(task: SyncTask) -> set[ComparisonMode]:
@@ -720,6 +1002,22 @@ def _configured_comparison_modes(task: SyncTask) -> set[ComparisonMode]:
         mode = _comparison_arg_mode(arg)
         if mode is not None and _comparison_arg_enabled(arg):
             modes.add(mode)
+    if task.mode == "bisync":
+        tokens = iter(task.additional_args)
+        for arg in tokens:
+            flag, separator, value = arg.partition("=")
+            if flag != "--compare":
+                continue
+            if not separator:
+                value = next(tokens, "")
+            attributes = {part.strip() for part in value.split(",")}
+            selected = next((
+                mode for mode, compare_value in BISYNC_COMPARE_VALUES.items()
+                if attributes == set(compare_value.split(","))
+            ), None)
+            if selected is None:
+                raise ValueError(f"Configured --compare '{value}' needs an explicit --comparison choice")
+            modes = {selected}
     return modes
 
 
@@ -727,12 +1025,75 @@ def _configured_comparison_modes(task: SyncTask) -> set[ComparisonMode]:
 # YAML schema validation (raw dict level)
 # ================================================================
 
-def _validate_field_in_dict(key: str, value: Any, path: str) -> Optional[str]:
+def _load_schema(stream: TextIO) -> Any:
+    """Safely load a YAML document, rejecting duplicate keys before merging.
+
+    Args:
+        stream: Open UTF-8 YAML text stream; its name appears in parse errors.
+
+    Returns:
+        The raw YAML value for schema validation, or None for an empty document.
+
+    Raises:
+        yaml.YAMLError: Invalid/unsafe YAML or duplicate keys. Duplicate-key
+            errors include the first and repeated definition's line and column.
+
+    Side effects:
+        Reads the stream. YAML merge-key overrides remain supported; no global
+        PyYAML constructors are changed.
+    """
+    import yaml
+
+    class SchemaLoader(yaml.SafeLoader):
+        """Check each original mapping once, before YAML merges expand aliases."""
+
+        def __init__(self, source: TextIO) -> None:
+            super().__init__(source)
+            self.checked_mappings: set[yaml.MappingNode] = set()
+
+        def flatten_mapping(self, node: yaml.MappingNode) -> None:
+            """Reject repeated explicit keys while allowing inherited overrides."""
+            if node not in self.checked_mappings:
+                self.checked_mappings.add(node)
+                marks: dict[object, yaml.error.Mark] = {}
+                for key_node, _ in node.value:
+                    if key_node.tag in {"tag:yaml.org,2002:merge", "tag:yaml.org,2002:value"}:
+                        key = key_node.value
+                    else:
+                        key = self.construct_object(key_node, deep=True)
+                    try:
+                        first = marks.get(key)
+                        if first is not None:
+                            raise yaml.constructor.ConstructorError(
+                                "first key defined here", first,
+                                f"duplicate YAML key {key!r}", key_node.start_mark,
+                            )
+                        marks[key] = key_node.start_mark
+                    except TypeError as exc:
+                        raise yaml.constructor.ConstructorError(
+                            "while reading a mapping", node.start_mark,
+                            "mapping keys must be hashable", key_node.start_mark,
+                        ) from exc
+            super().flatten_mapping(node)
+
+    return yaml.load(stream, Loader=SchemaLoader)
+
+
+def _validate_field_in_dict(
+    key: str, value: Any, path: str, known_profiles: Optional[set[str]] = None,
+) -> Optional[str]:
     """Validate a single key-value pair from a raw YAML dict against the field registry."""
     fd = _ATTR_TO_FIELD.get(_YAML_TO_ATTR.get(key, ""))
     if fd is None:
         return f"{path}: unknown field '{key}'"
-    return fd.validate(value, path)
+    if key == "path-type" and value is None:
+        return f"{path}: '{key}' cannot be null; omit the key to inherit"
+    error = fd.validate(value, path)
+    if error is None and key == "inherit" and known_profiles is not None:
+        missing = [name for name in _normalize_inherit(value) if name not in known_profiles]
+        if missing:
+            return f"{path}: inherit profiles not found in settings: {', '.join(missing)}"
+    return error
 
 
 def _validate_raw_task(task: dict, path: str, known_profiles: set) -> list[str]:
@@ -746,16 +1107,7 @@ def _validate_raw_task(task: dict, path: str, known_profiles: set) -> list[str]:
     for key, value in task.items():
         if key in _STRUCTURAL_KEYS:
             continue
-        if key == "inherit":
-            if isinstance(value, str):
-                if value not in known_profiles:
-                    errors.append(f"{path}: inherit='{value}' not found in settings")
-            elif isinstance(value, list):
-                for v in value:
-                    if isinstance(v, str) and v not in known_profiles:
-                        errors.append(f"{path}: inherit='{v}' not found in settings")
-            continue
-        err = _validate_field_in_dict(key, value, path)
+        err = _validate_field_in_dict(key, value, path, known_profiles)
         if err:
             errors.append(err)
 
@@ -773,7 +1125,7 @@ def _validate_raw_task(task: dict, path: str, known_profiles: set) -> list[str]:
                 if "name" not in st:
                     errors.append(f"{st_path}: missing 'name'")
                 for k, v in st.items():
-                    err = _validate_field_in_dict(k, v, st_path)
+                    err = _validate_field_in_dict(k, v, st_path, known_profiles)
                     if err:
                         errors.append(err)
     return errors
@@ -795,13 +1147,23 @@ def _validate_schema(schema: dict) -> list[str]:
             known_profiles = set(s.keys())
             for pname, pfields in s.items():
                 sp = f"settings.{pname}"
+                if not isinstance(pname, str) or not pname:
+                    errors.append("Settings profile names must be non-empty strings")
+                    continue
                 if not isinstance(pfields, dict):
                     errors.append(f"{sp}: must be a dict")
                     continue
                 for key, value in pfields.items():
-                    err = _validate_field_in_dict(key, value, sp)
+                    err = _validate_field_in_dict(key, value, sp, known_profiles)
                     if err:
                         errors.append(err)
+            if not errors:
+                # Check unused profiles too, before any task can be executed.
+                for pname in s:
+                    try:
+                        _resolve_profile_chain(s, pname)
+                    except ValueError as exc:
+                        errors.append(f"settings.{pname}: {exc}")
 
     # --- tasks ---
     if "tasks" not in schema:
@@ -819,6 +1181,23 @@ def _validate_schema(schema: dict) -> list[str]:
             continue
         for i, task in enumerate(tlist):
             errors.extend(_validate_raw_task(task, f"{gp}[{i}]", known_profiles))
+
+    if not errors:
+        # Validate effective leaves too: a file type or pre-check may be inherited.
+        settings = schema.get("settings", {})
+        for gname, tlist in tasks.items():
+            for task in tlist:
+                label = f"tasks.{gname}/{task['name']}"
+                try:
+                    parent = SyncTask.from_inheritance_chain(settings, task)
+                    raw_subs = task.get("sub-tasks") or []
+                    if not raw_subs:
+                        errors.extend(parent.validate(label))
+                    for sub in raw_subs:
+                        resolved = parent.merge(SyncTask.from_dict(sub).resolve_profiles(settings))
+                        errors.extend(resolved.validate(f"{label}/{sub['name']}"))
+                except ValueError as exc:
+                    errors.append(f"{label}: {exc}")
 
     return errors
 
@@ -948,74 +1327,208 @@ def _run_interruptible(
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def _get_local_mtime(path: str) -> Optional["datetime.datetime"]:
-    """Return the modification time of a local file or directory as a
-    timezone-aware UTC datetime, or ``None`` if the path does not exist.
+def _get_local_path_info(path: str, read_modtime: bool = True) -> PathInfo:
+    """Inspect local/UNC metadata without confusing absence with access errors.
+
+    Args:
+        path: Local file or directory to inspect.
+        read_modtime: Include its timezone-aware UTC modification time if true.
+
+    Returns:
+        Existence, type and optional time; only FileNotFoundError means missing.
+
+    Side effects:
+        Reads filesystem metadata, following source links as os.stat normally does.
     """
     try:
-        ts = os.path.getmtime(path)
-    except OSError:
-        return None
-    return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+        metadata = os.stat(path)
+    except FileNotFoundError:
+        return PathInfo(PathState.MISSING)
+    except OSError as exc:
+        return PathInfo(PathState.UNKNOWN, detail=f"filesystem error: {exc.strerror or type(exc).__name__}")
+    path_type = (
+        PathType.FILE if stat.S_ISREG(metadata.st_mode) else
+        PathType.DIRECTORY if stat.S_ISDIR(metadata.st_mode) else None
+    )
+    mtime = datetime.datetime.fromtimestamp(metadata.st_mtime, tz=datetime.timezone.utc) if read_modtime else None
+    return PathInfo(PathState.PRESENT, path_type, mtime)
 
 
-def _get_remote_latest_mtime(
-    rclone_exe: str, remote_path: str, timeout: int = 15
-) -> Optional["datetime.datetime"]:
-    """Return the latest modification time of items immediately inside
-    *remote_path* via ``rclone lsjson --max-depth 1``, or ``None`` on failure.
+def _read_remote_metadata(
+    task: SyncTask, rclone_exe: str, path: str, *, stat_only: bool,
+    read_modtime: bool = True, timeout: int = FILE_STAT_TIMEOUT,
+) -> object:
+    """Read unfiltered rclone metadata using the task's backend/config flags.
 
-    The path should already be a valid rclone remote reference
-    (e.g. ``myremote:path/to/dir``).
+    Args:
+        task: Supplies backend/config flags, but not transfer filters.
+        rclone_exe: Rclone executable.
+        path: Exact remote path or parent being listed.
+        stat_only: Request one entry with --stat, rather than immediate children.
+        read_modtime: False adds --no-modtime for existence/type-only checks.
+        timeout: Maximum query duration in seconds.
+
+    Returns:
+        Parsed JSON; callers validate the expected object/list shape.
+
+    Raises:
+        FileNotFoundError: Rclone explicitly reports a missing file/directory.
+        ValueError: Query failure or invalid JSON; diagnostics never include stderr.
+        OperationCancelled: The user cancels the query.
+
+    Side effects:
+        Runs read-only rclone lsjson requests; never transfers file contents.
     """
+    cmd = [rclone_exe, "lsjson", path, *(["--stat"] if stat_only else ["--max-depth", "1"])]
+    task._append_backend_flags(cmd)
+    if task.copy_links:
+        cmd.append("--copy-links")
+    # Retain backend/config flags while dropping transfer-only mode options.
+    cmd.extend(_mode_specific_args(_without_comparison_args(task.additional_args), "stat"))
+    if not read_modtime:
+        cmd.append("--no-modtime")
     try:
-        proc = _run_interruptible(
-            [rclone_exe, "lsjson", "--max-depth", "1", remote_path],
-            capture_output=True, text=True, timeout=timeout,
-        )
-    except OperationCancelled:
-        raise
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-
+        proc = _run_interruptible(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("metadata query timed out") from exc
+    except OSError as exc:
+        raise ValueError("cannot run rclone metadata query") from exc
+    if proc.returncode in RCLONE_NOT_FOUND_CODES:
+        raise FileNotFoundError("remote path not found")
     if proc.returncode != 0:
-        return None
-
-    if proc.stdout is None:
-        return None
-
+        raise ValueError(f"rclone metadata query failed (exit {proc.returncode})")
     try:
-        items = json.loads(proc.stdout)
-    except (TypeError, json.JSONDecodeError):
-        return None
+        return json.loads(proc.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid rclone metadata JSON") from exc
 
-    if not items:
-        return None
 
+def _remote_entry_info(item: object, read_modtime: bool = True) -> PathInfo:
+    """Parse one lsjson entry; reject malformed types, tolerate unavailable times.
+
+    Args:
+        item: Decoded rclone metadata object.
+        read_modtime: Whether to parse the optional ModTime field.
+
+    Returns:
+        Confirmed endpoint type and optional timezone-aware modification time.
+
+    Raises:
+        ValueError: The object does not identify a file or directory.
+    """
+    if not isinstance(item, dict) or not isinstance(item.get("IsDir"), bool):
+        raise ValueError("invalid rclone endpoint metadata")
+    mtime: Optional[datetime.datetime] = None
     # Each item has an ISO-8601 "ModTime" field, e.g. "2025-07-04T12:30:45+08:00"
-    latest: Optional["datetime.datetime"] = None
-    for item in items:
-        raw = item.get("ModTime")
-        if not raw:
-            continue
+    raw = item.get("ModTime")
+    if read_modtime and isinstance(raw, str) and raw:
         try:
             # fromisoformat handles the rclone ISO-8601 output directly
-            mt = datetime.datetime.fromisoformat(raw)
+            parsed = datetime.datetime.fromisoformat(raw)
+            if parsed.tzinfo is not None:
+                mtime = parsed
         except ValueError:
-            continue
-        if latest is None or mt > latest:
-            latest = mt
+            pass
+    return PathInfo(PathState.PRESENT, PathType.DIRECTORY if item["IsDir"] else PathType.FILE, mtime)
 
-    return latest
+
+def _find_remote_child(
+    task: SyncTask, rclone_exe: str, path: str, read_modtime: bool,
+) -> PathInfo:
+    """Disambiguate missing bucket objects/prefixes from existing directories.
+
+    Args:
+        task: Metadata query settings.
+        rclone_exe: Rclone executable.
+        path: Path whose --stat result identifies a directory.
+        read_modtime: Whether the matching entry's timestamp is needed.
+
+    Returns:
+        Matching child metadata or a confirmed missing state. A remote root
+        reported as a directory remains present even when its listing is empty.
+
+    Raises:
+        ValueError: Parent metadata is malformed or cannot be read.
+        FileNotFoundError: The parent is missing.
+        OperationCancelled: The user cancels the read-only parent listing.
+
+    Side effects:
+        May list the parent with filters removed, never changing either endpoint.
+    """
+    prefix = _extract_remote_host(path, "rclone")[0]
+    if prefix is None:
+        raise ValueError("cannot identify remote prefix")
+    relative = path[len(prefix):].rstrip("/")
+    if not relative:
+        return PathInfo(PathState.PRESENT, PathType.DIRECTORY)
+    parent, _, filename = relative.rpartition("/")
+    if filename in {".", ".."}:
+        raise ValueError("cannot identify the remote child name")
+    entries = _read_remote_metadata(task, rclone_exe, f"{prefix}{parent}", stat_only=False, read_modtime=read_modtime)
+    if not isinstance(entries, list):
+        raise ValueError("invalid remote parent listing")
+    matches: list[PathInfo] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("Name"), str):
+            raise ValueError("invalid remote parent entry")
+        info = _remote_entry_info(entry, read_modtime)
+        if entry["Name"].casefold() == filename.casefold():
+            matches.append(info)
+    if not matches:
+        return PathInfo(PathState.MISSING)
+    # A directory/file name collision must not bypass the file safety guard.
+    return next((info for info in matches if info.path_type == PathType.DIRECTORY), matches[0])
+
+
+def _get_remote_path_info(
+    task: SyncTask, rclone_exe: str, read_modtime: bool = True,
+) -> PathInfo:
+    """Inspect the remote endpoint while preserving directory time semantics.
+
+    Args:
+        task: Remote path, expected path type and metadata query settings.
+        rclone_exe: Rclone executable.
+        read_modtime: Include timestamps; false is used by file safety checks.
+
+    Returns:
+        Existence/type and optional time. Directory times remain the latest
+        immediate-child time, not the directory's own time. Empty listings alone
+        never imply absence; a failed probe never implies first synchronization.
+
+    Raises:
+        OperationCancelled: The user cancels a metadata query.
+
+    Side effects:
+        Reads remote metadata; may inspect the parent for bucket-based backends.
+    """
+    try:
+        if task.path_type == PathType.DIRECTORY:
+            entries = _read_remote_metadata(task, rclone_exe, task.remote_path, stat_only=False, read_modtime=read_modtime)
+            if not isinstance(entries, list):
+                raise ValueError("invalid remote directory listing")
+            if entries:
+                times = [info.mtime for entry in entries if (info := _remote_entry_info(entry, read_modtime)).mtime is not None]
+                return PathInfo(PathState.PRESENT, PathType.DIRECTORY, max(times, default=None))
+        item = _read_remote_metadata(task, rclone_exe, task.remote_path, stat_only=True, read_modtime=read_modtime)
+        info = _remote_entry_info(item, read_modtime)
+        if info.path_type == PathType.DIRECTORY:
+            # Bucket backends report missing objects as empty directories.
+            # An unfiltered parent listing distinguishes these from real prefixes.
+            info = _find_remote_child(task, rclone_exe, task.remote_path, read_modtime)
+        if task.path_type == PathType.DIRECTORY:
+            info = dataclasses.replace(info, mtime=None)
+        return info
+    except FileNotFoundError:
+        return PathInfo(PathState.MISSING)
+    except ValueError as exc:
+        return PathInfo(PathState.UNKNOWN, detail=str(exc))
 
 
 def _display_path_mtimes(
-    local_path: str,
-    remote_path: str,
+    task: SyncTask,
     rclone_exe: str,
     direction: str,
-    remote_path_type: str = "auto",
-) -> None:
+) -> list[str]:
     """Print the modification times of the local and remote paths in a compact
     comparison block, suitable for the pre-execution confirmation screen.
 
@@ -1025,27 +1538,84 @@ def _display_path_mtimes(
 
     When *direction* is ``"push"`` and local is older than remote, or
     *direction* is ``"pull"`` and local is newer than remote, a warning is
-    shown — the sync would overwrite newer data with older data.
-    """
-    local_mtime = _get_local_mtime(local_path)
-    remote_is_rclone = _extract_remote_host(remote_path, remote_path_type)[0] is not None
-    if remote_is_rclone:
-        remote_mtime = _get_remote_latest_mtime(rclone_exe, remote_path)
-    else:
-        remote_mtime = _get_local_mtime(remote_path)
+    returned. Directory times are only hints: they do not guarantee individual
+    file age or whether an overwrite will occur. The caller prints these
+    notices together with other pre-execution warnings.
 
-    def _fmt(dt: Optional["datetime.datetime"]) -> str:
-        if dt is None:
-            return f"{FGray}(unavailable){CRst}"
-        local_dt = dt.astimezone()  # local timezone
+    Args:
+        task: Resolved endpoints and metadata query settings.
+        rclone_exe: Rclone executable for remote metadata.
+        direction: Push/pull, or empty for check/bisync. Missing targets receive
+            first-sync guidance; missing sources are never treated as upload targets.
+
+    Returns:
+        Colored warning lines to display together before confirmation.
+
+    Raises:
+        OperationCancelled: The user cancels a metadata request.
+
+    Side effects:
+        Reads endpoint metadata and prints timestamps or first-sync information.
+    """
+    warnings: list[str] = []
+    local_path, remote_path = task.local_path, task.remote_path
+    local_info = _get_local_path_info(local_path)
+    remote_is_rclone = _extract_remote_host(remote_path, task.remote_path_type)[0] is not None
+    if remote_is_rclone:
+        remote_info = _get_remote_path_info(task, rclone_exe)
+    else:
+        remote_info = _get_local_path_info(remote_path)
+    local_mtime, remote_mtime = local_info.mtime, remote_info.mtime
+
+    def _fmt(info: PathInfo) -> str:
+        if info.state == PathState.MISSING:
+            return f"{FGray}(not found){CRst}"
+        if info.state == PathState.UNKNOWN:
+            return f"{FGray}(unavailable: {info.detail}){CRst}"
+        if info.mtime is None:
+            return f"{FGray}(exists; modification time unavailable){CRst}"
+        local_dt = info.mtime.astimezone()  # local timezone
         return f"{CRst}{local_dt.strftime('%Y-%m-%d %H:%M:%S')}{CRst}"
 
     print()
     print(f"  {FLYellow}Path modification times:{CRst}")
-    print(f"  {FLGreen}Local :{CRst}  {_fmt(local_mtime)}  {FGray}{local_path}{CRst}")
-    print(f"  {FLCyan}Remote:{CRst}  {_fmt(remote_mtime)}  {FGray}{remote_path}{CRst}")
+    print(f"  {FLGreen}Local :{CRst}  {_fmt(local_info)}  {FGray}{local_path}{CRst}")
+    print(f"  {FLCyan}Remote:{CRst}  {_fmt(remote_info)}  {FGray}{remote_path}{CRst}")
+    if task.path_type == PathType.DIRECTORY:
+        print(f"  {FGray}Directory times are hints only; they do not guarantee which files are newer.{CRst}")
 
-    # Show which side is more recent, plus a directional danger warning
+    # Missing endpoints need first-sync guidance, not an unavailable-time warning.
+    if PathState.MISSING in {local_info.state, remote_info.state}:
+        if local_info.state == remote_info.state == PathState.MISSING:
+            warnings.append(f"  {FLYellow}WARNING: Both paths are missing. First sync requires existing source data on one side.{CRst}")
+        elif PathState.UNKNOWN in {local_info.state, remote_info.state}:
+            warnings.append(f"  {FLYellow}WARNING: One path is missing and the other could not be inspected. Cannot determine first-sync direction.{CRst}")
+        elif direction in VALID_DIRECTIONS:
+            source_info = local_info if direction == "push" else remote_info
+            source_side, target_side = ("local", "remote") if direction == "push" else ("remote", "local")
+            if source_info.state == PathState.MISSING:
+                opposite = "pull" if direction == "push" else "push"
+                warnings.append(
+                    f"  {FLYellow}WARNING: The {source_side} source is missing; {direction} has no source data. "
+                    f"For first sync, choose {opposite} to initialize it from the other side, or correct the source path.{CRst}"
+                )
+            else:
+                operation = "upload" if direction == "push" else "download"
+                print(
+                    f"  {FLCyan}First {operation}: the {target_side} path does not exist yet. "
+                    f"The destination will be created when data is transferred.{CRst}"
+                )
+        else:
+            missing_side = "local" if local_info.state == PathState.MISSING else "remote"
+            initialize = "pull" if missing_side == "local" else "push"
+            warnings.append(
+                f"  {FLYellow}WARNING: The {missing_side} path is missing. "
+                f"For first sync, initialize it with a one-way {initialize} before checking or using bisync.{CRst}"
+            )
+        print()
+        return warnings
+
+    # Show which side is more recent, and collect a directional danger warning
     if local_mtime is not None and remote_mtime is not None:
         delta = local_mtime - remote_mtime
         delta_sec = delta.total_seconds()
@@ -1057,25 +1627,38 @@ def _display_path_mtimes(
                 print(f"  {FGray}  -> {FLGreen}local{FGray} is{CRst} {mins}m {FLYellow}newer{CRst} {FGray}than {FLCyan}remote{CRst}")
             else:
                 print(f"  {FGray}  -> {FLGreen}local{FGray} is{CRst} {int(delta_sec)}s {FLYellow}newer{CRst} {FGray}than {FLCyan}remote{CRst}")
-            # local newer + pull = danger: would overwrite newer local with older remote
+            # local newer + pull: directory times suggest a possible overwrite.
             if direction == "pull":
-                print(f"  {FLYellow}  ⚠ WARNING: {FLRed}pull would overwrite newer{CRst} {FLGreen}local{CRst}"
-                      f" {FLRed}data with older{CRst} {FLCyan}remote{CRst} {FLRed}data!{CRst}")
+                if task.path_type == PathType.DIRECTORY:
+                    warnings.append(
+                        f"  {FLYellow}NOTE: Directory timestamps suggest local data may be newer. "
+                        f"Pull might replace newer files; this is not guaranteed by directory times.{CRst}"
+                    )
+                else:
+                    warnings.append(f"  {FLYellow}  ⚠ WARNING: {FLRed}pull would overwrite newer{CRst} {FLGreen}local{CRst}"
+                                    f" {FLRed}data with older{CRst} {FLCyan}remote{CRst} {FLRed}data!{CRst}")
         else:
             mins = int(abs(delta_sec) // 60) if abs(delta_sec) >= 60 else 0
             if mins:
                 print(f"  {FGray}  -> {FLCyan}remote{FGray} is{CRst} {mins}m {FLYellow}newer{CRst} {FGray}than {FLGreen}local{CRst}")
             else:
                 print(f"  {FGray}  -> {FLCyan}remote{FGray} is{CRst} {int(abs(delta_sec))}s {FLYellow}newer{CRst} {FGray}than {FLGreen}local{CRst}")
-            # remote newer + push = danger: would overwrite newer remote with older local
+            # remote newer + push: directory times suggest a possible overwrite.
             if direction == "push":
-                print(f"  {FLRed}  ⚠ WARNING: push would overwrite newer{CRst} {FLCyan}remote{CRst}"
-                      f" {FLRed}data with older{CRst} {FLCyan}local{CRst} {FLRed}data!{CRst}")
+                if task.path_type == PathType.DIRECTORY:
+                    warnings.append(
+                        f"  {FLYellow}NOTE: Directory timestamps suggest remote data may be newer. "
+                        f"Push might replace newer files; this is not guaranteed by directory times.{CRst}"
+                    )
+                else:
+                    warnings.append(f"  {FLRed}  ⚠ WARNING: push would overwrite newer{CRst} {FLCyan}remote{CRst}"
+                                    f" {FLRed}data with older{CRst} {FLCyan}local{CRst} {FLRed}data!{CRst}")
     elif local_mtime is not None:
         print(f"  {FGray}  -> (remote time unavailable for comparison){CRst}")
     elif remote_mtime is not None:
         print(f"  {FGray}  -> (local time unavailable for comparison){CRst}")
     print()
+    return warnings
 
 
 # ---- alternative remote host helpers ----
@@ -1114,16 +1697,102 @@ def _replace_path_host(path: str, old_prefix: str, new_prefix: str) -> str:
     return path
 
 
-def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
+def _validate_file_endpoints(task: SyncTask, rclone_exe: str, direction: str) -> None:
+    """Require exact file endpoints before copyto/moveto can run.
+
+    Args:
+        task: Resolved file task; directory tasks are not probed.
+        rclone_exe: Executable used for read-only remote metadata requests.
+        direction: Push reads local-path; pull reads remote-path.
+
+    Raises:
+        ValueError: A source is missing, an endpoint is a directory/link, or
+            metadata cannot be verified. A missing destination is permitted.
+        OperationCancelled: The user cancels a metadata request.
+
+    Side effects:
+        Reads local metadata and may run rclone lsjson --stat. Never transfers
+        data, creates directories, or substitutes either endpoint's parent.
+    """
+    if task.path_type != PathType.FILE:
+        return
+    source, destination = task.source_dest(direction)
+    if source == destination:
+        raise ValueError("Source and destination must be different files")
+    for attr in ("local_path", "remote_path"):
+        path: str = getattr(task, attr)
+        is_source = path == source
+        role = "source" if is_source else "destination"
+        if not path or path.endswith(("/", "\\")):
+            raise ValueError(f"File {role} requires a full filename: {path}")
+        storage = task.remote_path_type if attr == "remote_path" else "local"
+        remote_prefix = _extract_remote_host(path, storage)[0]
+        if remote_prefix is None:
+            if os.path.islink(path) and (not is_source or not task.copy_links):
+                raise ValueError(f"File {role} is a symbolic link: {path}")
+            info = _get_local_path_info(path, read_modtime=False)
+        else:
+            if path[len(remote_prefix):].rsplit("/", 1)[-1] in {"", ".", ".."}:
+                raise ValueError(f"Remote file {role} requires a full filename: {path}")
+            info = _get_remote_path_info(task, rclone_exe, read_modtime=False)
+        if info.state == PathState.MISSING:
+            if not is_source:
+                continue
+            raise ValueError(f"Source file does not exist: {path}. First sync requires existing source data.")
+        if info.state == PathState.UNKNOWN:
+            raise ValueError(f"Cannot inspect file {role}: {path}: {info.detail}")
+        if info.path_type != PathType.FILE:
+            raise ValueError(f"File {role} is not a regular file: {path}")
+
+
+def _run_task_command(
+    task: SyncTask, cmd: list[str], rclone_exe: str, direction: str,
+) -> subprocess.CompletedProcess[str]:
+    """Validate file endpoints immediately before running a task command.
+
+    Args:
+        task: Resolved task, including its selected runtime mode.
+        cmd: Transfer/check command, optionally containing --dry-run.
+        rclone_exe: Executable for endpoint metadata checks.
+        direction: Selected push/pull direction.
+
+    Returns:
+        Rclone's result, or exit code 1 without execution if validation fails.
+
+    Raises:
+        OperationCancelled: The user cancels validation or execution.
+        OSError: Rclone cannot be started for execution.
+
+    Side effects:
+        Prints validation failures; otherwise runs the supplied command.
+    """
+    try:
+        _validate_file_endpoints(task, rclone_exe, direction)
+    except ValueError as exc:
+        print(f"{FLRed}{exc}{CRst}")
+        return subprocess.CompletedProcess(cmd, 1)
+    return _run_interruptible(cmd)
+
+
+def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> bool:
     """If *final_task* has ``alternative_remote_hosts``, offer the user
-    a choice of which host to use in ``local_path`` / ``remote_path``.
+    a choice of which host to use in ``remote_path``.
     Modifies *final_task* in place.  Skipped silently when *cli_auto*.
+
+    Args:
+        final_task: Resolved task whose remote path may be changed; its name
+            includes the selected sub-task suffix for the menu heading.
+        cli_auto: Skip interaction when the task was selected from the CLI.
+
+    Returns:
+        True when selected, kept, or skipped. False on Q/EOF cancellation,
+        leaving the remote path unchanged.
     """
     if cli_auto:
-        return
+        return True
     alternatives = final_task.alternative_remote_hosts
     if not alternatives:
-        return
+        return True
 
     # Only remote-path participates. Local/UNC paths skip in auto/local mode.
     path_attr = "remote_path"
@@ -1133,7 +1802,7 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
     )
 
     if path_attr is None or current_host is None or current_prefix is None:
-        return
+        return True
 
     # Build choices: current host first, then alternatives.
     # [0] is kept even if an alternative has the same name.
@@ -1151,13 +1820,16 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
         choices.append((alt, alt_prefix))
 
     if len(choices) <= 1:
-        return
+        return True
 
     # Compute full path for each choice by swapping the host prefix
     original_path = getattr(final_task, path_attr)
     # [0] is dimmed if an alternative also has the same host name
     current_overlaps = current_host in seen
-    print(f"\n{FLYellow}Alternative hosts available{CRst} for {FLCyan}{path_attr.replace('_', '-')}{CRst}:")
+    print(
+        f"\n{FLYellow}Alternative hosts available{CRst} for "
+        f"{FLGreen}{path_attr.replace('_', '-')}{CRst} {FLYellow}{final_task.name}{CRst}:"
+    )
     for idx, (name, prefix) in enumerate(choices):
         mark = f"{FGray}[{CRst}{idx}{FGray}]{CRst}"
         full = _replace_path_host(original_path, current_prefix, prefix)
@@ -1165,20 +1837,23 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
             # [0] duplicates an alternative — show dimmed
             print(f"  {mark}: {FGray}{full}{CRst} {FGray}(current){CRst}")
         elif idx == 0:
-            print(f"  {mark}: {FLCyan}{full}{CRst} {FGray}(current){CRst}")
+            print(f"  {mark}: {FLGreen}{full}{CRst} {FGray}(current){CRst}")
         else:
-            print(f"  {mark}: {FLCyan}{full}{CRst}")
+            print(f"  {mark}: {FLGreen}{full}{CRst}")
+    print(f"  {FGray}[{CRst}Q{FGray}]{CRst}: {FGray}Back to task menu{CRst}")
 
     while True:
         try:
             choice = input(
-                f"\n{FLYellow}Select host{CRst} {FGray}[# or Enter to keep current]{CRst}: "
+                f"\n{FLYellow}Select host{CRst} {FGray}[# / Enter=keep current / Q=back]{CRst}: "
             ).strip()
         except EOFError:
             print()
-            return
+            return False
+        if choice.lower() == "q":
+            return False
         if not choice:
-            return
+            return True
         if choice.isdigit():
             idx = int(choice)
             if 0 <= idx < len(choices):
@@ -1186,16 +1861,98 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> None:
                 if new_prefix != current_prefix:
                     old_val = getattr(final_task, path_attr)
                     setattr(final_task, path_attr, _replace_path_host(old_val, current_prefix, new_prefix))
-                return
+                return True
             print(f"{FLRed}Invalid number: {idx}{CRst}")
             continue
-        print(f"{FLRed}Enter a number, or Enter to keep current.{CRst}")
+        print(f"{FLRed}Enter a number, Q to go back, or Enter to keep current.{CRst}")
 
 
 def _host_name_to_prefix(name: str, template_prefix: str) -> str:
     """Build a full path prefix from a host *name* using *template_prefix*
     to preserve the rclone remote separator."""
     return name if name.endswith(':') else name + ':'
+
+
+def _available_actions(task: SyncTask) -> list[SyncAction]:
+    """Return allowed actions, stably placing the configured mode first."""
+    actions = [
+        action for action in PATH_ACTIONS[task.path_type]
+        if task.allow_actions is None or action in task.allow_actions
+    ]
+    return sorted(actions, key=lambda action: ACTION_COMMANDS[action][0] != task.preferred_mode)
+
+
+def _select_action(
+    task: SyncTask,
+    cli_action: Optional[SyncAction],
+    cli_direction: Optional[str],
+) -> Optional[SyncAction]:
+    """Resolve CLI action/direction or show the mode-prioritized action menu.
+
+    Returns None when q is selected; empty input retries without selecting.
+    Raises ValueError for disallowed actions
+    or directions on nondirectional modes. CLI direction uses preferred-mode.
+    """
+    actions = _available_actions(task)
+    selected = cli_action
+    if selected is None and cli_direction is not None:
+        command_mode = task.preferred_mode or ("copy" if task.path_type == PathType.FILE else "sync")
+        selected = next((
+            action for action in PATH_ACTIONS[task.path_type]
+            if ACTION_COMMANDS[action] == (command_mode, cli_direction)
+        ), None)
+        if selected is None:
+            raise ValueError(f"Preferred mode '{command_mode}' has no direction; use --action {command_mode}")
+    if selected is not None:
+        if selected not in actions:
+            raise ValueError(f"Task does not allow action '{selected.value}'")
+        return selected
+
+    print(f"\n  {FLYellow}Task:{CRst} {FLCyan}{task.name}{CRst}")
+    print(f"  {FGray}Path type: {task.path_type.value}{CRst}")
+    if task.preferred_mode:
+        print(f"  {FGray}Preferred mode '{task.preferred_mode}' is listed first in yellow.{CRst}")
+    else:
+        highlighted = "push-copy-file/pull-copy-file" if task.path_type == PathType.FILE else "push/pull"
+        print(f"  {FGray}No preferred mode; {highlighted} are highlighted in the standard order.{CRst}")
+    if not actions:
+        print(f"  {FLYellow}No actions are permitted for this path type.{CRst}")
+    print(f"  {FGray}Enter retries; q returns to the task menu.{CRst}")
+    local = f"{FLBlue}{task.local_path}{CRst}"
+    remote = f"{FLGreen}{task.remote_path}{CRst}"
+    options: list[MenuOption] = []
+    action_width = max((len(action.value) for action in actions), default=10)
+    preferred_mode = task.preferred_mode or ("copy" if task.path_type == PathType.FILE else "sync")
+    for index, action in enumerate(actions):
+        mode, direction = ACTION_COMMANDS[action]
+        source, destination = (remote, local) if direction == "pull" else (local, remote)
+        arrow = "↔" if mode == "bisync" else "=" if mode == "check" else "→"
+        action_color = FLYellow if mode == preferred_mode else FLCyan
+        options.append(MenuOption(
+            [str(index), action.value],
+            f"{action.value:<{action_width}} {source} {FGray}{arrow}{CRst} {destination}",
+            value=action,
+            desc_color=action_color,
+        ))
+    options.append(MenuOption(["q"], "Back to task menu", desc_color=FGray))
+    selected = Menu.select(options, prompt="Operation", required=True, separator=False, key_color="")
+    return selected if isinstance(selected, SyncAction) else None
+
+
+def _task_for_action(task: SyncTask, action: SyncAction) -> SyncTask:
+    """Copy a task with its runtime command mode, enforcing write permissions.
+
+    The original configuration is unchanged. Raises ValueError when the
+    action is forbidden or a one-way backup directory would be misapplied.
+    """
+    if action not in _available_actions(task):
+        raise ValueError(f"Task does not allow action '{action.value}'")
+    mode, direction = ACTION_COMMANDS[action]
+    if task.backup_dir and direction == "pull":
+        raise ValueError("Refusing pull with backup-dir. Use a task-specific pull backup path or disable backup-dir.")
+    if task.backup_dir and mode == "bisync":
+        raise ValueError("Bisync requires side-specific --backup-dir1/--backup-dir2 instead of backup-dir.")
+    return dataclasses.replace(task, mode=mode)
 
 
 def _select_comparison_mode(
@@ -1215,17 +1972,32 @@ def _select_comparison_mode(
         interactive: Whether to display the comparison selection menu.
 
     Returns:
-        The selected comparison mode, or ``None`` when conflicting configured
-        modes cannot be resolved non-interactively.
+        The selected comparison mode, or ``None`` when Q is selected or
+        conflicting configured modes cannot be resolved non-interactively.
 
     Side effects:
         Prints configured-mode notices, conflict errors, and an interactive
         menu when appropriate.
     """
+    allowed = MODE_COMPARISONS[task.mode or "sync"]
     if cli_comparison is not None:
+        if cli_comparison not in allowed:
+            print(f"{FLRed}Comparison '{cli_comparison.value}' is not supported by '{task.mode}'.{CRst}")
+            return None
         return cli_comparison
 
-    configured_modes = _configured_comparison_modes(task)
+    try:
+        configured_modes = _configured_comparison_modes(task)
+    except ValueError as exc:
+        print(f"{FLRed}{exc}{CRst}")
+        if not interactive:
+            return None
+        configured_modes = set(allowed)  # Require an explicit menu choice.
+    unsupported = configured_modes.difference(allowed)
+    if unsupported:
+        labels = ", ".join(sorted(mode.value for mode in unsupported))
+        print(f"{FLYellow}Configured comparison '{labels}' does not apply to '{task.mode}'.{CRst}")
+        configured_modes.difference_update(unsupported)
     if len(configured_modes) > 1:
         configured_text = ", ".join(sorted(mode.value for mode in configured_modes))
         print(
@@ -1237,9 +2009,11 @@ def _select_comparison_mode(
             return None
         default_mode: Optional[ComparisonMode] = None
     else:
-        default_mode = next(iter(configured_modes), ComparisonMode.SIZE_AND_TIME)
+        fallback = ComparisonMode.CHECKSUM if task.mode == "check" else ComparisonMode.SIZE_AND_TIME
+        default_mode = next(iter(configured_modes), fallback)
         if configured_modes:
             flag = {
+                ComparisonMode.SIZE_AND_TIME: "--compare size,modtime",
                 ComparisonMode.SIZE_ONLY: "--size-only",
                 ComparisonMode.FORCE: "--ignore-times",
                 ComparisonMode.CHECKSUM: "--checksum",
@@ -1278,6 +2052,16 @@ def _select_comparison_mode(
             desc_color=FGray,
         ),
     ]
+    options = [option for option in options if option.value in allowed]
+    if task.mode == "bisync":
+        for option in options:
+            description = option.description.partition(" (")[0]
+            option.description = f"{description} (--compare {BISYNC_COMPARE_VALUES[option.value]})"
+    if task.mode == "check":
+        for option in options:
+            if option.value is ComparisonMode.CHECKSUM:
+                option.description = "checksum       Compare by size and checksum (rclone check)"
+    options.append(MenuOption(["q"], "Back to task menu", desc_color=FGray))
     selected = Menu.select(
         options,
         prompt="Comparison mode",
@@ -1297,6 +2081,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--task")
     parser.add_argument("--sub-task")
     parser.add_argument("--direction", choices=sorted(VALID_DIRECTIONS))
+    parser.add_argument("--action", choices=[action.value for action in SyncAction])
+    parser.add_argument("--resync", action="store_true")
     parser.add_argument("--comparison", choices=[mode.value for mode in ComparisonMode])
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--pull", action="store_true")
@@ -1306,10 +2092,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     if ns.push and ns.pull:
         parser.error("--push and --pull cannot be used together")
+    if (ns.push and ns.direction == "pull") or (ns.pull and ns.direction == "push"):
+        parser.error("--push/--pull conflicts with --direction")
     if ns.push:
         ns.direction = "push"
     if ns.pull:
         ns.direction = "pull"
+    if ns.action is not None and ns.direction is not None:
+        parser.error("Use --action or --direction/--push/--pull, not both")
+    if ns.resync and ns.action not in (None, SyncAction.BISYNC.value):
+        parser.error("--resync requires --action bisync")
     return ns
 
 
@@ -1371,29 +2163,39 @@ def _print_help() -> None:
   python {script_name} --task <n> --sub-task <s>
   python {script_name} --task <n> --push      auto-sync (no interaction)
   python {script_name} --task <n> --push --comparison checksum
+  python {script_name} --task <n> --action pull-copy --comparison size_only
+  python {script_name} --task <n> --action pull-copy-file --comparison checksum
+  python {script_name} --task <n> --action bisync --resync
   python {script_name} --dry-run              print command only
 
 {FLYellow}Options:{CRst}
-  --schema-file <path>         YAML schema file path (default: <script-dir>/rclone-sync-default-schema.yaml)
+  --schema-file <path>         actual YAML schema path (overrides the environment variable)
   --rclone-config-file <path>  rclone config file path
   --rclone-config-password <>  encrypted config password ({FLRed}deprecated{CRst}, use env var)
   --task <group/task-name>     skip task selection
   --sub-task <name>            sub-task filter (requires --task)
   --direction <push|pull>      sync direction: push (local -> remote) or pull (remote -> local)
+                               uses preferred-mode (directory: sync, file: copy if unset)
+                               cannot combine with --action
   --push                       shorthand for --direction push
   --pull                       shorthand for --direction pull
+  --action <name>              push | pull | push-copy | pull-copy | push-move |
+                               pull-move | bisync | check | push-copy-file |
+                               pull-copy-file | push-move-file | pull-move-file
+  --resync                     explicitly initialize/rebuild bisync state for this run
   --comparison <mode>          size_and_time | size_only | force | checksum
-                               (sync/copy/move/bisync only)
+                               (available choices depend on the selected action)
   --dry-run                    print command, do not execute
   --verbose                    print additional diagnostics
 
 {FLYellow}Auto-sync:{CRst}
-  When --task and --direction are both specified, the script runs without
+  When --task and --action (or --direction) are specified, the script runs without
   any interactive prompts.  If --comparison is omitted, the effective task
   configuration selects the comparison mode automatically.
 
 {FLYellow}Comparison modes:{CRst}
-  Available for sync, copy, move, and bisync; check uses rclone check behavior.
+  Sync/copy/move offer all four choices. Bisync excludes force and uses --compare.
+  Check offers size_only and checksum (the latter is rclone check's default).
   {FLCyan}size_and_time{CRst}  compare by size and modified time
   {FLCyan}size_only{CRst}      compare by size only (--size-only)
   {FLCyan}force{CRst}          transfer all files unconditionally (--ignore-times)
@@ -1401,22 +2203,88 @@ def _print_help() -> None:
   Configured --ignore-times, --checksum, or --size-only flags only change the
   interactive default.  Each explicit selection has the behavior shown above.
 
+{FLYellow}Action menu and inheritance:{CRst}
+  Optional preferred-mode puts matching actions first in yellow; others are cyan.
+  Missing mode highlights push/pull for directories, or the two copy-file actions
+  for files, in the standard order.
+  Empty/null preferred-mode clears an inherited preference.
+  Menus end with Q: quit from the task menu; return from sub-task, host,
+  operation, and comparison menus. With --task and no task menu, Q exits.
+  Empty operation/confirmation input retries. Comparison keeps its Enter default.
+  Task labels retain group/task; after selection, they include /sub-task in
+  host/operation menus, confirmation, and notifications. Ungrouped tasks omit
+  the group prefix. Alternative hosts show the full name in yellow. Operation paths use blue
+  for local and green for remote. Execute/What next retain Q=quit.
+  Final confirmation groups warnings, then shows the command and task summary
+  before prompting with the action name in cyan. Move warns about deleting source files.
+  allow-actions accepts null, scalar all, or an exact list of action names, also enforced by CLI.
+  Omit it to inherit; if never set, all actions for the path type are available.
+  Explicit null/all clears inherited restrictions. [] disables all actions.
+  Lists replace inherited lists; [all] and unknown action names fail.
+  Check must be allowed explicitly when an allowlist is used; it never fixes links.
+  Profile inheritance is applied in list order; cycles are rejected with their
+  full reference chain, including cycles in default and unused profiles.
+  Duplicate YAML keys fail with the first and repeated definition's line/column.
+
+{FLYellow}Modification time display:{CRst}
+  do-not-check-modified-time: false (default; inherited by tasks/sub-tasks).
+  Set true to skip advisory time queries/display. This does not change comparison
+  or disable file existence/type guards. Missing destinations show first-upload/
+  download information; missing sources require the opposite direction or a
+  corrected source path. Read failures and empty directories are not assumed missing.
+  Directory time notices are hints, not guarantees of individual file age.
+
+{FLYellow}Deletion limits (optional):{CRst}
+  max-delete-count: sync only; non-negative file count, or -1 for unlimited.
+  max-delete-percent: bisync only; integer percentage from 0 to 100.
+  Omit either to use rclone's default (sync: unlimited; bisync: 50 percent).
+  Each applies only to its own operation; copy/move/check use neither.
+
+{FLYellow}File tasks:{CRst}
+  path-type: directory | file (inherited; default: directory).
+  File tasks require full filenames on both sides and only offer copy-file and
+  move-file actions, using copyto/moveto. No file check, pre-check, sync, or bisync.
+  preferred-mode accepts copy/move. All four comparisons work for file transfers.
+  Source must be a file; an absent destination is allowed, a directory is not.
+  Endpoints are checked before each execution, dry-run, and re-run. A symbolic
+  link source on local storage requires copy-links; local link destinations are refused.
+  A task without sub-tasks can run directly if its machine filters match.
+
+{FLYellow}Bisync state:{CRst}
+  Local is always Path1, remote is Path2. Rclone stores state in its local cache
+  (or an explicit --workdir in additional-args). Normal runs never add --resync.
+  Use --action bisync --resync for initialization/rebuilding, then omit --resync.
+  Changing comparison settings may require rebuilding state. Resync defaults
+  to preferring Path1 on conflicts; use --resync-mode in additional-args to change it.
+
 {FLYellow}Cancellation:{CRst}
   During rclone time checks, dry-runs, checks, and transfers, Ctrl+C cancels
   the current operation and returns to the task menu in interactive mode.
   When --task is supplied, cancellation exits with code 130 because there is
   no interactive task list to return to.
+  Re-run reuses the chosen command without repeating selection, confirmation,
+  time display, or pre-sync check. File endpoint guards still apply.
+
+{FLYellow}Schema selection:{CRst}
+  Interactive startup prompts for the actual configuration path, suggesting
+  --schema-file or {ENV_SCHEMA_FILE} when set (CLI takes precedence).
+  With neither set, a path must be entered. With --task, one of them is required.
+  rclone-sync-schema-sample.yaml is detailed agent/user documentation, not a
+  runtime configuration. The script never uses it as an automatic fallback.
 
 {FLYellow}Environment variables:{CRst}
-  {FLCyan}{ENV_SCHEMA_FILE}{CRst}    path to YAML schema file (default: <script-dir>/rclone-sync-default-schema.yaml)
+  {FLCyan}{ENV_SCHEMA_FILE}{CRst}    path to the actual YAML schema file (no bundled default)
   {FLCyan}{ENV_CONFIG_PASSWORD}{CRst}  password for encrypted rclone config
 
 {FLYellow}Path variables{CRst} (in YAML: local-path, remote-path, backup-dir, log-file):
-  {FGray}${{ENV_VAR}}{CRst}          environment variable (also %VAR% on Windows)
+  {FGray}$VAR / ${{VAR}} / %VAR%{CRst}  environment variable on every platform
   {FGray}$ENV:VAR{CRst} / {FGray}${{ENV:VAR}}{CRst}  PowerShell-style environment variable
   {FGray}{{{{schema_dir}}}}{CRst}       directory containing the YAML file
   {FGray}{{{{script_dir}}}}{CRst}       directory containing rclone-sync.py
   {FGray}{{{{current_dir}}}}{CRst}      current working directory
+  Expansion is single-pass; substituted values are not parsed again.
+  Undefined variables/placeholders stop the selected task and identify the field.
+  Leading ~ expands to the user home; remote/UNC paths and relative paths stay intact.
 
 {FLYellow}Remote path type:{CRst}
   YAML field {FLCyan}remote-path-type{CRst}: auto | rclone | local  (default: auto).
@@ -1425,6 +2293,7 @@ def _print_help() -> None:
   Local, drive, and UNC paths use filesystem mtime in auto/local mode.
 
 {FLYellow}Modes:{CRst}
+  YAML preferred-mode prioritizes the menu; the selected action determines the command.
   {FLCyan}sync{CRst}     make destination match source (one-way)
   {FLCyan}copy{CRst}     copy source to destination
   {FLCyan}move{CRst}     move source to destination ({FLRed}deletes source!{CRst})
@@ -1470,6 +2339,8 @@ def main() -> int:
     cli_dry_run = parsed.dry_run
     cli_verbose = parsed.verbose
     cli_direction: Optional[str] = parsed.direction
+    cli_action = SyncAction(parsed.action) if parsed.action is not None else None
+    cli_resync: bool = parsed.resync
     cli_comparison: Optional[ComparisonMode] = (
         ComparisonMode(parsed.comparison)
         if parsed.comparison is not None
@@ -1530,13 +2401,13 @@ def main() -> int:
     # ================================================================
     # Step 2: Resolve YAML schema file path
     # ================================================================
-    default_schema = DEFAULT_SCHEMA_FILE
-    if ENV_SCHEMA_FILE in os.environ:
-        default_schema = os.environ[ENV_SCHEMA_FILE]
-    if cli_schema_file:
-        default_schema = cli_schema_file
+    default_schema = cli_schema_file or os.environ.get(ENV_SCHEMA_FILE, "")
 
     if cli_auto:
+        if not default_schema:
+            print(f"{FLRed}With --task, specify --schema-file or set {ENV_SCHEMA_FILE}. "
+                  f"The bundled sample is documentation only.{CRst}")
+            return 1
         schema_file = default_schema
     else:
         if ENV_SCHEMA_FILE not in os.environ:
@@ -1567,8 +2438,8 @@ def main() -> int:
     # ================================================================
     try:
         with open(schema_file, "r", encoding="utf-8") as fh:
-            schema = yaml_mod.safe_load(fh)
-    except Exception as e:
+            schema = _load_schema(fh)
+    except (OSError, UnicodeError, yaml_mod.YAMLError) as e:
         print(f"{FLRed}Failed to read YAML schema:{CRst} {FGray}{schema_file}{CRst}\n{FGray}{e}{CRst}")
         return 1
 
@@ -1666,14 +2537,17 @@ def main() -> int:
     # profiles also participate.  The stored SyncTask is the original sub-task
     # — the full merge happens at execution time.
     _matching_subs_cache: dict[int, list[SyncTask]] = {}
-    for i, (_, t) in enumerate(all_entries):
+    _matching_entries: set[int] = set()
+    for i, (group_name, t) in enumerate(all_entries):
         raw_subs = t.get("sub-tasks") or []
         if raw_subs:
+            task_name = t.get("name", UNNAMED_TASK)
+            task_label = f"{group_name}/{task_name}" if group_name else task_name
             parent_dict = {k: v for k, v in t.items() if k != "sub-tasks"}
             try:
-                parent = SyncTask.from_dict(parent_dict).resolve_profiles(settings)
+                parent = SyncTask.from_inheritance_chain(settings, parent_dict)
             except ValueError as e:
-                print(f"{FLRed}Inheritance error in task '{t.get('name', UNNAMED_TASK)}': {e}{CRst}")
+                print(f"{FLRed}Inheritance error in task '{task_label}': {e}{CRst}")
                 return 1
             matching: list[SyncTask] = []
             for st in raw_subs:
@@ -1681,13 +2555,18 @@ def main() -> int:
                 try:
                     sub_prof = sub.resolve_profiles(settings)
                 except ValueError as e:
-                    print(f"{FLRed}Inheritance error in sub-task '{st.get('name', '')}': {e}{CRst}")
+                    print(f"{FLRed}Inheritance error in sub-task '{task_label}/{st.get('name', '')}': {e}{CRst}")
                     return 1
                 if parent.merge(sub_prof).matches_machine(platform_cur, arch_cur, computer_cur):
                     matching.append(sub)
             _matching_subs_cache[i] = matching
+            if matching:
+                _matching_entries.add(i)
         else:
             _matching_subs_cache[i] = []
+            parent = SyncTask.from_inheritance_chain(settings, t)
+            if parent.matches_machine(platform_cur, arch_cur, computer_cur):
+                _matching_entries.add(i)
 
     while True:
         # ================================================================
@@ -1728,8 +2607,8 @@ def main() -> int:
                 else:
                     print(f"{FLRed}Task '{cli_task}' not found.{CRst}")
                 return 1
-            if not _matching_subs_cache[selected_entry_idx]:
-                print(f"{FLRed}Task '{cli_task}' has no sub-tasks matching this machine.{CRst}")
+            if selected_entry_idx not in _matching_entries:
+                print(f"{FLRed}Task '{cli_task}' does not match this machine or has no matching sub-tasks.{CRst}")
                 return 1
         else:
             Console.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
@@ -1740,13 +2619,13 @@ def main() -> int:
             selectable_set: set[int] = set()
             display_total = 0
             for i in range(len(all_entries)):
-                if _matching_subs_cache[i]:
+                if i in _matching_entries:
                     selectable_map[display_total] = i
                     selectable_set.add(i)
                     display_total += 1
 
             if not selectable_map:
-                print(f"  {FLRed}No tasks have sub-tasks matching this machine.{CRst}")
+                print(f"  {FLRed}No tasks or sub-tasks match this machine.{CRst}")
                 Console.print_exit_message("Bye.")
                 return 0
 
@@ -1778,6 +2657,7 @@ def main() -> int:
                 if group_name is not None:
                     prev_group = group_name
 
+            print(f"  {FGray}[{CRst}{'Q':>{max_digits}}{FGray}]{CRst}: {FGray}Quit{CRst}")
             Console.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
 
             # Warn about duplicate task names
@@ -1789,16 +2669,16 @@ def main() -> int:
                         label = f"{g}/{tn}" if g else tn
                         print(f"    {FGray}line {lineno}:{CRst} {FLCyan}{label}{CRst}")
 
-            print(f"\n  Enter {FLGreen}number{CRst} to select, {FLCyan}e{CRst} to open YAML, or {FLCyan}Enter{CRst} to exit")
+            print(f"\n  Enter {FLGreen}number{CRst} to select, {FLCyan}e{CRst} to open YAML, or {FLCyan}Q/Enter{CRst} to exit")
 
             while True:
                 try:
-                    choice = input(f"\n{FLYellow}Select task{CRst} {FGray}[#]{CRst}: ").strip()
+                    choice = input(f"\n{FLYellow}Select task{CRst} {FGray}[# / Q=quit]{CRst}: ").strip()
                 except EOFError:
                     print()
                     Console.print_exit_message("Bye.")
                     return 0
-                if not choice:
+                if not choice or choice.lower() == "q":
                     Console.print_exit_message("Bye.")
                     return 0
                 if choice.lower() == "e":
@@ -1812,19 +2692,22 @@ def main() -> int:
                         break
                     print(f"{FLRed}Invalid number: {sel_idx}{CRst}")
                     continue
-                print(f"{FLRed}Enter a number, 'e' to open YAML, or Enter to exit.{CRst}")
+                print(f"{FLRed}Enter a number, 'e' to open YAML, or Q/Enter to exit.{CRst}")
 
         assert selected_task_dict is not None
+        _task_group = all_entries[selected_entry_idx][0]
+        _task_name = selected_task_dict.get("name", UNNAMED_TASK)
+        _task_label = f"{_task_group}/{_task_name}" if _task_group else _task_name
 
         # ---- Resolve task with inheritance ----
         try:
             merged_task = SyncTask.from_inheritance_chain(settings, selected_task_dict)
         except ValueError as e:
-            print(f"{FLRed}Inheritance error: {e}{CRst}")
+            print(f"{FLRed}Inheritance error in task '{_task_label}': {e}{CRst}")
             return 1
 
         if cli_verbose:
-            print(f"{FGray}Selected: {merged_task.name}{CRst}")
+            print(f"{FGray}Selected: {_task_label}{CRst}")
 
         # ================================================================
         # Step 5: Sub-task selection (reuses pre-computed matching list)
@@ -1832,10 +2715,6 @@ def main() -> int:
         matching_subs = _matching_subs_cache[selected_entry_idx]
         selected_subtask: Optional[SyncTask] = None
         subtask_go_back = False
-
-        _task_group = all_entries[selected_entry_idx][0]
-        _task_name = selected_task_dict.get("name", UNNAMED_TASK)
-        _task_label = f"{_task_group}/{_task_name}" if _task_group else _task_name
 
         # Check for duplicate sub-task names within this task (warn interactive, reject --sub-task)
         raw_subs = selected_task_dict.get("sub-tasks") or []
@@ -1881,16 +2760,19 @@ def main() -> int:
                 print(f"\nMultiple sub-tasks of task {FLYellow}{_task_label}{CRst} match this machine:")
                 for idx, sub in enumerate(matching_subs):
                     print(f"  {FGray}[{CRst}{idx}{FGray}]{CRst}: {FLGreen}{sub.name}{CRst}{sub.display_filters()}")
+                back_label = "Quit" if cli_auto else "Back to task menu"
+                print(f"  {FGray}[{CRst}Q{FGray}]{CRst}: {FGray}{back_label}{CRst}")
 
                 while True:
                     try:
                         choice = input(
-                            f"\n{FLYellow}Select sub-task{CRst} {FGray}[# or Enter to go back]{CRst}: "
+                            f"\n{FLYellow}Select sub-task for {_task_label}{CRst} "
+                            f"{FGray}[# / Q or Enter={back_label.lower()}]{CRst}: "
                         ).strip()
                     except EOFError:
                         print()
                         return 0
-                    if not choice:
+                    if not choice or choice.lower() == "q":
                         subtask_go_back = True
                         break
                     if choice.isdigit():
@@ -1900,26 +2782,31 @@ def main() -> int:
                             break
                         print(f"{FLRed}Invalid number: {idx}{CRst}")
                         continue
-                    print(f"{FLRed}Enter a number, or Enter to go back.{CRst}")
+                    print(f"{FLRed}Enter a number, or Q/Enter to {back_label.lower()}.{CRst}")
 
             if subtask_go_back:
+                if cli_auto:
+                    return 0
                 continue  # back to task selection
 
         # ---- Merge sub-task into final task, resolve paths ----
         if selected_subtask:
             # Re-validate sub-task matches this machine at execution time
             if not selected_subtask.matches_machine(platform_cur, arch_cur, computer_cur):
-                print(f"{FLRed}Selected sub-task '{selected_subtask.name}' does not match this machine.{CRst}")
+                print(f"{FLRed}Selected sub-task '{_task_label}/{selected_subtask.name}' does not match this machine.{CRst}")
                 return 1
             # Resolve sub-task's own inherit profiles on top of the sub-task
             # before merging onto the already-resolved task.
             try:
                 sub_resolved = selected_subtask.resolve_profiles(settings)
             except ValueError as e:
-                print(f"{FLRed}Inheritance error in sub-task '{selected_subtask.name}': {e}{CRst}")
+                print(f"{FLRed}Inheritance error in sub-task '{_task_label}/{selected_subtask.name}': {e}{CRst}")
                 return 1
             final_task = merged_task.merge(sub_resolved)
-            final_task.name = f"{merged_task.name}/{selected_subtask.name}"
+            final_task.name = f"{_task_label}/{selected_subtask.name}"
+        elif not raw_subs:
+            final_task = merged_task
+            final_task.name = _task_label
         else:
             print(f"{FLRed}No matching sub-tasks for this machine — task requires a compatible sub-task.{CRst}")
             return 1
@@ -1931,85 +2818,56 @@ def main() -> int:
                 print(f"  {FLRed}- {err}{CRst}")
             return 1
 
-        final_task.resolve_paths(schema_dir, script_dir)
+        try:
+            final_task.resolve_paths(schema_dir, script_dir)
+        except ValueError as exc:
+            print(f"{FLRed}Path expansion failed for '{final_task.name}': {exc}{CRst}")
+            if cli_auto:
+                return 1
+            continue  # keep the schema and password, return to task selection
 
         if not final_task.local_path or not final_task.remote_path:
             print(f"{FLRed}Task is missing local-path or remote-path.{CRst}")
             return 1
 
         # ---- Alternative remote host selection ----
-        _interactive_host_swap(final_task, cli_auto)
+        if not _interactive_host_swap(final_task, cli_auto):
+            continue  # back to task selection without using the current host
 
         # ================================================================
-        # Step 6: Pre-sync check (if configured)
+        # Step 6: Select action before the optional pre-sync check
         # ================================================================
 
         # Determine direction before pre-sync check so the check uses the same direction
-        directional = final_task.mode in _DIRECTIONAL_MODES
-        direction: str = cli_direction or "push"
-
-        if directional and cli_direction is None:
-            # ---- Interactive direction selection ----
-            print()
-            print(f"  {FLYellow}Task:{CRst} {FLCyan}{final_task.name}{CRst}")
-            lp, rp = final_task.local_path, final_task.remote_path
-            direction_options: list[MenuOption] = []
-            if final_task.allow_push:
-                direction_options.append(MenuOption(["0"], f"push   {FLCyan}{lp}{CRst} {FGray}->{CRst} {FLCyan}{rp}{CRst}", value="push"))
-            if final_task.allow_pull:
-                key = "1" if direction_options else "0"
-                direction_options.append(MenuOption([key], f"pull   {FLCyan}{rp}{CRst} {FGray}->{CRst} {FLCyan}{lp}{CRst}", value="pull"))
-            if not direction_options:
-                print(f"{FLRed}Task allows neither push nor pull.{CRst}")
-                return 1
-            result = Menu.select(
-                direction_options,
-                prompt="Sync direction",
-                separator=False,
-                key_color="",
-            )
-            if result is None:
-                continue  # back to task selection
-            direction = result
-        elif not directional and cli_direction:
-            print(f"{FGray}  -> direction 'push/pull' ignored for mode '{final_task.mode}'{CRst}")
-
-        if directional and direction == "push" and not final_task.allow_push:
-            print(f"{FLRed}Task does not allow push direction.{CRst}")
-            return 1
-        if directional and direction == "pull" and not final_task.allow_pull:
-            print(f"{FLRed}Task does not allow pull direction.{CRst}")
-            return 1
-        if directional and direction == "pull" and final_task.backup_dir:
-            print(f"{FLRed}Refusing pull with backup-dir. Use a task-specific pull backup path or disable backup-dir.{CRst}")
-            return 1
-
-        unresolved_path_vars = final_task.find_unresolved_path_vars()
-        if unresolved_path_vars:
-            print(f"{FLRed}Task contains unresolved path variables:{CRst}")
-            for err in unresolved_path_vars:
-                print(f"  {FLRed}- {err}{CRst}")
-            return 1
-
-        # Auto-execute when both --task and --direction are given.  When --task
-        # is supplied from the CLI, there is no task list to return to.
-        auto_execute = cli_task is not None and cli_direction is not None
-        comparison: Optional[ComparisonMode] = None
-        if final_task.mode in _DATA_MODES:
-            comparison = _select_comparison_mode(
-                final_task,
-                cli_comparison,
-                interactive=not auto_execute,
-            )
-            if comparison is None:
+        # ---- Interactive operation selection (includes direction) ----
+        try:
+            action = _select_action(final_task, cli_action, cli_direction)
+            if action is None:
                 if cli_auto:
-                    return 1
-                continue
-        elif cli_comparison is not None:
-            print(
-                f"{FGray}  -> comparison '{cli_comparison.value}' ignored "
-                f"for mode '{final_task.mode}'{CRst}"
-            )
+                    return 0
+                continue  # back to task selection
+            final_task = _task_for_action(final_task, action)
+            if cli_resync and action is not SyncAction.BISYNC:
+                raise ValueError("--resync requires the bisync action")
+        except ValueError as exc:
+            print(f"{FLRed}{exc}{CRst}")
+            if cli_auto:
+                return 1
+            continue
+        _, action_direction = ACTION_COMMANDS[action]
+        directional = action_direction is not None
+        direction = action_direction or "push"
+
+        # Auto-execute with --task and --action (or the legacy --direction). When --task
+        # is supplied from the CLI, there is no task list to return to.
+        auto_execute = cli_task is not None and (cli_action is not None or cli_direction is not None)
+        comparison = _select_comparison_mode(
+            final_task, cli_comparison, interactive=not auto_execute,
+        )
+        if comparison is None:
+            if cli_auto:
+                return 1 if auto_execute or cli_comparison is not None else 0
+            continue
 
         cancel_hint = (
             "Press Ctrl+C to cancel and exit with code 130."
@@ -2017,7 +2875,114 @@ def main() -> int:
             "Press Ctrl+C to cancel and return to the task menu."
         )
 
-        if not cli_dry_run and final_task.check_before_sync and final_task.check_before_sync is not False:
+        # ================================================================
+        # Step 7: Confirm & execute
+        # ================================================================
+        print("────────────")
+        task_summary = (
+            f"  {FLYellow}Task:{CRst} {FLCyan}{final_task.name}{CRst}  "
+            f"{FLYellow}action:{CRst} {FLCyan}{action.value}{CRst}"
+        )
+        if comparison is not None:
+            task_summary += (
+                f"  {FLYellow}comparison:{CRst} "
+                f"{FLCyan}{comparison.value}{CRst}"
+            )
+        cmd = final_task.to_command(
+            rclone_exe,
+            dry_run=cli_dry_run,
+            direction=direction,
+            comparison=comparison,
+            resync=cli_resync,
+        )
+        if cli_dry_run:
+            _print_cmd(cmd)
+            print(task_summary)
+            print(f"\n{FGray}(dry-run - command only, no changes made){CRst}")
+            return 0
+
+        # Show path modification times for user awareness.
+        # Only show directional danger warnings for sync/copy/move (not bisync/check).
+        warnings: list[str] = []
+        if final_task.do_not_check_modified_time:
+            print(f"{FGray}Path modification time check skipped by configuration.{CRst}")
+        else:
+            print(f"\n{FLCyan}Checking path modification times...{CRst} {FGray}{cancel_hint}{CRst}")
+            try:
+                warnings = _display_path_mtimes(final_task, rclone_exe, direction if directional else "")
+            except OperationCancelled:
+                if cli_auto:
+                    return 130
+                continue
+
+        if final_task.mode == "move":
+            source_side = "local" if direction == "push" else "remote"
+            warnings.append(
+                f"  {FLYellow}  ⚠ WARNING:{CRst} {FLCyan}{action.value}{CRst} "
+                f"{FLRed}will delete {source_side} source files after successful transfer "
+                f"or an identical destination match!{CRst}"
+            )
+        if final_task.mode == "bisync":
+            print(f"{FGray}Bisync keeps local as Path1 and remote as Path2; state is stored in rclone's work directory.{CRst}")
+            if cli_resync:
+                warnings.append(f"  {FLYellow}  ⚠ WARNING: Rebuilding bisync state (--resync); rclone's default conflict preference is Path1 (local).{CRst}")
+            else:
+                print(f"{FGray}First use or comparison changes may require an explicit --resync run.{CRst}")
+        go_back = False
+        while True:
+            for warning in warnings:
+                print(warning)
+            _print_cmd(cmd)
+            print(task_summary)
+            if auto_execute:
+                break  # skip confirmation, execute directly
+            try:
+                choice = input(
+                    f"\n{FLYellow}Execute{CRst} {FLCyan}{action.value}{CRst}{FLYellow}?{CRst} "
+                    f"{FGray}[{FLGreen}y{FGray}=yes / {FLCyan}n{FGray}=back / {FLCyan}d{FGray}=dry-run / {FLCyan}Q{FGray}=quit]{CRst}: "
+                ).strip().lower()
+            except EOFError:
+                print()
+                Console.print_exit_message("Bye.")
+                return 0
+
+            if not choice:
+                continue
+            if choice == "y":
+                break
+            elif choice == "n":
+                go_back = True
+                break
+            elif choice == "d":
+                dry_cmd = final_task.to_command(
+                    rclone_exe,
+                    dry_run=True,
+                    direction=direction,
+                    comparison=comparison,
+                    resync=cli_resync,
+                )
+                print(f"\n{FLCyan}Running dry-run...{CRst} {FGray}{cancel_hint}{CRst}\n")
+                try:
+                    exec_result = _run_task_command(final_task, dry_cmd, rclone_exe, direction)
+                except OperationCancelled:
+                    go_back = True
+                    break
+                if exec_result.returncode == 0:
+                    print(f"\n{FGray}(dry-run complete — no changes){CRst}")
+                else:
+                    print(f"\n{FLRed}Dry-run failed with exit code {exec_result.returncode}.{CRst}")
+                continue
+            elif choice == "q":
+                Console.print_exit_message("Bye.")
+                return 0
+            else:
+                print(f"{FLRed}Enter y, n, d, or q.{CRst}")
+
+        if go_back:
+            continue  # back to outermost task selection loop
+
+        # ---- Execute ----
+        if directional and final_task.check_before_sync:
             print(f"\n{FLCyan}Running pre-sync check...{CRst} {FGray}{cancel_hint}{CRst}")
             check_cmd = final_task.to_check_command(rclone_exe, direction=direction)
             _print_cmd(check_cmd)
@@ -2028,121 +2993,37 @@ def main() -> int:
                     return 130
                 continue
             if result.returncode != 0:
-                print(f"{FLYellow}  -> Differences detected between source and destination.{CRst}")
+                print(f"{FLYellow}  -> Pre-sync check reported differences or an error.{CRst}")
                 if final_task.stop_on_check_failure:
                     print(f"{FLRed}  -> Stopped because stop-on-check-failure is enabled.{CRst}")
                     return result.returncode
-
-        # ================================================================
-        # Step 7: Confirm & execute
-        # ================================================================
-        print("────────────")
-        task_summary = (
-            f"  {FLYellow}Task:{CRst} {FLCyan}{final_task.name}{CRst}  "
-            f"{FLYellow}mode:{CRst} {FLCyan}{final_task.mode}{CRst}  "
-            f"{FLYellow}direction:{CRst} {FLCyan}{direction}{CRst}"
-        )
-        if comparison is not None:
-            task_summary += (
-                f"  {FLYellow}comparison:{CRst} "
-                f"{FLCyan}{comparison.value}{CRst}"
-            )
-        print(task_summary)
-        cmd = final_task.to_command(
-            rclone_exe,
-            dry_run=cli_dry_run,
-            direction=direction,
-            comparison=comparison,
-        )
-        _print_cmd(cmd)
-
-        # Show path modification times for user awareness.
-        # Only show directional danger warnings for sync/copy/move (not bisync/check).
-        print(f"\n{FLCyan}Checking path modification times...{CRst} {FGray}{cancel_hint}{CRst}")
-        try:
-            _display_path_mtimes(
-                final_task.local_path, final_task.remote_path, rclone_exe,
-                direction if directional else "",
-                final_task.remote_path_type,
-            )
-        except OperationCancelled:
-            if cli_auto:
-                return 130
-            continue
-
-        if cli_dry_run:
-            print(f"\n{FGray}(dry-run - no changes made){CRst}")
-            return 0
-        elif auto_execute:
-            pass  # skip confirmation, execute directly
-        else:
-            go_back = False
-            while True:
-                try:
-                    choice = input(
-                        f"\n{FLYellow}Execute?{CRst} {FGray}[{FLGreen}y{FGray}=yes / {FLCyan}n{FGray}=back / {FLCyan}d{FGray}=dry-run / {FLCyan}q{FGray}=quit]{CRst}: "
-                    ).strip().lower()
-                except EOFError:
-                    print()
-                    Console.print_exit_message("Bye.")
-                    return 0
-
-                if choice == "y":
-                    break
-                elif choice == "n":
-                    go_back = True
-                    break
-                elif choice == "d":
-                    dry_cmd = final_task.to_command(
-                        rclone_exe,
-                        dry_run=True,
-                        direction=direction,
-                        comparison=comparison,
-                    )
-                    print(f"\n{FLCyan}Running dry-run...{CRst} {FGray}{cancel_hint}{CRst}\n")
-                    try:
-                        exec_result = _run_interruptible(dry_cmd)
-                    except OperationCancelled:
-                        go_back = True
-                        break
-                    if exec_result.returncode == 0:
-                        print(f"\n{FGray}(dry-run complete — no changes){CRst}")
-                    else:
-                        print(f"\n{FLRed}Dry-run failed with exit code {exec_result.returncode}.{CRst}")
-                    continue
-                elif choice == "q":
-                    Console.print_exit_message("Bye.")
-                    return 0
-                else:
-                    print(f"{FLRed}Enter y, n, d, or q.{CRst}")
-
-            if go_back:
-                continue  # back to outermost task selection loop
-
-        # ---- Execute ----
+            _print_cmd(cmd)
         print(f"\n{FLYellow}Running...{CRst} {FGray}{cancel_hint}{CRst}\n")
         try:
-            exec_result = _run_interruptible(cmd)
+            exec_result = _run_task_command(final_task, cmd, rclone_exe, direction)
         except OperationCancelled:
             if cli_auto:
                 return 130
             continue
 
         if exec_result.returncode == 0:
-            print(f"\n{FLGreen}Sync completed successfully.{CRst}")
+            print(f"\n{FLGreen}Operation '{action.value}' completed successfully.{CRst}")
         else:
-            print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
+            print(f"\n{FLRed}Operation '{action.value}' failed with exit code {exec_result.returncode}.{CRst}")
 
         _, sync_dst = final_task.source_dest(direction)
-        if final_task.links and os.path.exists(sync_dst):
+        if exec_result.returncode == 0 and directional and final_task.links and os.path.exists(sync_dst):
             _fix_windows_symlinkd(sync_dst)
 
         if final_task.notify_after_sync:
             status = "completed" if exec_result.returncode == 0 else f"failed (code {exec_result.returncode})"
-            _notify(f"rclone-sync: {final_task.name}", f"Sync {status}")
+            _notify(f"rclone-sync: {final_task.name}", f"{action.value} {status}")
 
         if auto_execute:
             return exec_result.returncode
+
+        if cli_resync and exec_result.returncode == 0:
+            cmd = final_task.to_command(rclone_exe, direction=direction, comparison=comparison)
 
         # ================================================================
         # Step 8: Post-execution menu
@@ -2150,7 +3031,7 @@ def main() -> int:
         while True:
             try:
                 choice = input(
-                    f"\n{FLYellow}What next?{CRst} {FGray}[{FLGreen}m{FGray}/{FLGreen}Enter{FGray}=back to menu / {FLCyan}r{FGray}=re-run / {FLCyan}q{FGray}=quit]{CRst}: "
+                    f"\n{FLYellow}What next?{CRst} {FGray}[{FLGreen}m{FGray}/{FLGreen}Enter{FGray}=back to menu / {FLCyan}r{FGray}=re-run / {FLCyan}Q{FGray}=quit]{CRst}: "
                 ).strip().lower()
             except EOFError:
                 print()
@@ -2162,13 +3043,13 @@ def main() -> int:
             elif choice == "r":
                 print(f"\n{FLYellow}Re-running...{CRst} {FGray}{cancel_hint}{CRst}\n")
                 try:
-                    exec_result = _run_interruptible(cmd)
+                    exec_result = _run_task_command(final_task, cmd, rclone_exe, direction)
                 except OperationCancelled:
                     break
                 if exec_result.returncode == 0:
-                    print(f"\n{FLGreen}Sync completed successfully.{CRst}")
+                    print(f"\n{FLGreen}Operation '{action.value}' completed successfully.{CRst}")
                 else:
-                    print(f"\n{FLRed}Sync failed with exit code {exec_result.returncode}.{CRst}")
+                    print(f"\n{FLRed}Operation '{action.value}' failed with exit code {exec_result.returncode}.{CRst}")
             elif choice == "q":
                 Console.print_exit_message("Bye.")
                 return 0

@@ -263,7 +263,7 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/network/tailscale-restart-accept-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
-| `tools/network/rclone-sync.py` | **基于 YAML 配置的 rclone 同步任务手动运行器**：<br />支持可复用 profile、按机器过滤 sub-task、适用于 sync/copy/move 的方向选择、适用于 sync/copy/move/bisync 的比较模式选择（`size_and_time`、`size_only`、`force`、`checksum`）、备选远端、修改时间检查、dry-run、pre-check，以及在 rclone 操作期间用 Ctrl+C 取消（交互模式返回任务菜单；使用 `--task` 时退出码 130） | `rclone`<br />**Python 库**：`PyYAML` |
+| `tools/network/rclone-sync.py` | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，同步、复制、移动或比较目录，也可复制和移动单个文件。支持配置校验、灵活的动作权限、操作与比较方式选择、删除限制、备选远端、参考性时间提示、试运行和取消操作。 | `rclone`<br />**Python 库**：`PyYAML` |
 | `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | **Python 库：**`boto3` |
 | `tools/windows/firewall-app-blocker.py` | 仅 Windows，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
 | `tools/network/webserver-run.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |
@@ -314,12 +314,18 @@
 | --------------------------- | ------------------------------------------------------------ | ------------ |
 | `tools/macos/run-pdf2zh.sh` | 仅 macOS，**启动 pdf2zh-next**（[PDFMathTranslate-next](https://github.com/PDFMathTranslate-next/PDFMathTranslate-next)） | **仅 macOS** |
 
+### 预设命令
+
+| 脚本 | 描述 | 依赖 |
+|------|------|------|
+| `tools/run-commands.py` | **预设命令运行器**：<br />选择自己的配置文件，再通过菜单选择并执行保存的命令或脚本；[配置样例](tools/run-commands-schema-sample.yaml) 提供详细说明。 | **Python 库**：`PyYAML`；预设命令所需的程序或解释器 |
+
 ### 科研工具
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/research/npy-viewer.py` | **`.npy`/`.npz` 文件交互式查看器**：<br />1D 折线/柱状/散点图，2D 热力图/曲面图 | **Python 库**：`numpy`、`matplotlib`、`plotly` |
-| `tools/research/pattern-generator.py` | **结构光投影图案生成器**：<br />非专业人员请勿使用 | Python 库：`opencv-python`、`numpy` |
+| `tools/research/pattern-generator.py` | **结构光投影图案生成器**：<br />生成可选择左/上边缘、像素中心或右/下边缘采样的正弦条纹，以及标准格雷码序列。<br />非专业人员请勿使用 | Python 库：`opencv-python`、`numpy` |
 
 ### 测试/辅助脚本
 

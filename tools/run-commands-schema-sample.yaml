@@ -1,0 +1,173 @@
+# Configuration reference and design notes for users and agents.
+# Documentation only: this is not your actual runtime configuration.
+# Do not execute these example tasks directly. Copy and adapt the relevant
+# examples into your own configuration file before running them.
+# This file is NEVER an automatic default or fallback configuration.
+# Interactive startup prompts for a path, defaulting to --schema-file or
+# ZL_RUN_COMMANDS_SCHEMA. If neither is set, the path must be entered.
+# With --task or redirected stdin, --schema-file or ZL_RUN_COMMANDS_SCHEMA
+# is required and used directly (--schema-file takes precedence).
+# --yes skips execution confirmation only; it does not skip path selection.
+# Requires PyYAML and only the selected runtime/program.
+#
+# Inheritance: default -> task profiles -> task -> child profiles -> child.
+# Parents first; each profile applies ONCE, at its first occurrence. Cycles and
+# unknown names are rejected even in unused profiles. Lists of args/commands
+# retain duplicates. Sub-tasks are alternatives, not sequential steps.
+#
+# environment / interactive-inputs can appear in profiles, tasks, sub-tasks,
+# or their run blocks. Merge by variable name, later wins. Within each layer,
+# run-level context wins. Repeated inputs overwrite and are prompted once.
+# Other run fields form an atomic payload: a child run replaces the parent run.
+#
+# Machine filters accept a string or list: OR within a list, AND between fields.
+# Omitted/[] matches any machine. windows=win32, macos=darwin,
+# x64=x86_64=amd64, x86=i386=386, aarch64=arm64.
+# Shell choice: explicit runtime > last matching inherited binding > platform
+# default (Windows powershell-5.1, macOS zsh, Linux bash). Binding lists append.
+# Bindings do not affect task visibility; no cross-runtime fallback.
+#
+# Runtimes: powershell-5.1, pwsh-7, cmd, git-bash, bash, zsh,
+# conda-python, python-current, python, node, tsx, deno, bun.
+# python requires runtime-executable; python-current uses sys.executable.
+# conda-python defaults to base; conda-environment / conda-prefix are exclusive.
+# runtime-executable overrides discovery (for conda-python, this is CONDA).
+# runtime-args precede the payload (unsupported for cmd).
+# tsx needs Node and tsx installed in the target project; nothing is installed
+# automatically. code supports Python, Node and Bun; use script for Deno/tsx.
+#
+# cwd defaults to invocation cwd. Relative cwd uses invocation cwd; relative
+# script-path/runtime-executable use final cwd, NOT the YAML directory.
+# Relative PATH entries also use the task's cwd. Program/interpreter launch paths
+# preserve symlinks (important for virtual environments).
+# Paths, args and environment support environment references and placeholders:
+# ${VAR}, $VAR, %VAR%, $ENV:VAR, ${ENV:VAR}
+# {{schema_dir}}, {{script_dir}}, {{current_dir}}, {{pathsep}}.
+# Self-reference (e.g. PATH) reads the parent value; other references resolve
+# dependencies. Undefined references and cycles fail. All values are strings.
+# Interactive values are literal and override environment; source command/code
+# is NEVER template-expanded. Empty maps add no overrides.
+#
+# shell command accepts a string or list of complete blocks in ONE session.
+# Native shell failure/exit behavior applies; no abort-on-error policy.
+# PowerShell native exit propagation may require: exit $LASTEXITCODE
+# exec uses executable + args without a shell; Windows requires a native binary.
+# script uses script-path + args; code uses literal inline source.
+# args are strings, one item per argument. CMD script paths/args cannot contain
+# quotes, %, ! or newlines; use literal shell commands for CMD-specific quoting.
+# Inline CMD files use the console code page.
+#
+# --validate checks all profiles/tasks without runtime probes.
+# --doctor resolves matching plans; --dry-run previews one selected plan.
+# Supply required inputs with --input NAME=VALUE (repeatable, last value wins).
+# --yes skips execution confirmation, not input prompts.
+schema-version: 1
+
+settings:
+  default:
+    cwd: "{{current_dir}}"
+    environment:
+      RUN_COMMANDS_MESSAGE: "Hello from run-commands"
+  windows:
+    platform: windows
+  posix:
+    platform: [macos, linux]
+  preferred-shells:
+    default-shell-binding:
+      - platform: windows
+        runtime: pwsh-7
+      - platform: macos
+        runtime: zsh
+      - platform: linux
+        runtime: bash
+      # Optional machine override, after general bindings:
+      # - computer-name: [example-desktop, example-laptop]
+      #   platform: windows
+      #   runtime: powershell-5.1
+  greeting-input:
+    interactive-inputs:
+      MESSAGE: "Message:"
+
+tasks:
+  examples:
+    - name: shell
+      inherit: [preferred-shells]
+      sub-tasks:
+        - name: windows
+          inherit: [windows]
+          run:
+            type: shell
+            command:
+              - '$message = $env:RUN_COMMANDS_MESSAGE'
+              - 'Write-Output $message'
+        - name: posix
+          inherit: [posix]
+          run:
+            type: shell
+            command: |
+              message="$RUN_COMMANDS_MESSAGE"
+              printf '%s\n' "$message"
+
+    - name: executable
+      run:
+        type: exec
+        executable: git
+        args: ["--version"]
+
+    - name: python
+      run:
+        type: code
+        runtime: conda-python
+        conda-environment: base
+        code: |
+          import os
+          import sys
+          print(sys.executable)
+          print(os.environ["RUN_COMMANDS_MESSAGE"])
+
+    - name: input
+      inherit: [greeting-input]
+      environment:
+        DECORATED_MESSAGE: "Input: ${MESSAGE}"
+      run:
+        type: code
+        runtime: python-current
+        code: |
+          import os
+          print(os.environ["DECORATED_MESSAGE"])
+
+    - name: javascript
+      run:
+        type: code
+        runtime: node
+        code: 'console.log(process.env.RUN_COMMANDS_MESSAGE);'
+
+    - name: script
+      run:
+        type: script
+        runtime: python-current
+        script-path: "{{script_dir}}/run-commands.py"
+        args: ["--help"]
+
+  # Project-specific examples (uncomment and customize):
+  # project:
+  #   - name: typescript
+  #     cwd: ./my-node-project
+  #     run:
+  #       type: script
+  #       runtime: tsx
+  #       script-path: ./scripts/report.ts
+  #       args: ["--format", "json"]
+  #   - name: virtual-environment
+  #     run:
+  #       type: script
+  #       runtime: python
+  #       runtime-executable: "${PROJECT_PYTHON}"
+  #       script-path: ./report.py
+  #   - name: git-bash
+  #     inherit: [windows]
+  #     run:
+  #       type: shell
+  #       runtime: git-bash
+  #       command: 'printf "%s\n" "$RUN_COMMANDS_MESSAGE"'
+          

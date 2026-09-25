@@ -1,9 +1,21 @@
 # ============================================================
-# rclone-sync-default-schema.yaml — reference / example schema
+# rclone-sync-schema-sample.yaml — agent-facing schema reference
 # ============================================================
 #
-# This is the default schema file bundled with rclone-sync.py.
-# It serves as a reference — copy and customize it for your own use.
+# This file is detailed documentation for agents and users: schema fields,
+# inheritance rules, runtime behavior, and illustrative configuration examples.
+# Agents should read it when editing rclone-sync.py or a user's actual schema.
+# It is NOT the user's runtime configuration, and is NEVER an automatic default
+# or fallback. Do not execute these examples or treat them as the user's sync plan.
+# Keep this reference consistent with the script; edit the separately selected
+# personal configuration only when the user requests changes to that file.
+#
+# Select the actual configuration with --schema-file or ZL_RCLONE_SYNC_SCHEMA_FILE
+# (--schema-file takes precedence). Interactive startup prompts for a path,
+# using that selection as the suggested value; with neither set, input is required.
+# With --task, one of those configuration sources is required and used directly.
+# Duplicate keys in a YAML mapping are errors, with both definition locations.
+# YAML anchors/merge keys may still provide defaults overridden by explicit keys.
 #
 # Environment variables recognized by the script:
 #   ZL_RCLONE_SYNC_SCHEMA_FILE   path to the YAML schema file
@@ -19,20 +31,86 @@
 #                                         may itself inherit other profiles)
 #   exclude                append+dedup
 #   alternative-remote-host  append+dedup
+#   allow-actions          replace (including null, all, or an empty list)
 #   sub-tasks              replace
 #   everything else        replace (override)
 #
 # Multiple profiles can be inherited via `inherit: [p1, p2]` — later
 # profiles override earlier ones for the same field.  When a profile
 # itself declares `inherit`, its parents are resolved first (recursively),
-# forming a DAG.  Cycles are detected and silently broken.
+# forming a DAG. Cycles are rejected with the full reference chain, e.g.
+# a -> b -> a. All profiles (including default and unused ones) are checked
+# when loading the schema. Shared parents in separate branches are valid
+# and are applied again in list order; a task/sub-task's own fields win last.
+# Unknown profile references and invalid inherit lists are also rejected.
+#
+# ---- Runtime actions --------------------------------------------------
+# Optional preferred-mode controls menu ordering, not which operation must run:
+# A nonempty value (including an inherited one) puts matching actions first
+# in FLYellow; the other actions use FLCyan. If no layer sets preferred-mode, push/pull
+# use FLYellow and the others use FLCyan in the standard order below.
+# preferred-mode: null or "" clears an inherited preference and restores that order.
+#   sync   -> push, pull first
+#   copy   -> push-copy, pull-copy first
+#   move   -> push-move, pull-move first (removes source files)
+#   bisync -> bisync first
+#   check  -> check first
+# The other permitted actions remain available. Menus end with Q: exit from
+# the task menu, or return from sub-task/host/operation/comparison selection.
+# With --task, Q exits when there is no task menu to return to.
+# Empty operation/confirmation input retries without selecting or executing.
+# Operation paths use FLBlue for local and FLGreen for remote.
+# Task labels retain group/task; sub-task menus show that parent label.
+# After selection, host/operation/confirmation displays append /sub-task.
+# Alternative host menus show group/task/sub-task in FLYellow.
+# Ungrouped tasks omit the group prefix.
+# Confirmation groups warnings, then shows the command, task/action/comparison,
+# and Execute prompt. Move's source-deletion warning appears here, not in the menu.
+# CLI --action selects an operation explicitly; --direction/--push/--pull
+# instead use the configured sync/copy/move preferred-mode.
+# Without a preference, direction-only CLI flags use sync for directories, copy for files.
+# allow-actions accepts null, scalar all, or a list of exact action names.
+# Omit it to inherit; if never set, all supported actions are available.
+# Explicit null/all clears inherited restrictions. [] disables every action, including check.
+# Use null (or an empty YAML value) for Python None, not the string "None".
+# all must not appear in a list: [all] is invalid. Unknown action names are errors.
+# The effective menu is the intersection of allow-actions and path-type support.
+# These restrictions also apply to CLI; preferred-mode never grants an action permission.
+# Bisync uses rclone's local state directory; Path1 is always local-path.
+# Initialize/rebuild with --action bisync --resync, then omit --resync on
+# subsequent runs. Changing comparison settings may require rebuilding.
+#
+# ---- File tasks -------------------------------------------------------
+# path-type: directory | file (inherited; default: directory, usually omitted).
+# With file, both endpoints contain full filenames, possibly different names.
+# Only push-copy-file, pull-copy-file, push-move-file, pull-move-file are offered.
+# copy-file uses copyto; move-file uses moveto and removes the source file.
+# preferred-mode accepts copy/move. Without a preference, the two copy-file actions are yellow.
+# All four comparisons work; file check/pre-check, sync, and bisync are not provided.
+# A file task must not inherit an enabled check-before-sync setting.
+# Source must exist as a file; destination may be absent, but cannot be a directory.
+# This is checked immediately before execution, dry-run, and re-run.
+# Directory contents still use links/copy-links independently of path-type.
+# A file endpoint that is itself a symlink is not a separate supported task type:
+# a source link requires copy-links; a destination link is refused.
+#
+# ---- Modification time display ----------------------------------------
+# do-not-check-modified-time defaults to false and follows normal inheritance.
+# true skips the advisory time queries/display; it does not change comparison
+# or disable the mandatory file existence/type checks before transfers.
+# Missing destinations show first-upload/download guidance. Missing sources
+# show direction-aware warnings. Read failures and empty directories are not
+# automatically treated as missing paths or first synchronization.
+# Directory timestamps provide hints, not guarantees of individual file age.
+# Re-run reuses the selected command without repeating selection, confirmation,
+# time display, or pre-sync check; file endpoint guards still apply.
 #
 # ---- Path variables ---------------------------------------------------
 # ``local-path`` and ``remote-path`` can be set at the task level and
 # will be inherited by every sub-task that does not override them.
-# A task still requires at least one machine-matching sub-task before
-# it can execute — task-level paths just reduce repetition when many
-# sub-tasks share the same source or destination.
+# With sub-tasks, at least one must match the current machine. Without sub-tasks,
+# a task can execute directly when its own machine filters match.
+# Task-level paths reduce repetition when sub-tasks share an endpoint.
 #
 # ``remote-path-type`` controls how ``remote-path`` is classified:
 #   auto    — infer from the path string (default)
@@ -44,11 +122,17 @@
 # Every path-type field (local-path, remote-path, backup-dir, log-file)
 # supports the following placeholders:
 #
-#   ${ENV_VAR} / %ENV_VAR%     any environment variable
+#   $VAR / ${VAR} / %VAR%      any environment variable (all platforms)
 #   $ENV:VAR / ${ENV:VAR}      PowerShell-style environment variable
 #   {{schema_dir}}             directory containing *this* YAML file
 #   {{script_dir}}             directory containing rclone-sync.py
 #   {{current_dir}}            current working directory (cwd)
+#
+# Expansion happens once after selecting the task/sub-task. Undefined variables
+# and unknown placeholders stop that task with the field name in the error.
+# Substituted values stay literal even if they contain $VAR or {{placeholder}}.
+# Leading ~ expands to the user home; UNC/rclone and relative paths stay intact.
+# Missing variables on other machines' unselected tasks do not block this machine.
 #
 # Examples:
 #   local-path: "~/Documents"
@@ -64,7 +148,8 @@
 settings:
   # "default" is special: every task inherits these values automatically.
   default:
-    mode: sync              # sync | copy | move | check | bisync  [default: sync]
+    # preferred-mode: sync   # optional: sync | copy | move | check | bisync
+    do-not-check-modified-time: false  # true skips the advisory time comparison
     progress: true          # show real-time transfer progress     [default: true]
     transfer: 8             # parallel file transfers (1-64)       [default: 4]
     exclude:                # glob patterns to skip                [default: []]
@@ -84,7 +169,8 @@ settings:
   # ---- cautious -----------------------------------------------------
   # Safety net: limits deletions, runs a pre-sync check.
   cautious:
-    max-delete: 50
+    max-delete-count: 50
+    max-delete-percent: 50
     check-before-sync: true
     stop-on-check-failure: false
 
@@ -119,7 +205,7 @@ settings:
   # another will also pass through its inherited parent's profiles.
   #
   # full-bulk:
-  #   inherit: bulk
+  #   inherit: [bulk]
   #   notify-after-sync: true
   #   bwlimit: "5M"
 
@@ -139,13 +225,15 @@ tasks:
       # Pull defaults from a named profile in `settings`.
       inherit: [cautious]            # [default: "" = no profile]
 
-      # ---- mode -----------------------------------------------------
+      # ---- preferred-mode -------------------------------------------
+      # Matching actions are placed first; the menu still offers other modes.
+      # Omit to inherit preferred-mode; null or "" clears an inherited preference.
       # sync   — make dest match source, one-way (deletes extra files)
-      # copy   — copy source to dest, never deletes
+      # copy   — copy source to dest, preserves extra destination files
       # move   — like copy but deletes source files after transfer
       # check  — compare source vs dest (read-only, no transfer)
-      # bisync — bidirectional sync (experimental, needs rclone ≥ 1.58)
-      mode: sync                     # [default: sync]
+      # bisync — bidirectional sync with persistent state and explicit initialization
+      preferred-mode: sync           # optional [default: no menu preference]
 
       # ---- progress -------------------------------------------------
       progress: true                 # show live progress with -P     [default: true]
@@ -171,6 +259,9 @@ tasks:
       ignore-case-sync: false        # [default: false]
 
       # ---- comparison strategy ------------------------------------------
+      # Sync/copy/move offer size_and_time, size_only, force, checksum.
+      # Bisync excludes force and maps the choice to --compare.
+      # Check offers size_only/checksum, defaulting to checksum.
       # ignore-times — transfer every source file unconditionally
       #                (--ignore-times).  In interactive mode this only
       #                makes "force" the default comparison selection.
@@ -205,10 +296,16 @@ tasks:
       # and credentials can read/write objects but cannot CreateBucket.
       s3-no-check-bucket: false      # [default: false]
 
-      # ---- direction safety -----------------------------------------
-      # Disable one direction to prevent accidental reversal.
-      allow-push: true               # [default: true]
-      allow-pull: true               # [default: true]
+      # ---- action safety --------------------------------------------
+      # Disable individual actions to prevent accidental reversal or deletion.
+      # push means sync upload only; it does not grant push-copy or push-move.
+      # Lists replace inherited lists. [] disables all actions; omit to inherit.
+      # If never set, all supported actions are available. Explicit all resets restrictions.
+      # Bisync and check are independently controlled, like every other action.
+      # allow-actions: all           # usually omitted
+
+      # ---- path type ------------------------------------------------
+      path-type: directory           # directory | file [default: directory]
 
       # ---- remote path type -----------------------------------------
       # auto   — infer rclone vs local/UNC from remote-path
@@ -236,14 +333,20 @@ tasks:
       # being permanently lost (--backup-dir).  Supports path variables.
       # Must be on the same backend as the destination.  Pull is
       # refused when a generic backup-dir is configured.
+      # Bisync requires explicit --backup-dir1/--backup-dir2 instead.
       backup-dir: "myremote:Projects/_deleted_backup"  # [default: "" = off]
 
-      # ---- max-delete -----------------------------------------------
-      # Abort if more than this many files would be deleted.
-      max-delete: 100                # [default: unlimited]
+      # ---- deletion limits ------------------------------------------
+      # Sync: abort if more than this many files would be deleted; -1 = unlimited.
+      max-delete-count: 100          # optional [rclone default: unlimited]
+      # Bisync: abort if deletions exceed this percentage on either side (0..100).
+      max-delete-percent: 50         # optional [rclone default: 50 percent]
+      # Each limit applies only to its own mode; copy/move/check use neither.
 
       # ---- check-before-sync ----------------------------------------
+      # Separate from do-not-check-modified-time, which only hides time checks.
       # Run `rclone check` before the real sync to preview differences.
+      # Applies to directory sync/copy/move only; copy/move checks use --one-way.
       #   true       — full comparison (checksum + size)
       #   size-only  — compare only file sizes (faster)
       #   false      — skip pre-sync check
@@ -331,6 +434,18 @@ tasks:
           local-path: "~/Documents"
           remote-path: "myremote:Documents"
 
+    # One file, two exact filenames; no upload/download sub-task split.
+    # Omit allow-actions to also permit the two move-file actions.
+    - name: single-config-file
+      path-type: file
+      allow-actions: [push-copy-file, pull-copy-file]
+      preferred-mode: copy
+      sub-tasks:
+        - name: windows
+          platform: windows
+          local-path: "$ENV:APPDATA/ExampleApp/config.ini"
+          remote-path: "myremote:AppData/ExampleApp/config.ini"
+
 
   # ---------- grouped tasks ----------
   # Tasks can be organized into named groups for clarity.
@@ -343,12 +458,12 @@ tasks:
     # Inherits:
     #   bulk        → transfer=24, log-file, log-level=INFO
     #   host-webdav → alternative-remote-host (4 WebDAV paths)
-    #   default     → mode=sync, progress=true, exclude patterns, …
+    #   default     → no mode preference, progress=true, exclude patterns, …
     #
     # At runtime the user will be asked to choose a dav-* host before
     # the sync runs.  Excludes from default are still active.
     - name: photos-sync
-      mode: sync
+      preferred-mode: sync
       check-before-sync: true
       inherit: [bulk, host-webdav]
       sub-tasks:
@@ -366,7 +481,8 @@ tasks:
     # "music-backup" — simple copy task, no host switching
     # =================================================================
     - name: music-backup
-      mode: copy                  # copy only — never deletes on destination
+      preferred-mode: copy        # prefer copy; permissions below exclude sync/move
+      allow-actions: [push-copy, pull-copy, check]  # preserve extra destination files
       sub-tasks:
         - name: default
           local-path: "~/Music"

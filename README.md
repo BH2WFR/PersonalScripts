@@ -211,6 +211,12 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 
 ## Script List
 
+### Command Presets
+
+| Script | Description | Requirements |
+|------|------|------|
+| `tools/run-commands.py` | **Preset command runner:** Select your configuration file, then choose and execute a saved command or script from a menu. A [configuration sample](tools/run-commands-schema-sample.yaml) documents the supported features. | **Python pkg:** `PyYAML`; programs or runtimes required by the selected preset |
+
 ### PDF Tools
 
 | Script | Description | Requirements |
@@ -265,7 +271,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 | Script | Description | Requirements |
 |------|------|------|
 | `tools/network/tailscale-restart-accept-routes.py` | **Quick restart tool for Tailscale subnet routes:**<br />Restarts Tailscale subnet routing by toggling `--accept-routes`.<br />Addresses an issue on macOS where subnet routes may be disabled automatically after a device returns home and then leaves again. | `tailscale` |
-| `tools/network/rclone-sync.py` | **Manual runner for YAML-configured rclone synchronization tasks:**<br />Supports reusable profiles, machine-filtered subtasks, direction selection for sync/copy/move, comparison modes for sync/copy/move/bisync (`size_and_time`, `size_only`, `force`, and `checksum`), alternate remotes, modification-time checks, dry runs, pre-checks, and cancellation with Ctrl+C during rclone operations (returns to the task menu in interactive mode or exits with code 130 when using `--task`). | `rclone`<br />**Python pkg:** `PyYAML` |
+| `tools/network/rclone-sync.py` | **Manual runner for rclone tasks using your own YAML configuration:**<br />Sync, copy, move, or compare directories, and copy or move individual files using reusable profiles and machine-specific subtasks. Includes configuration validation, flexible action permissions, operation and comparison choices, deletion limits, alternate remotes, advisory time notices, dry runs, and cancellation. | `rclone`<br />**Python pkg:** `PyYAML` |
 | `tools/network/upload-ipaddress.py` | **Local network-interface information collector and uploader:**<br />Collects local network-interface information, especially IP addresses (using `ipconfig`/`ip addr`), and uploads it to an S3 bucket for remote access.<br />Credentials come from environment variables: `ZL-IP-ADDRESS-S3-BUCKET`, `ZL-IP-ADDRESS-S3-ENDPOINT`, `ZL-IP-ADDRESS-S3-ID`, and `ZL-IP-ADDRESS-S3-SECRET`. | **Python pkg:** `boto3` |
 | `tools/windows/firewall-app-blocker.py` | Windows-only tool for **configuring system firewall rules that block network access for `.exe`/`.com` files:**<br />Recursively finds every `.exe`/`.com` file under a selected path and can add blocking rules or remove those rules to restore access. | **Windows only**<br />**Elevation required** |
 | `tools/network/webserver-run.py` | **Maps a local directory, or a website directory containing `index.html`, to a local HTTP server:**<br />Uses a multithreaded server based on Python's built-in `http.server` and supports interactive setup (directory/bind address/port) or CLI options (`--dir`, `--bind`, and `--port`). | |
@@ -321,7 +327,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 | Script | Description | Requirements |
 |------|------|------|
 | `tools/research/npy-viewer.py` | **Interactive `.npy`/`.npz` viewer:**<br />1D line/bar/scatter plots and 2D heatmaps/surface plots. | **Python pkgs:** `numpy`, `matplotlib`, `plotly` |
-| `tools/research/pattern-generator.py` | **Structured-light projection pattern generator:**<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
+| `tools/research/pattern-generator.py` | **Structured-light projection pattern generator:**<br />Generates sinusoidal stripes with selectable left/top-edge, center, or right/bottom-edge pixel sampling, plus standard Gray-code sequences.<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
 
 ### Test/Helper Scripts
 

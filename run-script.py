@@ -30,7 +30,6 @@ Usage:
 
 import sys
 import os
-import json
 import platform
 import re
 import subprocess
@@ -45,8 +44,7 @@ PATCH_CONFIG_FILE_NAME = "launcher-config.patch.yaml"
 ENV_INFO_FLAG = "--env-info"
 CONDA_ENV_FLAG_PREFIX = "--env="
 CONDA_ENV_VARIABLE = "ZL_CONDA_ENV"
-DEFAULT_CONDA_ENV = "base"
-CONDA_INFO_TIMEOUT_SECONDS = 15
+DEFAULT_CONDA_ENV = Environment.DEFAULT_CONDA_ENV
 SCRIPT_TYPE_KEYS = ("python", "bash", "powershell")
 ARCHITECTURE_ALIASES = {
     "amd64": "x86_64",
@@ -200,35 +198,6 @@ def _read_required_string(
     return value.strip()
 
 
-def _resolve_project_path(project_dir: str, configured_path: str) -> str:
-    """Resolve one configured path relative to the project directory."""
-    expanded_path = os.path.expanduser(os.path.expandvars(configured_path))
-    if not os.path.isabs(expanded_path):
-        expanded_path = os.path.join(project_dir, expanded_path)
-    return os.path.abspath(expanded_path)
-
-
-def _resolve_existing_directories(
-    project_dir: str,
-    configured_paths: list[str],
-) -> tuple[str, ...]:
-    """Resolve, silently discard missing directories, and deduplicate paths."""
-    directories: dict[str, str] = {}
-    for configured_path in configured_paths:
-        directory = _resolve_project_path(project_dir, configured_path)
-        if os.path.isdir(directory):
-            directories.setdefault(os.path.normcase(directory), directory)
-    return tuple(directories.values())
-
-
-def _prepend_env_paths(paths: tuple[str, ...]) -> None:
-    """Prepend directories to this process's PATH without changing its parent."""
-    if paths:
-        current_path = os.environ.get("PATH")
-        path_entries = (*paths, current_path) if current_path else paths
-        os.environ["PATH"] = os.pathsep.join(path_entries)
-
-
 def _resolve_config_color(color_name: str, yaml_key: str) -> str:
     """Resolve one configured color name with contextual validation errors."""
     try:
@@ -317,9 +286,8 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
     launcher = _read_mapping(root.get("launcher"), "launcher")
     display = _read_mapping(root.get("display"), "display")
 
-    script_root = _resolve_project_path(
-        project_dir,
-        _read_required_string(launcher, "script-root", "launcher"),
+    script_root = Paths.resolve_path(
+        _read_required_string(launcher, "script-root", "launcher"), project_dir,
     )
     test_settings = _read_mapping(launcher.get("test"), "launcher.test")
     test_enabled_value = test_settings.get("enabled")
@@ -333,15 +301,14 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         if not isinstance(configured_test_root, str) or not configured_test_root.strip():
             raise ValueError("'launcher.test.test-root' must be a non-empty string")
         configured_test_root = configured_test_root.strip()
-        test_root = _resolve_project_path(project_dir, configured_test_root)
+        test_root = Paths.resolve_path(configured_test_root, project_dir)
         if os.path.isabs(configured_test_root):
             test_path_prefix = os.path.basename(test_root)
         else:
             test_path_prefix = _normalize_relative_path(configured_test_root).rstrip("/")
 
-    requirements_file = _resolve_project_path(
-        project_dir,
-        _read_required_string(launcher, "requirements-file", "launcher"),
+    requirements_file = Paths.resolve_path(
+        _read_required_string(launcher, "requirements-file", "launcher"), project_dir,
     )
     additional_path_env = _read_required_string(
         launcher,
@@ -488,10 +455,7 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
                 f"extra-env-paths.{platform_key}",
             )
         )
-    extra_env_paths = _resolve_existing_directories(
-        project_dir,
-        configured_extra_env_paths,
-    )
+    extra_env_paths = Paths.resolve_directories(configured_extra_env_paths, project_dir)
 
     return _LauncherConfig(
         script_root=script_root,
@@ -1017,100 +981,6 @@ def _default_conda_env_name(command_line_env: Optional[str]) -> str:
     return configured_env or DEFAULT_CONDA_ENV
 
 
-def _conda_env_names_equal(left: str, right: str) -> bool:
-    """Compare Conda environment names using platform path case semantics."""
-    return os.path.normcase(left) == os.path.normcase(right)
-
-
-def _resolve_conda_python(env_name: str) -> str:
-    """Resolve the Python executable belonging to a named Conda environment.
-
-    The current interpreter is returned without starting Conda when it already
-    belongs to the requested environment. Other environments are discovered
-    through ``conda info --envs --json`` so custom ``envs_dirs`` are honored.
-
-    Args:
-        env_name: Exact Conda environment name, or ``base``.
-
-    Returns:
-        Absolute path to the selected environment's Python executable.
-
-    Raises:
-        RuntimeError: If Conda is unavailable, discovery fails, the environment
-            does not exist or is ambiguous, or it has no Python executable.
-    """
-    current_env = Environment.get_conda_env()
-    if current_env is not None and _conda_env_names_equal(current_env, env_name):
-        return os.path.abspath(sys.executable)
-
-    conda_executable = Environment.find_conda()
-    if conda_executable is None:
-        raise RuntimeError(
-            f"Cannot resolve Conda environment '{env_name}': conda is not in PATH."
-        )
-    try:
-        result = subprocess.run(
-            [conda_executable, "info", "--envs", "--json"],
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=CONDA_INFO_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(
-            f"Cannot inspect Conda environments: {exc}"
-        ) from exc
-    if result.returncode != 0:
-        detail = " ".join((result.stderr or result.stdout or "").split())
-        if not detail:
-            detail = f"conda exited with code {result.returncode}"
-        raise RuntimeError(f"Cannot inspect Conda environments: {detail}")
-
-    try:
-        payload: object = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Conda returned invalid environment data.") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("Conda returned invalid environment data.")
-
-    root_prefix = payload.get("root_prefix")
-    env_paths = payload.get("envs")
-    if not isinstance(root_prefix, str) or not isinstance(env_paths, list):
-        raise RuntimeError("Conda returned incomplete environment data.")
-
-    if _conda_env_names_equal(env_name, DEFAULT_CONDA_ENV):
-        matching_prefixes = [root_prefix]
-    else:
-        matching_prefixes = [
-            path
-            for path in env_paths
-            if isinstance(path, str)
-            and _conda_env_names_equal(os.path.basename(os.path.normpath(path)), env_name)
-        ]
-    if not matching_prefixes:
-        raise RuntimeError(f"Conda environment '{env_name}' does not exist.")
-    if len(matching_prefixes) > 1:
-        raise RuntimeError(
-            f"Multiple Conda environments are named '{env_name}'; use a unique name."
-        )
-
-    env_prefix = os.path.abspath(matching_prefixes[0])
-    if not os.path.isdir(os.path.join(env_prefix, "conda-meta")):
-        raise RuntimeError(f"Conda environment '{env_name}' is invalid.")
-    python_path = (
-        os.path.join(env_prefix, "python.exe")
-        if _detect_platform()[0]
-        else os.path.join(env_prefix, "bin", "python")
-    )
-    if not os.path.isfile(python_path):
-        raise RuntimeError(
-            f"Conda environment '{env_name}' has no Python executable."
-        )
-    return python_path
-
-
 def run_py_script(
     script_path: str,
     args: list[str],
@@ -1279,33 +1149,16 @@ def _resolve_additional_directories(
     if not raw_value:
         return []
 
-    directories: list[str] = []
-    seen: set[str] = set()
-    for raw_path in raw_value.split(os.pathsep):
-        raw_path = raw_path.strip()
-        if not raw_path:
-            continue
+    def warn_missing(directory: str) -> None:
+        """Keep the launcher's warning format while sharing directory resolution."""
+        print(
+            f"{FLYellow}Ignoring missing additional directory:{CRst} "
+            f"{FGray}{directory}{CRst}",
+            file=sys.stderr,
+        )
 
-        expanded_path = os.path.expanduser(os.path.expandvars(raw_path))
-        if not os.path.isabs(expanded_path):
-            expanded_path = os.path.join(project_dir, expanded_path)
-        resolved_path = os.path.abspath(expanded_path)
-        normalized_key = os.path.normcase(resolved_path)
-
-        if normalized_key in seen:
-            continue
-        seen.add(normalized_key)
-
-        if not os.path.isdir(resolved_path):
-            print(
-                f"{FLYellow}Ignoring missing additional directory:{CRst} "
-                f"{FGray}{resolved_path}{CRst}",
-                file=sys.stderr,
-            )
-            continue
-        directories.append(resolved_path)
-
-    return directories
+    entries = [entry.strip() for entry in raw_value.split(os.pathsep) if entry.strip()]
+    return list(Paths.resolve_directories(entries, project_dir, on_missing=warn_missing))
 
 
 def main() -> int:
@@ -1324,7 +1177,7 @@ def main() -> int:
         print(f"{FLRed}Cannot load {CONFIG_FILE_NAME}:{CRst} {exc}", file=sys.stderr)
         return 1
 
-    _prepend_env_paths(config.extra_env_paths)
+    Environment.prepend_path(config.extra_env_paths)
 
     if launcher_args and launcher_args[0] in ("--help", "-h"):
         _print_help(config)
@@ -1416,7 +1269,7 @@ def main() -> int:
             else:
                 print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
                 try:
-                    choice_line = input().strip()
+                    choice_line = Input.prompt("")
                 except EOFError:
                     print()
                     Console.print_exit_message("Bye.")
@@ -1498,7 +1351,7 @@ def main() -> int:
     if script_path.endswith(config.script_types["python"].extension):
         print()
         try:
-            target_python = _resolve_conda_python(target_conda_env)
+            target_python = Environment.resolve_conda_python(target_conda_env)
         except RuntimeError as exc:
             print(f"{FLRed}Cannot select target Python:{CRst} {exc}", file=sys.stderr)
             return 1

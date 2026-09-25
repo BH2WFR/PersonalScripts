@@ -3,8 +3,9 @@
 
 This script provides an interactive terminal workflow for generating
 structured-light projector images. It currently supports sinusoidal stripe
-patterns and standard Gray-code patterns, including complementary inverse
-Gray-code images for phase unwrapping workflows.
+patterns with selectable pixel sampling positions, and standard Gray-code
+patterns, including complementary inverse Gray-code images for phase
+unwrapping workflows.
 
 Requirements:
     - pip: opencv-python, numpy
@@ -58,6 +59,12 @@ class StripeDirection(enum.Enum):
     CUSTOM_ANGLE = "3"
 
 
+class PixelSamplingPosition(enum.Enum):
+    LEFT_TOP = "1"
+    CENTER = "2"
+    RIGHT_BOTTOM = "3"
+
+
 class GrayCodeAxes(enum.Enum):
     X_ONLY = "1"
     Y_ONLY = "2"
@@ -93,6 +100,7 @@ class SinusoidalConfig:
     phase_rad: float
     stripe_direction: StripeDirection
     stripe_angle_deg: float
+    sampling_position: PixelSamplingPosition
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,7 @@ class SinusoidalInputDefaults:
     phase_rad: float = 0.0
     stripe_direction: StripeDirection = StripeDirection.VERTICAL_STRIPES
     stripe_angle_deg: float = 0.0
+    sampling_position: PixelSamplingPosition = PixelSamplingPosition.CENTER
 
 
 @dataclass(frozen=True)
@@ -164,8 +173,9 @@ class SinusoidalPatternStrategy:
         if request.projector.coordinate_system is not CoordinateSystem.CARTESIAN:
             raise NotImplementedError("Only Cartesian coordinate system is implemented now.")
 
-        x = np.arange(width, dtype=np.float64) + 0.5
-        y = np.arange(height, dtype=np.float64) + 0.5
+        sample_offset = self._sampling_offset(cfg.sampling_position)
+        x = np.arange(width, dtype=np.float64) + sample_offset
+        y = np.arange(height, dtype=np.float64) + sample_offset
         xx, yy = np.meshgrid(x, y)
 
         nx, ny = self._distribution_vector(cfg)
@@ -184,6 +194,14 @@ class SinusoidalPatternStrategy:
 
         image = (0.5 + 0.5 * np.sin(phase)) * 255.0
         return np.clip(np.rint(image), 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _sampling_offset(position: PixelSamplingPosition) -> float:
+        return {
+            PixelSamplingPosition.LEFT_TOP: 0.0,
+            PixelSamplingPosition.CENTER: 0.5,
+            PixelSamplingPosition.RIGHT_BOTTOM: 1.0,
+        }[position]
 
     @staticmethod
     def _distribution_vector(cfg: SinusoidalConfig) -> tuple[float, float]:
@@ -880,6 +898,29 @@ def _select_stripe_direction(default: StripeDirection = StripeDirection.VERTICAL
     ))
 
 
+def _sampling_position_default_key(position: PixelSamplingPosition) -> str:
+    return {
+        PixelSamplingPosition.LEFT_TOP: "1",
+        PixelSamplingPosition.CENTER: "2",
+        PixelSamplingPosition.RIGHT_BOTTOM: "3",
+    }[position]
+
+
+def _select_sampling_position(
+    default: PixelSamplingPosition = PixelSamplingPosition.CENTER,
+) -> PixelSamplingPosition:
+    return cast(PixelSamplingPosition, Menu.select(
+        [
+            MenuOption(["1", "L"], "Left / top pixel edge", PixelSamplingPosition.LEFT_TOP),
+            MenuOption(["2", "C"], "Pixel center", PixelSamplingPosition.CENTER),
+            MenuOption(["3", "R"], "Right / bottom pixel edge", PixelSamplingPosition.RIGHT_BOTTOM),
+        ],
+        prompt="Select pixel sampling position",
+        required=True,
+        default_key=_sampling_position_default_key(default),
+    ))
+
+
 def _input_sinusoidal_config(
     frequency_unit: FrequencyUnit,
     defaults: SinusoidalInputDefaults,
@@ -910,6 +951,7 @@ def _input_sinusoidal_config(
         allow_negative=False,
     )
     phase_rad = _input_phase_rad(defaults.phase_rad)
+    sampling_position = _select_sampling_position(defaults.sampling_position)
 
     return SinusoidalConfig(
         frequency_unit=frequency_unit,
@@ -917,6 +959,7 @@ def _input_sinusoidal_config(
         phase_rad=phase_rad,
         stripe_direction=stripe_direction,
         stripe_angle_deg=stripe_angle_deg,
+        sampling_position=sampling_position,
     )
 
 
@@ -934,7 +977,15 @@ def _default_output_path(projector: ProjectorSpec, cfg: SinusoidalConfig) -> str
     }[cfg.stripe_direction]
     unit = "cycles" if cfg.frequency_unit is FrequencyUnit.TOTAL_CYCLES else "period_px"
     phase = _phase_label_for_filename(cfg.phase_rad)
-    name = f"sinusoidal_{projector.width}x{projector.height}_{direction}_{cfg.frequency:g}_{unit}_{phase}.bmp"
+    sampling = {
+        PixelSamplingPosition.LEFT_TOP: "sample_left_top",
+        PixelSamplingPosition.CENTER: "sample_center",
+        PixelSamplingPosition.RIGHT_BOTTOM: "sample_right_bottom",
+    }[cfg.sampling_position]
+    name = (
+        f"sinusoidal_{projector.width}x{projector.height}_{direction}_"
+        f"{cfg.frequency:g}_{unit}_{phase}_{sampling}.bmp"
+    )
     return os.path.join(os.getcwd(), "output/generated_patterns", name)
 
 
@@ -947,6 +998,11 @@ def _print_summary(request: PatternRequest) -> None:
         StripeDirection.VERTICAL_STRIPES: "▥ Vertical, horizontal variation",
         StripeDirection.CUSTOM_ANGLE: f"Custom angle {cfg.stripe_angle_deg:g} deg from ▥",
     }[cfg.stripe_direction]
+    sampling_label = {
+        PixelSamplingPosition.LEFT_TOP: "Left / top pixel edge",
+        PixelSamplingPosition.CENTER: "Pixel center",
+        PixelSamplingPosition.RIGHT_BOTTOM: "Right / bottom pixel edge",
+    }[cfg.sampling_position]
 
     print(f"\n{FLYellow}Generation parameters:{CRst}")
     print(f"  Pattern type:  {FLGreen}Sinusoidal stripes{CRst}")
@@ -956,6 +1012,7 @@ def _print_summary(request: PatternRequest) -> None:
     print(f"  Frequency:     {FLGreen}{cfg.frequency:g}{CRst}")
     print(f"  Phase:         {FLGreen}{phase_deg:g} deg{CRst} {FGray}({cfg.phase_rad:g} rad){CRst}")
     print(f"  Stripe dir.:   {FLGreen}{direction_label}{CRst}")
+    print(f"  Sampling:      {FLGreen}{sampling_label}{CRst}")
     print(f"  Output path:   {FGray}{request.output_path}{CRst}")
 
 
@@ -1048,6 +1105,7 @@ def _run_generation_loop(
             phase_rad=cfg.phase_rad,
             stripe_direction=cfg.stripe_direction,
             stripe_angle_deg=cfg.stripe_angle_deg,
+            sampling_position=cfg.sampling_position,
         )
         output_path = Input.resolve_output_path(
             _default_output_path(projector, cfg),
@@ -1120,7 +1178,8 @@ Usage:
 
 {FLYellow}Description:{CRst}
   Interactive generator for structured-light projector images. It can create
-  single sinusoidal stripe patterns, or full standard Gray-code image sequences
+  single sinusoidal stripe patterns with selectable left/top-edge, center, or
+  right/bottom-edge pixel sampling, or full standard Gray-code image sequences
   for projector-coordinate / sinusoidal-cycle indexing.
 
 {FLYellow}Options:{CRst}
@@ -1129,6 +1188,7 @@ Usage:
 {FLYellow}Implemented:{CRst}
   Patterns:       sinusoidal stripes; standard Gray code
   Coordinates:    Cartesian projector coordinates
+  Sampling:       left/top edge; pixel center; right/bottom edge (sinusoidal)
   Preview:        optional detached OpenCV window; terminal confirms save/discard
   Output:         8-bit grayscale image; PNG uses lossless compression level 9
 
