@@ -13,7 +13,7 @@ Usage:
     conda run -n base python tools/run-commands.py --schema-file ./commands.yaml --validate
 
 Interactive startup asks for a configuration path, defaulting to --schema-file
-or ZL_RUN_COMMANDS_SCHEMA. With --task or redirected stdin, one of those paths
+or ZL_RUN_COMMANDS_SCHEMA_FILE. With --task or redirected stdin, one of those paths
 must be supplied and is used without a path prompt. --yes skips only execution
 confirmation. run-commands-schema-sample.yaml is reference documentation for
 users/agents, never an automatic default or fallback configuration.
@@ -44,7 +44,7 @@ from utils import *  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCHEMA_SAMPLE = SCRIPT_DIR / "run-commands-schema-sample.yaml"
-SCHEMA_ENV = "ZL_RUN_COMMANDS_SCHEMA"
+SCHEMA_ENV = "ZL_RUN_COMMANDS_SCHEMA_FILE"
 MAX_PROFILE_DEPTH = 64
 TEMP_SCRIPT = "<temporary-command-script>"
 CONDA_PAYLOAD_ENV = "ZL_RUN_COMMANDS_INTERNAL_PAYLOAD"

@@ -188,6 +188,18 @@ class ExecutionTests(unittest.TestCase):
                               cwd=self.work, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", timeout=30,
                               env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
 
+    def test_cli_reads_documented_schema_file_environment_variable(self) -> None:
+        self.config.write_text(yaml.safe_dump(schema({"run": code_run()})), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(RUNNER), "--list"],
+            cwd=self.work, stdin=subprocess.DEVNULL, capture_output=True,
+            text=True, encoding="utf-8", timeout=30,
+            env={**os.environ, "ZL_RUN_COMMANDS_SCHEMA_FILE": str(self.config),
+                 "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("examples/test", result.stdout)
+
     def test_interactive_schema_uses_environment_default_and_can_be_changed(self) -> None:
         self.config.write_text(yaml.safe_dump(schema({"run": code_run()})), encoding="utf-8")
         alternative = self.work / "alternative.yaml"

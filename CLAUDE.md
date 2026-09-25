@@ -28,6 +28,19 @@ Project-specific reminders:
 
 ## Environment
 
+### Project-specific environment variables
+
+- All project-specific environment variables must start with `ZL_`.
+  Standard system and third-party variables retain their original names.
+- Whenever a script adds, uses, renames, or changes a project-specific
+  environment variable, document it in the repository-root
+  `Environmental_Variables.md` in the same change. Include the variable name,
+  owning script, purpose, whether it is required, and relevant value format,
+  defaults, and precedence. Identify internal-only variables as such.
+- Keep code, help text, configuration samples, and this registry consistent.
+  Use placeholder values in documentation, never real credentials or private
+  machine-specific paths.
+
 ### Python — CRITICAL: conda first, never system Python
 
 - **Whenever Python is needed, use conda / Anaconda Python.** System Python on

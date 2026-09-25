@@ -4,8 +4,8 @@
 # examples into your own configuration file before running them.
 # This file is NEVER an automatic default or fallback configuration.
 # Interactive startup prompts for a path, defaulting to --schema-file or
-# ZL_RUN_COMMANDS_SCHEMA. If neither is set, the path must be entered.
-# With --task or redirected stdin, --schema-file or ZL_RUN_COMMANDS_SCHEMA
+# ZL_RUN_COMMANDS_SCHEMA_FILE. If neither is set, the path must be entered.
+# With --task or redirected stdin, --schema-file or ZL_RUN_COMMANDS_SCHEMA_FILE
 # is required and used directly (--schema-file takes precedence).
 # --yes skips execution confirmation only; it does not skip path selection.
 # Requires PyYAML and only the selected runtime/program.
