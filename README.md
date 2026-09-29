@@ -11,7 +11,7 @@
 **Highlights** (see [Script List](#script-list) for the complete list; bold entries are key features):
 
 > - **Research**
->   - Interactive `.npy`/`.npz` viewer with line charts, heatmaps, 3D surfaces, and other visualizations
+>   - `.npy`/`.npz` matrix viewer for 1D and 2D arrays, with 2D images, 3D surfaces, and 1D row/column profiles; also opens images as 2D matrices
 >   - Batch image cropping tool
 > - **Windows**
 >   - **One-click Windows event log clearing tool**
@@ -69,7 +69,7 @@ Most scripts support both interactive mode and command-line arguments. Run `pyth
 
     - Notable libraries used by some scripts (see [Script List](#script-list) for actual requirements; the following are examples only):
 
-      `mss` (screenshots), `Pillow`/`matplotlib`/`numpy`/`opencv-python` (image processing), `plotly` (data visualization), `PyMuPDF`/`pypdf` (PDF processing), `boto3` (S3 access and uploads), and `pynput` (keyboard input monitoring)
+      `mss` (screenshots), `Pillow`/`matplotlib`/`numpy`/`opencv-python` (image processing), `PySide6` (GUI), `pyqtgraph`/`pyvista` (data visualization), `PyMuPDF`/`pypdf` (PDF processing), `boto3` (S3 access and uploads), and `pynput` (keyboard input monitoring)
 
   - **Install Python dependencies:**
 
@@ -326,7 +326,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/research/npy-viewer.py` | **Interactive `.npy`/`.npz` viewer:**<br />1D line/bar/scatter plots and 2D heatmaps/surface plots. | **Python pkgs:** `numpy`, `matplotlib`, `plotly` |
+| `tools/research/npy-viewer.py` | **GUI viewer for `.npy`/`.npz` matrices:**<br />Views 1D and 2D arrays; 2D matrices support image, 3D surface, and 1D row/column profile views. Also opens image files as 2D matrices. | **Python pkgs:** `numpy`, `opencv-python`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk` |
 | `tools/research/pattern-generator.py` | **Structured-light projection pattern generator:**<br />Generates sinusoidal stripes with selectable left/top-edge, center, or right/bottom-edge pixel sampling, plus standard Gray-code sequences.<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
 
 ### Test/Helper Scripts

@@ -59,6 +59,7 @@ ignore-list:
         - "dist/"
         - "BUILD/"
         - "INSTALL/"
+        - "research/npy-viewer/"
     platform-specific:
         # 规范：windows, linux, macos
         windows:
@@ -87,6 +88,7 @@ ignore-list:
         no-gui:
             - "keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
+            - "research/npy-viewer.py"
         wayland:
             - "keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"

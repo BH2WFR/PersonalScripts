@@ -4,4 +4,8 @@
 matplotlib
 numpy
 opencv-python
-plotly
+PySide6
+pyqtgraph
+pyvista
+pyvistaqt
+vtk

@@ -11,7 +11,7 @@
 **主要特色功能如下**：（完整内容请查看后面的[「脚本列表」](#脚本列表)章节，加粗的为其中的重点功能）
 
 > - **研究相关**
->   - `.npy`/`.npz` 文件交互式查看器，支持折线图、热力图和三维曲面等可视化方式
+>   - `.npy`/`.npz` 文件（矩阵）查看器，支持查看一维、二维矩阵（支持二维、三维、切片一维视图），支持将图片视作二维矩阵打开
 >   - 图片批量裁剪工具
 > - **Windows 相关**
 >   - **Windows 事件日志一键清除工具**
@@ -69,7 +69,7 @@
 
     - 部分脚本依赖的特色库（**参考后面的[「脚本列表」](#脚本列表)章节**中所写的依赖库，下一行仅为举例，不代表实际依赖）：
 
-      `mss`（截图）、`Pillow`/`matplotlib`/`numpy`/`opencv-python`（图像处理）、`plotly`（图像可视化）、`PyMuPDF`/`pypdf`（PDF 处理）、`boto3`（S3 存储访问与上传）、`pynput`（键盘监听）
+      `mss`（截图）、`Pillow`/`matplotlib`/`numpy`/`opencv-python`（图像处理）、`PySide6`（GUI）、`pyqtgraph`/`pyvista`（数据可视化）、`PyMuPDF`/`pypdf`（PDF 处理）、`boto3`（S3 存储访问与上传）、`pynput`（键盘监听）
 
   - **一键安装 Python 库依赖：**
 
@@ -324,8 +324,8 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/research/npy-viewer.py` | **`.npy`/`.npz` 文件交互式查看器**：<br />1D 折线/柱状/散点图，2D 热力图/曲面图 | **Python 库**：`numpy`、`matplotlib`、`plotly` |
-| `tools/research/pattern-generator.py` | **结构光投影图案生成器**：<br />生成可选择左/上边缘、像素中心或右/下边缘采样的正弦条纹，以及标准格雷码序列。<br />非专业人员请勿使用 | Python 库：`opencv-python`、`numpy` |
+| `tools/research/npy-viewer.py` | **`.npy`/`.npz` 矩阵 GUI 查看器**：<br />支持查看一维、二维矩阵；对于二维矩阵，支持二维、三维、切片一维视图；支持将图片文件当成二维矩阵打开 | **Python 库**：`numpy`、`opencv-python`、`matplotlib`、`PySide6`、`pyqtgraph`、`pyvista`、`pyvistaqt`、`vtk` |
+| `tools/research/pattern-generator.py` | **结构光投影图案生成器**：<br />生成可选择左/上边缘、像素中心或右/下边缘采样的正弦条纹，以及标准格雷码序列。<br />非专业人员请勿使用 | **Python 库**：`opencv-python`、`numpy` |
 
 ### 测试/辅助脚本
 
