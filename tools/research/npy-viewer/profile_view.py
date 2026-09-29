@@ -9,6 +9,7 @@ Usage: embedded below matrix views or used alone for signal data.
 
 from enum import IntEnum
 from dataclasses import replace
+from collections.abc import Sequence
 from time import perf_counter
 
 import numpy as np
@@ -16,6 +17,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 from pyqtgraph.graphicsItems.PlotItem.PlotItem import PlotItem
 from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
+from pyqtgraph.graphicsItems.AxisItem import AxisItem
 
 from .data_model import DEFAULT_CLIP_COLOR, FloatArray, Limits, RealArray, BoolArray, format_sample
 from .clipping import ClippedCurve, clip_curve
@@ -27,6 +29,10 @@ DERIVATIVE_DELAY_MS = 70
 UNDEFINED_COLOR = "#e53935"
 CLIP_LINE_WIDTH = 4
 CLIP_POINT_SIZE = 6
+TICK_SIGNIFICANT_DIGITS = 10
+FLOAT_NOISE_RELATIVE_TOLERANCE = 64 * float(np.finfo(np.float64).eps)
+CONSTANT_Y_PADDING_FRACTION = 0.01
+ZERO_Y_PADDING = 0.5
 
 
 class CurveStyle(IntEnum):
@@ -49,6 +55,35 @@ class JumpMode(IntEnum):
 class ProfileViewBox(ViewBox):
     """Pan normally; use the wheel for X zoom and Ctrl+wheel for both axes."""
 
+    def childrenBounds(self, frac: Sequence[float] | None = None,
+                       orthoRange: Sequence[Sequence[float] | None] = (None, None),
+                       items: Sequence[QtWidgets.QGraphicsItem] | None = None) -> list[list[float] | None]:
+        """Pad nearly constant Y bounds instead of auto-fitting roundoff noise.
+
+        Args:
+            frac: Optional visible data fractions for X and Y, passed to QtGraph.
+            orthoRange: Optional perpendicular ranges for visible-data fitting.
+            items: Optional graphics items to include; None uses all data items.
+
+        Returns:
+            X/Y bounds, with None for an empty axis. Only automatic fitting
+            uses the padded bounds; manual zoom and source values are unchanged.
+        """
+        raw_bounds = super().childrenBounds(frac=frac, orthoRange=orthoRange, items=items)
+        bounds: list[list[float] | None] = [
+            None if axis is None else [float(axis[0]), float(axis[1])] for axis in raw_bounds
+        ]
+        y_range = bounds[1]
+        if y_range is not None:
+            lower, upper = y_range
+            magnitude = max(abs(lower), abs(upper))
+            if upper - lower <= magnitude * FLOAT_NOISE_RELATIVE_TOLERANCE:
+                padding = magnitude * CONSTANT_Y_PADDING_FRACTION if magnitude else ZERO_Y_PADDING
+                padded = [lower - padding, upper + padding]
+                if all(np.isfinite(value) for value in padded):
+                    bounds[1] = padded
+        return bounds
+
     def wheelEvent(self, ev: object, axis: int | None = None) -> None:
         """Zoom about the pointer without letting X-only zoom alter the Y range.
 
@@ -67,6 +102,27 @@ class ProfileViewBox(ViewBox):
         self.sigRangeChangedManually.emit([True, both])
 
 
+class ProfileValueAxis(AxisItem):
+    """Compact Y tick labels without rounding the plotted or exported data."""
+
+    def tickStrings(self, values: list[float], scale: float, spacing: float) -> list[str]:
+        """Format tick labels with bounded precision and scientific notation.
+
+        Args:
+            values: Tick positions in data coordinates.
+            scale: Display multiplier, including the axis SI prefix.
+            spacing: Tick interval passed through for logarithmic axes.
+
+        Returns:
+            Labels with at most ten significant digits and no trailing zeros.
+            Logarithmic labels keep PyQtGraph's exponent formatting.
+        """
+        if self.logMode:
+            return self.logTickStrings(values, scale, spacing)
+        labels = [f"{value * scale:.{TICK_SIGNIFICANT_DIGITS}g}" for value in values]
+        return ["0" if label == "-0" else label for label in labels]
+
+
 class CurvePane(QtWidgets.QWidget):
     """One curve canvas with matching zoom behavior and a movable crosshair.
 
@@ -78,7 +134,7 @@ class CurvePane(QtWidgets.QWidget):
     def __init__(self, y_label: str, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.view_box = ProfileViewBox()
-        self.plot_item = PlotItem(viewBox=self.view_box)
+        self.plot_item = PlotItem(viewBox=self.view_box, axisItems={"left": ProfileValueAxis("left")})
         self.plot = pg.PlotWidget(plotItem=self.plot_item)
         self.plot_item.setMenuEnabled(False)
         self.plot_item.setLabel("bottom", "Index (x)")
