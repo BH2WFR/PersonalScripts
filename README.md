@@ -326,7 +326,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/research/npy-viewer.py` | **GUI viewer for `.npy`/`.npz` matrices:**<br />Views 1D and 2D arrays; 2D matrices support image, 3D surface, and 1D row/column profile views. Also opens image files as 2D matrices. | **Python pkgs:** `numpy`, `opencv-python`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk` |
+| `tools/research/npy-viewer.py` | **GUI viewer for `.npy`/`.npz` matrices:**<br />Views 1D and 2D arrays; 2D matrices support image, 3D surface, and 1D row/column profile views. Also opens image files as 2D matrices. | **Python pkgs:** `numpy`, `opencv-python`, `Pillow`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk` |
 | `tools/research/pattern-generator.py` | **Structured-light projection pattern generator:**<br />Generates sinusoidal stripes with selectable left/top-edge, center, or right/bottom-edge pixel sampling, plus standard Gray-code sequences.<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
 
 ### Test/Helper Scripts

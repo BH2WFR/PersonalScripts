@@ -1,10 +1,15 @@
 """Signal/profile plots with an optional, lazily computed derivative tab.
 
+Actual derivative calculations print their source, sample indices and timing;
+cached tab revisits do not emit calculation diagnostics.
+
 Requirements: PySide6, pyqtgraph and numpy.
 Usage: embedded below matrix views or used alone for signal data.
 """
 
 from enum import IntEnum
+from dataclasses import replace
+from time import perf_counter
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -93,7 +98,7 @@ class CurvePane(QtWidgets.QWidget):
 
     def set_samples(self, values: RealArray, valid: BoolArray,
                     color: QtGui.QColor, mode: CurveStyle, x_start: int = 0,
-                    x_values: FloatArray | None = None) -> None:
+                    x_values: RealArray | None = None) -> None:
         """Render samples with gaps, optional markers and a common curve style.
 
         Args:
@@ -105,12 +110,13 @@ class CurvePane(QtWidgets.QWidget):
             x_values: Optional coordinates including interpolated clip crossings.
         """
         y = np.where(valid, values, np.nan)
+        ordered = x_values is None or bool(np.all(np.isfinite(x_values)) and np.all(x_values[1:] >= x_values[:-1]))
         self.curve.setData(
             np.arange(x_start, x_start + len(y)) if x_values is None else x_values, y, connect="finite",
             pen=pg.mkPen(color, width=1) if mode != CurveStyle.POINTS else None,
             symbol="o" if mode != CurveStyle.LINE or len(y) == 1 else None,
             symbolSize=5, symbolBrush=color, symbolPen=None,
-            autoDownsample=bool(np.all(valid)), downsampleMethod="peak", clipToView=True,
+            autoDownsample=ordered and bool(np.all(valid)), downsampleMethod="peak", clipToView=ordered,
         )
 
     def set_theme(self, dark: bool) -> None:
@@ -137,6 +143,9 @@ class ProfileView(QtWidgets.QWidget):
         self.values: RealArray | None = None
         self.valid: BoolArray | None = None
         self.x_start = 0
+        self.x_values: RealArray | None = None
+        self._x_order = np.empty(0, dtype=np.int64)
+        self._sorted_x = np.empty(0, dtype=np.float64)
         self.display_values: RealArray | None = None
         self.clipped: BoolArray | None = None
         self._clipped_curve: ClippedCurve | None = None
@@ -144,6 +153,8 @@ class ProfileView(QtWidgets.QWidget):
         self.color = QtGui.QColor("#48b9ff")
         self._has_data = False
         self._derivative_reset = True
+        self._derivative_dirty = True
+        self._limits = Limits()
         self.derivative_result: DerivativeResult | None = None
         self._derivative_timer = QtCore.QTimer(self)
         self._derivative_timer.setSingleShot(True)
@@ -225,8 +236,12 @@ class ProfileView(QtWidgets.QWidget):
     def set_data(self, values: RealArray, valid: BoolArray, title: str,
                  reset: bool = False, *, x_start: int = 0,
                  display_values: RealArray | None = None, clipped: BoolArray | None = None,
-                 limits: Limits = Limits()) -> None:
-        """Set source samples; invalid values become gaps without changing x.
+                 limits: Limits = Limits(), x_values: RealArray | None = None) -> None:
+        """Set source samples; preserve cached plots when the data is unchanged.
+
+        Inputs are retained without copying and must not be modified in place.
+        Derivatives are calculated only while their tab is selected. Equivalent
+        frames (for example after changing 3D sampling) reuse the existing plots.
 
         Args:
             values: Original one-dimensional numeric data.
@@ -237,13 +252,45 @@ class ProfileView(QtWidgets.QWidget):
             display_values: Visually clamped samples, or None to use the source.
             clipped: Mask of visually clamped samples; omitted from derivatives.
             limits: Applied bounds used to interpolate horizontal cap segments.
+            x_values: Optional actual X coordinates, in original sample order.
         """
+        shown = values if display_values is None else display_values
+        unchanged = self._has_data and self.x_start == x_start and self._limits == limits and all(
+            previous is current or (
+                previous is not None and current is not None
+                and previous.dtype == current.dtype
+                and np.array_equal(previous, current, equal_nan=True)
+            )
+            for previous, current in (
+                (self.values, values), (self.valid, valid), (self.x_values, x_values),
+                (self.display_values, shown), (self.clipped, clipped),
+            )
+        )
+        self.title.setText(title)
+        if unchanged:
+            if reset:
+                self.view_box.enableAutoRange()
+                self.derivative_pane.view_box.enableAutoRange()
+            return
         self.values, self.valid = values, valid
+        self._limits = limits
         self.x_start = x_start
-        self.display_values = values if display_values is None else display_values
+        self.x_values = x_values
+        if x_values is not None:
+            finite_x = np.flatnonzero(np.isfinite(x_values))
+            self._x_order = finite_x[np.argsort(x_values[finite_x], kind="stable")]
+            self._sorted_x = np.asarray(x_values[self._x_order], dtype=np.float64)
+        for pane in (self.signal_pane, self.derivative_pane):
+            pane.plot_item.setLabel("bottom", "X" if x_values is not None else "Index (x)")
+        self.display_values = shown
         self.clipped = clipped
         self._clipped_curve = clip_curve(values, valid, limits, x_start) if clipped is not None and np.any(clipped) else None
-        self.title.setText(title)
+        if self._clipped_curve is not None and x_values is not None:
+            curve = self._clipped_curve
+            indices = np.arange(x_start, x_start + len(values), dtype=np.float64)
+            coordinates = np.asarray(x_values, dtype=np.float64)
+            self._clipped_curve = replace(curve, x=np.interp(curve.x, indices, coordinates),
+                                          cap_x=np.interp(curve.cap_x, indices, coordinates))
         self.readout.setText("Move over the curve to inspect a sample")
         self.crosshair.hide()
         self._invalidate_derivative()
@@ -253,6 +300,21 @@ class ProfileView(QtWidgets.QWidget):
             self._derivative_reset = True
         self._has_data = True
 
+    def set_derivative_enabled(self, enabled: bool) -> None:
+        """Enable derivative inspection only for ordered signal/profile modes.
+
+        Args:
+            enabled: False disables the tab, cancels pending work and clears
+                cached derivatives. True restores the tab without opening it
+                or computing derivatives until the user selects it.
+        """
+        self.tabs.setTabEnabled(1, enabled)
+        if not enabled:
+            self._derivative_timer.stop()
+            self.tabs.setCurrentIndex(0)
+            self._invalidate_derivative()
+            self.derivative_note.setText("Derivatives are unavailable in point-cloud mode.")
+
     def clear_selection(self) -> None:
         """Clear both curves and cancel derivative work after deselection.
 
@@ -260,6 +322,7 @@ class ProfileView(QtWidgets.QWidget):
         """
         self._derivative_timer.stop()
         self.values = None
+        self.x_values = None
         self.valid = None
         self.display_values = None
         self.clipped = None
@@ -267,6 +330,7 @@ class ProfileView(QtWidgets.QWidget):
         self.derivative_result = None
         self._has_data = False
         self._derivative_reset = True
+        self._derivative_dirty = True
         self.signal_pane.curve.clear()
         self.clip_curve_item.clear()
         self.clip_points_item.clear()
@@ -301,7 +365,7 @@ class ProfileView(QtWidgets.QWidget):
             self.signal_pane.set_samples(clipped_curve.y, np.isfinite(clipped_curve.y), self.color,
                                           mode, self.x_start, clipped_curve.x)
         else:
-            self.signal_pane.set_samples(self.display_values, self.valid, self.color, mode, self.x_start)
+            self.signal_pane.set_samples(self.display_values, self.valid, self.color, mode, self.x_start, self.x_values)
         if clipped_curve is not None and self.clipped is not None:
             self.clip_curve_item.setData(clipped_curve.cap_x, clipped_curve.cap_y, connect="finite",
                                          pen=pg.mkPen(self.clip_color, width=CLIP_LINE_WIDTH), autoDownsample=False)
@@ -313,15 +377,33 @@ class ProfileView(QtWidgets.QWidget):
                 connected[:-1] |= paired
                 connected[1:] |= paired
                 marked &= ~connected
-            self.clip_points_item.setData(np.flatnonzero(marked) + self.x_start,
+            marked_x = np.flatnonzero(marked) + self.x_start if self.x_values is None else self.x_values[marked]
+            self.clip_points_item.setData(marked_x,
                                           self.display_values[marked], pen=None, symbol="o",
                                           symbolSize=CLIP_POINT_SIZE, symbolPen=None, symbolBrush=self.clip_color)
         else:
             self.clip_curve_item.clear()
             self.clip_points_item.clear()
+        self._derivative_dirty = True
+        self._redraw_derivative()
+
+    def _redraw_derivative(self) -> None:
+        """Render a changed derivative only when its tab is selected."""
         result = self.derivative_result
-        if result is not None:
+        if result is None or not self._derivative_dirty or self.tabs.currentIndex() != 1:
+            return
+        mode = CurveStyle(self.style_selector.currentIndex())
+        if self.x_values is None:
             self.derivative_pane.set_samples(result.values, result.valid, self.color, mode, self.x_start)
+            marker_x = result.undefined_indices + self.x_start
+        else:
+            # Keep the signal/table in source order; only dy/dx is drawn by X.
+            order = self._x_order
+            self.derivative_pane.set_samples(result.values[order], result.valid[order], self.color,
+                                             mode, x_values=self.x_values[order])
+            marker_x = self.x_values[result.undefined_indices]
+        self.undefined_markers.setData(marker_x, np.zeros(len(result.undefined_indices)))
+        self._derivative_dirty = False
 
     def set_clip_color(self, color: QtGui.QColor) -> None:
         """Recolor clipping markers without recalculating derivatives.
@@ -344,11 +426,12 @@ class ProfileView(QtWidgets.QWidget):
 
     def _invalidate_derivative(self) -> None:
         self.derivative_result = None
+        self._derivative_dirty = True
         self.derivative_pane.curve.clear()
         self.undefined_markers.clear()
         self.derivative_pane.crosshair.hide()
         self._derivative_timer.stop()
-        if self.tabs.currentIndex() == 1:
+        if self.tabs.isTabEnabled(1) and self.tabs.currentIndex() == 1:
             self.readout.setText("Updating derivative…")
             self._derivative_timer.start()
 
@@ -362,9 +445,10 @@ class ProfileView(QtWidgets.QWidget):
             self._ensure_derivative()
 
     def _ensure_derivative(self) -> None:
-        if self.tabs.currentIndex() != 1 or self.values is None or self.valid is None:
+        if not self.tabs.isTabEnabled(1) or self.tabs.currentIndex() != 1 or self.values is None or self.valid is None:
             return
         if self.derivative_result is not None:
+            self._redraw_derivative()
             return
         mode = JumpMode(self.jump_mode.currentIndex())
         threshold: float | None = self.jump_threshold.value()
@@ -373,14 +457,31 @@ class ProfileView(QtWidgets.QWidget):
         elif mode == JumpMode.RADIANS:
             threshold = float(np.pi)
         analysis_valid = self.valid if self.clipped is None else self.valid & ~self.clipped
-        result = differentiate(self.values, analysis_valid, threshold)
+        source = self.title.text()
+        spacing = "sorted actual X" if self.x_values is not None else "sample index (dx=1)"
+        threshold_text = "disabled (gaps only)" if threshold is None else f"{threshold:g}"
+        print(
+            f"[Derivative] Computing: {source}; samples={self.values.size:,}; dtype={self.values.dtype}; "
+            f"sample indices={self.x_start}..{self.x_start + self.values.size - 1} "
+            f"(all indices zero-based); spacing={spacing}; jump threshold={threshold_text}",
+            flush=True,
+        )
+        started = perf_counter()
+        result = differentiate(self.values, analysis_valid, threshold, x_values=self.x_values)
+        elapsed_ms = (perf_counter() - started) * 1000
+        print(
+            f"[Derivative] Finished: {source}; valid={np.count_nonzero(result.valid):,}; "
+            f"undefined markers={len(result.undefined_indices):,}; suspected jumps={result.jump_count:,}; "
+            f"calculation time={elapsed_ms:.3f} ms",
+            flush=True,
+        )
         self.derivative_result = result
-        self._redraw()
-        self.undefined_markers.setData(result.undefined_indices + self.x_start, np.zeros(len(result.undefined_indices)))
+        self._redraw_derivative()
         self.derivative_note.setText(
             f"Red dots at y=0: undefined / omitted, not zero. "
             f"{len(result.undefined_indices):,} markers; {result.jump_count:,} suspected jumps. "
-            "dx=1; original values, clipped samples omitted."
+            + ("Sorted by X with actual spacing; repeated X treated as gaps." if self.x_values is not None else "dx=1;")
+            + " Original values, clipped samples omitted."
         )
         if self._derivative_reset:
             self.derivative_pane.view_box.enableAutoRange()
@@ -403,21 +504,33 @@ class ProfileView(QtWidgets.QWidget):
             pane.crosshair.hide()
             return
         point = pane.view_box.mapSceneToView(position)
-        source_index = int(np.floor(point.x() + 0.5))
-        index = source_index - self.x_start
+        if self.x_values is None:
+            source_index = int(np.floor(point.x() + 0.5))
+            index = source_index - self.x_start
+        else:
+            if not len(self._sorted_x) or not self._sorted_x[0] <= point.x() <= self._sorted_x[-1]:
+                pane.crosshair.hide()
+                self.readout.setText("Outside signal")
+                return
+            insert = int(np.searchsorted(self._sorted_x, point.x()))
+            candidates = [min(insert, len(self._sorted_x) - 1), max(0, insert - 1)]
+            nearest = min(candidates, key=lambda item: abs(float(self._sorted_x[item]) - point.x()))
+            index = int(self._x_order[nearest])
+            source_index = index + self.x_start
         if not 0 <= index < len(self.values):
             pane.crosshair.hide()
             self.readout.setText("Outside signal")
             return
-        pane.crosshair.setValue(source_index)
+        source_x = str(source_index) if self.x_values is None else format_sample(self.x_values, index)
+        pane.crosshair.setValue(source_index if self.x_values is None else float(self.x_values[index]))
         pane.crosshair.show()
         if derivative:
             result = self.derivative_result
             if result is not None:
                 value = format_sample(result.values, index) if result.valid[index] else "undefined / omitted"
-                self.readout.setText(f"x={source_index}   dy/dx={value}")
+                self.readout.setText(f"x={source_x}   dy/dx={value}   [sample {source_index}]")
             return
         suffix = "  [filtered / nonfinite]" if not self.valid[index] else ""
         if self.clipped is not None and self.clipped[index] and self.display_values is not None:
             suffix = f"  [clamped to {format_sample(self.display_values, index)}]"
-        self.readout.setText(f"x={source_index}   y={format_sample(self.values, index)}{suffix}")
+        self.readout.setText(f"x={source_x}   y={format_sample(self.values, index)}{suffix}   [sample {source_index}]")

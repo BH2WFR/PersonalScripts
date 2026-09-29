@@ -13,7 +13,7 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker
 
-from .data_model import DEFAULT_CLIP_COLOR, FilterMode, FloatArray, Frame, format_sample
+from .data_model import DEFAULT_CLIP_COLOR, ColorArray, FilterMode, FloatArray, Frame, format_sample
 
 HOVER_INTERVAL_MS = 35
 ROTATION_DEGREES_PER_PIXEL = 0.45
@@ -21,7 +21,10 @@ ZOOM_FACTOR = 1.15
 DEFAULT_PROFILE_COLOR = "#ff1111"
 DEFAULT_PROFILE_LIFT = 0.01
 DEFAULT_SECTION_OPACITY = 0.65
+DEFAULT_POINT_SIZE = 2.0
 SECTION_HEIGHT_PADDING = 0.05
+SOURCE_COLOR_FIELD = "SourceColor"
+SOURCE_INDEX_FIELD = "SourceIndex"
 
 
 class ProfileStyle(StrEnum):
@@ -78,7 +81,8 @@ class SurfaceCanvas(QtInteractor):
         self._hover_timer.stop()
         modifiers = event.modifiers()
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
-            self._action = Gesture.PAN
+            self._action = (Gesture.ORBIT if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
+                            else Gesture.PAN)
         elif event.button() == QtCore.Qt.MouseButton.RightButton:
             self._action = Gesture.ROLL
         elif event.button() == QtCore.Qt.MouseButton.MiddleButton:
@@ -212,6 +216,21 @@ class SurfaceCanvas(QtInteractor):
         if not hit:
             self.coordinate_changed.emit("No visible surface under cursor")
             return
+        if frame.point_coordinates is not None:
+            dataset = self.picker.GetDataSet()
+            point_id = self.picker.GetPointId()
+            indices = dataset.GetPointData().GetArray(SOURCE_INDEX_FIELD) if dataset is not None else None
+            if indices is None or not 0 <= point_id < indices.GetNumberOfTuples():
+                self.coordinate_changed.emit("No point under cursor")
+                return
+            index = int(indices.GetTuple1(point_id))
+            values = frame.point_coordinates
+            suffix = f" [Z clamped to {format_sample(frame.display_scalar, index)}]" if frame.clip_kind[index] else ""
+            self.coordinate_changed.emit(
+                f"Point {index + frame.x_start}: x={format_sample(values, index, 0)}   "
+                f"y={format_sample(values, index, 1)}   z={format_sample(values, index, 2)}{suffix}"
+            )
+            return
         # Clipping inserts vertices, so recover the nearest original pixel from
         # world X/Y rather than interpreting an actor-local point ID as a source ID.
         world = self.picker.GetPickPosition()
@@ -249,6 +268,7 @@ class SurfaceView(QtWidgets.QWidget):
         self._surface_actor: vtkActor | None = None
         self._profile_actor: vtkActor | None = None
         self._clip_actors: list[vtkActor] = []
+        self._colored_caps: list[pv.PolyData] = []
         self.clip_color = DEFAULT_CLIP_COLOR
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -264,7 +284,7 @@ class SurfaceView(QtWidgets.QWidget):
         layout.addWidget(self.resolution)
 
     def set_frame(self, frame: Frame, cmap: str, levels: tuple[float, float],
-                  z_scale: float, reset: bool) -> None:
+                  z_scale: float, reset: bool, point_size: float = DEFAULT_POINT_SIZE) -> None:
         """Replace surface geometry while optionally retaining the camera.
 
         Args:
@@ -273,6 +293,7 @@ class SurfaceView(QtWidgets.QWidget):
             levels: Scalar color limits, independent of the visibility mask.
             z_scale: Positive visual height multiplier; readouts stay unscaled.
             reset: Fit a new isometric view when True.
+            point_size: Pixel diameter for point-cloud samples.
         """
         surface = frame.surface
         if surface is None:
@@ -282,6 +303,7 @@ class SurfaceView(QtWidgets.QWidget):
         self._surface_actor = None
         self._profile_actor = None
         self._clip_actors.clear()
+        self._colored_caps.clear()
         self.canvas.picker.InitializePickList()
         self.canvas.frame = frame
         self.z_scale = z_scale
@@ -289,12 +311,17 @@ class SurfaceView(QtWidgets.QWidget):
         if len(surface.points):
             mesh = pv.PolyData(surface.points, surface.faces) if surface.faces.size else pv.PolyData(surface.points)
             mesh.point_data["Value"] = surface.points[:, 2]
+            if frame.point_coordinates is not None:
+                mesh.point_data[SOURCE_INDEX_FIELD] = surface.rows - frame.x_start
+            if surface.colors is not None:
+                mesh.point_data[SOURCE_COLOR_FIELD] = surface.colors
             remaining, caps = self._partition_surface(mesh, frame)
             if remaining.n_points:
                 actor = self.canvas.add_mesh(
-                    remaining, scalars="Value", cmap=cmap, clim=levels,
-                    style="surface" if surface.faces.size else "points", point_size=5,
-                    lighting=False, show_scalar_bar=True, reset_camera=False, render=False,
+                    remaining, scalars=SOURCE_COLOR_FIELD if surface.colors is not None else "Value",
+                    rgb=surface.colors is not None, cmap=cmap, clim=levels,
+                    style="surface" if surface.faces.size else "points", point_size=point_size,
+                    lighting=False, show_scalar_bar=surface.colors is None, reset_camera=False, render=False,
                     scalar_bar_args={"title": "Luminance" if frame.composite else "Value",
                                      "color": "#dce5f2" if self.dark else "#263247",
                                      "vertical": True, "position_x": 0.88, "position_y": 0.18,
@@ -305,15 +332,22 @@ class SurfaceView(QtWidgets.QWidget):
                 self._surface_actor = actor
                 self.canvas.picker.AddPickList(actor)
             for cap in caps:
-                actor = self.canvas.add_mesh(cap, color=self.clip_color, lighting=False,
-                                             point_size=6, show_scalar_bar=False,
+                colored = SOURCE_COLOR_FIELD in cap.point_data
+                if colored:
+                    self._paint_cap(cap)
+                    self._colored_caps.append(cap)
+                actor = self.canvas.add_mesh(cap, color=None if colored else self.clip_color,
+                                             scalars=SOURCE_COLOR_FIELD if colored else None, rgb=colored, lighting=False,
+                                             point_size=max(6, point_size), show_scalar_bar=False,
                                              reset_camera=False, render=False)
                 actor.SetScale(1, 1, z_scale)
                 self._clip_actors.append(actor)
                 self.canvas.picker.AddPickList(actor)
                 if self._surface_actor is None:
                     self._surface_actor = actor
-            self.canvas.show_grid(xtitle="Column (x)", ytitle="Row (y)", ztitle="Scaled height",
+            cloud = frame.point_coordinates is not None
+            self.canvas.show_grid(xtitle="X" if cloud else "Column (x)", ytitle="Y" if cloud else "Row (y)",
+                                  ztitle="Z" if cloud and z_scale == 1 else "Scaled height",
                                   color="#adb9cb" if self.dark else "#465368", font_size=10)
             if reset:
                 self.canvas.view_isometric()
@@ -345,7 +379,10 @@ class SurfaceView(QtWidgets.QWidget):
                 points: FloatArray = np.asarray(remaining.points, dtype=np.float64)
                 cap = pv.PolyData(points[outside].copy())
                 kept = pv.PolyData(points[~outside].copy())
-                kept.point_data["Value"] = values[~outside]
+                for name in remaining.point_data.keys():
+                    data = np.asarray(remaining.point_data[name])
+                    cap.point_data[name] = data[outside]
+                    kept.point_data[name] = data[~outside]
             elif np.all(outside):
                 cap, kept = remaining.copy(deep=True), pv.PolyData()
             else:
@@ -389,7 +426,16 @@ class SurfaceView(QtWidgets.QWidget):
         rgb = (chosen.redF(), chosen.greenF(), chosen.blueF())
         for actor in self._clip_actors:
             actor.GetProperty().SetColor(*rgb)
+        for cap in self._colored_caps:
+            self._paint_cap(cap)
         self.canvas.render()
+
+    def _paint_cap(self, cap: pv.PolyData) -> None:
+        """Replace a clipped region's RGB while retaining per-vertex opacity."""
+        colors: ColorArray = np.array(cap.point_data[SOURCE_COLOR_FIELD], dtype=np.uint8, copy=True)
+        color = QtGui.QColor(self.clip_color)
+        colors[:, :3] = (color.red(), color.green(), color.blue())
+        cap.point_data[SOURCE_COLOR_FIELD] = colors
 
     def set_profile(self, by_row: bool, index: int | None) -> None:
         """Mark a selected full-resolution row/column, or clear the selection.
@@ -427,7 +473,7 @@ class SurfaceView(QtWidgets.QWidget):
         self.canvas.remove_actor("profile", reset_camera=False, render=False)
         self._profile_actor = None
         index, by_row = self._index, self._by_row
-        if frame is None or index is None:
+        if frame is None or index is None or frame.scalar.ndim != 2:
             self.canvas.render()
             return
         h, w = frame.scalar.shape
@@ -523,12 +569,19 @@ class SurfaceView(QtWidgets.QWidget):
         frame = self.canvas.frame
         if frame is None or frame.surface is None:
             return
+        if frame.point_coordinates is not None:
+            self.resolution.setText(
+                f"Point cloud: {len(frame.surface.points):,} rendered / {np.count_nonzero(frame.valid):,} valid "
+                f"/ {len(frame.scalar):,} source points | Z multiplier: {self.z_scale:g} | Bounds apply to Z"
+            )
+            return
         ny, nx = frame.surface.sampled_shape
         h, w = frame.scalar.shape
         self.resolution.setText(
             f"3D grid: {nx} x {ny} | Region: {w} x {h} | "
             f"X: {frame.x_start}..{frame.x_start + w - 1}, Y: {frame.y_start}..{frame.y_start + h - 1} | "
             f"Visible cells: {frame.surface.faces.size // 5:,} | Height scale: {self.z_scale:g}"
+            + (" | Image colors; grayscale height" if frame.surface.colors is not None else "")
         )
 
     def reset_view(self) -> None:

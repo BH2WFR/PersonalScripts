@@ -3,6 +3,7 @@
 # Dependencies used only by tools/research/
 matplotlib
 numpy
+Pillow
 opencv-python
 PySide6
 pyqtgraph

@@ -1,17 +1,37 @@
 #!/usr/bin/env python3
-"""Browse NPY, NPZ and images in a linked Qt matrix/signal viewer.
+"""Browse NPY, NPZ, CSV/TXT and images in a linked Qt matrix/signal viewer.
 
 Includes inclusive X/Y source-index cropping, lazy gap-aware derivatives,
 X-only or XY curve zoom, and adjustable 3D sampling and height.
+XY derivatives use sorted actual X coordinates and treat repeated X as gaps.
+The derivative tab computes on demand and reuses unchanged data and plots.
+Actual derivative calculations print source row/column indices and timing.
 Uses the native Qt Fusion widget style.
+Images expose source channels, stored bit depth, RGB grayscale and
+alpha-weighted RGBA grayscale as selectable matrices, plus RGB/RGBA/monochrome color
+rendering in both 2D and 3D. Image loading prints decoder diagnostics.
+Monochrome images hide RGB color and offer RGBA color only with an alpha channel.
+Raw data is available as a read-only spreadsheet. Two-row/column tables can
+be XY signals; three-row/column tables can be XYZ point clouds. CSV/TXT accepts
+UTF-8, comma/semicolon/tab separators, an optional textual header and empty
+cells (NaN). Point clouds retain physical XYZ proportions by default.
+TXT files must contain numeric CSV-style tables; unrecognized text reports a
+load error. Raw table columns default to 48 px and can be adjusted below the table.
+Selected row/column slices can be saved as 1D NPY arrays with their current
+crop and numeric component, preserving values before display filtering/clamping.
+Full 1D/2D results can also be saved with crop alone or with applied value
+bounds. Hidden/nonfinite samples become NaN in processed exports; XY exports
+retain X/Y columns and RGB(A) color displays export their grayscale matrix.
 
 Requirements:
-    Python 3.13+; numpy, opencv-python, matplotlib, PySide6, pyqtgraph,
+    Python 3.13+; numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
     pyvista, pyvistaqt and vtk (requirements-research.txt).
 
 Usage:
     python npy-viewer.py [file] [--key NAME] [--max-edge 512]
     python npy-viewer.py data.npy --mode signal --channel-axis 1
+    python npy-viewer.py measurements.csv --mode xy
+    python npy-viewer.py coordinates.npy --mode points
 """
 
 import argparse
@@ -26,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
 
 PACKAGE_NAME = "personal_npy_viewer"
-DEPENDENCIES = "numpy opencv-python matplotlib PySide6 pyqtgraph pyvista pyvistaqt vtk"
+DEPENDENCIES = "numpy opencv-python Pillow matplotlib PySide6 pyqtgraph pyvista pyvistaqt vtk"
 
 
 def main() -> int:
@@ -37,13 +57,22 @@ def main() -> int:
         a Qt window and runs its event loop. Prints dependency errors.
     """
     parser = argparse.ArgumentParser(
-        description="Browse NPY/NPZ/images as a 2D image, 3D surface and 1D profile with optional derivatives.",
+        description=("Browse NPY/NPZ/CSV/TXT/images as a raw table, 2D image, 3D surface or point cloud, and 1D/XY profiles with derivatives. "
+                     "XY derivatives use actual X spacing; repeated X values are gaps. Derivative tabs load on demand and reuse unchanged results. "
+                     "Derivative calculations print source indices and timing. "
+                     "Save selected row/column slices as 1D NPY arrays. "
+                     "Export full cropped arrays with optional value bounds. "
+                     "Images expose file bit depth, individual channels, grayscale matrices and RGB/RGBA/monochrome color views. "
+                     "Monochrome images hide RGB color and offer RGBA color only with alpha. "
+                     "TXT must contain a numeric CSV-style table. Image loading prints format, depth and decoder diagnostics."),
         epilog=(f"Dependencies: {DEPENDENCIES}. Indices and axis numbers are zero-based. "
-                "1D wheel zooms X; Ctrl+wheel zooms XY. 3D right drag or Alt+middle drag rolls the view."),
+                "1D wheel zooms X; Ctrl+wheel zooms XY. 3D middle drag or Ctrl+left drag orbits; "
+                "right drag or Alt+middle drag rolls the view."),
     )
     parser.add_argument("file", nargs="?", type=Path, help="File to open; omit for an empty GUI")
-    parser.add_argument("--key", help="Initial NPZ member name")
-    parser.add_argument("--mode", choices=("matrix", "signal"), help="Interpret data as a matrix or signal")
+    parser.add_argument("--key", help="Initial NPZ member or image matrix label (e.g. R, G, B, A, Monochrome)")
+    parser.add_argument("--mode", choices=("matrix", "signal", "xy", "points"),
+                        help="Interpret as a matrix, indexed signal, XY table (2 rows/columns), or XYZ cloud (3 rows/columns)")
     parser.add_argument("--channel-axis", type=int, help="Channel axis (negative indices accepted)")
     parser.add_argument("--max-edge", type=int, default=512, help="3D maximum grid edge; 0 = full resolution (default: 512)")
     args = parser.parse_args()

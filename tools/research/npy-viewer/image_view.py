@@ -80,7 +80,9 @@ class ImageView(QtWidgets.QWidget):
         self.bar.setVisible(not frame.composite)
         if frame.composite:
             # setOpts supports clearing the LUT; setLookupTable's annotation omits None.
-            self.item.setOpts(lut=None)
+            # Override any initial deferred colorbar levels after setImage, so
+            # the first RGB(A) image is not saturated into an all-white preview.
+            self.item.setOpts(lut=None, levels=(0, 255))
         else:
             self.bar.setColorMap(pg.colormap.get(cmap, source="matplotlib"))
             self.bar.setLevels(levels)

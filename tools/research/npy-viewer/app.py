@@ -1,11 +1,13 @@
 """Qt application coordinating asynchronous data loading and linked views.
 
-Requirements: numpy, opencv-python, matplotlib, PySide6, pyqtgraph,
+Requirements: numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
 pyvista, pyvistaqt and vtk. Usage: run the npy-viewer.py launcher.
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 from enum import StrEnum
+from io import BytesIO
 import math
 from pathlib import Path
 import sys
@@ -14,12 +16,13 @@ from typing import cast
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .data_model import (COLORMAPS, DEFAULT_CLIP_COLOR, IMAGE_EXTENSIONS, Component, Crop, Document, FilterMode, Frame,
-                         Limits, Selection, ViewMode, default_selection,
-                         load_document, prepare_frame)
+from .data_model import (COLORMAPS, DEFAULT_CLIP_COLOR, DEFAULT_MAX_POINTS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, Component, Crop, Document, ExportMode, FilterMode, Frame, ImageMember,
+                         Limits, RealArray, Selection, ViewMode, default_selection, export_array,
+                         load_document, prepare_frame, select_image_member)
 from .image_view import ImageView
 from .profile_view import ProfileView
-from .surface_view import (DEFAULT_PROFILE_COLOR, DEFAULT_PROFILE_LIFT,
+from .raw_view import RawDataView
+from .surface_view import (DEFAULT_POINT_SIZE, DEFAULT_PROFILE_COLOR, DEFAULT_PROFILE_LIFT,
                            DEFAULT_SECTION_OPACITY, ProfileStyle, SurfaceView)
 
 DEFAULT_MAX_EDGE = 512
@@ -28,7 +31,7 @@ REBUILD_DELAY_MS = 120
 HEIGHT_SLIDER_STEPS_PER_DECADE = 100
 HEIGHT_MIN_EXPONENT = -9
 HEIGHT_MAX_EXPONENT = 9
-FILE_FILTER = "Matrices and images (*.npy *.npz *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All files (*)"
+FILE_FILTER = "Matrices and images (*.npy *.npz *.csv *.txt *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;Text tables (*.csv *.txt);;All files (*)"
 
 
 class JobKind(StrEnum):
@@ -81,7 +84,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def __init__(self, max_edge: int = DEFAULT_MAX_EDGE, initial_mode: str | None = None,
                  initial_channel_axis: int | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("Matrix Viewer — NPY / NPZ / Images")
+        self.setWindowTitle("Matrix Viewer — NPY / NPZ / CSV / TXT / Images")
         self.resize(1400, 930)
         self.setMinimumSize(980, 680)
         self.setAcceptDrops(True)
@@ -134,11 +137,14 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.tabs = QtWidgets.QTabWidget()
         self.image_view = ImageView()
         self.surface_view = SurfaceView()
+        self.raw_view = RawDataView()
         self.tabs.addTab(self.image_view, "2D image")
         self.tabs.addTab(self.surface_view, "3D surface")
+        self.tabs.addTab(self.raw_view, "Raw data")
         self.tabs.currentChanged.connect(self._tab_changed)
         self.vertical.addWidget(self.tabs)
         profile_area = QtWidgets.QWidget()
+        self.profile_area = profile_area
         profile_layout = QtWidgets.QVBoxLayout(profile_area)
         profile_layout.setContentsMargins(0, 6, 0, 0)
         self.profile_controls = self._profile_controls()
@@ -151,7 +157,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         right_layout.addWidget(self.vertical)
         self.hint = QtWidgets.QLabel(
             "1D wheel: zoom X · Ctrl+wheel: zoom XY · Left drag: pan · "
-            "3D middle: orbit · Ctrl+middle: pan · Right / Alt+middle: roll"
+            "3D middle / Ctrl+left: orbit · Ctrl+middle: pan · Right / Alt+middle: roll"
         )
         self.hint.setWordWrap(True)
         right_layout.addWidget(self.hint)
@@ -159,7 +165,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         split.setSizes([370, 1010])
         split.setStretchFactor(1, 1)
         self.setCentralWidget(root)
-        self.statusBar().showMessage("Open or drop an NPY, NPZ or image file. All indices are zero-based.")
+        self.statusBar().showMessage("Open or drop an NPY, NPZ, CSV, TXT or image file. All indices are zero-based.")
         self.controls.setEnabled(False)
         self.profile_controls.setEnabled(False)
         self._theme_changed()
@@ -172,11 +178,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout.addWidget(button)
         self.path_label = QtWidgets.QLineEdit()
         self.path_label.setReadOnly(True)
-        self.path_label.setPlaceholderText("Drop an NPY, NPZ or image file here")
+        self.path_label.setPlaceholderText("Drop an NPY, NPZ, CSV, TXT or image file here")
         layout.addWidget(self.path_label, 1)
-        layout.addWidget(QtWidgets.QLabel("NPZ array"))
+        self.archive_label = QtWidgets.QLabel("NPZ array")
+        layout.addWidget(self.archive_label)
         self.archive_key = QtWidgets.QComboBox()
-        self.archive_key.setMinimumWidth(180)
+        self.archive_key.setMinimumWidth(245)
         self.archive_key.setEnabled(False)
         self.archive_key.currentIndexChanged.connect(self._key_changed)
         layout.addWidget(self.archive_key)
@@ -197,6 +204,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.mode = QtWidgets.QComboBox()
         self.mode.addItem("2D matrix", ViewMode.MATRIX.value)
         self.mode.addItem("1D signal", ViewMode.SIGNAL.value)
+        self.mode.addItem("1D XY", ViewMode.XY.value)
+        self.mode.addItem("3D point cloud", ViewMode.POINTS.value)
         self.mode.currentIndexChanged.connect(self._mode_changed)
         form.addRow("View as", self.mode)
         self.x_axis = QtWidgets.QComboBox()
@@ -219,6 +228,25 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.slice_form = QtWidgets.QFormLayout(self.slice_box)
         layout.addWidget(axes_box)
         layout.addWidget(self.slice_box)
+        self.coordinate_box = QtWidgets.QGroupBox("Coordinate layout")
+        coordinate_form = QtWidgets.QFormLayout(self.coordinate_box)
+        self.coordinate_axis = QtWidgets.QComboBox()
+        self.coordinate_axis.currentIndexChanged.connect(self._coordinate_layout_changed)
+        coordinate_form.addRow("Coordinates stored in", self.coordinate_axis)
+        self.coordinate_columns: list[QtWidgets.QComboBox] = []
+        self.coordinate_labels: list[QtWidgets.QLabel] = []
+        for name in ("X", "Y", "Z"):
+            combo = QtWidgets.QComboBox()
+            combo.currentIndexChanged.connect(self._schedule_frame)
+            label = QtWidgets.QLabel(name)
+            coordinate_form.addRow(label, combo)
+            self.coordinate_columns.append(combo)
+            self.coordinate_labels.append(label)
+        swap = QtWidgets.QPushButton("Swap X / Y")
+        swap.clicked.connect(self._swap_coordinates)
+        coordinate_form.addRow(swap)
+        self.coordinate_box.hide()
+        layout.addWidget(self.coordinate_box)
         layout.addWidget(self._crop_controls())
 
         # ── shared filter and color controls ───────────────
@@ -281,6 +309,18 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.max_edge.setKeyboardTracking(False)
         self.max_edge.valueChanged.connect(self._schedule_frame)
         surface.addRow("Maximum grid edge", self.max_edge)
+        self.max_points = QtWidgets.QSpinBox()
+        self.max_points.setRange(0, MAX_QT_INDEX)
+        self.max_points.setSpecialValueText("All points")
+        self.max_points.setValue(DEFAULT_MAX_POINTS)
+        self.max_points.setKeyboardTracking(False)
+        self.max_points.valueChanged.connect(self._schedule_frame)
+        surface.addRow("Maximum cloud points", self.max_points)
+        self.point_size = QtWidgets.QDoubleSpinBox()
+        self.point_size.setRange(1, 32)
+        self.point_size.setValue(DEFAULT_POINT_SIZE)
+        self.point_size.valueChanged.connect(self._presentation_changed)
+        surface.addRow("Point size (pixels)", self.point_size)
         self.auto_height = QtWidgets.QCheckBox("Auto height scale")
         self.auto_height.setChecked(True)
         self.auto_height.toggled.connect(self._auto_height_changed)
@@ -344,6 +384,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.crop_info = QtWidgets.QLabel("X: columns / samples; Y: rows. Source indices are retained.")
         self.crop_info.setWordWrap(True)
         form.addRow(self.crop_info)
+        self.export_mode = QtWidgets.QComboBox()
+        self.export_mode.addItems([mode.value for mode in ExportMode])
+        self.export_mode.setCurrentText(ExportMode.PROCESSED.value)
+        form.addRow("NPY export", self.export_mode)
+        self.result_save = QtWidgets.QPushButton("Save result as NPY…")
+        self.result_save.setEnabled(False)
+        self.result_save.setToolTip(
+            "Save the full-resolution array using the applied crop, channel and numeric component. "
+            "Value bounds optionally clamp samples or replace hidden samples with NaN. "
+            "XY exports keep X/Y columns; RGB(A) color displays export grayscale."
+        )
+        self.result_save.clicked.connect(self._save_result)
+        form.addRow(self.result_save)
         return box
 
     def _configure_crop(self) -> None:
@@ -351,6 +404,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if document is None:
             return
         x_axis, y_axis = self.x_axis.currentIndex(), self.y_axis.currentIndex()
+        if self.mode.currentData() in (ViewMode.XY.value, ViewMode.POINTS.value):
+            axis = self.coordinate_axis.currentData()
+            if axis is None:
+                return
+            x_axis = 1 - int(axis)
         if x_axis < 0 or y_axis < 0:
             return
         matrix = self.mode.currentIndex() == 0
@@ -405,6 +463,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_toggle = QtWidgets.QPushButton("Clear selection")
         self.profile_toggle.clicked.connect(self._toggle_profile_selection)
         selector.addWidget(self.profile_toggle)
+        self.profile_save = QtWidgets.QPushButton("Save slice as NPY…")
+        self.profile_save.setEnabled(False)
+        self.profile_save.setToolTip("Save the current cropped row/column before value filtering or clamping, preserving its dtype.")
+        self.profile_save.clicked.connect(self._save_profile)
+        selector.addWidget(self.profile_save)
         layout.addLayout(selector)
 
         # ── independent image/3D marker appearance ──────────
@@ -480,12 +543,87 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._profile_selected = True
         self._update_profile()
 
+    def _save_profile(self) -> None:
+        """Save the displayed source slice as a one-dimensional NumPy array.
+
+        The current crop, channel and complex component are retained; display
+        bounds, colormaps, derivatives and height scaling do not change values.
+        Cancelling the dialog leaves the filesystem unchanged. Write failures
+        are reported without replacing an existing destination file.
+
+        Side effects:
+            Opens a native save dialog, writes the chosen NPY file through
+            QSaveFile, and reports success in the status bar or a failure dialog.
+        """
+        document, frame, values = self.document, self.frame, self.profile_view.values
+        if (document is None or frame is None or frame.scalar.ndim != 2
+                or not self._profile_selected or values is None or values.ndim != 1):
+            return
+        # Freeze the displayed slice before the modal dialog pumps worker events.
+        snapshot = values.copy()
+        direction = "row" if self.profile_direction.currentIndex() == 0 else "column"
+        name = f"{document.path.stem}_{direction}_{self.profile_index.value()}.npy"
+        self._save_array(snapshot, name, "1D slice")
+
+    def _save_result(self) -> None:
+        document, frame = self.document, self.frame
+        if document is None or frame is None or frame.point_coordinates is not None:
+            return
+        mode = ExportMode(self.export_mode.currentText())
+        try:
+            snapshot = export_array(frame, mode)
+        except ValueError as exc:
+            QtWidgets.QMessageBox.warning(self, "Cannot export array", str(exc))
+            return
+        suffix = "cropped" if mode == ExportMode.CROP else "processed"
+        self._save_array(snapshot, f"{document.path.stem}_{suffix}.npy", f"{snapshot.ndim}D {suffix} array")
+
+    def _save_array(self, snapshot: RealArray, name: str, label: str) -> None:
+        """Save an independent numeric snapshot through the shared NPY dialog.
+
+        Args:
+            snapshot: Owned array buffer, isolated from subsequent UI updates.
+            name: Suggested filename in the project's output directory.
+            label: Human-readable array kind for the dialog and status messages.
+
+        Side effects:
+            Prompts for a path and atomically replaces the confirmed destination.
+            Reports write errors without replacing existing destination content.
+        """
+        default_path = Path(__file__).resolve().parents[3] / "output" / name
+        dialog = QtWidgets.QFileDialog(self, f"Save {label} as NPY", str(default_path), "NumPy arrays (*.npy)")
+        dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
+        dialog.setFileMode(QtWidgets.QFileDialog.FileMode.AnyFile)
+        dialog.setDefaultSuffix("npy")
+        accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted
+        paths = dialog.selectedFiles() if accepted else []
+        dialog.deleteLater()
+        if not paths:
+            return
+        target = Path(paths[0])
+        output = QtCore.QSaveFile(str(target))
+        try:
+            with BytesIO() as buffer:
+                np.save(buffer, snapshot, allow_pickle=False)
+                payload = buffer.getvalue()
+            if not output.open(QtCore.QIODevice.OpenModeFlag.WriteOnly):
+                raise OSError(output.errorString())
+            if output.write(payload) != len(payload):
+                raise OSError(output.errorString())
+            if not output.commit():
+                raise OSError(output.errorString())
+        except (OSError, ValueError) as exc:
+            output.cancelWriting()
+            QtWidgets.QMessageBox.warning(self, "Cannot save array", f"{target}\n{exc}")
+            return
+        self.statusBar().showMessage(f"Saved {label}: {target} | Shape: {snapshot.shape} | Dtype: {snapshot.dtype}")
+
     def open_path(self, path: Path, key: str | None = None) -> None:
         """Load a file asynchronously, leaving the current view intact on failure.
 
         Args:
-            path: NPY, NPZ or image path.
-            key: NPZ member name; None selects the first.
+            path: NPY, NPZ, CSV/TXT or image path.
+            key: NPZ member or image matrix label; None selects the default.
 
         Side effects:
             Starts background I/O, disables data controls and updates status.
@@ -532,12 +670,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if kind == JobKind.LOAD and self.document is not None:
             with QtCore.QSignalBlocker(self.archive_key):
                 self.archive_key.setCurrentText(self.document.key or "")
+        if kind == JobKind.LOAD:
+            print(f"[Viewer] Load failed: {message}", flush=True)
         self.statusBar().showMessage(f"Error: {message}")
         QtWidgets.QMessageBox.warning(self, "Cannot update viewer", message)
 
     def _document_loaded(self, document: Document) -> None:
+        previous = self.document
+        previous_selection = self.frame_selection
+        same_image = (document.image_source is not None and previous is not None
+                      and document.image_source is previous.image_source)
+        saved_crop, saved_selected = self._crop, self._profile_selected
         self.document = document
-        self._profile_selected = True
+        self._profile_selected = saved_selected if same_image else True
         self.frame = None
         self.frame_selection = None
         self._reset_pending = True
@@ -549,8 +694,31 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.archive_key.addItems(list(document.keys))
             self.archive_key.setCurrentText(document.key or "")
         self.archive_key.setEnabled(bool(document.keys))
-        self.info.setText(f"Shape: {document.array.shape}\nDtype: {document.array.dtype}\n"
+        self.archive_label.setText("Image matrix" if document.is_image else "NPZ array")
+        details = ""
+        source = document.image_source
+        if source is not None:
+            channels = ", ".join(channel.value for channel in source.channels)
+            details = (f"Image: {source.metadata.format} | {source.layout}\nChannels: {channels}\n"
+                       f"File mode: {source.metadata.mode}\nFile depth: {source.metadata.depth}\n"
+                       f"Decoded: {source.pixels.dtype.itemsize * 8}-bit per channel ({source.pixels.dtype})\n"
+                       f"Matrix: {document.key}\n")
+            if document.key == ImageMember.RGBA_GRAY:
+                details += "Grayscale x normalized alpha; black background.\n"
+            elif document.key == ImageMember.RGB_GRAY:
+                details += "Grayscale = 0.2126 R + 0.7152 G + 0.0722 B.\n"
+            elif document.key == ImageMember.MONO_COLOR:
+                details += "2D / 3D use black and white at the source bit-depth scale; height = grayscale.\nAlpha is ignored.\n"
+            elif document.key in (ImageMember.RGB_COLOR, ImageMember.RGBA_COLOR):
+                details += "2D / 3D use image colors; height = RGB grayscale.\n"
+                details += "Alpha is ignored.\n" if document.key == ImageMember.RGB_COLOR else "Alpha controls opacity, not height.\n"
+            if ImageMember.ALPHA not in source.channels and len(source.channels) > 1:
+                details += "No source alpha: fusion uses fully opaque alpha.\n"
+        self.info.setText(f"{details}Shape: {document.array.shape}\nDtype: {document.array.dtype}\n"
                           f"Size: {document.array.nbytes / (1024 ** 2):,.2f} MiB\nIndices start at 0.")
+        if document.path.suffix.lower() in TEXT_EXTENSIONS:
+            header_text = ", ".join(document.csv_headers) if document.csv_headers else "none"
+            self.info.setText(f"{self.info.text()}\nCSV headers: {header_text}\nEmpty cells are NaN.")
         try:
             selection = default_selection(document, self._initial_mode, self._initial_channel_axis)
         except ValueError as exc:
@@ -558,7 +726,18 @@ class ViewerWindow(QtWidgets.QMainWindow):
             selection = default_selection(document)
         self._initial_mode = None
         self._initial_channel_axis = None
+        preserve_crop = (same_image and previous_selection is not None
+                         and previous_selection.mode == ViewMode.MATRIX
+                         and {previous_selection.x_axis, previous_selection.y_axis} == {0, 1})
+        if preserve_crop and previous_selection is not None:
+            selection = replace(selection, x_axis=previous_selection.x_axis, y_axis=previous_selection.y_axis)
         self._configure_selection(selection)
+        if preserve_crop:
+            self._crop = saved_crop
+            self.crop_x_start.setValue(saved_crop.x_start)
+            self.crop_x_end.setValue(saved_crop.x_end if saved_crop.x_end is not None else self.crop_x_end.maximum())
+            self.crop_y_start.setValue(saved_crop.y_start)
+            self.crop_y_end.setValue(saved_crop.y_end if saved_crop.y_end is not None else self.crop_y_end.maximum())
         self.controls.setEnabled(True)
         self._request_frame()
 
@@ -566,8 +745,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         document = self.document
         if document is None:
             return
+        self.profile_view.set_derivative_enabled(selection.mode != ViewMode.POINTS)
         self._updating = True
-        self.mode.setCurrentIndex(0 if selection.mode == ViewMode.MATRIX else 1)
+        self.mode.setCurrentIndex(self.mode.findData(selection.mode.value))
+        mode_model = self.mode.model()
+        if isinstance(mode_model, QtGui.QStandardItemModel):
+            for mode, count in ((ViewMode.XY, 2), (ViewMode.POINTS, 3)):
+                item = mode_model.item(self.mode.findData(mode.value))
+                if item is not None:
+                    item.setEnabled(document.array.ndim == 2 and count in document.array.shape
+                                    and not np.iscomplexobj(document.array))
         for combo in (self.x_axis, self.y_axis, self.channel_axis):
             combo.clear()
         self.channel_axis.addItem("None", -1)
@@ -578,9 +765,28 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.x_axis.setCurrentIndex(selection.x_axis)
         self.y_axis.setCurrentIndex(selection.y_axis if selection.y_axis is not None else 0)
         self.channel_axis.setCurrentIndex(0 if selection.channel_axis is None else selection.channel_axis + 1)
+        self.channel_axis.setEnabled(document.image_source is None)
+        self.mode.setEnabled(document.image_source is None or document.key not in (
+            ImageMember.RGB_COLOR, ImageMember.RGBA_COLOR, ImageMember.MONO_COLOR,
+        ))
         self.y_axis.setEnabled(selection.mode == ViewMode.MATRIX)
         self.component.setEnabled(np.iscomplexobj(document.array))
         self.component.setCurrentText(selection.component.value)
+        coordinates = selection.mode in (ViewMode.XY, ViewMode.POINTS)
+        self.coordinate_box.setVisible(coordinates)
+        if coordinates:
+            count = 2 if selection.mode == ViewMode.XY else 3
+            self.coordinate_axis.clear()
+            for axis, label in ((1, "Columns (N x coordinates)"), (0, "Rows (coordinates x N)")):
+                if document.array.shape[axis] == count:
+                    self.coordinate_axis.addItem(label, axis)
+            self.coordinate_axis.setCurrentIndex(self.coordinate_axis.findData(selection.coordinate_axis))
+            for index, combo in enumerate(self.coordinate_columns):
+                combo.clear()
+                combo.addItems([str(i) for i in range(count)])
+                combo.setCurrentIndex(selection.coordinate_order[index] if index < count else 0)
+                combo.setVisible(index < count)
+                self.coordinate_labels[index].setVisible(index < count)
         self._updating = False
         self._refresh_axis_controls()
         with QtCore.QSignalBlocker(self.channel):
@@ -590,15 +796,30 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _mode_changed(self) -> None:
         if self._updating or self.document is None:
             return
-        mode = ViewMode.MATRIX if self.mode.currentIndex() == 0 else ViewMode.SIGNAL
+        mode = ViewMode(self.mode.currentData())
         try:
             selection = default_selection(self.document, mode)
         except ValueError as exc:
             self.statusBar().showMessage(str(exc))
             with QtCore.QSignalBlocker(self.mode):
-                self.mode.setCurrentIndex(0 if self.frame_selection and self.frame_selection.mode == ViewMode.MATRIX else 1)
+                self.mode.setCurrentIndex(self.mode.findData(self.frame_selection.mode.value) if self.frame_selection else 0)
             return
         self._configure_selection(selection)
+        self._reset_pending = True
+        self._schedule_frame()
+
+    def _coordinate_layout_changed(self) -> None:
+        if not self._updating and self.document is not None:
+            self._configure_crop()
+            self._reset_pending = True
+            self._schedule_frame()
+
+    def _swap_coordinates(self) -> None:
+        x, y = self.coordinate_columns[:2]
+        a, b = x.currentIndex(), y.currentIndex()
+        with QtCore.QSignalBlocker(x), QtCore.QSignalBlocker(y):
+            x.setCurrentIndex(b)
+            y.setCurrentIndex(a)
         self._reset_pending = True
         self._schedule_frame()
 
@@ -614,10 +835,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if self.document is None:
             return
         shape = self.document.array.shape
+        coordinates = self.mode.currentData() in (ViewMode.XY.value, ViewMode.POINTS.value)
+        for widget in (self.x_axis, self.y_axis, self.channel_axis, self.channel, self.component):
+            widget.setEnabled(not coordinates)
+        if coordinates:
+            self.slice_box.hide()
+            return
+        self.channel_axis.setEnabled(self.document.image_source is None)
+        self.component.setEnabled(np.iscomplexobj(self.document.array))
         channel_axis = self.channel_axis.currentIndex() - 1
         matrix = self.mode.currentIndex() == 0
+        self.y_axis.setEnabled(matrix)
         self._updating = True
-        self.channel.setEnabled(channel_axis >= 0)
+        self.channel.setEnabled(channel_axis >= 0 and self.document.image_source is None)
         count = shape[channel_axis] if channel_axis >= 0 else 1
         rgb = matrix and channel_axis >= 0 and count in (3, 4) and not np.iscomplexobj(self.document.array)
         self.channel.setSpecialValueText("RGB / luminance" if rgb else "")
@@ -646,6 +876,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _selection(self) -> Selection:
         assert self.document is not None
+        mode = ViewMode(self.mode.currentData())
+        if mode in (ViewMode.XY, ViewMode.POINTS):
+            count = 2 if mode == ViewMode.XY else 3
+            axis = int(self.coordinate_axis.currentData())
+            return Selection(mode, 1 - axis, None, None, 0, (0, 0), coordinate_axis=axis,
+                             coordinate_order=tuple(combo.currentIndex() for combo in self.coordinate_columns[:count]))
         channel_axis = self.channel_axis.currentIndex() - 1
         matrix = self.mode.currentIndex() == 0
         slices = tuple(self._slice_spins[axis].value() if axis in self._slice_spins else 0
@@ -667,6 +903,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _schedule_frame(self) -> None:
         if not self._updating and self.document is not None:
+            self.result_save.setEnabled(False)
             self._latest[JobKind.FRAME] = -1
             self._rebuild.start()
 
@@ -674,6 +911,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         document = self.document
         if document is None or self._closing:
             return
+        self.result_save.setEnabled(False)
         try:
             selection = self._selection()
             limits = Limits(self._bound(self.filter_low), self._bound(self.filter_high),
@@ -684,16 +922,22 @@ class ViewerWindow(QtWidgets.QMainWindow):
             active = [axis for axis in axes if axis is not None]
             if len(set(active)) != len(active):
                 raise ValueError("Row, column/sample and channel axes must be different.")
+            if selection.mode in (ViewMode.XY, ViewMode.POINTS):
+                if len(set(selection.coordinate_order)) != len(selection.coordinate_order):
+                    raise ValueError("X, Y and Z must use distinct source rows/columns.")
         except ValueError as exc:
             self.statusBar().showMessage(f"Invalid setting: {exc}")
             return
         self._next_selection = selection
         edge = self.max_edge.value()
+        points = self.max_points.value()
         crop = self._crop
         self.statusBar().showMessage("Preparing views…")
-        self._submit(JobKind.FRAME, lambda: prepare_frame(document, selection, limits, edge, crop))
+        self._submit(JobKind.FRAME, lambda: prepare_frame(document, selection, limits, edge, crop, max_points=points))
 
     def _color_levels(self, automatic: tuple[float, float]) -> tuple[float, float]:
+        if self.frame is not None and self.frame.composite:
+            return automatic
         lower, upper = self._bound(self.color_low), self._bound(self.color_high)
         lower = automatic[0] if lower is None else lower
         upper = automatic[1] if upper is None else upper
@@ -706,10 +950,27 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if frame is None or selection is None:
             return
         matrix = selection.mode == ViewMode.MATRIX
-        self.tabs.setVisible(matrix)
+        cloud = selection.mode == ViewMode.POINTS
+        self.result_save.setEnabled(not cloud)
+        self.export_mode.setEnabled(not cloud)
+        self.tabs.setVisible(True)
+        self.tabs.setTabEnabled(0, matrix)
+        self.tabs.setTabEnabled(1, matrix or cloud)
+        self.tabs.setTabText(1, "3D point cloud" if cloud else "3D surface")
+        if reset and cloud:
+            self.tabs.setCurrentIndex(1)
+        elif not matrix and not cloud:
+            self.tabs.setCurrentIndex(2)
+        self.profile_area.setVisible(not cloud)
         self.profile_controls.setVisible(matrix)
         self.profile_controls.setEnabled(matrix)
-        self.surface_controls.setEnabled(matrix)
+        self.profile_save.setEnabled(matrix and self._profile_selected)
+        self.surface_controls.setEnabled(matrix or cloud)
+        self.max_edge.setEnabled(matrix)
+        self.max_points.setEnabled(cloud)
+        self.point_size.setEnabled(cloud)
+        labels = self.document.csv_headers if self.document is not None and selection.x_axis == 1 else ()
+        self.raw_view.set_frame(frame, labels)
         self._surface_dirty = True
         self._surface_reset |= reset
         self._presentation_changed(reset=reset)
@@ -717,10 +978,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self._configure_profile_range()
             if reset:
                 self.profile_view.reset_view()
-        else:
-            self.profile_view.set_data(frame.scalar, frame.valid, "Signal", reset, x_start=frame.x_start,
+        elif not cloud:
+            self.profile_view.set_data(frame.scalar, frame.valid, "XY signal" if frame.x_values is not None else "Signal", reset, x_start=frame.x_start,
                                        display_values=frame.display_scalar, clipped=frame.clip_kind != 0,
-                                       limits=frame.value_limits)
+                                       limits=frame.value_limits, x_values=frame.x_values)
+        else:
+            self.profile_view.clear_selection()
         crop_text = f"X: {frame.x_start}..{frame.x_start + frame.scalar.shape[-1] - 1}"
         if matrix:
             crop_text = f"{crop_text}; Y: {frame.y_start}..{frame.y_start + frame.scalar.shape[0] - 1}"
@@ -729,12 +992,14 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(
             f"Ready | Visible samples: {visible:,} / {frame.scalar.size:,}"
             + (f" | Clamped: {np.count_nonzero(frame.clip_kind):,}" if np.any(frame.clip_kind) else "")
-            + (" | RGB composition; surface/profile show luminance" if frame.composite else "")
+            + (" | Image colors; surface/profile show grayscale" if frame.composite else "")
         )
 
     def _presentation_changed(self, *, reset: bool = False) -> None:
         if self._updating or self.frame is None:
             return
+        for control in (self.colormap, self.color_low, self.color_high):
+            control.setEnabled(not self.frame.composite)
         try:
             levels = self._color_levels(self.frame.limits)
         except ValueError as exc:
@@ -744,6 +1009,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._update_height_controls()
         if matrix:
             self.image_view.set_frame(self.frame, self.colormap.currentText(), levels, reset)
+            self._surface_dirty = True
+            self._surface_reset |= reset
+            self._refresh_surface()
+        elif self.frame.point_coordinates is not None:
             self._surface_dirty = True
             self._surface_reset |= reset
             self._refresh_surface()
@@ -757,6 +1026,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
             value = max(self.frame.scalar.shape) * 0.3 / span
             with QtCore.QSignalBlocker(self.height_scale):
                 self.height_scale.setValue(value)
+        elif automatic and self.frame is not None and self.frame.point_coordinates is not None:
+            with QtCore.QSignalBlocker(self.height_scale):
+                self.height_scale.setValue(1.0)
         self._sync_height_slider()
 
     def _sync_height_slider(self) -> None:
@@ -773,19 +1045,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _height_changed(self) -> None:
         self._sync_height_slider()
-        if self.frame is None or self.frame.scalar.ndim != 2:
+        if self.frame is None or self.frame.surface is None:
             return
         if not self._surface_dirty:
             self.surface_view.set_height_scale(self.height_scale.value())
 
     def _refresh_surface(self) -> None:
-        if self.frame is None or self.frame.scalar.ndim != 2 or self.tabs.currentIndex() != 1:
+        if self.frame is None or self.frame.surface is None or self.tabs.currentIndex() != 1:
             return
         if self._surface_dirty:
             try:
                 self.surface_view.set_frame(self.frame, self.colormap.currentText(),
                                             self._color_levels(self.frame.limits), self.height_scale.value(),
-                                            self._surface_reset)
+                                            self._surface_reset, self.point_size.value())
             except (ValueError, RuntimeError) as exc:
                 self.statusBar().showMessage(f"3D rendering error: {exc}")
                 return
@@ -814,6 +1086,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _update_profile(self) -> None:
         frame = self.frame
+        self.profile_save.setEnabled(False)
         if frame is None or frame.scalar.ndim != 2:
             return
         row = self.profile_direction.currentIndex() == 0
@@ -834,6 +1107,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_view.set_data(values, valid, f"{'Row' if row else 'Column'} {index}",
                                     reset=self._reset_pending, x_start=frame.x_start if row else frame.y_start,
                                     display_values=shown, clipped=clipped, limits=frame.value_limits)
+        self.profile_save.setEnabled(True)
         self.image_view.set_profile(row, index)
         if self.tabs.currentIndex() == 1 and not self._surface_dirty:
             self.surface_view.set_profile(row, index)
@@ -869,8 +1143,21 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.open_path(Path(path))
 
     def _key_changed(self) -> None:
-        if self.document is not None and self.document.keys and self.archive_key.currentIndex() >= 0:
-            self.open_path(self.document.path, self.archive_key.currentText())
+        document = self.document
+        if document is None or not document.keys or self.archive_key.currentIndex() < 0:
+            return
+        key = self.archive_key.currentText()
+        if key == document.key:
+            return
+        if document.image_source is None:
+            self.open_path(document.path, key)
+        else:
+            self._rebuild.stop()
+            self._latest[JobKind.FRAME] = -1
+            self.controls.setEnabled(False)
+            self.archive_key.setEnabled(False)
+            self.statusBar().showMessage(f"Preparing image matrix: {key}…")
+            self._submit(JobKind.LOAD, lambda: select_image_member(document, key))
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
         """Accept a local numeric/image file dragged into the window.
@@ -879,7 +1166,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             event: Native Qt drag-enter event.
         """
         urls = event.mimeData().urls()
-        if urls and urls[0].isLocalFile() and Path(urls[0].toLocalFile()).suffix.lower() in IMAGE_EXTENSIONS | {".npy", ".npz"}:
+        if urls and urls[0].isLocalFile() and Path(urls[0].toLocalFile()).suffix.lower() in IMAGE_EXTENSIONS | TEXT_EXTENSIONS | {".npy", ".npz"}:
             event.acceptProposedAction()
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:

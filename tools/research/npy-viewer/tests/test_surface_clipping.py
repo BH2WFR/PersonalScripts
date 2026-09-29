@@ -64,6 +64,36 @@ class SurfaceClippingTests(unittest.TestCase):
         np.testing.assert_array_equal(middle.point_data["Value"], middle.points[:, 2])
         np.testing.assert_array_equal(frame.scalar, source)
 
+    def test_clipping_interpolates_color_and_alpha(self) -> None:
+        """Inserted threshold vertices carry interpolated colors and opacity."""
+        source = np.array([[-4.0, 4.0], [-4.0, 4.0]])
+        document = model.Document(Path("color-ramp.npy"), source)
+        frame = model.prepare_frame(document, model.default_selection(document),
+                                    model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
+        mesh = pv.PolyData(frame.surface.points, frame.surface.faces)
+        mesh.point_data["Value"] = np.asarray(mesh.points)[:, 2]
+        mesh.point_data[surface.SOURCE_COLOR_FIELD] = np.array([[0, 0, 255, 0], [255, 0, 0, 255]] * 2, dtype=np.uint8)
+        middle, caps = surface.SurfaceView._partition_surface(mesh, frame)
+        for part in (middle, *caps):
+            colors = np.asarray(part.point_data[surface.SOURCE_COLOR_FIELD])
+            np.testing.assert_allclose(colors[:, 3], np.asarray(part.points)[:, 0] * 255, atol=1)
+            self.assertEqual(colors.dtype, np.uint8)
+
+    def test_point_cloud_clipping_keeps_colors(self) -> None:
+        """Singleton image dimensions retain RGB(A) values on both clip outputs."""
+        source = np.array([[-4.0, 0.0, 4.0]])
+        document = model.Document(Path("color-points.npy"), source)
+        frame = model.prepare_frame(document, model.default_selection(document),
+                                    model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
+        mesh = pv.PolyData(frame.surface.points)
+        mesh.point_data["Value"] = source.ravel()
+        colors = np.array([[10, 20, 30, 0], [40, 50, 60, 128], [70, 80, 90, 255]], dtype=np.uint8)
+        mesh.point_data[surface.SOURCE_COLOR_FIELD] = colors
+        middle, caps = surface.SurfaceView._partition_surface(mesh, frame)
+        np.testing.assert_array_equal(middle.point_data[surface.SOURCE_COLOR_FIELD], colors[1:2])
+        for part, index in zip(caps, (0, 2)):
+            np.testing.assert_array_equal(part.point_data[surface.SOURCE_COLOR_FIELD], colors[index:index + 1])
+
 
 if __name__ == "__main__":
     unittest.main()
