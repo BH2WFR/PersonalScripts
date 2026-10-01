@@ -10,6 +10,7 @@ import sys
 import unittest
 
 import numpy as np
+from fixture_store import preserve_array, preserve_document
 
 PACKAGE = Path(__file__).resolve().parents[1]
 if "personal_npy_viewer" not in sys.modules:
@@ -29,7 +30,7 @@ class ClippingTests(unittest.TestCase):
     def test_bounds_keep_source_values_and_nonfinite_gaps(self) -> None:
         """Clamp both sides without replacing NaN/Inf or altering the source."""
         source = np.array([-10, -2, 0, 2, 10, np.nan, np.inf, -np.inf])
-        document = model.Document(Path("signal.npy"), source)
+        document = preserve_document(model.Document(Path("signal.npy"), source), "unit-inputs/test_clipping")
         frame = model.prepare_frame(document, model.default_selection(document),
                                     model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
         np.testing.assert_array_equal(frame.scalar, source)
@@ -41,7 +42,7 @@ class ClippingTests(unittest.TestCase):
     def test_fractional_bounds_and_exact_integer_source(self) -> None:
         """Fractional bounds do not truncate to integers or round raw uint64 values."""
         source = np.array([0, 1, 2, 3, 2**64 - 1], dtype=np.uint64)
-        document = model.Document(Path("integer.npy"), source)
+        document = preserve_document(model.Document(Path("integer.npy"), source), "unit-inputs/test_clipping")
         frame = model.prepare_frame(document, model.default_selection(document),
                                     model.Limits(0.5, 2.5, model.FilterMode.CLAMP), 0)
         np.testing.assert_array_equal(frame.display_scalar, [0.5, 1, 2, 2.5, 2.5])
@@ -49,7 +50,7 @@ class ClippingTests(unittest.TestCase):
 
     def test_curve_interpolates_crossings_and_caps(self) -> None:
         """A segment crossing both bounds gets two exact horizontal cap intervals."""
-        result = clipping.clip_curve(np.array([-4.0, 4.0]), np.ones(2, dtype=np.bool_),
+        result = clipping.clip_curve(preserve_array(np.array([-4.0, 4.0]), "values", "unit-inputs/test_clipping"), preserve_array(np.ones(2, dtype=np.bool_), "valid", "unit-inputs/test_clipping"),
                                       model.Limits(-2, 2, model.FilterMode.CLAMP), 10)
         np.testing.assert_allclose(result.x, [10, 10.25, 10.75, 11])
         np.testing.assert_allclose(result.y, [-2, -2, 2, 2])
@@ -58,15 +59,15 @@ class ClippingTests(unittest.TestCase):
 
     def test_caps_never_bridge_missing_samples(self) -> None:
         """Clipped samples adjacent to a hole remain disconnected."""
-        result = clipping.clip_curve(np.array([5.0, np.nan, 5.0]),
-                                      np.array([True, False, True]),
+        result = clipping.clip_curve(preserve_array(np.array([5.0, np.nan, 5.0]), "values", "unit-inputs/test_clipping"),
+                                      preserve_array(np.array([True, False, True]), "valid", "unit-inputs/test_clipping"),
                                       model.Limits(None, 1, model.FilterMode.CLAMP))
         np.testing.assert_allclose(result.y, [1, np.nan, 1])
         self.assertEqual(result.cap_x.size, 0)
 
     def test_equal_bounds_and_large_crossing(self) -> None:
         """Degenerate intervals and extreme finite values produce finite geometry."""
-        result = clipping.clip_curve(np.array([-1e308, 1e308]), np.ones(2, dtype=np.bool_),
+        result = clipping.clip_curve(preserve_array(np.array([-1e308, 1e308]), "values", "unit-inputs/test_clipping"), preserve_array(np.ones(2, dtype=np.bool_), "valid", "unit-inputs/test_clipping"),
                                       model.Limits(0, 0, model.FilterMode.CLAMP))
         np.testing.assert_allclose(result.x, [0, 0.5, 0.5, 1])
         np.testing.assert_array_equal(result.y, np.zeros(4))
@@ -75,7 +76,7 @@ class ClippingTests(unittest.TestCase):
         """2D outlines follow the cropped region; hide mode retains former gaps."""
         source = np.zeros((12, 12))
         source[3:9, 3:9] = 10
-        document = model.Document(Path("matrix.npy"), source)
+        document = preserve_document(model.Document(Path("matrix.npy"), source), "unit-inputs/test_clipping")
         selection = model.default_selection(document)
         frame = model.prepare_frame(document, selection, model.Limits(None, 2, model.FilterMode.CLAMP),
                                     0, model.Crop(2, 9, 2, 9))
@@ -90,7 +91,7 @@ class ClippingTests(unittest.TestCase):
 
     def test_nonfinite_bounds_rejected(self) -> None:
         """Reject unusable bounds before constructing rendering buffers."""
-        document = model.Document(Path("signal.npy"), np.arange(3))
+        document = preserve_document(model.Document(Path("signal.npy"), np.arange(3)), "unit-inputs/test_clipping")
         for lower, upper in ((np.nan, None), (None, np.inf), (-np.inf, 2)):
             with self.assertRaises(ValueError):
                 model.prepare_frame(document, model.default_selection(document),

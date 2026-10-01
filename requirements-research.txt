@@ -3,6 +3,8 @@
 # Dependencies used only by tools/research/
 matplotlib
 numpy
+scipy
+h5py
 Pillow
 opencv-python
 PySide6

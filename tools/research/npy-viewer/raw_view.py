@@ -1,16 +1,20 @@
 """Virtual, read-only array spreadsheet with exact source-value formatting.
 
+8-bit integer image data optionally uses channel-ordered hexadecimal labels.
 Requirements: PySide6 and numpy. Usage: embedded as the Raw data tab.
 """
 
+from typing import cast
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .data_model import Array, Frame
+from .data_model import Array, Frame, ImageMember, ImageSource
 
 MAX_COPY_CELLS = 1_000_000
 DEFAULT_COLUMN_WIDTH = 48
 MIN_COLUMN_WIDTH = 16
 MAX_COLUMN_WIDTH = 1024
+HEX_DIGITS_PER_BYTE = 2
 
 
 class ArrayTableModel(QtCore.QAbstractTableModel):
@@ -26,13 +30,20 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
         self.row_start = 0
         self.column_start = 0
         self.column_labels: tuple[str, ...] = ()
+        self.hexadecimal = False
+        self.hex_available = False
+        self.hex_description = ""
+        self._hex_digits = HEX_DIGITS_PER_BYTE
+        self._hex_channels: tuple[int, ...] = ()
 
-    def set_frame(self, frame: Frame, labels: tuple[str, ...] = ()) -> None:
+    def set_frame(self, frame: Frame, labels: tuple[str, ...] = (), *, image_source: ImageSource | None = None) -> None:
         """Reset the table to unfiltered, unclamped source cells for a frame.
 
         Args:
             frame: Prepared selection retaining its raw, possibly complex values.
             labels: Optional source column headers for a CSV matrix.
+            image_source: Original image metadata enabling 8-bit integer hex display.
+                Gray+alpha color views pack gray and alpha without repeating RGB.
         """
         self.beginResetModel()
         raw = frame.raw if frame.raw is not None else frame.scalar
@@ -42,7 +53,48 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
         self.column_start = 0 if raw.ndim == 1 or coordinates else frame.x_start
         self.column_labels = (("X", "Y", "Z") if frame.point_coordinates is not None else
                               ("X", "Y") if frame.x_values is not None else labels)
+        self.hex_available = (image_source is not None and self.array.dtype.kind in "bu"
+                              and self.array.dtype.itemsize == 1)
+        self.hexadecimal &= self.hex_available
+        self._hex_digits = max(HEX_DIGITS_PER_BYTE, self.array.dtype.itemsize * HEX_DIGITS_PER_BYTE)
+        self._hex_channels = ()
+        self.hex_description = "Hex display is available only for 8-bit integer image values; floating-point and 16-bit data remain decimal."
+        if self.hex_available:
+            letters = "V"
+            channel_text = "single channel"
+            if self.array.ndim == 3:
+                count = self.array.shape[-1]
+                self._hex_channels = tuple(range(count))
+                if image_source is not None and ImageMember.MONO in image_source.channels and count == 4:
+                    self._hex_channels = (0, 3)
+                    letters, channel_text = "GA", "gray then alpha; repeated RGB components omitted"
+                elif count == 2:
+                    letters, channel_text = "GA", "gray then alpha"
+                else:
+                    letters = "RGBA"[:count]
+                    channel_text = "RGB; alpha last" if count == 4 else "RGB"
+            pattern = f"#{''.join(letter * self._hex_digits for letter in letters)}"
+            self.hex_description = f"{pattern}: {channel_text}; {self.array.dtype.itemsize * 8}-bit values, no scaling."
         self.endResetModel()
+
+    def set_hexadecimal(self, enabled: bool) -> None:
+        """Toggle image cell formatting without resetting the data or selection.
+
+        Args:
+            enabled: Use uppercase, fixed-width hex for 8-bit integer images.
+                Floating-point, 16-bit and non-image arrays remain decimal.
+
+        Side effects:
+            Notifies views that display and tooltip text changed; values and
+            full-precision buffers are retained without conversion or copying.
+        """
+        enabled = enabled and self.hex_available
+        if enabled == self.hexadecimal:
+            return
+        self.hexadecimal = enabled
+        if self.rowCount() and self.columnCount():
+            self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1),
+                                  [QtCore.Qt.ItemDataRole.DisplayRole, QtCore.Qt.ItemDataRole.ToolTipRole])
 
     def rowCount(self, parent: QtCore.QModelIndex | QtCore.QPersistentModelIndex = QtCore.QModelIndex()) -> int:
         """Return source rows for the root; table cells have no children."""
@@ -54,12 +106,20 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
 
     def data(self, index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
              role: int = QtCore.Qt.ItemDataRole.DisplayRole) -> str | int | None:
-        """Format one source value or RGB(A) tuple without float conversion."""
+        """Format a source value or pixel tuple, optionally as 8-bit image hex."""
         if not index.isValid() or self.array is None:
             return None
         if role == QtCore.Qt.ItemDataRole.TextAlignmentRole:
             return int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         if role in (QtCore.Qt.ItemDataRole.DisplayRole, QtCore.Qt.ItemDataRole.ToolTipRole):
+            if self.hexadecimal:
+                # The unsigned/bool dtype guard makes item() return Python int/bool.
+                if self._hex_channels:
+                    channels = (cast(int, self.array.item(index.row(), index.column(), channel))
+                                for channel in self._hex_channels)
+                    return f"#{''.join(f'{channel:0{self._hex_digits}X}' for channel in channels)}"
+                scalar = cast(int, self.array.item(index.row(), index.column()))
+                return f"#{scalar:0{self._hex_digits}X}"
             value = self.array[index.row(), index.column()]
             if self.array.ndim == 3:
                 return f"({', '.join(str(channel) for channel in value)})"
@@ -91,7 +151,13 @@ class RawDataView(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         self.note = QtWidgets.QLabel("No data loaded")
         self.note.setWordWrap(True)
-        layout.addWidget(self.note)
+        heading = QtWidgets.QHBoxLayout()
+        heading.addWidget(self.note, 1)
+        self.hex_checkbox = QtWidgets.QCheckBox("Hexadecimal")
+        self.hex_checkbox.setVisible(False)
+        self.hex_checkbox.toggled.connect(self._hexadecimal_changed)
+        heading.addWidget(self.hex_checkbox)
+        layout.addLayout(heading)
         self.model = ArrayTableModel(self)
         self.table = QtWidgets.QTableView()
         self.table.setModel(self.model)
@@ -141,18 +207,44 @@ class RawDataView(QtWidgets.QWidget):
         self.table.addAction(action)
         self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
 
-    def set_frame(self, frame: Frame, labels: tuple[str, ...] = ()) -> None:
-        """Display raw selected cells, preserving dtype, gaps and cropped indices."""
-        self.model.set_frame(frame, labels)
+    def set_frame(self, frame: Frame, labels: tuple[str, ...] = (), *, image_source: ImageSource | None = None) -> None:
+        """Display raw selected cells with an optional image-only hex checkbox.
+
+        Args:
+            frame: Prepared data preserving dtype, gaps and source indices.
+            labels: Optional CSV column names.
+            image_source: Image channel metadata; None hides the hex checkbox.
+                Floating-point and 16-bit image matrices show a disabled,
+                unchecked checkbox.
+        """
+        self.model.set_frame(frame, labels, image_source=image_source)
+        self.hex_checkbox.setVisible(image_source is not None)
+        self.hex_checkbox.setEnabled(self.model.hex_available)
+        self.hex_checkbox.setToolTip(self.model.hex_description)
+        with QtCore.QSignalBlocker(self.hex_checkbox):
+            self.hex_checkbox.setChecked(self.model.hexadecimal)
+        self._update_note()
         array = self.model.array
         if array is None:
             return
-        self.note.setText(f"Raw selected data | Shape: {array.shape} | Dtype: {array.dtype}\n"
-                          "Read-only; before value filtering, clamping and complex-component conversion. "
-                          "Color cells show original channel tuples. Ctrl+C copies selected cells.")
         self.row.setRange(self.model.row_start, self.model.row_start + self.model.rowCount() - 1)
         self.column.setRange(self.model.column_start, self.model.column_start + self.model.columnCount() - 1)
         self._set_column_width(self.column_width.value())
+
+    def _hexadecimal_changed(self) -> None:
+        self.model.set_hexadecimal(self.hex_checkbox.isChecked())
+        self._update_note()
+
+    def _update_note(self) -> None:
+        array = self.model.array
+        if array is None:
+            return
+        text = (f"Raw selected data | Shape: {array.shape} | Dtype: {array.dtype}\n"
+                "Read-only; before value filtering, clamping and complex-component conversion. "
+                "Ctrl+C copies the displayed cell text.")
+        if self.model.hexadecimal:
+            text = f"{text}\nHex: {self.model.hex_description}"
+        self.note.setText(text)
 
     def _set_column_width(self, width: int) -> None:
         header = self.table.horizontalHeader()

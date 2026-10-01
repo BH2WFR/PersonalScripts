@@ -5,17 +5,18 @@ Requirements: numpy, opencv-python and Pillow. Usage: unittest discovery here.
 
 import importlib
 import importlib.util
+from dataclasses import replace
 from contextlib import redirect_stdout
 import io
 from pathlib import Path
 import sys
-import tempfile
 import unittest
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
+from fixture_store import fixture_directory
 
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[2]
@@ -33,12 +34,8 @@ class ImageChannelTests(unittest.TestCase):
     """File metadata and derived previews never alter source channels."""
 
     def setUp(self) -> None:
-        """Allocate fixtures in the repository's ignored scratch directory."""
-        scratch = (ROOT / "tmp").resolve()
-        self.directory = tempfile.TemporaryDirectory(prefix="viewer-image-test-", dir=scratch)
-        self.addCleanup(self.directory.cleanup)
-        self.folder = Path(self.directory.name)
-        self.assertTrue(self.folder.is_relative_to(scratch))
+        """Keep generated images in ignored scratch directories per test."""
+        self.folder = fixture_directory(f"unit-files/images/{self._testMethodName}")
         self.console = io.StringIO()
         self.enterContext(redirect_stdout(self.console))
 
@@ -64,7 +61,8 @@ class ImageChannelTests(unittest.TestCase):
                     doc = model.load_document(path)
                     self.assertEqual(doc.key, model.ImageMember.RGB_GRAY)
                     self.assertIn("RGB color", doc.keys)
-                    self.assertIn("RGBA color", doc.keys)
+                    self.assertEqual("RGBA color" in doc.keys, channels == 4)
+                    self.assertEqual(model.ImageMember.RGBA_GRAY.value in doc.keys, channels == 4)
                     self.assertEqual(doc.image_source.metadata.depth, f"{source.dtype.itemsize * 8}-bit per channel")
                     for index, name in enumerate(("R", "G", "B", "A")[:channels]):
                         selected = model.select_image_member(doc, name)
@@ -92,19 +90,80 @@ class ImageChannelTests(unittest.TestCase):
         np.testing.assert_allclose(frame.image, luminance)
         np.testing.assert_array_equal(doc.image_source.pixels, source)
 
-    def test_rgb_without_alpha_uses_opaque_fusion(self) -> None:
-        """No synthetic alpha channel is advertised, and missing alpha means one."""
-        source = np.array([[[20, 30, 40], [255, 128, 0]]], dtype=np.uint8)
-        doc = model.load_document(self._save("rgb.png", source))
-        self.assertNotIn("A", doc.keys)
-        gray = model.select_image_member(doc, model.ImageMember.RGB_GRAY)
-        weighted = model.select_image_member(doc, model.ImageMember.RGBA_GRAY)
-        np.testing.assert_array_equal(gray.array, weighted.array)
-        frame = model.prepare_frame(doc, model.default_selection(doc), model.Limits(), 0)
-        self.assertFalse(frame.composite)
-        np.testing.assert_array_equal(frame.scalar, gray.array)
-        with self.assertRaises(KeyError):
-            model.select_image_member(doc, "A")
+    def test_alpha_weights_use_source_dtype_not_slice_extrema(self) -> None:
+        """8/16-bit slices keep absolute opacity; floats are clipped to 0..1."""
+        for dtype in (np.uint8, np.uint16):
+            with self.subTest(dtype=dtype):
+                maximum = np.iinfo(dtype).max
+                alpha = np.array([0, maximum // 4, maximum // 2, maximum], dtype=dtype)
+                alpha.flags.writeable = False
+                expected = alpha.astype(np.float64) / maximum
+                weights = model.normalize_image_alpha(alpha)
+                np.testing.assert_array_equal(weights, expected)
+                np.testing.assert_array_equal(model.normalize_image_alpha(alpha[1:3]), expected[1:3])
+                self.assertEqual(weights.dtype, np.float64)
+                self.assertFalse(np.shares_memory(weights, alpha))
+        floating = np.array([-0.2, 0, 0.25, 1, 1.5, np.nan], dtype=np.float32)
+        original = floating.copy()
+        np.testing.assert_array_equal(model.normalize_image_alpha(floating), [0, 0, 0.25, 1, 1, np.nan])
+        np.testing.assert_array_equal(floating, original)
+        np.testing.assert_array_equal(model.normalize_image_alpha(np.array([False, True])), [0., 1.])
+
+    def test_rgb_without_alpha_never_exposes_alpha_modes(self) -> None:
+        """RGB JPEG/PNG/BMP/TIFF/WebP keep three channels without synthetic A."""
+        source = np.arange(4 * 5 * 3, dtype=np.uint8).reshape(4, 5, 3) * 4
+        expected = ("R", "G", "B", model.ImageMember.RGB_GRAY.value, "RGB color", "Monochrome color")
+        for extension in ("jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp"):
+            with self.subTest(extension=extension):
+                path = self._save(f"rgb.{extension}", source)
+                doc = model.load_document(path)
+                self.assertEqual(doc.keys, expected)
+                self.assertEqual(doc.image_source.layout, "RGB")
+                color = model.select_image_member(doc, model.ImageMember.RGB_COLOR)
+                self.assertEqual(color.array.shape, source.shape)
+                frame = model.prepare_frame(color, model.default_selection(color), model.Limits(), 2)
+                self.assertEqual(frame.raw.shape[-1], 3)
+                np.testing.assert_allclose(frame.scalar, doc.image_source.pixels @ np.asarray(model.LUMINANCE_WEIGHTS))
+                for member in (model.ImageMember.ALPHA, model.ImageMember.RGBA_GRAY, model.ImageMember.RGBA_COLOR):
+                    with self.assertRaises(KeyError):
+                        model.select_image_member(doc, member)
+                    with self.assertRaisesRegex(ValueError, "Unknown image matrix"):
+                        model.load_document(path, member)
+                # A caller cannot revive the removed synthetic-alpha behavior
+                # by supplying stale cached member labels.
+                stale = replace(doc, keys=(*doc.keys, model.ImageMember.RGBA_COLOR.value))
+                with self.assertRaisesRegex(KeyError, "source alpha"):
+                    model.select_image_member(stale, model.ImageMember.RGBA_COLOR)
+
+    def test_fully_opaque_alpha_is_still_a_real_channel(self) -> None:
+        """An explicitly stored A channel is retained even when all samples are 255."""
+        source = np.full((3, 4, 4), 255, dtype=np.uint8)
+        source[..., 0] = 100
+        doc = model.load_document(self._save("opaque-rgba.png", source))
+        for member in (model.ImageMember.ALPHA, model.ImageMember.RGBA_GRAY, model.ImageMember.RGBA_COLOR):
+            self.assertIn(member, doc.keys)
+        color = model.select_image_member(doc, model.ImageMember.RGBA_COLOR)
+        np.testing.assert_array_equal(color.array, source)
+
+    def test_palette_transparency_preserves_real_alpha(self) -> None:
+        """PNG palette transparency exposes alpha; an opaque palette does not."""
+        palette = Image.new("P", (3, 2))
+        palette.putpalette([255, 0, 0, 0, 255, 0, 0, 0, 255])
+        palette.putdata([0, 1, 2, 2, 1, 0])
+        for transparent in (False, True):
+            with self.subTest(transparent=transparent):
+                path = self.folder / f"palette-{transparent}.png"
+                if transparent:
+                    palette.save(path, transparency=bytes([0, 128, 255]))
+                else:
+                    palette.save(path)
+                doc = model.load_document(path)
+                self.assertEqual(model.ImageMember.ALPHA in doc.image_source.channels, transparent)
+                self.assertEqual(model.ImageMember.RGBA_COLOR in doc.keys, transparent)
+                self.assertEqual(model.ImageMember.RGBA_GRAY in doc.keys, transparent)
+                if transparent:
+                    alpha = model.select_image_member(doc, model.ImageMember.ALPHA)
+                    np.testing.assert_array_equal(alpha.array, [[0, 128, 255], [255, 128, 0]])
 
     def test_monochrome_16bit_and_1bit_metadata(self) -> None:
         """Original 1-bit PNGs are distinguished from their expanded uint8 buffers."""
@@ -166,8 +225,12 @@ class ImageChannelTests(unittest.TestCase):
         source = np.arange(5 * 7 * 4, dtype=np.uint16).reshape(5, 7, 4)
         path = self._save("cropped.png", source)
         doc = model.load_document(path, "G")
-        path.unlink()
-        alpha = model.select_image_member(doc, "A")
+        payload = path.read_bytes()
+        try:
+            path.unlink()
+            alpha = model.select_image_member(doc, "A")
+        finally:
+            path.write_bytes(payload)
         frame = model.prepare_frame(alpha, model.default_selection(alpha), model.Limits(), 0, model.Crop(2, 4, 1, 3))
         np.testing.assert_array_equal(frame.scalar, source[1:4, 2:5, 3])
         self.assertEqual((frame.x_start, frame.y_start), (2, 1))

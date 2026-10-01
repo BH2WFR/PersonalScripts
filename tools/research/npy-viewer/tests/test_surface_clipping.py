@@ -12,6 +12,7 @@ import sys
 import unittest
 
 import numpy as np
+from fixture_store import preserve_document
 import pyvista as pv
 
 os.environ["QT_API"] = "pyside6"
@@ -33,7 +34,7 @@ class SurfaceClippingTests(unittest.TestCase):
     def test_caps_cover_exact_threshold_regions(self) -> None:
         """A ramp crossing both limits splits at the interpolated X positions."""
         source = np.array([[-4.0, 4.0], [-4.0, 4.0]])
-        document = model.Document(Path("ramp.npy"), source)
+        document = preserve_document(model.Document(Path("ramp.npy"), source), "unit-inputs/test_surface_clipping")
         frame = model.prepare_frame(document, model.default_selection(document),
                                     model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
         mesh = pv.PolyData(frame.surface.points, frame.surface.faces)
@@ -52,7 +53,7 @@ class SurfaceClippingTests(unittest.TestCase):
         """VTK interpolation roundoff cannot leave normal vertices past a bound."""
         yy, xx = np.mgrid[:90, :140]
         source = 5 * np.sin(xx / 15) * np.cos(yy / 30)
-        document = model.Document(Path("wave.npy"), source)
+        document = preserve_document(model.Document(Path("wave.npy"), source), "unit-inputs/test_surface_clipping")
         frame = model.prepare_frame(document, model.default_selection(document),
                                     model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
         mesh = pv.PolyData(frame.surface.points, frame.surface.faces)
@@ -67,7 +68,7 @@ class SurfaceClippingTests(unittest.TestCase):
     def test_clipping_interpolates_color_and_alpha(self) -> None:
         """Inserted threshold vertices carry interpolated colors and opacity."""
         source = np.array([[-4.0, 4.0], [-4.0, 4.0]])
-        document = model.Document(Path("color-ramp.npy"), source)
+        document = preserve_document(model.Document(Path("color-ramp.npy"), source), "unit-inputs/test_surface_clipping")
         frame = model.prepare_frame(document, model.default_selection(document),
                                     model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
         mesh = pv.PolyData(frame.surface.points, frame.surface.faces)
@@ -82,7 +83,7 @@ class SurfaceClippingTests(unittest.TestCase):
     def test_point_cloud_clipping_keeps_colors(self) -> None:
         """Singleton image dimensions retain RGB(A) values on both clip outputs."""
         source = np.array([[-4.0, 0.0, 4.0]])
-        document = model.Document(Path("color-points.npy"), source)
+        document = preserve_document(model.Document(Path("color-points.npy"), source), "unit-inputs/test_surface_clipping")
         frame = model.prepare_frame(document, model.default_selection(document),
                                     model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
         mesh = pv.PolyData(frame.surface.points)

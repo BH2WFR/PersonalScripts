@@ -1,11 +1,12 @@
 """Load numeric data and prepare linked views without changing source values.
 
-Requirements: numpy, opencv-python and Pillow.
+Requirements: numpy, opencv-python, Pillow, scipy and h5py.
 Usage: imported by the viewer; CPU preparation can run in a worker thread.
 """
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from mmap import mmap
 from pathlib import Path
 from time import perf_counter
 from typing import cast
@@ -16,6 +17,8 @@ from numpy.typing import NDArray
 
 from .image_metadata import ImageMetadata, read_image_metadata
 from .csv_loader import read_csv
+from .array_validation import validate_numeric_array
+from .mat_loader import read_mat
 
 type IntegerScalar = (np.int8 | np.int16 | np.int32 | np.int64 | np.longlong
                       | np.uint8 | np.uint16 | np.uint32 | np.uint64 | np.ulonglong)
@@ -33,7 +36,6 @@ type ColorArray = NDArray[np.uint8]
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"})
 TEXT_EXTENSIONS = frozenset({".csv", ".txt"})
 COLORMAPS: tuple[str, ...] = ("viridis", "cividis", "gray", "plasma", "inferno", "magma", "turbo", "coolwarm")
-NUMERIC_KINDS = frozenset("buifc")
 DEFAULT_CLIP_COLOR = "#ff0000"
 LUMINANCE_WEIGHTS: tuple[float, float, float] = (0.2126, 0.7152, 0.0722)
 DEFAULT_MAX_POINTS = 100_000
@@ -104,14 +106,15 @@ class Component(StrEnum):
     IMAGINARY = "Imaginary"
     MAGNITUDE = "Magnitude"
     PHASE = "Phase (rad)"
+    PHASE_DEG = "Phase (deg)"
 
 
 @dataclass(frozen=True)
 class Document:
     """An open numeric array and the archive/image metadata needed by the UI.
 
-    NPY arrays may be read-only memory maps. NPZ contains only the selected
-    member in memory; the ZIP file is closed before this object is returned.
+    NPY arrays may be read-only memory maps. NPZ/MAT contain only the selected
+    variable in memory; archive handles are closed before this object returns.
     """
 
     path: Path
@@ -218,51 +221,93 @@ def load_document(path: Path, key: str | None = None) -> Document:
     """Read one array or image, preserving numeric precision and image channels.
 
     Args:
-        path: Existing NPY, NPZ, numeric CSV/TXT or supported image file.
-        key: NPZ member or image matrix label. None chooses the first usable NPZ
-            member, RGB grayscale for color images, or monochrome otherwise.
+        path: Existing NPY, NPZ, MAT, numeric CSV/TXT or supported image file.
+        key: NPZ member, MAT variable or image matrix label. None chooses the
+            first usable array, RGB grayscale for color images, or monochrome.
 
     Returns:
         Document containing numeric data, with RGB(A) image channel ordering.
 
     Raises:
-        ValueError: Empty, nonnumeric, unsupported or undecodable data.
-        OSError: The file cannot be read.
-        KeyError: The requested NPZ member or image matrix does not exist.
+        ValueError: Unreadable files, missing members, empty, unsupported or
+            malformed data. Includes the path, requested member and reason.
 
     Side effects:
         Prints image loading, header and decoder diagnostics to the console.
     """
+    try:
+        return _read_document(path, key)
+    except Exception as exc:
+        if isinstance(exc, FileNotFoundError):
+            reason = "The file does not exist or is no longer accessible."
+        elif isinstance(exc, PermissionError):
+            reason = "Permission denied. Check file permissions and whether another program has locked it."
+        elif isinstance(exc, IsADirectoryError):
+            reason = "The selected path is a directory, not a matrix file."
+        elif isinstance(exc, MemoryError):
+            reason = "Not enough memory to load this array. Save a smaller array or close other large datasets."
+        else:
+            reason = str(exc) or type(exc).__name__
+            if "Python objects in dtype" in reason or "Object arrays cannot be loaded" in reason:
+                reason = ("Object arrays are not supported. Save a nonempty 1D/2D boolean, integer, "
+                          "real or complex numeric array without Python objects.")
+        member = f"\nArray / variable: {key}" if key is not None else ""
+        raise ValueError(f"Cannot open file:\n{path}{member}\n\n{reason}") from exc
+
+
+def _read_document(path: Path, key: str | None) -> Document:
+    """Decode one source; the public boundary adds file context to failures."""
+    if path.is_dir():
+        raise IsADirectoryError(str(path))
+    if not path.is_file():
+        raise FileNotFoundError(str(path))
     suffix = path.suffix.lower()
     keys: tuple[str, ...] = ()
     image = suffix in IMAGE_EXTENSIONS
     if suffix == ".npz":
-        with np.load(path, allow_pickle=False) as archive:
+        loaded = np.load(path, allow_pickle=False)
+        if not isinstance(loaded, np.lib.npyio.NpzFile):
+            raise ValueError("The file is not an NPZ archive. Check its contents and extension.")
+        with loaded as archive:
             keys = tuple(archive.files)
             if not keys:
                 raise ValueError("The NPZ archive has no arrays.")
             if key is not None:
+                if key not in keys:
+                    raise ValueError(f"NPZ member {key!r} does not exist. Available: {', '.join(keys)}")
                 array = archive[key]
             else:
                 # Metadata/object/empty members should not hide usable arrays.
+                problems: list[str] = []
                 for candidate in keys:
                     try:
-                        member = archive[candidate]
-                    except ValueError:
+                        member = validate_numeric_array(archive[candidate], f"NPZ member {candidate!r}")
+                    except ValueError as exc:
+                        problems.append(f"{candidate}: {exc}")
                         continue
-                    if member.dtype.kind in NUMERIC_KINDS and member.size:
-                        key, array = candidate, member
-                        break
+                    key, array = candidate, member
+                    break
                 else:
-                    raise ValueError("The NPZ archive has no nonempty numeric arrays.")
+                    details = "\n".join(problems)
+                    raise ValueError(f"The NPZ archive has no supported nonempty 1D/2D numeric arrays.\n{details}")
     elif suffix == ".npy":
+        with path.open("rb") as stream:
+            if stream.read(len(np.lib.format.MAGIC_PREFIX)) != np.lib.format.MAGIC_PREFIX:
+                raise ValueError("Invalid NPY file header. The file is damaged or is not a NumPy NPY file.")
         array = np.load(path, allow_pickle=False, mmap_mode="r")
+    elif suffix == ".mat":
+        try:
+            mat = read_mat(path, key)
+        except (OSError, ValueError, TypeError, IndexError, NotImplementedError) as exc:
+            raise ValueError(f"Cannot read this MATLAB MAT file.\n{exc}") from exc
+        return Document(path, cast(Array, mat.values), mat.keys, mat.key)
     elif suffix in TEXT_EXTENSIONS:
         try:
             table = read_csv(path)
         except (ValueError, UnicodeError) as exc:
             raise ValueError(f"Cannot read {path.name} as a numeric CSV table. "
                              f"Expected UTF-8 with comma, semicolon or tab separators.\n{exc}") from exc
+        validate_numeric_array(table.values, "Text matrix")
         return Document(path, table.values, csv_headers=table.headers)
     elif image:
         started = perf_counter()
@@ -296,11 +341,11 @@ def load_document(path: Path, key: str | None = None) -> Document:
         members = tuple(channel.value for channel in channels)
         if ImageMember.RED in channels:
             members += (ImageMember.RGB_GRAY.value,)
-        if len(channels) > 1:
+        if ImageMember.ALPHA in channels:
             members += (ImageMember.RGBA_GRAY.value,)
         if ImageMember.RED in channels:
             members += (ImageMember.RGB_COLOR.value,)
-        if ImageMember.RED in channels or ImageMember.ALPHA in channels:
+        if ImageMember.ALPHA in channels:
             members += (ImageMember.RGBA_COLOR.value,)
         members += (ImageMember.MONO_COLOR.value,)
         document = Document(path, cast(Array, array), members, is_image=True, image_source=source)
@@ -319,13 +364,33 @@ def load_document(path: Path, key: str | None = None) -> Document:
         return document
     else:
         raise ValueError(f"Unsupported file extension: {suffix}")
-    if array.dtype.kind not in NUMERIC_KINDS:
-        raise ValueError(f"Numeric arrays are required, got {array.dtype}.")
-    if array.size == 0:
-        raise ValueError("The selected array is empty.")
-    if array.ndim == 0:
-        array = array.reshape(1)
-    return Document(path, cast(Array, array), keys, key, image)
+    label = f"NPZ member {key!r}" if suffix == ".npz" else "NPY array"
+    try:
+        numeric = validate_numeric_array(array, label)
+    except ValueError:
+        # A retained exception traceback can otherwise keep a rejected NPY
+        # mapping alive and lock the file on Windows until garbage collection.
+        if isinstance(array, np.memmap) and isinstance(array.base, mmap):
+            array.base.close()
+        raise
+    return Document(path, cast(Array, numeric), keys, key, image)
+
+
+def normalize_image_alpha(alpha: RealArray) -> FloatArray:
+    """Convert image opacity samples to weights without altering source data.
+
+    Args:
+        alpha: Alpha samples in their original dtype and any shape. Integer
+            opacity uses the dtype maximum (255 for uint8, 65535 for uint16);
+            floating-point and boolean opacity already use the range 0..1.
+
+    Returns:
+        Float64 weights clipped to 0..1. NaNs remain gaps. Normalization uses
+        the source dtype, never the minimum/maximum of the selected slice.
+    """
+    maximum = (float(np.iinfo(cast(np.dtype[IntegerScalar], alpha.dtype)).max)
+               if np.issubdtype(alpha.dtype, np.integer) else 1.0)
+    return np.clip(np.asarray(alpha, dtype=np.float64) / maximum, 0, 1)
 
 
 def select_image_member(document: Document, key: str) -> Document:
@@ -338,13 +403,13 @@ def select_image_member(document: Document, key: str) -> Document:
     Returns:
         A document sharing the original pixels. RGB grayscale uses weighted
         luminance in source units. RGBA grayscale multiplies that luminance by
-        normalized alpha (black background); missing alpha means fully opaque.
-        RGB color ignores source alpha. RGBA color retains alpha, or adds full
-        opacity when absent. Monochrome is replicated into three color channels.
+        normalized source alpha (black background). RGB color ignores source
+        alpha. RGBA modes require an actual source alpha channel; none is added.
+        Monochrome is replicated into three color channels for RGBA display.
         Monochrome color displays source gray values or RGB luminance in black
         and white at the source bit-depth scale, ignoring alpha.
-        Monochrome sources hide RGB color and offer RGBA color only when an
-        alpha channel is present.
+        Monochrome sources hide RGB color. All images offer RGBA modes only
+        when an alpha channel is present.
 
     Raises:
         ValueError: The document is not a loaded image.
@@ -356,6 +421,8 @@ def select_image_member(document: Document, key: str) -> Document:
     if key not in document.keys:
         raise KeyError(f"Unknown image matrix: {key}")
     member = ImageMember(key)
+    if member in (ImageMember.RGBA_GRAY, ImageMember.RGBA_COLOR) and ImageMember.ALPHA not in source.channels:
+        raise KeyError(f"Image matrix requires a source alpha channel: {key}")
     pixels = source.pixels
     array: RealArray
     if member in source.channels:
@@ -369,26 +436,18 @@ def select_image_member(document: Document, key: str) -> Document:
         else:
             array = pixels[..., :3]
         if member == ImageMember.RGBA_COLOR:
-            if ImageMember.ALPHA in source.channels:
-                if ImageMember.MONO not in source.channels:
-                    array = pixels
-                else:
-                    array = np.concatenate((array, pixels[..., -1:]), axis=-1)
+            if ImageMember.MONO not in source.channels:
+                array = pixels
             else:
-                maximum = (np.iinfo(cast(np.dtype[IntegerScalar], pixels.dtype)).max
-                           if np.issubdtype(pixels.dtype, np.integer) else 1)
-                alpha = np.full((*array.shape[:2], 1), maximum, dtype=array.dtype)
-                array = np.concatenate((array, alpha), axis=-1)
+                array = np.concatenate((array, pixels[..., -1:]), axis=-1)
     else:
         if ImageMember.MONO in source.channels:
             array = np.asarray(pixels[..., 0], dtype=np.float64)
         else:
             array = np.asarray(pixels[..., :3], dtype=np.float64) @ np.asarray(LUMINANCE_WEIGHTS)
-        if member == ImageMember.RGBA_GRAY and ImageMember.ALPHA in source.channels:
-            alpha = np.asarray(pixels[..., source.channels.index(ImageMember.ALPHA)], dtype=np.float64)
-            maximum = (float(np.iinfo(cast(np.dtype[IntegerScalar], pixels.dtype)).max)
-                       if np.issubdtype(pixels.dtype, np.integer) else 1.0)
-            array = array * np.clip(alpha / maximum, 0, 1)
+        if member == ImageMember.RGBA_GRAY:
+            alpha = pixels[..., source.channels.index(ImageMember.ALPHA)]
+            array = array * normalize_image_alpha(alpha)
     return replace(document, array=array, key=key)
 
 
@@ -416,7 +475,7 @@ def default_selection(document: Document, mode: ViewMode | None = None,
         coordinate_axis = 1 if shape[1] == count else 0
         return Selection(mode, 1 - coordinate_axis, None, None, 0, (0, 0),
                          coordinate_axis=coordinate_axis, coordinate_order=tuple(range(count)))
-    if mode is None and document.path.suffix.lower() in TEXT_EXTENSIONS and 1 in shape:
+    if mode is None and document.path.suffix.lower() in TEXT_EXTENSIONS | {".mat"} and 1 in shape:
         mode = ViewMode.SIGNAL
     mode = mode or (ViewMode.SIGNAL if rank == 1 else ViewMode.MATRIX)
     if channel_axis is not None:
@@ -499,6 +558,8 @@ def _extract(document: Document, selection: Selection, crop: Crop) -> tuple[Real
                 data = np.abs(complex_data)
             case Component.PHASE:
                 data = np.angle(complex_data)
+            case Component.PHASE_DEG:
+                data = np.angle(complex_data, deg=True)
     # Every complex branch above produces a real component without coercing integers.
     return cast(RealArray, data), rgb
 
@@ -546,6 +607,37 @@ def _surface(data: RealArray, valid: BoolArray, max_edge: int,
         used = np.flatnonzero(mask.ravel())
     return SurfaceData(points[used], faces, yy.ravel()[used] + y_start, xx.ravel()[used] + x_start,
                        mask.ravel()[used], (ny, nx))
+
+
+def apply_value_limits(values: RealArray, valid: BoolArray, limits: Limits) -> tuple[RealArray, BoolArray, ClipArray]:
+    """Apply validated display bounds without modifying source arrays or masks.
+
+    Args:
+        values: Numeric source samples of any shape.
+        valid: Matching mask excluding nonfinite/invalid samples.
+        limits: Finite, ordered bounds already validated by frame preparation.
+
+    Returns:
+        Display values, visibility mask and clipping codes (-1 below, 1 above,
+        0 unchanged). Hidden samples have no clipping code. Unclamped values
+        keep their source dtype; clamped display values use float64.
+    """
+    clip_kind = np.zeros(values.shape, dtype=np.int8)
+    if limits.lower is not None:
+        clip_kind[valid & (values < limits.lower)] = -1
+    if limits.upper is not None:
+        clip_kind[valid & (values > limits.upper)] = 1
+    display = values
+    if limits.mode == FilterMode.HIDE:
+        valid = valid & (clip_kind == 0)
+        clip_kind.fill(0)
+    elif np.any(clip_kind):
+        display = values.astype(np.float64)
+        if limits.lower is not None:
+            display[clip_kind < 0] = limits.lower
+        if limits.upper is not None:
+            display[clip_kind > 0] = limits.upper
+    return display, valid, clip_kind
 
 
 def prepare_frame(document: Document, selection: Selection, limits: Limits,
@@ -602,21 +694,7 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
         valid &= np.all(np.isfinite(coordinates), axis=1)
     if x_values is not None:
         valid &= np.isfinite(x_values)
-    clip_kind = np.zeros(scalar.shape, dtype=np.int8)
-    if limits.lower is not None:
-        clip_kind[valid & (scalar < limits.lower)] = -1
-    if limits.upper is not None:
-        clip_kind[valid & (scalar > limits.upper)] = 1
-    display_scalar = scalar
-    if limits.mode == FilterMode.HIDE:
-        valid &= clip_kind == 0
-        clip_kind.fill(0)
-    elif np.any(clip_kind):
-        display_scalar = scalar.astype(np.float64)
-        if limits.lower is not None:
-            display_scalar[clip_kind < 0] = limits.lower
-        if limits.upper is not None:
-            display_scalar[clip_kind > 0] = limits.upper
+    display_scalar, valid, clip_kind = apply_value_limits(scalar, valid, limits)
     finite = display_scalar[valid]
     low, high = (float(np.min(finite)), float(np.max(finite))) if finite.size else (0.0, 1.0)
     if low == high:

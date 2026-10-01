@@ -8,10 +8,10 @@ import importlib
 import importlib.util
 from pathlib import Path
 import sys
-import tempfile
 import unittest
 
 import numpy as np
+from fixture_store import fixture_directory, preserve_array, preserve_document
 
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[2]
@@ -30,13 +30,13 @@ class CSVCoordinateTests(unittest.TestCase):
     """Data order, coordinate units and raw precision survive every interpretation."""
 
     def setUp(self) -> None:
-        """Create CSV fixtures only in the ignored project scratch directory."""
-        folder = tempfile.TemporaryDirectory(prefix="viewer-csv-", dir=ROOT / "tmp")
-        self.addCleanup(folder.cleanup)
-        self.folder = Path(folder.name)
+        """Keep generated text tables in an ignored test-specific directory."""
+        self.folder = fixture_directory(f"unit-files/csv/{self._testMethodName}")
+        self._fixture_number = 0
 
     def _csv(self, content: str) -> Path:
-        path = self.folder / "data.csv"
+        self._fixture_number += 1
+        path = self.folder / f"data-{self._fixture_number:02d}.csv"
         path.write_text(content, encoding="utf-8")
         return path
 
@@ -65,7 +65,7 @@ class CSVCoordinateTests(unittest.TestCase):
         """Coordinate layout is explicit and cropping preserves original X units."""
         source = np.array([[10, 2], [12, 4], [20, 8], [21, 16]], dtype=np.int64)
         for array in (source, source.T):
-            doc = model.Document(Path("measurements.csv"), array)
+            doc = preserve_document(model.Document(Path("measurements.csv"), array), "unit-inputs/test_csv_coordinates")
             selection = model.default_selection(doc, model.ViewMode.XY)
             frame = model.prepare_frame(doc, selection, model.Limits(3, 10, model.FilterMode.CLAMP), 512,
                                         model.Crop(1, 3))
@@ -81,7 +81,7 @@ class CSVCoordinateTests(unittest.TestCase):
         """Point limits affect only geometry; filtering checks all coordinates."""
         source = np.array([[10, 30, 2], [20, 60, 4], [30, 90, 8], [np.nan, 100, 1], [50, 150, 16]])
         for array in (source, source.T):
-            doc = model.Document(Path("cloud.npy"), array)
+            doc = preserve_document(model.Document(Path("cloud.npy"), array), "unit-inputs/test_csv_coordinates")
             selection = model.default_selection(doc, model.ViewMode.POINTS)
             frame = model.prepare_frame(doc, selection, model.Limits(), 512, max_points=2)
             np.testing.assert_array_equal(frame.surface.points, source[[0, 4]])
@@ -96,7 +96,7 @@ class CSVCoordinateTests(unittest.TestCase):
 
     def test_ambiguous_square_and_invalid_coordinate_orders(self) -> None:
         """3x3 data supports either layout; repeated assignments are rejected."""
-        doc = model.Document(Path("square.npy"), np.arange(9).reshape(3, 3))
+        doc = preserve_document(model.Document(Path("square.npy"), np.arange(9).reshape(3, 3)), "unit-inputs/test_csv_coordinates")
         selection = model.default_selection(doc, model.ViewMode.POINTS)
         rows = replace(selection, coordinate_axis=0, x_axis=1, coordinate_order=(2, 0, 1))
         frame = model.prepare_frame(doc, rows, model.Limits(), 512)
@@ -107,7 +107,7 @@ class CSVCoordinateTests(unittest.TestCase):
     def test_raw_complex_and_large_integer_data_survive_filtering(self) -> None:
         """Raw cells retain complex values while plots use the requested component."""
         data = np.array([[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]])
-        doc = model.Document(Path("complex.npy"), data)
+        doc = preserve_document(model.Document(Path("complex.npy"), data), "unit-inputs/test_csv_coordinates")
         selection = replace(model.default_selection(doc), component=model.Component.MAGNITUDE)
         frame = model.prepare_frame(doc, selection, model.Limits(0, 2, model.FilterMode.CLAMP), 512)
         np.testing.assert_array_equal(frame.raw, data)
@@ -117,18 +117,18 @@ class CSVCoordinateTests(unittest.TestCase):
     def test_nonuniform_and_descending_derivatives(self) -> None:
         """Quadratic interior slopes are exact with unequal or decreasing spacing."""
         for x in (np.array([0., 1., 3., 6.]), np.array([6., 3., 1., 0.])):
-            result = derivatives.differentiate(x ** 2, np.ones(4, dtype=bool), x_values=x)
+            result = derivatives.differentiate(preserve_array(x ** 2, "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(4, dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), x_values=preserve_array(x, "x_values", "unit-inputs/test_csv_coordinates"))
             np.testing.assert_allclose(result.values[1:-1], 2 * x[1:-1])
             self.assertTrue(np.all(result.valid))
         large_x = np.array([2 ** 63, 2 ** 63 + 1, 2 ** 63 + 3], dtype=np.uint64)
-        result = derivatives.differentiate(np.array([0., 1., 9.]), np.ones(3, dtype=bool), x_values=large_x)
+        result = derivatives.differentiate(preserve_array(np.array([0., 1., 9.]), "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(3, dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), x_values=preserve_array(large_x, "x_values", "unit-inputs/test_csv_coordinates"))
         self.assertAlmostEqual(result.values[1], 2)
 
     def test_unordered_xy_derivatives_follow_x_not_record_order(self) -> None:
         """Shuffled coordinates retain dy/dx and source-index correspondence."""
         x = np.array([6., 0., 3., 1., 10.])
         values = x ** 2
-        result = derivatives.differentiate(values, np.ones(5, dtype=bool), x_values=x)
+        result = derivatives.differentiate(preserve_array(values, "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(5, dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), x_values=preserve_array(x, "x_values", "unit-inputs/test_csv_coordinates"))
         np.testing.assert_allclose(result.values, [12, 1, 6, 2, 16])
         self.assertTrue(result.valid.all())
         np.testing.assert_array_equal(x, [6, 0, 3, 1, 10])
@@ -140,22 +140,22 @@ class CSVCoordinateTests(unittest.TestCase):
         for repeated_y in (16., 1000.):
             values = x ** 2
             values[-1] = repeated_y
-            result = derivatives.differentiate(values, np.ones(11, dtype=bool), x_values=x)
+            result = derivatives.differentiate(preserve_array(values, "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(11, dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), x_values=preserve_array(x, "x_values", "unit-inputs/test_csv_coordinates"))
             np.testing.assert_array_equal(result.undefined_indices, [3, 4, 5, 10])
             np.testing.assert_allclose(result.values[result.valid], [1, 2, 4, 12, 14, 16, 17])
             self.assertTrue(np.all(np.isnan(result.values[~result.valid])))
             order = np.array([10, 8, 2, 1, 4, 9, 0, 7, 5, 3, 6])
-            shuffled = derivatives.differentiate(values[order], np.ones(11, dtype=bool), x_values=x[order])
+            shuffled = derivatives.differentiate(preserve_array(values[order], "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(11, dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), x_values=preserve_array(x[order], "x_values", "unit-inputs/test_csv_coordinates"))
             np.testing.assert_allclose(shuffled.values, result.values[order], equal_nan=True)
 
     def test_repeated_and_nonfinite_x_do_not_invent_derivatives(self) -> None:
         """Short duplicate groups and invalid coordinates stay undefined."""
         for x in (np.array([0., 1., 1., 3.]), np.array([1., 1., 1.])):
-            result = derivatives.differentiate(np.arange(float(len(x))), np.ones(len(x), dtype=bool), x_values=x)
+            result = derivatives.differentiate(preserve_array(np.arange(float(len(x))), "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(len(x), dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), x_values=preserve_array(x, "x_values", "unit-inputs/test_csv_coordinates"))
             self.assertFalse(result.valid.any())
             self.assertTrue(np.isnan(result.values).all())
         x = np.array([0., np.nan, 1., np.inf, 2., -np.inf, 3.])
-        result = derivatives.differentiate(np.arange(7.), np.ones(7, dtype=bool), x_values=x)
+        result = derivatives.differentiate(preserve_array(np.arange(7.), "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(7, dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), x_values=preserve_array(x, "x_values", "unit-inputs/test_csv_coordinates"))
         self.assertFalse(result.valid[~np.isfinite(x)].any())
         self.assertTrue(np.isnan(result.values[~np.isfinite(x)]).all())
         self.assertTrue(np.all(np.isfinite(x[result.undefined_indices])))
@@ -164,7 +164,7 @@ class CSVCoordinateTests(unittest.TestCase):
         """File order cannot change the detected jump or marker locations."""
         x = np.array([4., 0., 3., 1., 2., 5.])
         values = x + np.where(x >= 3, 10, 0)
-        result = derivatives.differentiate(values, np.ones(6, dtype=bool), 5, x_values=x)
+        result = derivatives.differentiate(preserve_array(values, "values", "unit-inputs/test_csv_coordinates"), preserve_array(np.ones(6, dtype=bool), "valid", "unit-inputs/test_csv_coordinates"), 5, x_values=preserve_array(x, "x_values", "unit-inputs/test_csv_coordinates"))
         self.assertEqual(result.jump_count, 1)
         np.testing.assert_array_equal(result.undefined_indices, [2, 4])
         np.testing.assert_allclose(result.values[result.valid], 1)
