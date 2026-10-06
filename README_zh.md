@@ -263,7 +263,7 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/network/tailscale-restart-accept-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
-| `tools/network/rclone-sync.py` | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，同步、复制、移动或比较目录，也可复制和移动单个文件。支持配置校验、灵活的动作权限、操作与比较方式选择、删除限制、备选远端、参考性时间提示、试运行和取消操作。 | `rclone`<br />**Python 库**：`PyYAML` |
+| `tools/network/rclone-sync.py` | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，依次同步、复制、移动或比较多对目录，也可按精确路径复制和移动单个文件。支持编号命令预览、从失败项重试、灵活的动作权限、备选远端、试运行和取消操作，不可用任务置灰，无可用任务时警告并退出。 | `rclone`<br />**Python 库**：`PyYAML` |
 | `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | **Python 库：**`boto3` |
 | `tools/windows/firewall-app-blocker.py` | 仅 Windows，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
 | `tools/network/webserver-run.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |

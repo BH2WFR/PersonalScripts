@@ -33,6 +33,7 @@
 #   alternative-remote-host  append+dedup
 #   allow-actions          replace (including null, all, or an empty list)
 #   sub-tasks              replace
+#   paths                  required only under a sub-task; ordered [local, remote] pairs
 #   everything else        replace (override)
 #
 # Multiple profiles can be inherited via `inherit: [p1, p2]` — later
@@ -59,6 +60,11 @@
 # the task menu, or return from sub-task/host/operation/comparison selection.
 # With --task, Q exits when there is no task menu to return to.
 # Empty operation/confirmation input retries without selecting or executing.
+# Tasks without a sub-task matching this device appear in gray without a number.
+# If every task is gray, show the list, warn, and exit without asking for input.
+# Empty YAML files, omitted/null tasks, tasks: {}, and empty groups also warn
+# and exit. Interactive no-work exit code is 0; an unavailable CLI task returns 1.
+# Malformed schemas remain errors, not empty-task warnings.
 # Operation paths use FLBlue for local and FLGreen for remote.
 # Task labels retain group/task; sub-task menus show that parent label.
 # After selection, host/operation/confirmation displays append /sub-task.
@@ -85,6 +91,14 @@
 # With file, both endpoints contain full filenames, possibly different names.
 # Only push-copy-file, pull-copy-file, push-move-file, pull-move-file are offered.
 # copy-file uses copyto; move-file uses moveto and removes the source file.
+# Exact-file commands cannot be combined with file-selection filters. For file
+# tasks only, YAML exclude/ignore-case (including inherited values) and filter
+# options in additional-args are ignored, with a warning listing their names
+# before the command. This includes include/exclude/filter rules, files-from,
+# age/size limits, metadata filters, hash filters, and directory-listing options.
+# The single configured file is selected even if an ignored rule would exclude it.
+# Directory tasks still apply their filters. Comparison, links/copy-links,
+# ignore-case-sync, backend, and other transfer options remain effective.
 # preferred-mode accepts copy/move. Without a preference, the two copy-file actions are yellow.
 # All four comparisons work; file check/pre-check, sync, and bisync are not provided.
 # A file task must not inherit an enabled check-before-sync setting.
@@ -102,24 +116,34 @@
 # show direction-aware warnings. Read failures and empty directories are not
 # automatically treated as missing paths or first synchronization.
 # Directory timestamps provide hints, not guarantees of individual file age.
-# Re-run reuses the selected command without repeating selection, confirmation,
+# Re-run reuses selected commands without repeating selection, confirmation,
 # time display, or pre-sync check; file endpoint guards still apply.
+# After failure, retry starts at the failed pair, skipping completed pairs.
+# After full success, re-run starts at the first pair. No rollback is performed.
 #
 # ---- Path variables ---------------------------------------------------
-# ``local-path`` and ``remote-path`` can be set at the task level and
-# will be inherited by every sub-task that does not override them.
-# With sub-tasks, at least one must match the current machine. Without sub-tasks,
-# a task can execute directly when its own machine filters match.
-# Task-level paths reduce repetition when sub-tasks share an endpoint.
+# Every task requires a non-empty sub-tasks list; at least one must match this machine.
+# Every sub-task requires paths: [[local, remote], ...], even for one pair.
+# Each pair is exactly two non-empty strings, in local/remote order, without a name.
+# Legacy local-path/remote-path keys are rejected at every level. paths is not
+# allowed in profiles or parent tasks; endpoints cannot be inherited separately.
+# Shared inherit/exclude/path-type and all other options stay on task/sub-task.
+# All pairs use one selected action/comparison and one confirmation, in YAML order.
+# Commands are printed in full with [1/N], [2/N], ... numbering before execution.
+# Failure stops remaining pairs; Ctrl+C cancels the batch. CLI --dry-run prints
+# all commands without probing/transferring; interactive d simulates the whole batch.
+# Alternate host selection is shared only among pairs with the same original
+# rclone prefix. Different prefixes get separate menus; local/UNC paths are unchanged.
+# Existing sub-tasks are alternatives, not implicitly combined into a path batch.
 #
-# ``remote-path-type`` controls how ``remote-path`` is classified:
+# ``remote-path-type`` controls how the remote endpoint (second string) is classified:
 #   auto    — infer from the path string (default)
 #   rclone  — force ``remote-path`` to be treated as a rclone remote
 #   local   — force ``remote-path`` to be treated as a local/UNC path
 # This affects rclone-remote-only features such as alternative host selection
 # and whether remote mtime checks use rclone lsjson or local filesystem APIs.
 #
-# Every path-type field (local-path, remote-path, backup-dir, log-file)
+# Every path endpoint and path field (backup-dir, log-file)
 # supports the following placeholders:
 #
 #   $VAR / ${VAR} / %VAR%      any environment variable (all platforms)
@@ -135,9 +159,9 @@
 # Missing variables on other machines' unselected tasks do not block this machine.
 #
 # Examples:
-#   local-path: "~/Documents"
-#   local-path: "%USERPROFILE%\\Documents"          (Windows cmd style)
-#   local-path: "$ENV:APPDATA/Code"                 (PowerShell style)
+#   paths: [['~/Documents', 'myremote:Documents']]
+#   paths: [['%USERPROFILE%\Documents', 'myremote:Documents']]  (Windows cmd style)
+#   paths: [['$ENV:APPDATA/Code', 'myremote:Code']]              (PowerShell style)
 #   log-file:  "{{schema_dir}}/rclone-sync.log"     (beside the YAML)
 # ============================================================
 
@@ -211,7 +235,7 @@ settings:
 
 
 # -------------------------------------------------------------------
-# tasks  —  sync task definitions (required section)
+# tasks  —  sync task definitions (omit/null/empty means no tasks)
 # -------------------------------------------------------------------
 tasks:
   # ---------- ungrouped tasks ----------
@@ -317,6 +341,7 @@ tasks:
 
       # ---- exclude --------------------------------------------------
       # Appends to inherited excludes (here: default + cautious).
+      # Applies to directory tasks; exact-file tasks ignore it with a warning.
       # Effective excludes for this task:
       #   .git/**  .DS_Store  Desktop.ini  Thumbs.db  *.bak  *.tmp  node_modules/**  .venv/**
       exclude:                       # [default: []]
@@ -386,8 +411,8 @@ tasks:
         # --- Match by hostname ---
         - name: desktop-pc
           computer-name: ZL-DESKTOP
-          local-path: "D:\\Projects"
-          remote-path: "myremote:/Projects"
+          paths:
+            - ['D:\Projects', 'myremote:/Projects']
           # At runtime the user can choose:
           #   [0] myremote:/Projects        (current)
           #   [1] myremote-backup:/Projects
@@ -399,43 +424,55 @@ tasks:
         - name: laptop-x64
           platform: windows
           arch: amd64
-          local-path: "$ENV:HOME\\Projects"
+          paths:
+            - ['$ENV:HOME\Projects', 'myremote:/Projects']
 
         # --- Match by platform only ---
         - name: macbook
           platform: darwin
-          local-path: "~/Projects"
+          paths:
+            - ['~/Projects', 'myremote:/Projects']
 
         # --- Match by platform OR (list, any satisfy) ---
         - name: linux-or-macos
           platform: [linux, darwin]
-          local-path: "~/Projects"
+          paths:
+            - ['~/Projects', 'myremote:/Projects']
 
     # =================================================================
     # "minimal" — simplest tasks
     # =================================================================
-    # Task-level paths are inherited by all sub-tasks.  Useful when
-    # the same source/destination is shared, with different machines
-    # providing machine-specific alternatives.
+    # Each sub-task declares both endpoints, while common options remain on
+    # the parent task. Different machines remain separate menu alternatives.
     - name: minimal
-      remote-path: "myremote:Documents"     # inherited by all sub-tasks
       sub-tasks:
         - name: macos
-          local-path: "~/Documents"
           platform: darwin
+          paths:
+            - ['~/Documents', 'myremote:Documents']
         - name: windows
-          local-path: "%USERPROFILE%\\Documents"
           platform: windows
+          paths:
+            - ['%USERPROFILE%\Documents', 'myremote:Documents']
 
     # If there's only one sub-task, paths can stay at sub-task level.
     - name: minimal-single
       sub-tasks:
         - name: default
-          local-path: "~/Documents"
-          remote-path: "myremote:Documents"
+          paths:
+            - ['~/Documents', 'myremote:Documents']
+
+    # Multiple pairs execute sequentially, with no additional selection menu.
+    - name: multiple-directories
+      sub-tasks:
+        - name: default
+          paths:
+            - ['~/Example/config', 'myremote:Example/config']
+            - ['~/Example/data', 'myremote:Example/data']
 
     # One file, two exact filenames; no upload/download sub-task split.
     # Omit allow-actions to also permit the two move-file actions.
+    # Inherited default excludes are ignored for this exact-file task.
     - name: single-config-file
       path-type: file
       allow-actions: [push-copy-file, pull-copy-file]
@@ -443,8 +480,8 @@ tasks:
       sub-tasks:
         - name: windows
           platform: windows
-          local-path: "$ENV:APPDATA/ExampleApp/config.ini"
-          remote-path: "myremote:AppData/ExampleApp/config.ini"
+          paths:
+            - ['$ENV:APPDATA/ExampleApp/config.ini', 'myremote:AppData/ExampleApp/config.ini']
 
 
   # ---------- grouped tasks ----------
@@ -468,8 +505,8 @@ tasks:
       inherit: [bulk, host-webdav]
       sub-tasks:
         - name: default
-          local-path: "~/Pictures"
-          remote-path: "myremote:Photos"
+          paths:
+            - ['~/Pictures', 'myremote:Photos']
           # At runtime the user can choose:
           #   [0] dav-ddns4:/Photos     (current)
           #   [1] dav-ddns6:/Photos     DDNS IPv6 (direct)
@@ -485,5 +522,5 @@ tasks:
       allow-actions: [push-copy, pull-copy, check]  # preserve extra destination files
       sub-tasks:
         - name: default
-          local-path: "~/Music"
-          remote-path: "myremote:Music"
+          paths:
+            - ['~/Music', 'myremote:Music']

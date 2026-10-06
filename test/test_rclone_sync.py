@@ -177,7 +177,7 @@ class InheritanceTests(unittest.TestCase):
             for scope in ("profile", "task", "subtask"):
                 with self.subTest(inherit=inherit, scope=scope):
                     profile: dict[str, object] = {}
-                    sub: dict[str, object] = {"name": "sub"}
+                    sub: dict[str, object] = {"name": "sub", "paths": [["local", "remote"]]}
                     task: dict[str, object] = {"name": "task", "sub-tasks": [sub]}
                     target = {"profile": profile, "task": task, "subtask": sub}[scope]
                     target["inherit"] = inherit
@@ -203,6 +203,7 @@ class ActionTests(unittest.TestCase):
                     'name: test\npreferred-mode: "   "'):
             with self.subTest(raw=raw):
                 config = yaml.safe_load(raw)
+                config["sub-tasks"] = [{"name": "all", "paths": [["local", "remote"]]}]
                 self.assertEqual(runner._validate_schema({"tasks": {"test": [config]}}), [])
                 task = runner.SyncTask.from_dict(config)
                 self.assertEqual(task.preferred_mode, "")
@@ -254,7 +255,8 @@ class ActionTests(unittest.TestCase):
             (["pull", "pull-copy", "pull-move", "check"], runner.SyncAction.PUSH),
         ):
             with self.subTest(expected=expected):
-                config = {"name": "test", "allow-actions": expected}
+                config = {"name": "test", "allow-actions": expected,
+                          "sub-tasks": [{"name": "all", "paths": [["local", "remote"]]}]}
                 self.assertEqual(runner._validate_schema({"tasks": {"test": [config]}}), [])
                 task = runner.SyncTask.from_dict(config)
                 self.assertEqual([action.value for action in runner._available_actions(task)], expected)
@@ -313,7 +315,7 @@ class ActionTests(unittest.TestCase):
                     fields = yaml.safe_load(f"allow-actions: {raw_value}")
                     settings = {"default": {"allow-actions": ["check"]}, "override": {}}
                     raw = {"name": "demo", "inherit": ["override"]}
-                    sub = {"name": "sub"}
+                    sub = {"name": "sub", "paths": [["local", "remote"]]}
                     {"profile": settings["override"], "task": raw, "subtask": sub}[scope].update(fields)
                     for path_type in runner.PathType:
                         raw["path-type"] = path_type.value
@@ -331,8 +333,8 @@ class ActionTests(unittest.TestCase):
                 with self.subTest(path_type=path_type, preferred=preferred):
                     task = runner.SyncTask.from_dict({
                         "name": "test", "preferred-mode": preferred, "path-type": path_type.value,
-                        "local-path": "local", "remote-path": "remote:",
-                    })
+                        "paths": [["local", "remote:"]],
+                    }).path_tasks()[0]
                     action = runner._select_action(task, None, "pull")
                     self.assertEqual(runner.ACTION_COMMANDS[action], (preferred, "pull"))
                     expected = f"{preferred}to" if path_type == runner.PathType.FILE else preferred
@@ -371,7 +373,8 @@ class ActionTests(unittest.TestCase):
             with self.subTest(fields=fields):
                 self.assertTrue(runner._validate_schema({"tasks": {"test": [{"name": "task", **fields}]}}))
         for count, percent in ((-1, 100), (0, 0), (12, 50)):
-            fields = {"name": "task", "max-delete-count": count, "max-delete-percent": percent}
+            fields = {"name": "task", "max-delete-count": count, "max-delete-percent": percent,
+                      "sub-tasks": [{"name": "all", "paths": [["local", "remote"]]}]}
             self.assertEqual(runner._validate_schema({"tasks": {"test": [fields]}}), [])
         self.assertNotIn("--max-delete", runner.SyncTask().to_command("rclone"))
 
@@ -536,7 +539,7 @@ class FileTaskTests(unittest.TestCase):
             for scope in ("task", "profile", "subtask"):
                 with self.subTest(fields=fields, scope=scope):
                     profile: dict[str, object] = {}
-                    sub: dict[str, object] = {"name": "all"}
+                    sub: dict[str, object] = {"name": "all", "paths": [["local", "remote"]]}
                     task: dict[str, object] = {"name": "config", "inherit": ["profile"], "sub-tasks": [sub]}
                     {"task": task, "profile": profile, "subtask": sub}[scope].update(fields)
                     self.assertTrue(runner._validate_schema({"settings": {"profile": profile}, "tasks": {"test": [task]}}))
@@ -574,11 +577,67 @@ class FileTaskTests(unittest.TestCase):
                         self.assertEqual(flag in cmd, flag == expected)
         self.assertEqual(original.mode, "")
 
+    def test_file_commands_ignore_inherited_excludes_without_mutating_configuration(self) -> None:
+        settings = {"default": {"exclude": ["*.bak", ".DS_Store"], "ignore-case": True,
+                                "transfer": 24, "s3-no-check-bucket": True, "copy-links": True}}
+        parent = runner.SyncTask.from_inheritance_chain(settings, {"name": "config"})
+        file_task = parent.merge(runner.SyncTask.from_dict({"name": "file", "path-type": "file",
+                                                          "paths": [["a.ini", "remote:b.ini"]]})).path_tasks()[0]
+        for action in runner.FILE_ACTIONS:
+            task = runner._task_for_action(file_task, action)
+            _, direction = runner.ACTION_COMMANDS[action]
+            for comparison in runner.ComparisonMode:
+                with self.subTest(action=action, comparison=comparison):
+                    cmd = task.to_command("rclone", direction=direction, comparison=comparison)
+                    self.assertNotIn("--exclude", cmd)
+                    self.assertNotIn("--ignore-case", cmd)
+                    self.assertIn("--copy-links", cmd)
+                    self.assertIn("--s3-no-check-bucket", cmd)
+                    self.assertEqual(cmd[cmd.index("--transfers") + 1], "24")
+                    self.assertEqual(task.ignored_file_filter_flags(), ["--exclude", "--ignore-case"])
+        self.assertEqual(file_task.exclude, ["*.bak", ".DS_Store"])
+        self.assertEqual(parent.exclude, file_task.exclude)
+        self.assertEqual(parent.ignored_file_filter_flags(), [])
+        for action in runner.PATH_ACTIONS[runner.PathType.DIRECTORY]:
+            task = runner._task_for_action(parent, action)
+            _, direction = runner.ACTION_COMMANDS[action]
+            cmd = task.to_command("rclone", direction=direction or "push")
+            self.assertEqual(cmd.count("--exclude"), 2)
+            self.assertIn("--ignore-case", cmd)
+        self.assertIn("--exclude", parent.to_check_command("rclone"))
+
+    def test_file_extra_filters_and_their_values_are_ignored(self) -> None:
+        for flag in sorted(runner.METADATA_FILTER_FLAGS | {"--filters-file"}):
+            for args in ([flag, "pattern"], [f"{flag}=pattern"]):
+                for mode in ("copy", "move"):
+                    with self.subTest(flag=flag, args=args, mode=mode):
+                        extras = ["--config", "test.conf", *args, "--s3-no-check-bucket", "--bwlimit=1M"]
+                        task = runner.SyncTask(path_type=runner.PathType.FILE, mode=mode, additional_args=extras)
+                        cmd = task.to_command("rclone")
+                        self.assertEqual(cmd[-4:], ["--config", "test.conf", "--s3-no-check-bucket", "--bwlimit=1M"])
+                        self.assertNotIn("pattern", cmd)
+                        self.assertNotIn(f"{flag}=pattern", cmd)
+                        self.assertEqual(task.ignored_file_filter_flags(), [flag])
+                        self.assertEqual(task.additional_args, extras)
+
+    def test_file_short_filters_booleans_and_warnings_are_deduplicated(self) -> None:
+        task = runner.SyncTask(path_type=runner.PathType.FILE, exclude=["*.bak"], ignore_case=True,
+                               additional_args=["--exclude=*.bak", "-f-*.tmp", "-f", "+ *.ini",
+                                                "--ignore-case=false", "--dirs-only", "--files-only=true",
+                                                "--ignore-case-sync", "--checksum", "--backup-dir", "old"])
+        cmd = task.to_command("rclone")
+        self.assertEqual(cmd[-4:], ["--ignore-case-sync", "--checksum", "--backup-dir", "old"])
+        self.assertEqual(task.ignored_file_filter_flags(), ["--exclude", "--ignore-case", "-f", "--dirs-only", "--files-only"])
+        self.assertNotIn("+ *.ini", cmd)
+        directory_args = ["--include", "*.ini", "-f-*.bak", "--max-size=1M"]
+        self.assertEqual(runner._mode_specific_args(directory_args, "copy"), directory_args)
+        self.assertEqual(runner._mode_specific_args(["--filters-file", "filters.txt"], "stat"), [])
+
     def test_file_check_precheck_and_invalid_preferences_fail(self) -> None:
         for fields in ({"check-before-sync": True}, {"preferred-mode": "check"}, {"preferred-mode": "sync"}, {"preferred-mode": "bisync"}):
             with self.subTest(fields=fields):
                 schema = {"settings": {"default": {"path-type": "file"}}, "tasks": {"test": [
-                    {"name": "config", "sub-tasks": [{"name": "all", **fields}]},
+                    {"name": "config", "sub-tasks": [{"name": "all", "paths": [["local", "remote"]], **fields}]},
                 ]}}
                 self.assertTrue(runner._validate_schema(schema))
         task = runner.SyncTask(path_type=runner.PathType.FILE)
@@ -785,6 +844,143 @@ class ModifiedTimeTests(unittest.TestCase):
                 runner._get_remote_path_info(task, "rclone")
 
 
+class PathBatchTests(unittest.TestCase):
+    """Validate the paths-only schema and ordered per-pair execution contracts."""
+
+    def schema(self, paths: object) -> dict[str, object]:
+        """Build a minimal schema with the supplied raw paths value."""
+        return {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": paths}]}]}}
+
+    def test_paths_require_exactly_two_nonempty_strings(self) -> None:
+        self.assertEqual(runner._validate_schema(self.schema([["local", "remote"], ["other", "nas:other"]])), [])
+        for value in (None, [], "local", {}, [None], [[]], [["a"]], [["a", "b", "c"]],
+                      [["", "b"]], [["a", "  "]], [[True, "b"]], [["a", 1]],
+                      [{"local": "a", "remote": "b"}], [["a", "b"], ["c", None]]):
+            with self.subTest(value=value):
+                errors = runner._validate_schema(self.schema(value))
+                self.assertTrue(errors)
+                self.assertIn("sub-tasks[0]", errors[0])
+                with self.assertRaises(ValueError):
+                    runner.SyncTask.from_dict({"paths": value})
+
+    def test_paths_are_required_on_subtasks_only_and_legacy_keys_are_rejected(self) -> None:
+        for field in ("local-path", "remote-path", "paths"):
+            for scope in ("task", "profile", "subtask"):
+                if field == "paths" and scope == "subtask":
+                    continue
+                with self.subTest(field=field, scope=scope):
+                    profile: dict[str, object] = {}
+                    sub: dict[str, object] = {"name": "all", "paths": [["a", "b"]]}
+                    task: dict[str, object] = {"name": "demo", "sub-tasks": [sub]}
+                    target = {"task": task, "profile": profile, "subtask": sub}[scope]
+                    target[field] = [["a", "b"]] if field == "paths" else "old-path"
+                    errors = runner._validate_schema({"settings": {"default": profile}, "tasks": {"test": [task]}})
+                    self.assertTrue(any(field in error for error in errors))
+        for task in ({"name": "demo"}, {"name": "demo", "sub-tasks": []},
+                     {"name": "demo", "sub-tasks": [{"name": "all"}]}):
+            self.assertTrue(runner._validate_schema({"tasks": {"test": [task]}}))
+        with self.assertRaisesRegex(ValueError, "Legacy"):
+            runner.SyncTask.from_dict({"local-path": "a", "remote-path": "b"})
+
+    def test_path_materialization_preserves_shared_options_without_merging_alternatives(self) -> None:
+        settings = {"default": {"exclude": ["*.tmp"]}, "bulk": {"transfer": 24, "exclude": ["*.tmp", "*.bak"]}}
+        parent = runner.SyncTask.from_inheritance_chain(settings, {"name": "demo", "inherit": ["bulk"]})
+        batch = parent.merge(runner.SyncTask.from_dict({"name": "all", "paths": [["a", "b"], ["c", "d"]]}))
+        batch = runner._task_for_action(batch, runner.SyncAction.PULL_COPY)
+        pairs = batch.path_tasks()
+        self.assertEqual([p.to_command("rclone", direction="pull")[:4] for p in pairs],
+                         [["rclone", "copy", "b", "a"], ["rclone", "copy", "d", "c"]])
+        for pair in pairs:
+            self.assertEqual(pair.exclude, ["*.tmp", "*.bak"])
+            self.assertEqual(pair.transfer, 24)
+        pairs[0].exclude.append("unique")
+        self.assertNotIn("unique", pairs[1].exclude)
+        self.assertNotIn("unique", batch.exclude)
+        replacement = batch.merge(runner.SyncTask.from_dict({"paths": [["x", "y"]]}))
+        self.assertEqual(replacement.paths, [("x", "y")])
+        with self.assertRaisesRegex(ValueError, "Materialize"):
+            batch.to_command("rclone")
+
+    def test_path_expansion_is_atomic_across_all_pairs_and_runs_once(self) -> None:
+        raw = [["$ROOT/a", "nas:backup"], ["local", "$MISSING/b"]]
+        task = runner.SyncTask.from_dict({"paths": raw, "backup-dir": "$ROOT/old"})
+        with patch.dict(os.environ, {"ROOT": "${LITERAL}"}, clear=True):
+            with self.assertRaisesRegex(ValueError, r"paths\[1\]\[1\]"):
+                task.resolve_paths("schema", "script")
+            self.assertEqual(task.paths, [tuple(pair) for pair in raw])
+            self.assertEqual(task.backup_dir, "$ROOT/old")
+            os.environ["MISSING"] = "destination"
+            task.resolve_paths("schema", "script")
+        self.assertEqual(task.paths, [("${LITERAL}/a", "nas:backup"), ("local", "destination/b")])
+        self.assertEqual(task.path_tasks()[0].local_path, "${LITERAL}/a")
+        empty = runner.SyncTask.from_dict({"paths": [["$EMPTY", "remote"]]})
+        with patch.dict(os.environ, {"EMPTY": ""}), self.assertRaisesRegex(ValueError, "expanded path is empty"):
+            empty.resolve_paths("schema", "script")
+
+    def test_host_selection_reuses_only_matching_prefix_and_cancels_atomically(self) -> None:
+        task = runner.SyncTask(name="test/demo/all", alternative_remote_hosts=["backup"], paths=[
+            ("a", "primary:/a"), ("b", "primary:/b"), ("c", "other:/c"), ("d", r"\\server\share"),
+        ])
+        with patch("builtins.input", side_effect=["1", "0"]) as prompt, contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(runner._interactive_batch_hosts(task, False))
+        self.assertEqual(prompt.call_count, 2)
+        self.assertEqual(task.paths, [("a", "backup:/a"), ("b", "backup:/b"), ("c", "other:/c"), ("d", r"\\server\share")])
+        before = list(task.paths)
+        with patch("builtins.input", side_effect=["1", "q"]), contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(runner._interactive_batch_hosts(task, False))
+        self.assertEqual(task.paths, before)
+
+    def test_retry_skips_successful_pairs_and_drops_each_successful_resync_flag(self) -> None:
+        batch = runner.SyncTask(name="test/demo/all", mode="bisync", paths=[("a", "b"), ("c", "d"), ("e", "f")])
+        pairs = batch.path_tasks()
+        commands = [pair.to_command("rclone", resync=True) for pair in pairs]
+        results = [subprocess.CompletedProcess([], code) for code in (0, 7, 0, 0)]
+        with patch.object(runner, "_run_task_command", side_effect=results) as run, contextlib.redirect_stdout(io.StringIO()):
+            code, start = runner._run_path_batch(pairs, commands, "rclone", "push")
+            self.assertEqual((code, start), (7, 1))
+            self.assertNotIn("--resync", commands[0])
+            self.assertIn("--resync", commands[1])
+            self.assertEqual(runner._run_path_batch(pairs, commands, "rclone", "push", start=start, precheck=False), (0, 3))
+        self.assertEqual([call.args[0].local_path for call in run.call_args_list], ["a", "c", "c", "e"])
+        self.assertTrue(all("--resync" not in cmd for cmd in commands))
+
+    def test_prechecks_run_per_pair_and_failure_stops_before_transfer(self) -> None:
+        batch = runner.SyncTask(mode="copy", paths=[("a", "b"), ("c", "d")],
+                                check_before_sync=True, stop_on_check_failure=True)
+        pairs = batch.path_tasks()
+        commands = [pair.to_command("rclone") for pair in pairs]
+        with patch.object(runner, "_run_interruptible", side_effect=[subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 8)]) as check, patch.object(runner, "_run_task_command", return_value=subprocess.CompletedProcess([], 0)) as run, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(runner._run_path_batch(pairs, commands, "rclone", "push"), (8, 1))
+            self.assertEqual([call.args[0][2:4] for call in check.call_args_list], [["a", "b"], ["c", "d"]])
+            run.assert_called_once()
+            self.assertEqual(runner._run_path_batch(pairs, commands, "rclone", "push", start=1, precheck=False), (0, 2))
+            self.assertEqual(check.call_count, 2)
+
+    def test_dry_run_does_not_consume_resync_state_or_repair_links(self) -> None:
+        batch = runner.SyncTask(mode="bisync", links=True, paths=[("a", "b"), ("c", "d")])
+        pairs = batch.path_tasks()
+        commands = [pair.to_command("rclone", resync=True) for pair in pairs]
+        with patch.object(runner, "_run_task_command", return_value=subprocess.CompletedProcess([], 0)) as run, patch.object(runner, "_fix_windows_symlinkd") as repair, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(runner._run_path_batch(pairs, commands, "rclone", "push", dry_run=True), (0, 2))
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue(all("--dry-run" in call.args[1] for call in run.call_args_list))
+        self.assertTrue(all("--resync" in cmd and "--dry-run" not in cmd for cmd in commands))
+        repair.assert_not_called()
+
+    def test_cancel_and_process_launch_failure_never_start_remaining_pairs(self) -> None:
+        batch = runner.SyncTask(mode="copy", paths=[("a", "b"), ("c", "d"), ("e", "f")])
+        pairs = batch.path_tasks()
+        for failure in (runner.OperationCancelled(), OSError("launch failed")):
+            with self.subTest(failure=type(failure).__name__), patch.object(runner, "_run_task_command", side_effect=[subprocess.CompletedProcess([], 0), failure]) as run, contextlib.redirect_stdout(io.StringIO()):
+                commands = [pair.to_command("rclone") for pair in pairs]
+                if isinstance(failure, runner.OperationCancelled):
+                    with self.assertRaises(runner.OperationCancelled):
+                        runner._run_path_batch(pairs, commands, "rclone", "push")
+                else:
+                    self.assertEqual(runner._run_path_batch(pairs, commands, "rclone", "push"), (1, 1))
+                self.assertEqual(run.call_count, 2)
+
+
 class WorkflowTests(unittest.TestCase):
     """Verify confirmation and execution without launching real subprocesses."""
 
@@ -807,6 +1003,211 @@ class WorkflowTests(unittest.TestCase):
         self.repair: MagicMock = self.enterContext(patch.object(runner, "_fix_windows_symlinkd"))
         self.enterContext(contextlib.redirect_stdout(self.output))
 
+    def test_empty_schema_or_task_lists_warn_and_exit_without_task_input(self) -> None:
+        sources = ("", "# No tasks yet\n", "{}\n", "settings: {}\n", "tasks:\n",
+                   "tasks: {}\n", "tasks:\n  test: []\n  ungrouped: []\n")
+        for source in sources:
+            for cli in (False, True):
+                with self.subTest(source=source, cli=cli):
+                    self.output.seek(0)
+                    self.output.truncate(0)
+                    argv = ["runner", "--task", "test/demo"] if cli else ["runner"]
+                    with patch.object(sys, "argv", argv), patch("builtins.open", mock_open(read_data=source)), patch.object(runner.Input, "resolve_input_path", return_value="schema.yaml"), patch("builtins.input") as prompt:
+                        self.assertEqual(runner.main(), 1 if cli else 0, self.output.getvalue())
+                    self.assertIn(f"{runner.FLYellow}WARNING: No tasks found in schema. Exiting.{runner.CRst}", self.output.getvalue())
+                    prompt.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_malformed_schemas_still_fail_instead_of_becoming_no_task_warnings(self) -> None:
+        for source in ("tasks: []\n", "tasks: wrong\n", "tasks:\n  test: null\n", "[]\n",
+                       "settings: wrong\n", "settings:\n  default:\n    inherit: [missing]\n"):
+            with self.subTest(source=source):
+                self.output.seek(0)
+                self.output.truncate(0)
+                with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=source)), patch.object(runner.Input, "resolve_input_path", return_value="schema.yaml"), patch("builtins.input") as prompt:
+                    self.assertEqual(runner.main(), 1)
+                self.assertIn("Schema validation failed:", self.output.getvalue())
+                self.assertNotIn("No tasks found", self.output.getvalue())
+                prompt.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_all_unmatched_tasks_are_gray_then_warn_and_exit_without_a_menu_prompt(self) -> None:
+        schema = {"tasks": {"test": [{"name": "other-device", "sub-tasks": [
+            {"name": "all", "computer-name": "another-device", "paths": [["$UNDEFINED", "remote"]]},
+        ]}]}}
+        with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner.Input, "resolve_input_path", return_value="schema.yaml"), patch.object(runner.System, "get_computer_name", return_value="this-device"), patch("builtins.input") as prompt:
+            self.assertEqual(runner.main(), 0)
+        output = self.output.getvalue()
+        gray_label = f"{runner.FGray}     test/other-device{runner.CRst}"
+        self.assertIn(gray_label, output)
+        self.assertIn(f"{runner.FLYellow}WARNING: No tasks have sub-tasks matching this machine. Exiting.{runner.CRst}", output)
+        self.assertLess(output.index(gray_label), output.index("WARNING:"))
+        self.assertNotIn("Select task", output)
+        self.assertNotIn("Path expansion failed", output)
+        prompt.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_unmatched_task_is_gray_and_has_no_selection_number_for_every_filter_scope(self) -> None:
+        for field, value in (("platform", "linux"), ("arch", "arm64"), ("computer-name", "another-device")):
+            for scope in ("task", "subtask", "task-profile", "subtask-profile"):
+                with self.subTest(field=field, scope=scope):
+                    self.output.seek(0)
+                    self.output.truncate(0)
+                    sub: dict[str, object] = {"name": "all", "paths": [["$UNDEFINED", "remote"]]}
+                    inactive: dict[str, object] = {"name": "inactive", "sub-tasks": [sub]}
+                    profile: dict[str, object] = {}
+                    if scope.endswith("profile"):
+                        target = inactive if scope == "task-profile" else sub
+                        target["inherit"] = ["other"]
+                        profile[field] = value
+                    else:
+                        (inactive if scope == "task" else sub)[field] = value
+                    schema = {"settings": {"other": profile}, "tasks": {"test": [inactive,
+                        {"name": "available", "sub-tasks": [{"name": "all", "paths": [["local", "remote"]]}]},
+                    ]}}
+                    with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner.Input, "resolve_input_path", return_value="schema.yaml"), patch.object(runner.sys, "platform", "win32"), patch.object(runner.System, "get_arch", return_value="amd64"), patch.object(runner.System, "get_computer_name", return_value="this-device"), patch("builtins.input", side_effect=["1", "q"]) as prompt:
+                        self.assertEqual(runner.main(), 0, self.output.getvalue())
+                    output = self.output.getvalue()
+                    self.assertIn(f"{runner.FGray}     test/inactive{runner.CRst}", output)
+                    self.assertIn(f"{runner.FGray}[{runner.CRst}0{runner.FGray}]{runner.CRst}: {runner.FLYellow}test{runner.CRst}/{runner.FLCyan}available{runner.CRst}", output)
+                    self.assertIn("Invalid number: 1", output)
+                    self.assertNotIn("No tasks have", output)
+                    self.assertEqual(prompt.call_count, 2)
+        self.run.assert_not_called()
+
+    def test_cli_unmatched_task_warns_and_returns_nonzero_without_prompting(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [
+            {"name": "all", "computer-name": "another-device", "paths": [["local", "remote"]]},
+        ]}]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner.System, "get_computer_name", return_value="this-device"), patch("builtins.input") as prompt:
+            self.assertEqual(runner.main(), 1)
+        self.assertIn(f"{runner.FLYellow}WARNING: Task 'test/demo' has no sub-tasks matching this machine. Exiting.{runner.CRst}", self.output.getvalue())
+        prompt.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_batch_executes_every_action_in_yaml_order_with_one_comparison(self) -> None:
+        for action, (mode, direction) in runner.ACTION_COMMANDS.items():
+            with self.subTest(action=action):
+                self.run.reset_mock()
+                self.output.seek(0)
+                self.output.truncate(0)
+                schema = {"tasks": {"test": [{"name": "demo", "do-not-check-modified-time": True,
+                          "path-type": "file" if action in runner.FILE_ACTIONS else "directory",
+                          "sub-tasks": [{"name": "all", "paths": [["local-one", "remote-one"], ["local-two", "remote-two"]]}]}]}}
+                with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", action.value, "--comparison", "checksum"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_validate_file_endpoints") as validate:
+                    self.assertEqual(runner.main(), 0, self.output.getvalue())
+                command_mode = f"{mode}to" if action in runner.FILE_ACTIONS else mode
+                expected_pairs = [["remote-one", "local-one"], ["remote-two", "local-two"]] if direction == "pull" else [["local-one", "remote-one"], ["local-two", "remote-two"]]
+                self.assertEqual([call.args[0][:4] for call in self.run.call_args_list], [["rclone", command_mode, *pair] for pair in expected_pairs])
+                self.assertEqual(validate.call_count, 2)
+                output = self.output.getvalue()
+                self.assertLess(output.index("[1/2] Rclone command:"), output.index("[2/2] Rclone command:"))
+                self.assertLess(output.index("[2/2] Rclone command:"), output.index("Running..."))
+
+    def test_batch_print_only_does_not_probe_or_execute_any_pair(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [
+            ["local-one", "remote-one"], ["local-two", "remote-two"],
+        ]}]}]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "pull", "--dry-run"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_display_path_mtimes") as times, patch.object(runner, "_validate_file_endpoints") as guard:
+            self.assertEqual(runner.main(), 0)
+        output = self.output.getvalue()
+        self.assertIn("sync remote-one local-one", output)
+        self.assertIn("sync remote-two local-two", output)
+        self.assertEqual(output.count("--dry-run"), 2)
+        self.run.assert_not_called()
+        times.assert_not_called()
+        guard.assert_not_called()
+
+    def test_invalid_later_path_prevents_execution_of_earlier_pairs(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [
+            ["valid", "remote"], ["$MISSING/local", "other"],
+        ]}]}]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-copy"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))):
+            self.assertEqual(runner.main(), 1)
+        self.assertIn("paths[1][0]", self.output.getvalue())
+        self.run.assert_not_called()
+
+    def test_batch_move_retry_starts_at_failure_without_reselection_or_confirmation(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [
+            ["a", "remote:a"], ["b", "remote:b"], ["c", "remote:c"],
+        ]}]}]}}
+        self.run.side_effect = [subprocess.CompletedProcess([], code) for code in (0, 9, 0, 0)]
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch("builtins.input", side_effect=["y", "r", "q"]) as prompt, patch.object(runner, "_select_action", return_value=runner.SyncAction.PUSH_MOVE) as action, patch.object(runner, "_select_comparison_mode", return_value=runner.ComparisonMode.SIZE_AND_TIME) as comparison, patch.object(runner, "_display_path_mtimes", return_value=[]) as times:
+            self.assertEqual(runner.main(), 0, self.output.getvalue())
+        self.assertEqual([call.args[0][2] for call in self.run.call_args_list], ["a", "b", "b", "c"])
+        self.assertEqual(times.call_count, 3)
+        action.assert_called_once()
+        comparison.assert_called_once()
+        self.assertEqual(sum("Execute" in call.args[0] for call in prompt.call_args_list), 1)
+        self.assertIn("retry from [2/3]", prompt.call_args_list[1].args[0])
+        self.assertIn("re-run all", prompt.call_args_list[2].args[0])
+
+    def test_file_guard_failure_stops_remaining_pairs(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "path-type": "file", "do-not-check-modified-time": True,
+                  "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"], ["c.ini", "d.ini"], ["e.ini", "f.ini"]]}]}]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-move-file"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_validate_file_endpoints", side_effect=[None, ValueError("missing source")]) as guard:
+            self.assertEqual(runner.main(), 1)
+        self.assertEqual(guard.call_count, 2)
+        self.run.assert_called_once()
+        self.assertIn("Pair [2/3] failed", self.output.getvalue())
+
+    def test_successful_batch_reruns_all_and_dry_run_does_not_change_the_real_commands(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "do-not-check-modified-time": True,
+                  "sub-tasks": [{"name": "all", "paths": [["a", "b"], ["c", "d"]]}]}]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch("builtins.input", side_effect=["d", "y", "r", "q"]) as prompt, patch.object(runner, "_select_action", return_value=runner.SyncAction.PUSH_COPY), patch.object(runner, "_select_comparison_mode", return_value=runner.ComparisonMode.SIZE_AND_TIME):
+            self.assertEqual(runner.main(), 0)
+        calls = self.run.call_args_list
+        self.assertEqual([call.args[0][2] for call in calls], ["a", "c", "a", "c", "a", "c"])
+        self.assertEqual(["--dry-run" in call.args[0] for call in calls], [True, True, False, False, False, False])
+        self.assertEqual(sum("Execute" in call.args[0] for call in prompt.call_args_list), 2)
+        self.assertIn("re-run all", prompt.call_args_list[2].args[0])
+
+    def test_cli_batch_cancellation_exits_130_without_starting_later_pairs(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "do-not-check-modified-time": True,
+                  "sub-tasks": [{"name": "all", "paths": [["a", "b"], ["c", "d"], ["e", "f"]]}]}]}}
+        self.run.side_effect = [subprocess.CompletedProcess([], 0), runner.OperationCancelled()]
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-copy"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))):
+            self.assertEqual(runner.main(), 130)
+        self.assertEqual(self.run.call_count, 2)
+
+    def test_batch_warnings_are_grouped_before_all_numbered_commands(self) -> None:
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [["a", "b"], ["c", "d"]]}]}]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-move"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_display_path_mtimes", side_effect=[["WARNING: first pair"], ["WARNING: second pair"]]):
+            self.assertEqual(runner.main(), 0)
+        output = self.output.getvalue()
+        positions = [i for i, line in enumerate(output.splitlines()) if "WARNING:" in line]
+        self.assertEqual(positions, list(range(positions[0], positions[0] + 3)))
+        self.assertLess(output.index("will delete"), output.index("[1/2] Rclone command:"))
+        self.assertLess(output.index("[2/2] Rclone command:"), output.index("Task:"))
+
+    def test_file_filter_warning_precedes_command_in_command_only_mode(self) -> None:
+        schema = {"settings": {"default": {"exclude": ["*.bak"]}}, "tasks": {"test": [
+            {"name": "config", "path-type": "file", "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"]]}],
+             "additional-args": ["--include", "*.ini", "--s3-no-check-bucket"]},
+        ]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/config", "--action", "push-copy-file", "--dry-run"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))):
+            self.assertEqual(runner.main(), 0)
+        output = self.output.getvalue()
+        self.assertIn("ignoring file-selection filters: --exclude, --include", output)
+        self.assertLess(output.index("WARNING:"), output.index("Rclone command:"))
+        command = output.split("Rclone command:")[1]
+        self.assertNotIn("--exclude", command)
+        self.assertNotIn("--include", command)
+        self.assertIn("--s3-no-check-bucket", command)
+        self.run.assert_not_called()
+
+    def test_file_move_groups_filter_warning_with_move_warning(self) -> None:
+        schema = {"tasks": {"test": [{"name": "config", "path-type": "file", "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"]]}], "exclude": ["*.bak"], "do-not-check-modified-time": True}]}}
+        with patch.object(sys, "argv", ["runner", "--task", "test/config", "--action", "pull-move-file"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_validate_file_endpoints"):
+            self.assertEqual(runner.main(), 0)
+        output = self.output.getvalue()
+        lines = [i for i, line in enumerate(output.splitlines()) if "WARNING:" in line]
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[1], lines[0] + 1)
+        self.assertLess(output.index("will delete"), output.index("Rclone command:"))
+        self.assertNotIn("--exclude", self.run.call_args.args[0])
+        self.assertEqual(self.run.call_args.args[0][:4], ["rclone", "moveto", "b.ini", "a.ini"])
+
     def test_cli_requires_an_explicit_schema_instead_of_loading_the_sample(self) -> None:
         os.environ.pop(runner.ENV_SCHEMA_FILE)
         with patch.object(sys, "argv", ["runner", "--task", "test/demo"]), patch("builtins.open") as open_file:
@@ -818,14 +1219,14 @@ class WorkflowTests(unittest.TestCase):
 
     def test_interactive_startup_has_no_bundled_schema_suggestion(self) -> None:
         os.environ.pop(runner.ENV_SCHEMA_FILE)
-        schema = {"tasks": {"test": [{"name": "demo", "local-path": "local", "remote-path": "remote:"}]}}
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [["local", "remote:"]]}]}]}}
         with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner.Input, "resolve_input_path", return_value="personal.yaml") as prompt, patch("builtins.input", return_value="q"):
             self.assertEqual(runner.main(), 0)
         self.assertEqual(prompt.call_args.args[0], "")
         self.run.assert_not_called()
 
     def test_cli_schema_takes_precedence_over_the_environment(self) -> None:
-        schema = {"tasks": {"test": [{"name": "demo", "local-path": "local", "remote-path": "remote:"}]}}
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [["local", "remote:"]]}]}]}}
         with patch.object(sys, "argv", ["runner", "--schema-file", "chosen.yaml", "--task", "test/demo"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))) as open_file, patch("builtins.input", return_value="q"):
             self.assertEqual(runner.main(), 0)
         self.assertTrue(all(call.args[0] == os.path.abspath("chosen.yaml") for call in open_file.call_args_list))
@@ -842,16 +1243,16 @@ class WorkflowTests(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_undefined_path_stops_before_host_or_operation_selection(self) -> None:
-        schema = {"tasks": {"test": [{"name": "demo", "local-path": "$MISSING/files", "remote-path": "remote:"}]}}
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [["$MISSING/files", "remote:"]]}]}]}}
         with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "pull"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_interactive_host_swap") as hosts, patch.object(runner, "_select_action") as select:
             self.assertEqual(runner.main(), 1)
-        self.assertIn("Path expansion failed for 'test/demo': local-path: Undefined environment variable: MISSING", self.output.getvalue())
+        self.assertIn("Path expansion failed for 'test/demo/all': paths[0][0]: Undefined environment variable: MISSING", self.output.getvalue())
         hosts.assert_not_called()
         select.assert_not_called()
         self.run.assert_not_called()
 
     def test_path_error_returns_to_menu_without_reloading_schema_or_password(self) -> None:
-        schema = {"tasks": {"test": [{"name": "demo", "local-path": "$MISSING/files", "remote-path": "remote:"}]}}
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [["$MISSING/files", "remote:"]]}]}]}}
         with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner.Input, "resolve_input_path", return_value="schema.yaml") as schema_path, patch.object(runner, "_load_schema", wraps=runner._load_schema) as load, patch.object(runner, "_verify_config_password", return_value=True) as verify, patch.dict(os.environ, {runner.ENV_CONFIG_PASSWORD: "test-password"}), patch("builtins.input", side_effect=["0", "q"]):
             self.assertEqual(runner.main(), 0)
         schema_path.assert_called_once()
@@ -860,7 +1261,7 @@ class WorkflowTests(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_substituted_variable_syntax_remains_literal_in_final_command(self) -> None:
-        schema = {"tasks": {"test": [{"name": "demo", "local-path": "$ROOT/files", "remote-path": "remote",
+        schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [["$ROOT/files", "remote"]]}],
                                      "do-not-check-modified-time": True}]}}
         with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.dict(os.environ, {"ROOT": "${LITERAL}"}):
             self.assertEqual(runner.main(), 0)
@@ -869,7 +1270,7 @@ class WorkflowTests(unittest.TestCase):
     def test_check_never_prechecks_or_repairs_links(self) -> None:
         schema = {"tasks": {"test": [{"name": "demo", "preferred-mode": "move", "links": True,
                   "check-before-sync": True, "allow-actions": ["check"],
-                  "sub-tasks": [{"name": "all", "local-path": "local", "remote-path": "remote"}]}]}}
+                  "sub-tasks": [{"name": "all", "paths": [["local", "remote"]]}]}]}}
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(sys, "argv", ["rclone-sync.py", "--task", "test/demo", "--action", "check"]))
             stack.enter_context(patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))))
@@ -878,9 +1279,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.run.call_args.args[0][:4], ["rclone", "check", "local", "remote"])
         self.repair.assert_not_called()
 
-    def test_standalone_file_task_resolves_cli_direction_and_checks_before_execution(self) -> None:
+    def test_single_subtask_file_resolves_cli_direction_and_checks_before_execution(self) -> None:
         schema = {"tasks": {"appdata": [{"name": "config", "path-type": "file",
-                  "allow-actions": ["pull-copy-file"], "local-path": "a.ini", "remote-path": "b.ini"}]}}
+                  "allow-actions": ["pull-copy-file"], "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"]]}]}]}}
         with patch.object(sys, "argv", ["rclone-sync.py", "--task", "appdata/config", "--pull"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_validate_file_endpoints") as validate:
             self.assertEqual(runner.main(), 0, self.output.getvalue())
         validate.assert_called_once()
@@ -891,7 +1292,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_file_validation_failure_never_executes_in_auto_mode(self) -> None:
         schema = {"tasks": {"test": [{"name": "config", "path-type": "file",
-                  "local-path": "a.ini", "remote-path": "b.ini"}]}}
+                  "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"]]}]}]}}
         with patch.object(sys, "argv", ["rclone-sync.py", "--task", "test/config", "--action", "push-move-file"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_validate_file_endpoints", side_effect=ValueError("source is a directory")):
             self.assertEqual(runner.main(), 1, self.output.getvalue())
         self.run.assert_not_called()
@@ -899,7 +1300,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_file_cli_print_only_does_not_probe_endpoints(self) -> None:
         schema = {"tasks": {"test": [{"name": "config", "path-type": "file",
-                  "local-path": "a.ini", "remote-path": "b.ini"}]}}
+                  "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"]]}]}]}}
         with patch.object(sys, "argv", ["rclone-sync.py", "--task", "test/config", "--action", "pull-copy-file", "--dry-run"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_validate_file_endpoints") as validate:
             self.assertEqual(runner.main(), 0, self.output.getvalue())
         validate.assert_not_called()
@@ -908,7 +1309,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_time_display_can_be_disabled_without_disabling_file_safety_or_move_warning(self) -> None:
         schema = {"settings": {"default": {"do-not-check-modified-time": True}}, "tasks": {"test": [
-            {"name": "config", "path-type": "file", "local-path": "a.ini", "remote-path": "b.ini"},
+            {"name": "config", "path-type": "file", "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"]]}]},
         ]}}
         with patch.object(sys, "argv", ["rclone-sync.py", "--task", "test/config", "--action", "push-move-file"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_display_path_mtimes") as display, patch.object(runner, "_validate_file_endpoints") as validate:
             self.assertEqual(runner.main(), 0, self.output.getvalue())
@@ -922,8 +1323,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_false_subtask_flag_reenables_an_inherited_disabled_time_check(self) -> None:
         schema = {"settings": {"default": {"do-not-check-modified-time": True}}, "tasks": {"test": [
-            {"name": "config", "local-path": "local", "remote-path": "remote", "sub-tasks": [
-                {"name": "all", "do-not-check-modified-time": False},
+            {"name": "config", "sub-tasks": [
+                {"name": "all", "paths": [["local", "remote"]], "do-not-check-modified-time": False},
             ]},
         ]}}
         with patch.object(sys, "argv", ["rclone-sync.py", "--task", "test/config", "--action", "push-copy"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_display_path_mtimes", return_value=[]) as display:
@@ -932,7 +1333,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("time check skipped", self.output.getvalue())
 
     def test_disabling_time_display_does_not_disable_directory_precheck(self) -> None:
-        schema = {"tasks": {"test": [{"name": "config", "local-path": "local", "remote-path": "remote",
+        schema = {"tasks": {"test": [{"name": "config", "sub-tasks": [{"name": "all", "paths": [["local", "remote"]]}],
                   "do-not-check-modified-time": True, "check-before-sync": True}]}}
         with patch.object(sys, "argv", ["rclone-sync.py", "--task", "test/config", "--action", "push-copy"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(runner, "_display_path_mtimes") as display:
             self.assertEqual(runner.main(), 0, self.output.getvalue())
@@ -940,7 +1341,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual([call.args[0][1] for call in self.run.call_args_list], ["check", "copy"])
 
     def test_first_upload_to_missing_file_still_executes_but_missing_source_does_not(self) -> None:
-        schema = {"tasks": {"test": [{"name": "config", "path-type": "file", "local-path": "a.ini", "remote-path": "b.ini"}]}}
+        schema = {"tasks": {"test": [{"name": "config", "path-type": "file", "sub-tasks": [{"name": "all", "paths": [["a.ini", "b.ini"]]}]}]}}
         present = runner.PathInfo(runner.PathState.PRESENT, runner.PathType.FILE)
         missing = runner.PathInfo(runner.PathState.MISSING)
         for source_missing, observations, code in (
@@ -977,11 +1378,11 @@ class WorkflowTests(unittest.TestCase):
                 self.output.seek(0)
                 self.output.truncate(0)
                 subtasks = [
-                    {"name": "all", "local-path": "local", "remote-path": "primary:/files"},
+                    {"name": "all", "paths": [["local", "primary:/files"]]},
                 ]
                 task: dict[str, object] = {"name": "demo", "sub-tasks": subtasks}
                 if menu == "subtask":
-                    subtasks.append({"name": "second", "local-path": "local", "remote-path": "primary:/files"})
+                    subtasks.append({"name": "second", "paths": [["local", "primary:/files"]]})
                 if menu == "host":
                     task["alternative-remote-host"] = ["backup"]
                 schema = {"tasks": {"test": [task]}}
@@ -1013,7 +1414,7 @@ class WorkflowTests(unittest.TestCase):
                 self.output.truncate(0)
                 label = "demo" if group == runner.UNGROUPED_KEY else f"{group}/demo"
                 schema = {"tasks": {group: [{"name": "demo", "sub-tasks": [
-                    {"name": "all", "local-path": "local", "remote-path": "remote"},
+                    {"name": "all", "paths": [["local", "remote"]]},
                 ]}]}}
                 stack.enter_context(patch.object(sys, "argv", ["rclone-sync.py", "--task", label, "--verbose"]))
                 stack.enter_context(patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))))
@@ -1029,7 +1430,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_confirmation_names_action_and_adds_directional_move_warning(self) -> None:
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [
-            {"name": "all", "local-path": "local", "remote-path": "remote"},
+            {"name": "all", "paths": [["local", "remote"]]},
         ]}]}}
         older = runner.datetime.datetime(2026, 1, 1, tzinfo=runner.datetime.timezone.utc)
         newer = runner.datetime.datetime(2026, 1, 2, tzinfo=runner.datetime.timezone.utc)

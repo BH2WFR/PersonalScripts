@@ -2,7 +2,15 @@
 """Cross-platform rclone sync task runner driven by a YAML schema.
 
 Defines reusable sync tasks in YAML, filters sub-tasks by the current machine,
-shows source/destination modification times, and offers push/pull sync, copy,
+and runs each sub-task's paths: [[local, remote], ...] sequentially in YAML order.
+Every task requires sub-tasks; legacy local-path/remote-path keys are rejected.
+All pairs share one action/comparison and confirmation, with numbered commands.
+Failure stops the batch; retry resumes the failed pair and remaining pairs.
+After a successful batch, re-run starts again from the first pair.
+Tasks without a machine-matching sub-task are gray and cannot be selected.
+An empty schema/task list or no matching tasks produces a warning and exits
+without task input (interactive: 0; an unavailable CLI task: 1).
+The runner shows source/destination modification times and offers push/pull sync, copy,
 move, bisync, and check actions for directories. File tasks offer only
 push-copy-file/pull-copy-file (copyto) and push-move-file/pull-move-file (moveto).
 The inherited path-type defaults to directory; allow-actions defaults to all
@@ -24,6 +32,8 @@ cancels the current operation and returns to the task menu instead of exiting
 the whole script.
 File endpoints are checked before every transfer; no file check or bisync is
 provided. File tasks require full filenames on both sides, not parent directories.
+File tasks ignore YAML excludes and file-selection filters in additional-args,
+with a warning before the command; directory task filtering remains unchanged.
 The inherited do-not-check-modified-time flag defaults to false; true skips
 the advisory time comparison without changing transfer comparisons or file guards.
 Missing endpoints show first-upload/download guidance, distinct from read errors.
@@ -233,8 +243,8 @@ class FieldDef:
     """Definition of a single field in :class:`SyncTask`.
 
     Attributes:
-        yaml_key:   Key name in YAML (e.g. ``"local-path"``).
-        py_attr:    Attribute name on SyncTask (e.g. ``"local_path"``).
+        yaml_key:   Key name in YAML (e.g. ``"preferred-mode"``).
+        py_attr:    Attribute name on SyncTask (e.g. ``"preferred_mode"``).
         default:    Default value when the key is absent.
         required:   If True, the field must be present in the YAML.
         allowed:    Set of valid values, or ``None`` for free-form.
@@ -343,8 +353,6 @@ _FIELDS: list[FieldDef] = [
     FieldDef("follow-link",       "copy_links",         default=False,       check_type=bool),
     FieldDef("delete-excluded",   "delete_excluded",    default=False,       check_type=bool),
     # paths
-    FieldDef("local-path",        "local_path",         default=""),
-    FieldDef("remote-path",       "remote_path",        default=""),
     FieldDef("remote-path-type",  "remote_path_type",   default="auto",      allowed=VALID_REMOTE_PATH_TYPES),
     FieldDef("backup-dir",        "backup_dir",         default=""),
     # case sensitivity
@@ -391,7 +399,34 @@ for fd in _FIELDS:
         _FIELD_DEFAULTS[fd.py_attr] = fd.default
 
 # Structural keys inside a raw YAML task dict that are not fields
-_STRUCTURAL_KEYS = {"sub-tasks"}
+_STRUCTURAL_KEYS = {"sub-tasks", "paths"}
+
+
+def _parse_path_pairs(value: object, path: str = "task") -> list[tuple[str, str]]:
+    """Validate and copy a nonempty YAML list of [local, remote] pairs.
+
+    Args:
+        value: Raw YAML value; every pair must be a two-element string list.
+        path: Schema location used in errors.
+
+    Returns:
+        Ordered endpoint tuples without expanding or inspecting the paths.
+
+    Raises:
+        ValueError: The list, pair length, or an endpoint is invalid.
+    """
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{path}: 'paths' must be a non-empty list of [local, remote] pairs")
+    pairs: list[tuple[str, str]] = []
+    for index, pair in enumerate(value):
+        error = f"{path}.paths[{index}]: expected exactly two non-empty strings [local, remote]"
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError(error)
+        local, remote = pair
+        if not isinstance(local, str) or not local.strip() or not isinstance(remote, str) or not remote.strip():
+            raise ValueError(error)
+        pairs.append((local, remote))
+    return pairs
 
 
 def _normalize_inherit(value: object) -> list[str]:
@@ -450,7 +485,9 @@ def _resolve_profile_chain(
 class SyncTask:
     """A fully-resolved rclone sync task (or sub-task) configuration.
 
-    All fields mirror the YAML schema keys (hyphens mapped to underscores).
+    Configuration fields mirror YAML keys (hyphens mapped to underscores).
+    Paths are declared only on sub-tasks; local_path/remote_path are internal
+    endpoints populated by path_tasks() for one command at a time.
     Use :meth:`from_dict` to build from raw YAML, :meth:`from_inheritance_chain`
     to layer ``default → profile → task → sub-task``, and :meth:`to_command`
     to produce the rclone command line.
@@ -476,8 +513,9 @@ class SyncTask:
     retries:           int = 3
     s3_no_check_bucket: bool = False
     delete_excluded:   bool = False
-    local_path:        str = ""
-    remote_path:       str = ""
+    local_path:        str = ""  # Runtime endpoint of one materialized path pair.
+    remote_path:       str = ""  # Runtime endpoint; never read as a YAML field.
+    paths:            list[tuple[str, str]] = dataclasses.field(default_factory=list)
     remote_path_type:  str = "auto"
     backup_dir:        str = ""
     do_not_check_modified_time: bool = False
@@ -504,11 +542,17 @@ class SyncTask:
         """Build a SyncTask from a raw YAML dict.
 
         Only keys listed in the field registry are consumed.  Missing keys
-        get the default defined in :class:`FieldDef`.  ``sub-tasks`` is
-        recursed into.
+        get the default defined in :class:`FieldDef`. ``sub-tasks`` is
+        recursed into; ``paths`` is parsed as ordered endpoint pairs.
+        Legacy local-path/remote-path keys raise ValueError.
         """
         kwargs: dict[str, Any] = dict(_FIELD_DEFAULTS)
         explicit_fields: set[str] = set()
+        if "local-path" in data or "remote-path" in data:
+            raise ValueError("Legacy local-path/remote-path keys are not supported; use sub-task paths: [[local, remote]]")
+        if "paths" in data:
+            kwargs["paths"] = _parse_path_pairs(data["paths"])
+            explicit_fields.add("paths")
         for yk, val in data.items():
             if yk in _STRUCTURAL_KEYS:
                 continue
@@ -610,6 +654,9 @@ class SyncTask:
         # sub-tasks are always taken from the override when present
         if override.sub_tasks:
             result.sub_tasks = copy.deepcopy(override.sub_tasks)
+        if "paths" in override.explicit_fields:
+            result.paths = list(override.paths)
+            result.explicit_fields.add("paths")
         return result
 
     # ---- validation ----
@@ -726,6 +773,17 @@ class SyncTask:
             "current_dir": os.getcwd(),
         }
         resolved: dict[str, str] = {}
+        resolved_pairs: list[tuple[str, str]] = []
+        for index, pair in enumerate(self.paths):
+            endpoints: list[str] = []
+            for side, value in enumerate(pair):
+                try:
+                    endpoints.append(os.path.expanduser(Paths.expand_template(value, os.environ, placeholders)))
+                except ValueError as exc:
+                    raise ValueError(f"paths[{index}][{side}]: {exc}") from exc
+                if not endpoints[-1].strip():
+                    raise ValueError(f"paths[{index}][{side}]: expanded path is empty")
+            resolved_pairs.append((endpoints[0], endpoints[1]))
         for attr in ("local_path", "remote_path", "backup_dir", "log_file"):
             val = getattr(self, attr)
             if val:
@@ -735,6 +793,24 @@ class SyncTask:
                     raise ValueError(f"{attr.replace('_', '-')}: {exc}") from exc
         for attr, val in resolved.items():
             setattr(self, attr, val)
+        self.paths = resolved_pairs
+
+    def path_tasks(self) -> list['SyncTask']:
+        """Materialize ordered path pairs with shared settings and runtime endpoints.
+
+        Returns:
+            Independent task copies ready for per-pair command generation. Paths
+            must already be expanded by resolve_paths(); no expansion is repeated.
+
+        Raises:
+            ValueError: No path pairs are configured.
+        """
+        if not self.paths:
+            raise ValueError("Selected sub-task has no path pairs")
+        return [
+            dataclasses.replace(copy.deepcopy(self), paths=[], local_path=local, remote_path=remote)
+            for local, remote in self.paths
+        ]
 
     # ---- rclone command building ----
 
@@ -747,16 +823,37 @@ class SyncTask:
 
     def _append_filter_flags(self, cmd: list[str]) -> None:
         """Append flags shared by sync/copy/move/check."""
-        for pat in self.exclude:
-            cmd.extend(["--exclude", pat])
+        # copyto/moveto select one exact file and reject additional file filters.
+        if self.path_type != PathType.FILE:
+            for pat in self.exclude:
+                cmd.extend(["--exclude", pat])
         if self.links:
             cmd.append("--links")
         if self.copy_links:
             cmd.append("--copy-links")
-        if self.ignore_case:
+        if self.ignore_case and self.path_type != PathType.FILE:
             cmd.append("--ignore-case")
         if self.ignore_case_sync:
             cmd.append("--ignore-case-sync")
+
+    def ignored_file_filter_flags(self) -> list[str]:
+        """Return ignored file-selection option names for the confirmation warning.
+
+        Returns:
+            Unique flags in configuration order, or an empty list for directory
+            tasks. Includes inherited YAML excludes and additional-args filters.
+            Does not change task configuration or print anything.
+        """
+        if self.path_type != PathType.FILE:
+            return []
+        ignored: list[str] = []
+        if self.exclude:
+            ignored.append("--exclude")
+        if self.ignore_case:
+            ignored.append("--ignore-case")
+        # Both exact-file commands have the same filtering restrictions.
+        _mode_specific_args(self.additional_args, "copyto", ignored_filters=ignored)
+        return list(dict.fromkeys(ignored))
 
     def _append_log_flags(self, cmd: list[str]) -> None:
         """Append rclone logging flags."""
@@ -829,7 +926,11 @@ class SyncTask:
         An unset runtime mode uses preferred-mode, or sync for directories and
         copy for files when no preference is set. File tasks
         map copy/move to copyto/moveto. Permissions also apply to this API.
+        File-selection filters are omitted for exact-file transfers; use
+        ignored_file_filter_flags() to obtain the options for a user warning.
         """
+        if self.paths:
+            raise ValueError("Materialize sub-task paths with path_tasks() before building a single command")
         if not self.mode:
             default_mode = self.preferred_mode or ("copy" if self.path_type == PathType.FILE else "sync")
             return dataclasses.replace(self, mode=default_mode).to_command(
@@ -878,7 +979,7 @@ class SyncTask:
             if comparison is None
             else _without_comparison_args(self.additional_args)
         )
-        cmd.extend(_mode_specific_args(additional_args, self.mode))
+        cmd.extend(_mode_specific_args(additional_args, command_mode))
         if resync:
             cmd.append("--resync")
         if dry_run:
@@ -940,12 +1041,20 @@ def _without_comparison_args(args: list[str]) -> list[str]:
     return result
 
 
-def _mode_specific_args(args: list[str], mode: str) -> list[str]:
+def _mode_specific_args(
+    args: list[str], mode: str, *, ignored_filters: Optional[list[str]] = None,
+) -> list[str]:
     """Drop known command-specific extra flags when switching action modes.
 
     Value-taking flags consume their following token even when omitted.
     Unrecognized flags are left for rclone to validate.
+    copyto/moveto ignore file-selection filters like stat, and apply their
+    copy/move rules to other options. If supplied, ignored_filters collects
+    the removed filter option names for the caller's warning.
     """
+    exact_file = mode in {"copyto", "moveto"}
+    if exact_file:
+        mode = mode[:-2]
     rules: dict[str, tuple[set[str], bool]] = {
         "--delete-excluded": ({"sync"}, False),
         "--delete-before": ({"sync"}, False),
@@ -955,6 +1064,7 @@ def _mode_specific_args(args: list[str], mode: str) -> list[str]:
         "--backup-dir": (_DIRECTIONAL_MODES, True),
         "--resync": ({"bisync"}, False),
         "--resync-mode": ({"bisync"}, True),
+        "--filters-file": ({"bisync"}, True),
         "--workdir": ({"bisync"}, True),
         "--backup-dir1": ({"bisync"}, True),
         "--backup-dir2": ({"bisync"}, True),
@@ -974,11 +1084,22 @@ def _mode_specific_args(args: list[str], mode: str) -> list[str]:
     tokens = iter(args)
     for arg in tokens:
         flag, separator, _ = arg.partition("=")
-        if mode == "stat" and flag in METADATA_FILTER_FLAGS:
+        # Cobra accepts attached short-option values such as -f-*.bak.
+        if arg.startswith("-f") and not arg.startswith("--") and len(arg) > 2:
+            flag, separator = "-f", "="
+        if (mode == "stat" or exact_file) and (
+            flag in METADATA_FILTER_FLAGS or (exact_file and flag == "--filters-file")
+        ):
+            if exact_file and ignored_filters is not None:
+                ignored_filters.append(flag)
             if not separator:
                 next(tokens, None)
             continue
         if mode == "stat" and flag in {"--dirs-only", "--files-only"}:
+            continue
+        if exact_file and flag in {"--ignore-case", "--dirs-only", "--files-only"}:
+            if ignored_filters is not None:
+                ignored_filters.append(flag)
             continue
         rule = rules.get(flag)
         if rule is not None and mode not in rule[0]:
@@ -1083,6 +1204,8 @@ def _validate_field_in_dict(
     key: str, value: Any, path: str, known_profiles: Optional[set[str]] = None,
 ) -> Optional[str]:
     """Validate a single key-value pair from a raw YAML dict against the field registry."""
+    if key in {"local-path", "remote-path"}:
+        return f"{path}: legacy '{key}' is not supported; use sub-task paths: [[local, remote]]"
     fd = _ATTR_TO_FIELD.get(_YAML_TO_ATTR.get(key, ""))
     if fd is None:
         return f"{path}: unknown field '{key}'"
@@ -1105,7 +1228,7 @@ def _validate_raw_task(task: dict, path: str, known_profiles: set) -> list[str]:
         errors.append(f"{path}: missing 'name'")
 
     for key, value in task.items():
-        if key in _STRUCTURAL_KEYS:
+        if key == "sub-tasks":
             continue
         err = _validate_field_in_dict(key, value, path, known_profiles)
         if err:
@@ -1113,6 +1236,8 @@ def _validate_raw_task(task: dict, path: str, known_profiles: set) -> list[str]:
 
     # sub-tasks
     subs = task.get("sub-tasks")
+    if not subs:
+        errors.append(f"{path}: 'sub-tasks' must be a non-empty list; put paths inside each sub-task")
     if subs is not None:
         if not isinstance(subs, list):
             errors.append(f"{path}: 'sub-tasks' must be a list")
@@ -1124,7 +1249,13 @@ def _validate_raw_task(task: dict, path: str, known_profiles: set) -> list[str]:
                     continue
                 if "name" not in st:
                     errors.append(f"{st_path}: missing 'name'")
+                try:
+                    _parse_path_pairs(st.get("paths"), st_path)
+                except ValueError as exc:
+                    errors.append(str(exc))
                 for k, v in st.items():
+                    if k == "paths":
+                        continue
                     err = _validate_field_in_dict(k, v, st_path, known_profiles)
                     if err:
                         errors.append(err)
@@ -1135,7 +1266,7 @@ def _validate_schema(schema: dict) -> list[str]:
     """Validate the complete YAML schema. Returns list of error strings."""
     errors: list[str] = []
     if not isinstance(schema, dict):
-        return ["Schema must be a dict with optional 'settings' and required 'tasks'"]
+        return ["Schema must be a dict with optional 'settings' and 'tasks' sections"]
 
     # --- settings ---
     known_profiles: set[str] = set()
@@ -1166,11 +1297,10 @@ def _validate_schema(schema: dict) -> list[str]:
                         errors.append(f"settings.{pname}: {exc}")
 
     # --- tasks ---
-    if "tasks" not in schema:
-        errors.append("Schema must contain 'tasks' section")
+    tasks = schema.get("tasks")
+    if tasks is None:
         return errors
 
-    tasks = schema["tasks"]
     if not isinstance(tasks, dict):
         return ["'tasks' must be a dict (group_name → task list)"]
 
@@ -1250,10 +1380,17 @@ def _verify_config_password(rclone_exe: str) -> bool:
         return False
 
 
-def _print_cmd(cmd: list[str]) -> None:
+def _print_cmd(cmd: list[str], label: str = "") -> None:
     display = " ".join(f'"{a}"' if " " in a else a for a in cmd)
-    print(f"  {FLYellow}Rclone command:{CRst}")
+    prefix = f"{label} " if label else ""
+    print(f"  {FLYellow}{prefix}Rclone command:{CRst}")
     print(f"{FGray}{display}{CRst}")
+
+
+def _print_commands(commands: list[list[str]]) -> None:
+    """Print every full command in execution order with a one-based batch index."""
+    for index, command in enumerate(commands, 1):
+        _print_cmd(command, f"[{index}/{len(commands)}]")
 
 
 def _notify(title: str, body: str) -> None:
@@ -1867,6 +2004,98 @@ def _interactive_host_swap(final_task: 'SyncTask', cli_auto: bool) -> bool:
         print(f"{FLRed}Enter a number, Q to go back, or Enter to keep current.{CRst}")
 
 
+def _interactive_batch_hosts(task: SyncTask, cli_auto: bool) -> bool:
+    """Choose alternate hosts once per original remote prefix for a path batch.
+
+    Args:
+        task: Expanded sub-task whose ordered paths may be updated.
+        cli_auto: Skip host prompts for CLI-selected tasks.
+
+    Returns:
+        False on cancellation, leaving every path unchanged; otherwise True.
+
+    Side effects:
+        Shows host menus. Reuses choices only for the same original prefix;
+        local/UNC endpoints remain untouched and unrelated remotes stay separate.
+    """
+    choices: dict[str, str] = {}
+    paths: list[tuple[str, str]] = []
+    for index, pair in enumerate(task.path_tasks(), 1):
+        prefix, _ = _extract_remote_host(pair.remote_path, pair.remote_path_type)
+        if prefix is not None and prefix in choices:
+            pair.remote_path = _replace_path_host(pair.remote_path, prefix, choices[prefix])
+        else:
+            if len(task.paths) > 1:
+                pair.name = f"{task.name} [{index}/{len(task.paths)}]"
+            if not _interactive_host_swap(pair, cli_auto):
+                return False
+            replacement, _ = _extract_remote_host(pair.remote_path, pair.remote_path_type)
+            if prefix is not None and replacement is not None:
+                choices[prefix] = replacement
+        paths.append((pair.local_path, pair.remote_path))
+    task.paths = paths
+    return True
+
+
+def _run_path_batch(
+    tasks: list[SyncTask], commands: list[list[str]], rclone_exe: str, direction: str,
+    start: int = 0, precheck: bool = True, dry_run: bool = False,
+) -> tuple[int, int]:
+    """Run ordered pairs, stopping at the first failed command or pre-check.
+
+    Args:
+        tasks: Materialized tasks with shared action and comparison settings.
+        commands: Corresponding commands; successful real bisync initialization
+            loses its --resync flag in this list for subsequent re-runs.
+        rclone_exe: Executable used for file guards and optional pre-checks.
+        direction: Selected push/pull direction.
+        start: Zero-based first pair to execute; earlier successful pairs are skipped.
+        precheck: Run configured pre-checks and existing link repair on initial runs.
+            Re-runs skip these, but always retain file endpoint guards.
+        dry_run: Append --dry-run, without changing commands or repairing links.
+
+    Returns:
+        Exit code and first unfinished index (len(tasks) if fully successful).
+
+    Raises:
+        OperationCancelled: User cancellation; remaining pairs are not started.
+
+    Side effects:
+        Prints numbered progress and executes rclone sequentially; successful
+        earlier transfers are not rolled back when a later pair fails.
+    """
+    for index in range(start, len(tasks)):
+        task, command = tasks[index], commands[index]
+        print(f"\n{FLCyan}[{index + 1}/{len(tasks)}]{CRst} {FLYellow}{task.name}{CRst}")
+        try:
+            if precheck and not dry_run and task.mode in _DIRECTIONAL_MODES and task.check_before_sync:
+                print(f"{FLCyan}Running pre-sync check...{CRst}")
+                check_cmd = task.to_check_command(rclone_exe, direction=direction)
+                _print_cmd(check_cmd, f"[{index + 1}/{len(tasks)}] Pre-sync")
+                result = _run_interruptible(check_cmd)
+                if result.returncode != 0:
+                    print(f"{FLYellow}  -> Pre-sync check reported differences or an error.{CRst}")
+                    if task.stop_on_check_failure:
+                        print(f"{FLRed}  -> Stopped because stop-on-check-failure is enabled.{CRst}")
+                        return result.returncode, index
+                _print_cmd(command, f"[{index + 1}/{len(tasks)}]")
+            run_command = [*command, "--dry-run"] if dry_run else command
+            result = _run_task_command(task, run_command, rclone_exe, direction)
+        except OSError as exc:
+            print(f"{FLRed}Could not execute pair [{index + 1}/{len(tasks)}]: {exc}{CRst}")
+            return 1, index
+        if result.returncode != 0:
+            print(f"{FLRed}Pair [{index + 1}/{len(tasks)}] failed; remaining pairs were not started.{CRst}")
+            return result.returncode, index
+        if not dry_run:
+            # Initialization belongs to each pair, including pairs completed on retry.
+            commands[index] = [arg for arg in command if arg != "--resync"]
+            _, destination = task.source_dest(direction)
+            if precheck and task.mode in _DIRECTIONAL_MODES and task.links and os.path.exists(destination):
+                _fix_windows_symlinkd(destination)
+    return 0, len(tasks)
+
+
 def _host_name_to_prefix(name: str, template_prefix: str) -> str:
     """Build a full path prefix from a host *name* using *template_prefix*
     to preserve the rclone remote separator."""
@@ -1918,8 +2147,15 @@ def _select_action(
     if not actions:
         print(f"  {FLYellow}No actions are permitted for this path type.{CRst}")
     print(f"  {FGray}Enter retries; q returns to the task menu.{CRst}")
-    local = f"{FLBlue}{task.local_path}{CRst}"
-    remote = f"{FLGreen}{task.remote_path}{CRst}"
+    pairs = task.paths or [(task.local_path, task.remote_path)]
+    if len(pairs) > 1:
+        for index, (local_path, remote_path) in enumerate(pairs, 1):
+            print(f"  {FGray}[{index}/{len(pairs)}]{CRst} {FLBlue}{local_path}{CRst} | {FLGreen}{remote_path}{CRst}")
+        local = f"{FLBlue}local ({len(pairs)} paths){CRst}"
+        remote = f"{FLGreen}remote ({len(pairs)} paths){CRst}"
+    else:
+        local = f"{FLBlue}{pairs[0][0]}{CRst}"
+        remote = f"{FLGreen}{pairs[0][1]}{CRst}"
     options: list[MenuOption] = []
     action_width = max((len(action.value) for action in actions), default=10)
     preferred_mode = task.preferred_mode or ("copy" if task.path_type == PathType.FILE else "sync")
@@ -2155,7 +2391,7 @@ def _print_help() -> None:
   Interactive rclone task runner driven by a YAML schema.
   Lists tasks from the schema, lets you pick one by number,
   auto-filters sub-tasks by platform/arch/computer-name, then
-  builds and runs the rclone command.
+  builds numbered commands for every paths pair and runs them sequentially.
 
 {FLYellow}Usage:{CRst}
   python {script_name}                        interactive mode
@@ -2166,7 +2402,7 @@ def _print_help() -> None:
   python {script_name} --task <n> --action pull-copy --comparison size_only
   python {script_name} --task <n> --action pull-copy-file --comparison checksum
   python {script_name} --task <n> --action bisync --resync
-  python {script_name} --dry-run              print command only
+  python {script_name} --dry-run              print all commands only
 
 {FLYellow}Options:{CRst}
   --schema-file <path>         actual YAML schema path (overrides the environment variable)
@@ -2185,7 +2421,7 @@ def _print_help() -> None:
   --resync                     explicitly initialize/rebuild bisync state for this run
   --comparison <mode>          size_and_time | size_only | force | checksum
                                (available choices depend on the selected action)
-  --dry-run                    print command, do not execute
+  --dry-run                    print all numbered commands, do not execute
   --verbose                    print additional diagnostics
 
 {FLYellow}Auto-sync:{CRst}
@@ -2225,6 +2461,10 @@ def _print_help() -> None:
   Profile inheritance is applied in list order; cycles are rejected with their
   full reference chain, including cycles in default and unused profiles.
   Duplicate YAML keys fail with the first and repeated definition's line/column.
+  Tasks with no sub-task matching this device are gray and have no selection number.
+  If no tasks exist or none match, print a warning and exit without task input.
+  Empty files and omitted/null/empty tasks mean no tasks; malformed schemas still fail.
+  No work exits with code 0 interactively; an unavailable CLI task exits with code 1.
 
 {FLYellow}Modification time display:{CRst}
   do-not-check-modified-time: false (default; inherited by tasks/sub-tasks).
@@ -2244,11 +2484,25 @@ def _print_help() -> None:
   path-type: directory | file (inherited; default: directory).
   File tasks require full filenames on both sides and only offer copy-file and
   move-file actions, using copyto/moveto. No file check, pre-check, sync, or bisync.
+  File tasks ignore YAML exclude/ignore-case and file-selection filters in
+  additional-args (include/exclude/filter, files-from, age/size, metadata, etc.).
+  A warning lists ignored options before the command, including command-only dry runs.
+  Directory filters, file comparison choices, and backend flags are unchanged.
   preferred-mode accepts copy/move. All four comparisons work for file transfers.
   Source must be a file; an absent destination is allowed, a directory is not.
   Endpoints are checked before each execution, dry-run, and re-run. A symbolic
   link source on local storage requires copy-links; local link destinations are refused.
-  A task without sub-tasks can run directly if its machine filters match.
+
+{FLYellow}Path batches:{CRst}
+  Every task requires sub-tasks, each with paths: [[local, remote], ...].
+  Each pair contains exactly two non-empty strings, without a name field.
+  Legacy local-path/remote-path keys and task/profile-level paths are rejected.
+  All pairs share inherited options, path-type, action, comparison, and confirmation.
+  Commands are numbered [1/N], [2/N], ... and execute in YAML order.
+  Failure stops remaining pairs; re-run resumes at the failed pair. After a
+  successful batch, re-run starts from the first pair. Completed pairs are not rolled back.
+  Ctrl+C cancels the batch. CLI --dry-run only prints; interactive d simulates every pair.
+  Alternate host choices are reused only for pairs with the same original remote prefix.
 
 {FLYellow}Bisync state:{CRst}
   Local is always Path1, remote is Path2. Rclone stores state in its local cache
@@ -2276,7 +2530,7 @@ def _print_help() -> None:
   {FLCyan}{ENV_SCHEMA_FILE}{CRst}    path to the actual YAML schema file (no bundled default)
   {FLCyan}{ENV_CONFIG_PASSWORD}{CRst}  password for encrypted rclone config
 
-{FLYellow}Path variables{CRst} (in YAML: local-path, remote-path, backup-dir, log-file):
+{FLYellow}Path variables{CRst} (in YAML: paths endpoints, backup-dir, log-file):
   {FGray}$VAR / ${{VAR}} / %VAR%{CRst}  environment variable on every platform
   {FGray}$ENV:VAR{CRst} / {FGray}${{ENV:VAR}}{CRst}  PowerShell-style environment variable
   {FGray}{{{{schema_dir}}}}{CRst}       directory containing the YAML file
@@ -2288,7 +2542,7 @@ def _print_help() -> None:
 
 {FLYellow}Remote path type:{CRst}
   YAML field {FLCyan}remote-path-type{CRst}: auto | rclone | local  (default: auto).
-  It controls whether {FLCyan}remote-path{CRst} should be treated as a rclone remote
+  It controls whether the second endpoint in each pair is treated as a rclone remote
   for features such as {FLCyan}alternative-remote-host{CRst} and remote mtime checks.
   Local, drive, and UNC paths use filesystem mtime in auto/local mode.
 
@@ -2444,8 +2698,7 @@ def main() -> int:
         return 1
 
     if schema is None:
-        print(f"{FLRed}Schema file is empty:{CRst} {FGray}{schema_file}{CRst}")
-        return 1
+        schema = {}
 
     errors = _validate_schema(schema)
     if errors:
@@ -2458,7 +2711,7 @@ def main() -> int:
     if not isinstance(settings, dict):
         settings = {}
 
-    tasks_section = schema.get("tasks", {})
+    tasks_section = schema.get("tasks") or {}
     if not isinstance(tasks_section, dict):
         print(f"{FLRed}'tasks' must be a dict (group_name → task list):{CRst} {FGray}{schema_file}{CRst}")
         return 1
@@ -2489,8 +2742,8 @@ def main() -> int:
         all_entries.append((group_name, t))
 
     if not all_entries:
-        print(f"{FLRed}No tasks found in schema.{CRst}")
-        return 1
+        print(f"{FLYellow}WARNING: No tasks found in schema. Exiting.{CRst}")
+        return 1 if cli_auto else 0
 
     # ---- Scan YAML for name: line numbers (for duplicate-name error reporting) ----
     with open(schema_file, "r", encoding="utf-8") as fh:
@@ -2608,7 +2861,7 @@ def main() -> int:
                     print(f"{FLRed}Task '{cli_task}' not found.{CRst}")
                 return 1
             if selected_entry_idx not in _matching_entries:
-                print(f"{FLRed}Task '{cli_task}' does not match this machine or has no matching sub-tasks.{CRst}")
+                print(f"{FLYellow}WARNING: Task '{cli_task}' has no sub-tasks matching this machine. Exiting.{CRst}")
                 return 1
         else:
             Console.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
@@ -2624,12 +2877,7 @@ def main() -> int:
                     selectable_set.add(i)
                     display_total += 1
 
-            if not selectable_map:
-                print(f"  {FLRed}No tasks or sub-tasks match this machine.{CRst}")
-                Console.print_exit_message("Bye.")
-                return 0
-
-            max_digits = len(str(display_total - 1))
+            max_digits = len(str(max(display_total - 1, 0)))
 
             # Display all tasks — matching get numbers, non-matching shown in gray
             d_idx = 0   # display index (only for matching tasks)
@@ -2656,6 +2904,10 @@ def main() -> int:
 
                 if group_name is not None:
                     prev_group = group_name
+
+            if not selectable_map:
+                print(f"\n  {FLYellow}WARNING: No tasks have sub-tasks matching this machine. Exiting.{CRst}")
+                return 0
 
             print(f"  {FGray}[{CRst}{'Q':>{max_digits}}{FGray}]{CRst}: {FGray}Quit{CRst}")
             Console.print_separator(width=DISPLAY_WIDTH, color_ansi_esc=None, indent=2)
@@ -2804,9 +3056,6 @@ def main() -> int:
                 return 1
             final_task = merged_task.merge(sub_resolved)
             final_task.name = f"{_task_label}/{selected_subtask.name}"
-        elif not raw_subs:
-            final_task = merged_task
-            final_task.name = _task_label
         else:
             print(f"{FLRed}No matching sub-tasks for this machine — task requires a compatible sub-task.{CRst}")
             return 1
@@ -2826,12 +3075,8 @@ def main() -> int:
                 return 1
             continue  # keep the schema and password, return to task selection
 
-        if not final_task.local_path or not final_task.remote_path:
-            print(f"{FLRed}Task is missing local-path or remote-path.{CRst}")
-            return 1
-
         # ---- Alternative remote host selection ----
-        if not _interactive_host_swap(final_task, cli_auto):
+        if not _interactive_batch_hosts(final_task, cli_auto):
             continue  # back to task selection without using the current host
 
         # ================================================================
@@ -2869,6 +3114,8 @@ def main() -> int:
                 return 1 if auto_execute or cli_comparison is not None else 0
             continue
 
+        pair_tasks = final_task.path_tasks()
+
         cancel_hint = (
             "Press Ctrl+C to cancel and exit with code 130."
             if cli_auto else
@@ -2888,15 +3135,23 @@ def main() -> int:
                 f"  {FLYellow}comparison:{CRst} "
                 f"{FLCyan}{comparison.value}{CRst}"
             )
-        cmd = final_task.to_command(
-            rclone_exe,
-            dry_run=cli_dry_run,
-            direction=direction,
-            comparison=comparison,
-            resync=cli_resync,
+        commands = [
+            pair.to_command(
+                rclone_exe, dry_run=cli_dry_run, direction=direction,
+                comparison=comparison, resync=cli_resync,
+            )
+            for pair in pair_tasks
+        ]
+        ignored_filters = final_task.ignored_file_filter_flags()
+        filter_warning = (
+            f"  {FLYellow}WARNING: File task uses exact paths; ignoring file-selection "
+            f"filters: {', '.join(ignored_filters)}.{CRst}"
+            if ignored_filters else ""
         )
         if cli_dry_run:
-            _print_cmd(cmd)
+            if filter_warning:
+                print(filter_warning)
+            _print_commands(commands)
             print(task_summary)
             print(f"\n{FGray}(dry-run - command only, no changes made){CRst}")
             return 0
@@ -2909,12 +3164,20 @@ def main() -> int:
         else:
             print(f"\n{FLCyan}Checking path modification times...{CRst} {FGray}{cancel_hint}{CRst}")
             try:
-                warnings = _display_path_mtimes(final_task, rclone_exe, direction if directional else "")
+                for index, pair in enumerate(pair_tasks, 1):
+                    print(f"{FLCyan}[{index}/{len(pair_tasks)}]{CRst} {FLYellow}{pair.name}{CRst}")
+                    pair_warnings = _display_path_mtimes(pair, rclone_exe, direction if directional else "")
+                    warnings.extend(
+                        f"[{index}/{len(pair_tasks)}] {warning}" if len(pair_tasks) > 1 else warning
+                        for warning in pair_warnings
+                    )
             except OperationCancelled:
                 if cli_auto:
                     return 130
                 continue
 
+        if filter_warning:
+            warnings.append(filter_warning)
         if final_task.mode == "move":
             source_side = "local" if direction == "push" else "remote"
             warnings.append(
@@ -2932,7 +3195,7 @@ def main() -> int:
         while True:
             for warning in warnings:
                 print(warning)
-            _print_cmd(cmd)
+            _print_commands(commands)
             print(task_summary)
             if auto_execute:
                 break  # skip confirmation, execute directly
@@ -2954,23 +3217,20 @@ def main() -> int:
                 go_back = True
                 break
             elif choice == "d":
-                dry_cmd = final_task.to_command(
-                    rclone_exe,
-                    dry_run=True,
-                    direction=direction,
-                    comparison=comparison,
-                    resync=cli_resync,
-                )
                 print(f"\n{FLCyan}Running dry-run...{CRst} {FGray}{cancel_hint}{CRst}\n")
                 try:
-                    exec_result = _run_task_command(final_task, dry_cmd, rclone_exe, direction)
+                    dry_code, _ = _run_path_batch(
+                        pair_tasks, commands, rclone_exe, direction, precheck=False, dry_run=True,
+                    )
                 except OperationCancelled:
+                    if cli_auto:
+                        return 130
                     go_back = True
                     break
-                if exec_result.returncode == 0:
+                if dry_code == 0:
                     print(f"\n{FGray}(dry-run complete — no changes){CRst}")
                 else:
-                    print(f"\n{FLRed}Dry-run failed with exit code {exec_result.returncode}.{CRst}")
+                    print(f"\n{FLRed}Dry-run failed with exit code {dry_code}.{CRst}")
                 continue
             elif choice == "q":
                 Console.print_exit_message("Bye.")
@@ -2982,56 +3242,34 @@ def main() -> int:
             continue  # back to outermost task selection loop
 
         # ---- Execute ----
-        if directional and final_task.check_before_sync:
-            print(f"\n{FLCyan}Running pre-sync check...{CRst} {FGray}{cancel_hint}{CRst}")
-            check_cmd = final_task.to_check_command(rclone_exe, direction=direction)
-            _print_cmd(check_cmd)
-            try:
-                result = _run_interruptible(check_cmd)
-            except OperationCancelled:
-                if cli_auto:
-                    return 130
-                continue
-            if result.returncode != 0:
-                print(f"{FLYellow}  -> Pre-sync check reported differences or an error.{CRst}")
-                if final_task.stop_on_check_failure:
-                    print(f"{FLRed}  -> Stopped because stop-on-check-failure is enabled.{CRst}")
-                    return result.returncode
-            _print_cmd(cmd)
         print(f"\n{FLYellow}Running...{CRst} {FGray}{cancel_hint}{CRst}\n")
         try:
-            exec_result = _run_task_command(final_task, cmd, rclone_exe, direction)
+            exit_code, next_pair = _run_path_batch(pair_tasks, commands, rclone_exe, direction)
         except OperationCancelled:
             if cli_auto:
                 return 130
             continue
 
-        if exec_result.returncode == 0:
+        if exit_code == 0:
             print(f"\n{FLGreen}Operation '{action.value}' completed successfully.{CRst}")
         else:
-            print(f"\n{FLRed}Operation '{action.value}' failed with exit code {exec_result.returncode}.{CRst}")
-
-        _, sync_dst = final_task.source_dest(direction)
-        if exec_result.returncode == 0 and directional and final_task.links and os.path.exists(sync_dst):
-            _fix_windows_symlinkd(sync_dst)
+            print(f"\n{FLRed}Operation '{action.value}' failed with exit code {exit_code}.{CRst}")
 
         if final_task.notify_after_sync:
-            status = "completed" if exec_result.returncode == 0 else f"failed (code {exec_result.returncode})"
+            status = "completed" if exit_code == 0 else f"failed (code {exit_code})"
             _notify(f"rclone-sync: {final_task.name}", f"{action.value} {status}")
 
         if auto_execute:
-            return exec_result.returncode
-
-        if cli_resync and exec_result.returncode == 0:
-            cmd = final_task.to_command(rclone_exe, direction=direction, comparison=comparison)
+            return exit_code
 
         # ================================================================
         # Step 8: Post-execution menu
         # ================================================================
         while True:
+            rerun_label = f"retry from [{next_pair + 1}/{len(pair_tasks)}]" if next_pair < len(pair_tasks) else "re-run all"
             try:
                 choice = input(
-                    f"\n{FLYellow}What next?{CRst} {FGray}[{FLGreen}m{FGray}/{FLGreen}Enter{FGray}=back to menu / {FLCyan}r{FGray}=re-run / {FLCyan}Q{FGray}=quit]{CRst}: "
+                    f"\n{FLYellow}What next?{CRst} {FGray}[{FLGreen}m{FGray}/{FLGreen}Enter{FGray}=back to menu / {FLCyan}r{FGray}={rerun_label} / {FLCyan}Q{FGray}=quit]{CRst}: "
                 ).strip().lower()
             except EOFError:
                 print()
@@ -3043,13 +3281,18 @@ def main() -> int:
             elif choice == "r":
                 print(f"\n{FLYellow}Re-running...{CRst} {FGray}{cancel_hint}{CRst}\n")
                 try:
-                    exec_result = _run_task_command(final_task, cmd, rclone_exe, direction)
+                    start = next_pair if next_pair < len(pair_tasks) else 0
+                    exit_code, next_pair = _run_path_batch(
+                        pair_tasks, commands, rclone_exe, direction, start=start, precheck=False,
+                    )
                 except OperationCancelled:
+                    if cli_auto:
+                        return 130
                     break
-                if exec_result.returncode == 0:
+                if exit_code == 0:
                     print(f"\n{FLGreen}Operation '{action.value}' completed successfully.{CRst}")
                 else:
-                    print(f"\n{FLRed}Operation '{action.value}' failed with exit code {exec_result.returncode}.{CRst}")
+                    print(f"\n{FLRed}Operation '{action.value}' failed with exit code {exit_code}.{CRst}")
             elif choice == "q":
                 Console.print_exit_message("Bye.")
                 return 0
