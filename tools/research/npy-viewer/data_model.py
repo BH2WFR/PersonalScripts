@@ -9,7 +9,7 @@ from enum import StrEnum
 from mmap import mmap
 from pathlib import Path
 from time import perf_counter
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import cv2
 import numpy as np
@@ -19,6 +19,11 @@ from .image_metadata import ImageMetadata, read_image_metadata
 from .csv_loader import read_csv
 from .array_validation import validate_numeric_array
 from .mat_loader import read_mat
+from .coordinates import AxisCoordinates, AxisMap
+
+if TYPE_CHECKING:
+    from .fourier import TransformRecord
+    from .laplace import LaplaceRecord
 
 type IntegerScalar = (np.int8 | np.int16 | np.int32 | np.int64 | np.longlong
                       | np.uint8 | np.uint16 | np.uint32 | np.uint64 | np.ulonglong)
@@ -107,6 +112,7 @@ class Component(StrEnum):
     MAGNITUDE = "Magnitude"
     PHASE = "Phase (rad)"
     PHASE_DEG = "Phase (deg)"
+    MAGNITUDE_DB = "Magnitude (dB)"
 
 
 @dataclass(frozen=True)
@@ -124,6 +130,20 @@ class Document:
     is_image: bool = False
     image_source: ImageSource | None = None
     csv_headers: tuple[str, ...] = ()
+    axes: tuple[AxisCoordinates, ...] = ()
+    transform: "TransformRecord | None" = None
+    laplace: "LaplaceRecord | None" = None
+    complex_provenance: str = ""
+
+    @property
+    def is_complex(self) -> bool:
+        """Identify complex storage independently of the displayed component.
+
+        The dtype is the persistent flag in NPY/MAT, including arrays whose
+        imaginary part is entirely zero. Derived real display channels do not
+        change this source identity.
+        """
+        return self.array.dtype.kind == "c"
 
 
 @dataclass(frozen=True)
@@ -146,6 +166,7 @@ class Selection:
     component: Component = Component.REAL
     coordinate_axis: int | None = None
     coordinate_order: tuple[int, ...] = (0, 1, 2)
+    db_floor: float = -120.0
 
 
 @dataclass(frozen=True)
@@ -215,6 +236,19 @@ class Frame:
     raw: Array | None = None
     x_values: RealArray | None = None
     point_coordinates: RealArray | None = None
+    x_grid: AxisCoordinates | None = None
+    y_grid: AxisCoordinates | None = None
+    xy: bool = False
+
+    @property
+    def x_mapping(self) -> AxisMap:
+        """Map matrix source columns to physical X coordinates."""
+        return self.x_grid.mapping if self.x_grid is not None else AxisMap()
+
+    @property
+    def y_mapping(self) -> AxisMap:
+        """Map matrix source rows to physical Y coordinates."""
+        return self.y_grid.mapping if self.y_grid is not None else AxisMap()
 
 
 def load_document(path: Path, key: str | None = None) -> Document:
@@ -560,6 +594,16 @@ def _extract(document: Document, selection: Selection, crop: Crop) -> tuple[Real
                 data = np.angle(complex_data)
             case Component.PHASE_DEG:
                 data = np.angle(complex_data, deg=True)
+            case Component.MAGNITUDE_DB:
+                if not np.isfinite(selection.db_floor) or selection.db_floor >= 0:
+                    raise ValueError("The dB floor must be finite and negative.")
+                magnitude = np.abs(complex_data)
+                finite = magnitude[np.isfinite(magnitude)]
+                peak = float(np.max(finite)) if finite.size else 0.0
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    data = 20 * np.log10(magnitude / peak) if peak > 0 else np.full(magnitude.shape, selection.db_floor, dtype=np.float64)
+                data = np.maximum(data, selection.db_floor)
+                data[~np.isfinite(magnitude)] = np.nan
     # Every complex branch above produces a real component without coercing integers.
     return cast(RealArray, data), rgb
 
@@ -669,6 +713,8 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
         raise ValueError("Point limit must be nonnegative.")
     coordinates: RealArray | None = None
     x_values: RealArray | None = None
+    x_grid = document.axes[selection.x_axis] if document.axes else None
+    y_grid = document.axes[selection.y_axis] if document.axes and selection.y_axis is not None else None
     if selection.mode in (ViewMode.XY, ViewMode.POINTS):
         count = 2 if selection.mode == ViewMode.XY else 3
         axis = selection.coordinate_axis
@@ -686,6 +732,8 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
     else:
         raw = _extract_raw(document, selection, crop)
         scalar, rgb = _extract(document, selection, crop)
+        if selection.mode == ViewMode.SIGNAL and x_grid is not None:
+            x_values = x_grid.values(crop.x_start, len(scalar))
     source = document.image_source
     monochrome = source is not None and document.key == ImageMember.MONO_COLOR
     composite = rgb is not None or monochrome
@@ -720,6 +768,10 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
             rgba[..., 3] = valid * (color[..., 3] if color.shape[-1] == 4 else 1)
             display = (rgba * 255).astype(np.uint8)
         surface = _surface(scalar, valid, max_edge, crop.x_start, crop.y_start)
+        if x_grid is not None:
+            surface.points[:, 0] = x_grid.mapping.array(surface.points[:, 0])
+        if y_grid is not None:
+            surface.points[:, 1] = y_grid.mapping.array(surface.points[:, 1])
         if composite and display is not None:
             # Reuse the exact 2D display colors at the sampled surface vertices.
             colors = np.asarray(display[surface.rows - crop.y_start, surface.columns - crop.x_start], dtype=np.uint8)
@@ -741,7 +793,7 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
     return Frame(scalar, valid, display, (low, high), surface, composite,
                  display_scalar, clip_kind, limits, outline,
                  crop.x_start, crop.y_start if selection.mode == ViewMode.MATRIX else 0,
-                 raw, x_values, coordinates)
+                 raw, x_values, coordinates, x_grid, y_grid, selection.mode == ViewMode.XY)
 
 
 def export_array(frame: Frame, mode: ExportMode = ExportMode.PROCESSED) -> RealArray:
@@ -765,7 +817,7 @@ def export_array(frame: Frame, mode: ExportMode = ExportMode.PROCESSED) -> RealA
         raise ValueError("Array export is available in matrix and signal modes.")
     if mode not in (ExportMode.CROP, ExportMode.PROCESSED):
         raise ValueError(f"Unknown export mode: {mode}")
-    source = (cast(RealArray, frame.raw) if frame.x_values is not None and frame.raw is not None
+    source = (cast(RealArray, frame.raw) if frame.xy and frame.raw is not None
               else frame.scalar)
     if mode == ExportMode.CROP:
         return source.copy()
@@ -790,7 +842,7 @@ def export_array(frame: Frame, mode: ExportMode = ExportMode.PROCESSED) -> RealA
     result = source.astype(dtype, copy=True)
     if source.dtype.kind in "biu" and dtype.kind == "f":
         kept = frame.valid & ~below & ~above
-        if frame.x_values is not None:
+        if frame.xy:
             preserved = np.ones(source.shape, dtype=np.bool_)
             preserved[:, 1] = kept
         else:
@@ -802,7 +854,7 @@ def export_array(frame: Frame, mode: ExportMode = ExportMode.PROCESSED) -> RealA
         if not exact:
             raise ValueError("Value bounds require floating-point output and would lose integer precision. "
                              "Choose Crop only or adjust the bounds.")
-    values = result[:, 1] if frame.x_values is not None else result
+    values = result[:, 1] if frame.xy else result
     for mask, bound in active_bounds:
         values[mask] = int(bound) if dtype.kind in "biu" else bound
     if np.any(missing):

@@ -27,7 +27,9 @@ from .data_model import (DEFAULT_CLIP_COLOR, FloatArray, ImageMember, Limits, Re
                          apply_value_limits, format_sample, normalize_image_alpha)
 from .clipping import ClippedCurve, clip_curve
 from .derivatives import DerivativeResult, differentiate
-from .plot_support import graphics_scene, pyside_graphics_view
+from .plot_support import compact_axis, graphics_scene, pyside_graphics_view
+from .profile_legend import ProfileLegend
+from .qt_widgets import NoWheelComboBox
 
 WHEEL_ZOOM_FACTOR = 1.15
 DERIVATIVE_DELAY_MS = 70
@@ -47,7 +49,6 @@ MONO_OUTLINE_COLOR = "#dce5f2"
 MONO_OUTLINE_WIDTH = 3
 ANNOTATION_Z_VALUE = 1
 MIN_PROFILE_PLOT_HEIGHT = 160
-CHANNEL_LEGEND_COLUMNS = 4
 
 
 def _channel_label(channel: ImageMember | None, alpha_weighted: bool) -> str:
@@ -190,14 +191,14 @@ class CurvePane(QtWidgets.QWidget):
         self.plot_item.setMenuEnabled(False)
         self.plot_item.setLabel("bottom", "Index (x)")
         self.plot_item.setLabel("left", y_label)
+        for name in ("bottom", "left"):
+            compact_axis(self.plot_item.getAxis(name))
         self.plot_item.showGrid(x=True, y=True, alpha=0.2)
         self.view_box.setMouseMode(ViewBox.PanMode)
         self.curve = pg.PlotDataItem()
         self.plot_item.addItem(self.curve)
         self.channel_curves: dict[ImageMember, pg.PlotDataItem] = {}
         self._alpha_weighted = False
-        self.legend = self.plot_item.addLegend(offset=(5, 5), colCount=CHANNEL_LEGEND_COLUMNS)
-        self.legend.hide()
         self._dark = False
         self.crosshair = pg.InfiniteLine(angle=90, pen=pg.mkPen("#9c9c9c", style=QtCore.Qt.PenStyle.DashLine))
         self.plot_item.addItem(self.crosshair, ignoreBounds=True)
@@ -250,7 +251,6 @@ class CurvePane(QtWidgets.QWidget):
             for item in self.channel_curves.values():
                 self.plot_item.removeItem(item)
             self.channel_curves.clear()
-            self.legend.clear()
             for channel in channels:
                 label = _channel_label(channel, alpha_weighted)
                 item = pg.PlotDataItem(name=label)
@@ -258,7 +258,6 @@ class CurvePane(QtWidgets.QWidget):
                 self.channel_curves[channel] = item
         self._alpha_weighted = alpha_weighted
         self.curve.setVisible(not channels)
-        self.legend.setVisible(bool(channels))
 
     def clear_curves(self) -> None:
         """Clear all plotted data while retaining channel items and styling."""
@@ -274,11 +273,6 @@ class CurvePane(QtWidgets.QWidget):
         """
         self._dark = dark
         self.plot.setBackground("#151b25" if dark else "#ffffff")
-        self.legend.setLabelTextColor("#dce5f2" if dark else "#263247")
-        # QtGraph updates label defaults without rebuilding existing text HTML.
-        for _, label in self.legend.items:
-            label.setText(label.text)
-        self.legend.setBrush("#151b25" if dark else "#ffffff")
         monochrome = self.channel_curves.get(ImageMember.MONO)
         if monochrome is not None:
             monochrome.setShadowPen(pg.mkPen(MONO_OUTLINE_COLOR, width=MONO_OUTLINE_WIDTH) if dark else None)
@@ -327,9 +321,13 @@ class ProfileView(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         bar = QtWidgets.QHBoxLayout()
         self.title = QtWidgets.QLabel("Signal / profile")
-        self.title.setMinimumWidth(105)
+        self.title.setMinimumWidth(55)
+        self.title.setMaximumWidth(170)
+        self.title.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Preferred)
         bar.addWidget(self.title)
-        self.style_selector = QtWidgets.QComboBox()
+        self.legend_bar = ProfileLegend()
+        bar.addWidget(self.legend_bar, 1)
+        self.style_selector = NoWheelComboBox()
         self.style_selector.addItems(["Line", "Points", "Line + points"])
         self.style_selector.currentIndexChanged.connect(self._redraw)
         bar.addWidget(self.style_selector)
@@ -340,7 +338,9 @@ class ProfileView(QtWidgets.QWidget):
         fit.clicked.connect(self.reset_view)
         bar.addWidget(fit)
         self.readout = QtWidgets.QLabel("Move over the curve to inspect a sample")
-        self.readout.setMinimumWidth(190)
+        self.readout.setMinimumWidth(120)
+        self.readout.setMaximumWidth(250)
+        self.readout.setMaximumHeight(3 * self.readout.fontMetrics().lineSpacing())
         self.readout.setWordWrap(True)
         self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -367,7 +367,7 @@ class ProfileView(QtWidgets.QWidget):
         derivative_layout = QtWidgets.QVBoxLayout(page)
         derivative_layout.setContentsMargins(0, 0, 0, 0)
         settings = QtWidgets.QHBoxLayout()
-        self.jump_mode = QtWidgets.QComboBox()
+        self.jump_mode = NoWheelComboBox()
         self.jump_mode.addItems(["Phase (radians)", "Phase (degrees)", "Custom threshold", "Gaps only"])
         self.jump_mode.setCurrentIndex(JumpMode.GAPS_ONLY)
         settings.addWidget(self.jump_mode)
@@ -464,6 +464,7 @@ class ProfileView(QtWidgets.QWidget):
         self.values, self.valid = values, valid
         self.channel_values, self.channel_names = channel_values, channel_names
         self.alpha_weighted = alpha_weighted
+        self.legend_bar.set_entries(tuple((_channel_label(channel, alpha_weighted), CHANNEL_COLORS[channel]) for channel in channel_names))
         self.color_button.setEnabled(not channel_names)
         self.color_button.setToolTip("Image channel colors are fixed by R/G/B/M/A." if channel_names else "Choose the curve color.")
         for pane in (self.signal_pane, self.derivative_pane):
@@ -560,6 +561,7 @@ class ProfileView(QtWidgets.QWidget):
         self._clipped_curve = None
         self.channel_values = None
         self.channel_names = ()
+        self.legend_bar.set_entries(())
         self.alpha_weighted = False
         self._traces = ()
         self.derivative_result = None
@@ -831,8 +833,10 @@ class ProfileView(QtWidgets.QWidget):
             if result is not None:
                 value = format_sample(result.values, index) if result.valid[index] else "undefined / omitted"
                 self.readout.setText(f"x={source_x}   dy/dx={value}   [sample {source_index}]")
+                self.readout.setToolTip(self.readout.text())
             return
         suffix = "  [filtered / nonfinite]" if not self.valid[index] else ""
         if self.clipped is not None and self.clipped[index] and self.display_values is not None:
             suffix = f"  [clamped to {format_sample(self.display_values, index)}]"
         self.readout.setText(f"x={source_x}   y={format_sample(self.values, index)}{suffix}   [sample {source_index}]")
+        self.readout.setToolTip(self.readout.text())

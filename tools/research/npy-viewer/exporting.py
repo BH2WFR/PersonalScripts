@@ -112,16 +112,16 @@ def prepare_export(document: Document, selection: Selection, frame: Frame,
     x_values: RealArray | None = None
     cloud = False
     xy = False
+    selected = frame
     if options.target == ExportTarget.ORIGINAL:
         values = document.array.copy()
         parts.append("original")
     else:
-        selected = frame
         if not options.crop_xy:
             selected = prepare_frame(document, selection, frame.value_limits, 2, Crop(), max_points=1)
         origin_x, origin_y = selected.x_start, selected.y_start
         mode = ExportMode.PROCESSED if options.bound_values else ExportMode.CROP
-        if options.preserve_complex and np.iscomplexobj(document.array):
+        if options.preserve_complex and document.is_complex:
             if options.bound_values:
                 raise ValueError("Complex values have no ordered Z interval. Disable value bounds or export a display component.")
             if selected.raw is None:
@@ -136,9 +136,9 @@ def prepare_export(document: Document, selection: Selection, frame: Frame,
             cloud = True
         else:
             values = export_array(selected, mode)
-            xy = selected.x_values is not None
+            xy = selected.xy
             x_values = selected.x_values
-        if np.iscomplexobj(document.array):
+        if document.is_complex:
             parts.append("complex" if options.preserve_complex else selection.component.value)
         if options.target == ExportTarget.SLICE:
             if selection.mode != ViewMode.MATRIX:
@@ -147,6 +147,9 @@ def prepare_export(document: Document, selection: Selection, frame: Frame,
             if not 0 <= local < values.shape[0 if options.row else 1]:
                 raise ValueError("The selected slice is outside the exported region.")
             values = values[local, :] if options.row else values[:, local]
+            grid = selected.x_grid if options.row else selected.y_grid
+            start = selected.x_start if options.row else selected.y_start
+            x_values = grid.values(start, len(values)) if grid is not None else None
             origin_x = origin_x if options.row else origin_y
             parts.append(f"{'row' if options.row else 'column'}-{options.index}")
         else:
@@ -177,7 +180,9 @@ def prepare_export(document: Document, selection: Selection, frame: Frame,
             table = values
         elif values.ndim == 2 and not np.iscomplexobj(values) and not xy:
             y, x = np.indices(values.shape, dtype=np.int64)
-            table = _coordinate_table(((x + origin_x).ravel(), (y + origin_y).ravel(),
+            x_coordinates = selected.x_mapping.array((x + origin_x).ravel()) if options.target != ExportTarget.ORIGINAL and selected.x_grid is not None else (x + origin_x).ravel()
+            y_coordinates = selected.y_mapping.array((y + origin_y).ravel()) if options.target != ExportTarget.ORIGINAL and selected.y_grid is not None else (y + origin_y).ravel()
+            table = _coordinate_table((x_coordinates, y_coordinates,
                                        cast(RealArray, values).ravel()))
         else:
             raise ValueError("Point-cloud export requires a real 2D matrix or an XYZ view.")
@@ -229,9 +234,7 @@ def serialize_array(values: Array, format_: ExportFormat) -> bytes:
         np.save(buffer, values, allow_pickle=False)
         return buffer.getvalue()
     if format_ == ExportFormat.MAT:
-        if (values.dtype.kind == "f" and values.dtype.itemsize > 8
-                or values.dtype.kind == "c" and values.dtype.itemsize > 16):
-            raise ValueError("MAT cannot preserve this extended precision. Use NPY instead.")
+        validate_mat_array(values)
         buffer = BytesIO()
         savemat(buffer, {"matrix": values}, appendmat=False, do_compression=True, oned_as="column")
         return buffer.getvalue()
@@ -250,3 +253,17 @@ def serialize_array(values: Array, format_: ExportFormat) -> bytes:
     np.savetxt(text, values, fmt=f"%.{precision}g" if precision else "%d",
                delimiter="," if format_ == ExportFormat.CSV else "\t")
     return text.getvalue().encode("utf-8")
+
+
+def validate_mat_array(values: Array) -> None:
+    """Reject extended precision that MATLAB Level 5 cannot preserve.
+
+    Args:
+        values: Numeric array to serialize.
+
+    Raises:
+        ValueError: Float or complex precision exceeds MATLAB double precision.
+    """
+    if (values.dtype.kind == "f" and values.dtype.itemsize > 8
+            or values.dtype.kind == "c" and values.dtype.itemsize > 16):
+        raise ValueError("MAT cannot preserve this extended precision. Use NPY instead.")

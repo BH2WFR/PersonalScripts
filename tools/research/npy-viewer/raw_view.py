@@ -1,6 +1,7 @@
 """Virtual, read-only array spreadsheet with exact source-value formatting.
 
 8-bit integer image data optionally uses channel-ordered hexadecimal labels.
+A header dropdown browses workspace matrices by name without changing plot selection.
 Requirements: PySide6 and numpy. Usage: embedded as the Raw data tab.
 """
 
@@ -9,12 +10,14 @@ from typing import cast
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import Array, Frame, ImageMember, ImageSource
+from .qt_widgets import NoWheelComboBox
 
 MAX_COPY_CELLS = 1_000_000
 DEFAULT_COLUMN_WIDTH = 48
 MIN_COLUMN_WIDTH = 16
 MAX_COLUMN_WIDTH = 1024
 HEX_DIGITS_PER_BYTE = 2
+MATRIX_SELECTOR_CHARS = 24
 
 
 class ArrayTableModel(QtCore.QAbstractTableModel):
@@ -48,11 +51,11 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
         self.beginResetModel()
         raw = frame.raw if frame.raw is not None else frame.scalar
         self.array = raw[:, None] if raw.ndim == 1 else raw
-        coordinates = frame.point_coordinates is not None or frame.x_values is not None
+        coordinates = frame.point_coordinates is not None or frame.xy
         self.row_start = frame.x_start if raw.ndim == 1 or coordinates else frame.y_start
         self.column_start = 0 if raw.ndim == 1 or coordinates else frame.x_start
         self.column_labels = (("X", "Y", "Z") if frame.point_coordinates is not None else
-                              ("X", "Y") if frame.x_values is not None else labels)
+                              ("X", "Y") if frame.xy else labels)
         self.hex_available = (image_source is not None and self.array.dtype.kind in "bu"
                               and self.array.dtype.itemsize == 1)
         self.hexadecimal &= self.hex_available
@@ -95,6 +98,14 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
         if self.rowCount() and self.columnCount():
             self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1),
                                   [QtCore.Qt.ItemDataRole.DisplayRole, QtCore.Qt.ItemDataRole.ToolTipRole])
+
+    def clear(self) -> None:
+        """Release source data when the last matrix leaves the workspace."""
+        self.beginResetModel()
+        self.array = None
+        self.column_labels = ()
+        self.hexadecimal = self.hex_available = False
+        self.endResetModel()
 
     def rowCount(self, parent: QtCore.QModelIndex | QtCore.QPersistentModelIndex = QtCore.QModelIndex()) -> int:
         """Return source rows for the root; table cells have no children."""
@@ -148,6 +159,8 @@ class RawDataView(QtWidgets.QWidget):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.frame: Frame | None = None
+        self.source_name = ""
         layout = QtWidgets.QVBoxLayout(self)
         self.note = QtWidgets.QLabel("No data loaded")
         self.note.setWordWrap(True)
@@ -157,6 +170,13 @@ class RawDataView(QtWidgets.QWidget):
         self.hex_checkbox.setVisible(False)
         self.hex_checkbox.toggled.connect(self._hexadecimal_changed)
         heading.addWidget(self.hex_checkbox)
+        heading.addWidget(QtWidgets.QLabel("Matrix"))
+        self.matrix_combo = NoWheelComboBox()
+        self.matrix_combo.setPlaceholderText("No matrices")
+        self.matrix_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.matrix_combo.setMinimumContentsLength(MATRIX_SELECTOR_CHARS)
+        self.matrix_combo.setEnabled(False)
+        heading.addWidget(self.matrix_combo)
         layout.addLayout(heading)
         self.model = ArrayTableModel(self)
         self.table = QtWidgets.QTableView()
@@ -207,7 +227,28 @@ class RawDataView(QtWidgets.QWidget):
         self.table.addAction(action)
         self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
 
-    def set_frame(self, frame: Frame, labels: tuple[str, ...] = (), *, image_source: ImageSource | None = None) -> None:
+    def set_matrices(self, labels: tuple[str, ...], index: int) -> None:
+        """Update the header selector without emitting a user-selection signal.
+
+        Args:
+            labels: Source matrix names in tree order, counting channels together.
+                Zero or one matrix disables the dropdown.
+            index: Zero-based selected matrix index, or -1 for an empty list.
+        """
+        combo = self.matrix_combo
+        with QtCore.QSignalBlocker(combo):
+            if labels != tuple(combo.itemText(row) for row in range(combo.count())):
+                combo.clear()
+                combo.addItems(labels)
+                for row, label in enumerate(labels):
+                    combo.setItemData(row, label, QtCore.Qt.ItemDataRole.ToolTipRole)
+            combo.setCurrentIndex(index)
+            combo.setEnabled(len(labels) > 1)
+            hint = "Choose a matrix for Raw data only. Unchecked channels remain hidden."
+            combo.setToolTip(f"{combo.currentText()}\n{hint}" if combo.currentText() else hint)
+
+    def set_frame(self, frame: Frame, labels: tuple[str, ...] = (), *, image_source: ImageSource | None = None,
+                  source_name: str = "") -> None:
         """Display raw selected cells with an optional image-only hex checkbox.
 
         Args:
@@ -216,7 +257,9 @@ class RawDataView(QtWidgets.QWidget):
             image_source: Image channel metadata; None hides the hex checkbox.
                 Floating-point and 16-bit image matrices show a disabled,
                 unchecked checkbox.
+            source_name: File/member/channel identity shown above the table.
         """
+        self.frame, self.source_name = frame, source_name
         self.model.set_frame(frame, labels, image_source=image_source)
         self.hex_checkbox.setVisible(image_source is not None)
         self.hex_checkbox.setEnabled(self.model.hex_available)
@@ -235,11 +278,23 @@ class RawDataView(QtWidgets.QWidget):
         self.model.set_hexadecimal(self.hex_checkbox.isChecked())
         self._update_note()
 
+    def clear(self, message: str = "No data loaded") -> None:
+        """Clear the table and its image-only formatting controls."""
+        self.model.clear()
+        self.frame, self.source_name = None, ""
+        self.hex_checkbox.hide()
+        self.note.setText(message)
+
+    def set_source_name(self, name: str) -> None:
+        """Refresh the matrix/channel identity without resetting table selection."""
+        self.source_name = name
+        self._update_note()
+
     def _update_note(self) -> None:
         array = self.model.array
         if array is None:
             return
-        text = (f"Raw selected data | Shape: {array.shape} | Dtype: {array.dtype}\n"
+        text = (f"{self.source_name or 'Raw selected data'} | Shape: {array.shape} | Dtype: {array.dtype}\n"
                 "Read-only; before value filtering, clamping and complex-component conversion. "
                 "Ctrl+C copies the displayed cell text.")
         if self.model.hexadecimal:

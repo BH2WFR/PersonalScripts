@@ -2,6 +2,7 @@
 
 Requirements: PySide6, numpy, pyvista, pyvistaqt and vtk.
 Usage: SurfaceView is the matrix viewer's 3D tab.
+Single and overlaid slice markers use the shared 3D selection color.
 """
 
 import math
@@ -14,6 +15,7 @@ from pyvistaqt import QtInteractor
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker
 
 from .data_model import DEFAULT_CLIP_COLOR, ColorArray, FilterMode, FloatArray, Frame, format_sample
+from .workspace import RenderLayer, profile_series
 
 HOVER_INTERVAL_MS = 35
 ROTATION_DEGREES_PER_PIXEL = 0.45
@@ -57,6 +59,7 @@ class SurfaceCanvas(QtInteractor):
     def __init__(self, parent: QtWidgets.QWidget) -> None:
         super().__init__(parent=parent, auto_update=False, multi_samples=0)
         self.frame: Frame | None = None
+        self.layers: list[tuple[vtkActor, RenderLayer]] = []
         self._last = QtCore.QPointF()
         self._action: Gesture | None = None
         self._pending_hover: QtCore.QPointF | None = None
@@ -216,6 +219,12 @@ class SurfaceCanvas(QtInteractor):
         if not hit:
             self.coordinate_changed.emit("No visible surface under cursor")
             return
+        layer = next((layer for actor, layer in self.layers if actor == self.picker.GetActor()), None)
+        prefix = ""
+        if layer is not None:
+            frame = layer.frame
+            world = self.picker.GetPickPosition()
+            prefix = f"{layer.label} | Display ({world[0]:.6g}, {world[1]:.6g}) | "
         if frame.point_coordinates is not None:
             dataset = self.picker.GetDataSet()
             point_id = self.picker.GetPointId()
@@ -227,14 +236,17 @@ class SurfaceCanvas(QtInteractor):
             values = frame.point_coordinates
             suffix = f" [Z clamped to {format_sample(frame.display_scalar, index)}]" if frame.clip_kind[index] else ""
             self.coordinate_changed.emit(
-                f"Point {index + frame.x_start}: x={format_sample(values, index, 0)}   "
+                f"{prefix}Point {index + frame.x_start}: x={format_sample(values, index, 0)}   "
                 f"y={format_sample(values, index, 1)}   z={format_sample(values, index, 2)}{suffix}"
             )
             return
         # Clipping inserts vertices, so recover the nearest original pixel from
         # world X/Y rather than interpreting an actor-local point ID as a source ID.
         world = self.picker.GetPickPosition()
-        column, row = int(math.floor(world[0] + 0.5)), int(math.floor(world[1] + 0.5))
+        world_x = layer.x.inverse(world[0]) if layer is not None else world[0]
+        world_y = layer.y.inverse(world[1]) if layer is not None else world[1]
+        column = int(math.floor(frame.x_mapping.inverse(world_x) + 0.5))
+        row = int(math.floor(frame.y_mapping.inverse(world_y) + 0.5))
         local_y, local_x = row - frame.y_start, column - frame.x_start
         if not (0 <= local_y < frame.scalar.shape[0] and 0 <= local_x < frame.scalar.shape[1]):
             self.coordinate_changed.emit("Outside source region")
@@ -244,7 +256,8 @@ class SurfaceCanvas(QtInteractor):
         if frame.clip_kind[local_y, local_x]:
             suffix = f" [clamped to {format_sample(frame.display_scalar, local_y, local_x)}]"
         self.coordinate_changed.emit(
-            f"x={column}   y={row}   z={value}  [source sample]{suffix}"
+            f"{prefix}x={frame.x_mapping.forward(column):.6g}   y={frame.y_mapping.forward(row):.6g}   "
+            f"z={value}  [column={column}, row={row}]{suffix}"
         )
 
 
@@ -270,11 +283,15 @@ class SurfaceView(QtWidgets.QWidget):
         self._clip_actors: list[vtkActor] = []
         self._colored_caps: list[pv.PolyData] = []
         self.clip_color = DEFAULT_CLIP_COLOR
+        self._layers: tuple[RenderLayer, ...] = ()
+        self._layer_signature: tuple[tuple[object, ...], ...] = ()
+        self._layer_profiles: list[vtkActor] = []
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.readout = QtWidgets.QLabel("Move over the surface to inspect a source sample")
         self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.readout.setWordWrap(True)
         layout.addWidget(self.readout)
         self.canvas = SurfaceCanvas(self)
         self.canvas.coordinate_changed.connect(self.readout.setText)
@@ -299,6 +316,10 @@ class SurfaceView(QtWidgets.QWidget):
         if surface is None:
             return
         camera = self.canvas.camera_position
+        self._layers = ()
+        self._layer_signature = ()
+        self._layer_profiles.clear()
+        self.canvas.layers.clear()
         self.canvas.clear()
         self._surface_actor = None
         self._profile_actor = None
@@ -346,7 +367,8 @@ class SurfaceView(QtWidgets.QWidget):
                 if self._surface_actor is None:
                     self._surface_actor = actor
             cloud = frame.point_coordinates is not None
-            self.canvas.show_grid(xtitle="X" if cloud else "Column (x)", ytitle="Y" if cloud else "Row (y)",
+            self.canvas.show_grid(xtitle=frame.x_grid.label() if frame.x_grid else "X" if cloud else "Column (x)",
+                                  ytitle=frame.y_grid.label("Y") if frame.y_grid else "Y" if cloud else "Row (y)",
                                   ztitle="Z" if cloud and z_scale == 1 else "Scaled height",
                                   color="#adb9cb" if self.dark else "#465368", font_size=10)
             if reset:
@@ -359,6 +381,111 @@ class SurfaceView(QtWidgets.QWidget):
         if not len(surface.points):
             self.readout.setText("No finite samples within the filter interval")
         self.canvas.reset_camera_clipping_range()
+        self.canvas.render()
+
+    def set_layers(self, layers: tuple[RenderLayer, ...], reset: bool = False) -> None:
+        """Render aligned surfaces/clouds in independent solid colors.
+
+        Args:
+            layers: Compatible snapshots; XY alignment only affects actors.
+            reset: Fit all geometry instead of retaining the shared camera.
+        """
+        signature = tuple(layer.signature for layer in layers)
+        if signature == self._layer_signature and layers:
+            if reset:
+                self.reset_view()
+            return
+        camera = self.canvas.camera_position
+        self.canvas.clear()
+        self.canvas.picker.InitializePickList()
+        self.canvas.layers.clear()
+        self._layer_profiles.clear()
+        self._surface_actor = self._profile_actor = None
+        self._clip_actors.clear()
+        self._colored_caps.clear()
+        self._layers = layers
+        self._layer_signature = signature
+        self.canvas.frame = layers[0].frame if layers else None
+        for layer in layers:
+            frame, surface = layer.frame, layer.frame.surface
+            if surface is None or not len(surface.points):
+                continue
+            mesh = pv.PolyData(surface.points, surface.faces) if surface.faces.size else pv.PolyData(surface.points)
+            mesh.point_data["Value"] = surface.points[:, 2]
+            if frame.point_coordinates is not None:
+                mesh.point_data[SOURCE_INDEX_FIELD] = surface.rows - frame.x_start
+            remaining, caps = self._partition_surface(mesh, frame)
+            for part, color in ((remaining, layer.color), *((cap, layer.clip_color) for cap in caps)):
+                if not part.n_points:
+                    continue
+                actor = self.canvas.add_mesh(part, color=color, scalars=None, lighting=False,
+                    opacity=layer.opacity, show_scalar_bar=False, reset_camera=False, render=False,
+                    style="surface" if surface.faces.size else "points", point_size=layer.point_size)
+                actor.SetScale(layer.x.scale, layer.y.scale, layer.height)
+                actor.SetPosition(layer.x.offset, layer.y.offset, 0)
+                self.canvas.layers.append((actor, layer))
+                self.canvas.picker.AddPickList(actor)
+        if self.canvas.layers:
+            first_frame = self.canvas.layers[0][1].frame
+            self.canvas.show_grid(xtitle=first_frame.x_grid.label() if first_frame.x_grid else "Display X",
+                                  ytitle=first_frame.y_grid.label("Y") if first_frame.y_grid else "Display Y", ztitle="Scaled height",
+                                  color="#adb9cb" if self.dark else "#465368", font_size=10)
+            if reset:
+                self.canvas.view_isometric()
+                self.canvas.reset_camera()
+            else:
+                self.canvas.camera_position = camera
+        self.readout.setText("Move over a surface to inspect its matrix and original value")
+        self.resolution.setText(" | ".join(f"{layer.label}: {len(layer.frame.surface.points):,} points"
+                                          for layer in layers if layer.frame.surface is not None))
+        self.canvas.reset_camera_clipping_range()
+        self.canvas.render()
+
+    def set_layer_profiles(self, row: bool, position: float | None) -> None:
+        """Mark the nearest source slice using the shared 3D selection color.
+
+        Args:
+            row: True selects rows, False columns.
+            position: Shared display coordinate; None clears the selection.
+        """
+        for actor in self._layer_profiles:
+            self.canvas.remove_actor(actor, reset_camera=False, render=False)
+        self._layer_profiles.clear()
+        if position is None:
+            self.canvas.render()
+            return
+        for layer in self._layers:
+            series = profile_series(layer, row, position)
+            if series is None or series.index is None:
+                continue
+            frame = layer.frame
+            along = series.mapping.array(series.source_x)
+            across = (frame.y_mapping.then(layer.y) if row else frame.x_mapping.then(layer.x)).forward(series.index)
+            low, high = frame.limits
+            if self.profile_style == ProfileStyle.SECTION_PLANE:
+                ends = [float(along[0]), float(along[-1])]
+                z0, z1 = (low - (high - low) * SECTION_HEIGHT_PADDING) * layer.height, (high + (high - low) * SECTION_HEIGHT_PADDING) * layer.height
+                vertices = np.array([[ends[0], across, z0], [ends[1], across, z0],
+                                     [ends[1], across, z1], [ends[0], across, z1]])
+                if not row:
+                    vertices[:, [0, 1]] = vertices[:, [1, 0]]
+                mesh = pv.PolyData(vertices, np.array([4, 0, 1, 2, 3]))
+                actor = self.canvas.add_mesh(mesh, color=self.profile_color, opacity=self.section_opacity,
+                                            lighting=False, reset_camera=False, render=False)
+            else:
+                z = np.where(series.valid, series.shown, 0).astype(np.float64)
+                z = (z + (high - low) * self.profile_lift) * layer.height
+                vertices = np.column_stack((along, np.full(len(along), across), z))
+                if not row:
+                    vertices[:, [0, 1]] = vertices[:, [1, 0]]
+                indices = np.flatnonzero(series.valid[:-1] & series.valid[1:])
+                if not len(indices):
+                    continue
+                mesh = pv.PolyData(vertices)
+                mesh.lines = np.column_stack((np.full(len(indices), 2), indices, indices + 1)).ravel()
+                actor = self.canvas.add_mesh(mesh, color=self.profile_color, line_width=3, lighting=False,
+                                            reset_camera=False, render=False)
+            self._layer_profiles.append(actor)
         self.canvas.render()
 
     @staticmethod
@@ -500,6 +627,8 @@ class SurfaceView(QtWidgets.QWidget):
                 [[index, start, low], [index, end, low], [index, end, high], [index, start, high]],
                 dtype=np.float64,
             )
+            points[:, 0] = frame.x_mapping.array(points[:, 0])
+            points[:, 1] = frame.y_mapping.array(points[:, 1])
             mesh = pv.PolyData(points, np.array([4, 0, 1, 2, 3], dtype=np.int64))
             self._profile_actor = self.canvas.add_mesh(
                 mesh, color=self.profile_color, opacity=self.section_opacity,
@@ -524,6 +653,8 @@ class SurfaceView(QtWidgets.QWidget):
         fixed = np.full(len(varying), index)
         points = np.asarray(np.column_stack((varying if by_row else fixed, fixed if by_row else varying,
                                              values[valid])), dtype=np.float64)
+        points[:, 0] = frame.x_mapping.array(points[:, 0])
+        points[:, 1] = frame.y_mapping.array(points[:, 1])
         starts = np.flatnonzero(valid[:-1] & valid[1:])
         point_indices = np.full(len(values), -1, dtype=np.int64)
         point_indices[visible] = np.arange(len(visible))

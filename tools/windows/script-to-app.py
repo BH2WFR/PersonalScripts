@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+"""Create a Windows .cmd launcher for a Python script under Program Files.
+
+Try same-terminal elevation before prompting; writable output directories can
+still be used when elevation is unavailable.
+
+Requirements:
+    - Windows 10+ and Python 3.13+.
+    - system: gsudo or sudo (optional, for same-terminal elevation).
+
+Usage:
+    python script-to-app.py
+    python script-to-app.py --target-script C:/tools/my-tool.py --app-name MyTool
+"""
+
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -23,7 +37,10 @@ help_message = f'''
   {FGray}# Interactive mode (no arguments){CRst}
   python script-to-app.py
 
-{FLYellow}Windows only. Run as Administrator when writing to Program Files.{CRst}
+{FLYellow}Requirements:{CRst}
+  Windows 10+ and Python 3.13+.
+  gsudo or sudo (optional): tries same-terminal elevation before prompting.
+  If elevation is unavailable, use a writable --output-dir or run as Administrator.
 '''
 
 
@@ -134,6 +151,20 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
+
+    if not System.is_elevated():
+        # The shared helper replays sys.argv, including calls through main(argv).
+        original_argv = sys.argv
+        sys.argv = [os.path.abspath(__file__), *(sys.argv[1:] if argv is None else argv)]
+        try:
+            elevated = System.try_restart_elevated()
+        finally:
+            sys.argv = original_argv
+        if not elevated:
+            print(
+                f"{FLYellow}Elevation unavailable. Continuing with current permissions; "
+                f"use a writable --output-dir if needed.{CRst}"
+            )
 
     if len(sys.argv) == 1:
         print(help_message)

@@ -2,27 +2,36 @@
 
 Signal/XY modes use full-height plot, derivative and raw-data tabs in one row.
 Matrix modes restore the image/surface viewer above its linked profile.
-Separate selectors choose the source array and its image channel or complex
-component. A single NPY/image source is shown without multi-file switching.
+The workspace selects source entries and retains their image channels or complex
+components independently. The base window also supports ordinary single views.
+Raw-table synchronization is separate from plot selection for workspace browsing.
+The workspace Fourier dialog creates complex FFT/IFFT entries with physical
+coordinates shared by plots, surface picking, profiles and exports.
+The Transform menu also provides 1D Laplace planes (sigma/omega) and inverse
+contour reconstruction, retaining sampling metadata in the current session.
 The Export group saves originals, processed results or slices as NPY/MAT/CSV/TXT,
 with optional XY/XYZ coordinate layouts and automatic descriptive filenames.
 Value bounds share one input row and can be reverted independently of XY/color limits.
+Fusion keeps native widget painting with 2 px layout padding/vertical gaps and
+4 px horizontal gaps; the main content margins are 6 px except 2 px at the top.
+Splitter handles are blue, turning amber on hover and orange while dragging.
 
 Requirements: numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
 pyvista, pyvistaqt, vtk, scipy and h5py. Usage: run the npy-viewer.py launcher.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from enum import StrEnum
 import math
 from pathlib import Path
 import sys
-from typing import cast
+from typing import Protocol, cast
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .coordinates import AxisCoordinates
 from .data_model import (COLORMAPS, DEFAULT_CLIP_COLOR, DEFAULT_MAX_POINTS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, Array, Component, Crop, Document, FilterMode, Frame, ImageMember,
                          Limits, RealArray, Selection, ViewMode, default_selection,
                          load_document, prepare_frame, select_image_member)
@@ -31,6 +40,7 @@ from .exporting import (ExportFormat, ExportLayout, ExportOptions, ExportTarget,
 from .image_view import ImageView
 from .profile_view import ProfileView
 from .raw_view import RawDataView
+from .qt_widgets import NoWheelComboBox
 from .surface_view import (DEFAULT_POINT_SIZE, DEFAULT_PROFILE_COLOR, DEFAULT_PROFILE_LIFT,
                            DEFAULT_SECTION_OPACITY, ProfileStyle, SurfaceView)
 
@@ -43,9 +53,86 @@ HEIGHT_MAX_EXPONENT = 9
 DEFAULT_MATRIX_SPLIT: tuple[int, int] = (580, 290)
 ARRAY_SELECTOR_CHARACTERS = 12
 DISPLAY_SELECTOR_CHARACTERS = 18
+CONTENT_MARGIN = 2
+VERTICAL_SPACING = 2
+HORIZONTAL_SPACING = 4
+SPLITTER_COLOR = "#2496ed"
+SPLITTER_HOVER_COLOR = "#f5ae27"
+SPLITTER_DRAG_COLOR = "#f47721"
+WINDOW_MARGINS: tuple[int, int, int, int] = (6, 2, 6, 6)
+LAYOUT_MARGIN_METRICS: frozenset[QtWidgets.QStyle.PixelMetric] = frozenset((
+    QtWidgets.QStyle.PixelMetric.PM_LayoutLeftMargin,
+    QtWidgets.QStyle.PixelMetric.PM_LayoutTopMargin,
+    QtWidgets.QStyle.PixelMetric.PM_LayoutRightMargin,
+    QtWidgets.QStyle.PixelMetric.PM_LayoutBottomMargin,
+))
 SIGNAL_HINT = "1D wheel: zoom X · Ctrl+wheel: zoom XY · Left drag: pan"
 SURFACE_HINT = "3D middle / Ctrl+left: orbit · Ctrl+middle: pan · Right / Alt+middle: roll"
 FILE_FILTER = "Matrices and images (*.npy *.npz *.mat *.csv *.txt *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;MATLAB arrays (*.mat);;Text tables (*.csv *.txt);;All files (*)"
+
+
+class _StyleOptionFields(Protocol):
+    """Native QStyleOption fields omitted by some PySide6 stub versions."""
+
+    state: QtWidgets.QStyle.StateFlag
+    rect: QtCore.QRect
+
+
+class CompactFusionStyle(QtWidgets.QProxyStyle):
+    """Use compact Fusion layouts with colored splitter handles.
+
+    Applies to existing and lazily created controls, including group boxes,
+    scroll-area content layouts and dialogs. Native title and control sizes
+    remain intact; explicitly zero-margin plot layouts retain their settings.
+    Only splitter backgrounds use custom colors; other painting stays native.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Fusion")
+
+    def pixelMetric(self, metric: QtWidgets.QStyle.PixelMetric,
+                    option: QtWidgets.QStyleOption | None = None,
+                    widget: QtWidgets.QWidget | None = None) -> int:
+        """Return compact layout metrics and delegate other metrics to Fusion.
+
+        Args:
+            metric: Requested Qt style measurement.
+            option: Optional native control style context.
+            widget: Optional widget requesting the measurement.
+
+        Returns:
+            Size in logical pixels; Qt handles display scaling.
+        """
+        if metric in LAYOUT_MARGIN_METRICS:
+            return CONTENT_MARGIN
+        if metric == QtWidgets.QStyle.PixelMetric.PM_LayoutVerticalSpacing:
+            return VERTICAL_SPACING
+        if metric == QtWidgets.QStyle.PixelMetric.PM_LayoutHorizontalSpacing:
+            return HORIZONTAL_SPACING
+        return super().pixelMetric(metric, option, widget)
+
+    def drawControl(self, element: QtWidgets.QStyle.ControlElement,
+                    option: QtWidgets.QStyleOption, painter: QtGui.QPainter,
+                    widget: QtWidgets.QWidget | None = None) -> None:
+        """Highlight splitter handles without changing their native drag behavior.
+
+        Args:
+            element: Native control element being painted.
+            option: Paint rectangle and current hover/pressed state.
+            painter: Active Qt painter for the control.
+            widget: Optional control owning the painted element.
+        """
+        if element == QtWidgets.QStyle.ControlElement.CE_Splitter:
+            fields = cast(_StyleOptionFields, option)
+            if fields.state & QtWidgets.QStyle.StateFlag.State_Sunken:
+                color = SPLITTER_DRAG_COLOR
+            elif fields.state & QtWidgets.QStyle.StateFlag.State_MouseOver:
+                color = SPLITTER_HOVER_COLOR
+            else:
+                color = SPLITTER_COLOR
+            painter.fillRect(fields.rect, QtGui.QColor(color))
+            return
+        super().drawControl(element, option, painter, widget)
 
 
 class JobKind(StrEnum):
@@ -54,6 +141,11 @@ class JobKind(StrEnum):
     LOAD = "load"
     FRAME = "frame"
     EXPORT = "export"
+    BUNDLE = "bundle"
+    OVERLAY_FRAMES = "overlay_frames"
+    FOURIER = "fourier"
+    LAPLACE = "laplace"
+    COMPLEX_MERGE = "complex_merge"
 
 
 class JobSignals(QtCore.QObject):
@@ -139,11 +231,13 @@ class ViewerWindow(QtWidgets.QMainWindow):
         # ── window layout ─────────────────────────────────
         root = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(root)
-        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setContentsMargins(*WINDOW_MARGINS)
         layout.addLayout(self._file_bar())
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         layout.addWidget(split, 1)
         scroll = QtWidgets.QScrollArea()
+        self.control_scroll = scroll
+        self.main_split = split
         scroll.setWidgetResizable(True)
         scroll.setMinimumWidth(360)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -153,7 +247,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
         right = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right)
-        right_layout.setContentsMargins(8, 0, 0, 0)
+        right_layout.setContentsMargins(CONTENT_MARGIN, 0, 0, 0)
         self.vertical = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.tabs = QtWidgets.QTabWidget()
         self.image_view = ImageView()
@@ -172,7 +266,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_area = profile_area
         profile_layout = QtWidgets.QVBoxLayout(profile_area)
         self.profile_layout = profile_layout
-        profile_layout.setContentsMargins(0, 6, 0, 0)
+        profile_layout.setContentsMargins(0, CONTENT_MARGIN, 0, 0)
         self.profile_controls = self._profile_controls()
         profile_layout.addWidget(self.profile_controls)
         self.profile_view = ProfileView()
@@ -205,7 +299,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.path_label, 1)
         self.archive_label = QtWidgets.QLabel("Array")
         layout.addWidget(self.archive_label)
-        self.archive_key = QtWidgets.QComboBox()
+        self.archive_key = NoWheelComboBox()
         self.archive_key.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.archive_key.setMinimumContentsLength(ARRAY_SELECTOR_CHARACTERS)
         self.archive_key.setEnabled(False)
@@ -213,7 +307,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.archive_key)
         self.display_label = QtWidgets.QLabel("Display")
         layout.addWidget(self.display_label)
-        self.display_channel = QtWidgets.QComboBox()
+        self.display_channel = NoWheelComboBox()
         self.display_channel.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.display_channel.setMinimumContentsLength(DISPLAY_SELECTOR_CHARACTERS)
         self.display_channel.setEnabled(False)
@@ -234,16 +328,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         axes_box = QtWidgets.QGroupBox("Data interpretation")
         form = QtWidgets.QFormLayout(axes_box)
         self.axes_box, self.axes_form = axes_box, form
-        self.mode = QtWidgets.QComboBox()
+        self.mode = NoWheelComboBox()
         self.mode.addItem("2D matrix", ViewMode.MATRIX.value)
         self.mode.addItem("1D signal", ViewMode.SIGNAL.value)
         self.mode.addItem("1D XY", ViewMode.XY.value)
         self.mode.addItem("3D point cloud", ViewMode.POINTS.value)
         self.mode.currentIndexChanged.connect(self._mode_changed)
         form.addRow("View as", self.mode)
-        self.x_axis = QtWidgets.QComboBox()
-        self.y_axis = QtWidgets.QComboBox()
-        self.channel_axis = QtWidgets.QComboBox()
+        self.x_axis = NoWheelComboBox()
+        self.y_axis = NoWheelComboBox()
+        self.channel_axis = NoWheelComboBox()
         form.addRow("Column / sample axis", self.x_axis)
         form.addRow("Row axis", self.y_axis)
         form.addRow("Channel axis", self.channel_axis)
@@ -259,13 +353,13 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.slice_box)
         self.coordinate_box = QtWidgets.QGroupBox("Coordinate layout")
         coordinate_form = QtWidgets.QFormLayout(self.coordinate_box)
-        self.coordinate_axis = QtWidgets.QComboBox()
+        self.coordinate_axis = NoWheelComboBox()
         self.coordinate_axis.currentIndexChanged.connect(self._coordinate_layout_changed)
         coordinate_form.addRow("Coordinates stored in", self.coordinate_axis)
         self.coordinate_columns: list[QtWidgets.QComboBox] = []
         self.coordinate_labels: list[QtWidgets.QLabel] = []
         for name in ("X", "Y", "Z"):
-            combo = QtWidgets.QComboBox()
+            combo = NoWheelComboBox()
             combo.currentIndexChanged.connect(self._schedule_frame)
             label = QtWidgets.QLabel(name)
             coordinate_form.addRow(label, combo)
@@ -292,7 +386,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         bounds_row.addWidget(QtWidgets.QLabel("Maximum"))
         bounds_row.addWidget(self.filter_high, 1)
         filters.addRow(bounds_row)
-        self.filter_mode = QtWidgets.QComboBox()
+        self.filter_mode = NoWheelComboBox()
         self.filter_mode.addItems([mode.value for mode in FilterMode])
         self.filter_mode.currentIndexChanged.connect(self._schedule_frame)
         filters.addRow("Outside bounds", self.filter_mode)
@@ -321,7 +415,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         display_box = QtWidgets.QGroupBox("Color and appearance")
         display = QtWidgets.QFormLayout(display_box)
         self.display_box, self.display_form = display_box, display
-        self.colormap = QtWidgets.QComboBox()
+        self.db_floor = QtWidgets.QDoubleSpinBox()
+        self.db_floor.setRange(-600, -1)
+        self.db_floor.setValue(-120)
+        self.db_floor.setSuffix(" dB")
+        self.db_floor.setKeyboardTracking(False)
+        self.db_floor.setToolTip("Magnitude relative to the selected region's peak (0 dB). Values below this floor are displayed at the floor.")
+        self.db_floor.valueChanged.connect(self._schedule_frame)
+        display.addRow("Magnitude floor", self.db_floor)
+        display.setRowVisible(self.db_floor, False)
+        self.colormap = NoWheelComboBox()
         self.colormap.addItems(COLORMAPS)
         self.colormap.currentIndexChanged.connect(self._presentation_changed)
         display.addRow("Colormap", self.colormap)
@@ -332,7 +435,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         display.addRow("Color maximum", self.color_high)
         for entry in (self.color_low, self.color_high):
             entry.editingFinished.connect(self._presentation_changed)
-        self.theme = QtWidgets.QComboBox()
+        self.theme = NoWheelComboBox()
         self.theme.addItems(["Dark", "Light"])
         self.theme.setCurrentIndex(1)
         self.theme.currentIndexChanged.connect(self._theme_changed)
@@ -435,7 +538,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         """Build the single export entry point, using the applied viewer settings."""
         self.export_box = QtWidgets.QGroupBox("Export")
         self.export_form = QtWidgets.QFormLayout(self.export_box)
-        self.export_target = QtWidgets.QComboBox()
+        self.export_target = NoWheelComboBox()
         self.export_target.addItems([target.value for target in ExportTarget])
         self.export_form.addRow("Data", self.export_target)
         self.export_xy = QtWidgets.QCheckBox("Apply X / Y crop")
@@ -444,13 +547,14 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.export_z = QtWidgets.QCheckBox("Apply value bounds (Z / signal Y)")
         self.export_z.setChecked(True)
         self.export_form.addRow(self.export_z)
-        self.export_complex = QtWidgets.QCheckBox("Keep complex values (crop only)")
-        self.export_complex.setToolTip("Preserve real and imaginary parts; ordered value bounds require a real display component.")
+        self.export_complex = QtWidgets.QCheckBox("Export complex matrix (real + imaginary)")
+        self.export_complex.setChecked(True)
+        self.export_complex.setToolTip("Checked: preserve both source components, with optional XY crop/slice. Unchecked: export only the displayed component. Ordered value bounds require a real display component.")
         self.export_form.addRow(self.export_complex)
         self.export_complex.hide()
-        self.export_layout = QtWidgets.QComboBox()
+        self.export_layout = NoWheelComboBox()
         self.export_form.addRow("Layout", self.export_layout)
-        self.export_format = QtWidgets.QComboBox()
+        self.export_format = NoWheelComboBox()
         for format_ in ExportFormat:
             self.export_format.addItem(format_.value.upper(), format_.value)
         self.export_form.addRow("Format", self.export_format)
@@ -484,7 +588,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.export_target.setCurrentText(previous if previous in targets else ExportTarget.RESULT.value)
         target = ExportTarget(self.export_target.currentText())
         original = target == ExportTarget.ORIGINAL
-        complex_input = np.iscomplexobj(document.array)
+        complex_input = document.is_complex
         keep_complex = complex_input and (original or self.export_complex.isChecked())
         self.export_xy.setEnabled(not original)
         self.export_z.setEnabled(not original and not keep_complex)
@@ -515,7 +619,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if keep_complex and not original:
             hint = "Full-resolution complex values, with optional XY crop. Value bounds are not applied."
         if complex_input:
-            hint = f"{hint}\n" + ("Complex values are retained." if keep_complex else
+            hint = f"{hint}\n" + ("Complex source detected: NPY / MAT retain both real and imaginary parts in one matrix." if keep_complex else
                                     f"Exports {selection.component.value}; Original source matrix retains complex values.")
         if complex_source and text_format:
             hint = f"{hint}\nCreates two files: *_real.{format_.value} and *_imag.{format_.value}."
@@ -578,7 +682,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         selector = QtWidgets.QHBoxLayout()
-        self.profile_direction = QtWidgets.QComboBox()
+        self.profile_direction = NoWheelComboBox()
         self.profile_direction.addItems(["Row", "Column"])
         self.profile_direction.currentIndexChanged.connect(self._profile_direction_changed)
         self.profile_index = QtWidgets.QSpinBox()
@@ -606,7 +710,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_color_3d_button.clicked.connect(self._choose_profile_color_3d)
         appearance.addWidget(self.profile_color_2d_button)
         appearance.addWidget(self.profile_color_3d_button)
-        self.profile_style = QtWidgets.QComboBox()
+        self.profile_style = NoWheelComboBox()
         self.profile_style.addItems([style.value for style in ProfileStyle])
         self.profile_style.currentIndexChanged.connect(self._profile_appearance_changed)
         appearance.addWidget(self.profile_style)
@@ -669,6 +773,14 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._profile_selected = True
         self._update_profile()
 
+    def _export_profile_index(self) -> int:
+        """Return the selected source index, independently of display alignment."""
+        return self.profile_index.value()
+
+    def _export_stem(self, suggested: str) -> str:
+        """Allow the workspace to include a session alias in the default name."""
+        return suggested
+
     def _save_export(self) -> None:
         """Capture export choices, confirm actual destinations, and save in a worker.
 
@@ -682,12 +794,13 @@ class ViewerWindow(QtWidgets.QMainWindow):
         options = ExportOptions(ExportTarget(self.export_target.currentText()),
                                 ExportLayout(self.export_layout.currentText()),
                                 self.export_xy.isChecked(), self.export_z.isChecked() and self.export_z.isEnabled(),
-                                self.profile_direction.currentIndex() == 0, self.profile_index.value(),
+                                self.profile_direction.currentIndex() == 0, self._export_profile_index(),
                                 self.export_complex.isChecked())
         if options.target == ExportTarget.SLICE and not self._profile_selected:
             return
         try:
             snapshot = prepare_export(document, selection, frame, options)
+            snapshot = replace(snapshot, stem=self._export_stem(snapshot.stem))
         except (ValueError, MemoryError) as exc:
             QtWidgets.QMessageBox.warning(self, "Cannot export array", str(exc))
             return
@@ -699,7 +812,56 @@ class ViewerWindow(QtWidgets.QMainWindow):
         while any(path.exists() for path in output_paths(default_path, snapshot.values, format_)):
             default_path = directory / f"{snapshot.stem}_{suffix}.{format_.value}"
             suffix += 1
-        dialog = QtWidgets.QFileDialog(self, "Export array", str(default_path),
+        defaults = output_paths(default_path, snapshot.values, format_)
+        choices = self._choose_export_files(defaults, format_, "Export array")
+        if choices is None:
+            return
+        destinations = tuple(path for path, _ in choices)
+        if not self._confirm_export_destinations(destinations):
+            return
+        self._export_directory = destinations[-1].parent
+        self._export_busy = True
+        self.export_box.setEnabled(False)
+        self.statusBar().showMessage(f"Exporting {snapshot.values.shape} as {format_.value.upper()}…")
+        arrays = (snapshot.values.real, snapshot.values.imag) if len(choices) == 2 else (snapshot.values,)
+        outputs = tuple((array, path, selected_format)
+                        for array, (path, selected_format) in zip(arrays, choices, strict=True))
+        self._submit(JobKind.EXPORT, lambda: self._write_arrays(outputs))
+
+    def _choose_export_files(self, defaults: tuple[Path, ...], format_: ExportFormat,
+                             title: str) -> tuple[tuple[Path, ExportFormat], ...] | None:
+        """Collect distinct destinations sequentially; cancellation cancels the batch.
+
+        Each proposed name avoids existing files and earlier choices. No writes
+        occur here. CSV/TXT extensions may be selected independently per file.
+        """
+        choices: list[tuple[Path, ExportFormat]] = []
+        reserved: set[Path] = set()
+        directory = defaults[0].parent if defaults else Path.cwd()
+        for index, default in enumerate(defaults):
+            proposal = directory / default.name
+            suffix = 2
+            while proposal.exists() or proposal.resolve() in reserved:
+                proposal = directory / f"{default.stem}_{suffix}{default.suffix}"
+                suffix += 1
+            while True:
+                chosen = self._choose_export_destination(proposal, format_, f"{title} ({index + 1}/{len(defaults)}) — {default.stem}")
+                if chosen is None:
+                    return None
+                path, selected_format = chosen
+                resolved = path.resolve()
+                if resolved not in reserved:
+                    break
+                QtWidgets.QMessageBox.warning(self, "Duplicate export path", "Each matrix needs a different output filename.")
+            reserved.add(resolved)
+            choices.append((path, selected_format))
+            directory = path.parent
+        return tuple(choices)
+
+    def _choose_export_destination(self, default_path: Path, format_: ExportFormat,
+                                   title: str) -> tuple[Path, ExportFormat] | None:
+        """Ask for one filename; cancellation or an invalid extension writes nothing."""
+        dialog = QtWidgets.QFileDialog(self, title, str(default_path),
                                       f"{format_.value.upper()} files (*.{format_.value})")
         dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
         dialog.setFileMode(QtWidgets.QFileDialog.FileMode.AnyFile)
@@ -709,7 +871,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         paths = dialog.selectedFiles() if accepted else []
         dialog.deleteLater()
         if not paths:
-            return
+            return None
         target = Path(paths[0])
         # CSV/TXT are interchangeable text extensions; other mismatches are explicit.
         if target.suffix.lower() in (".csv", ".txt") and format_ in (ExportFormat.CSV, ExportFormat.TXT):
@@ -717,8 +879,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         elif target.suffix.lower() != f".{format_.value}":
             QtWidgets.QMessageBox.warning(self, "Cannot export array",
                                           f"Choose a .{format_.value} filename or change the export format.")
-            return
-        destinations = output_paths(target, snapshot.values, format_)
+            return None
+        return target, format_
+
+    def _confirm_export_destinations(self, destinations: tuple[Path, ...]) -> bool:
+        """Confirm every existing destination together before staging any files."""
         existing = [str(path) for path in destinations if path.exists()]
         if existing:
             message = "Replace the following files?\n\n" + "\n".join(existing)
@@ -726,12 +891,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
                 QtWidgets.QMessageBox.StandardButton.No)
             if answer != QtWidgets.QMessageBox.StandardButton.Yes:
-                return
-        self._export_directory = target.parent
-        self._export_busy = True
-        self.export_box.setEnabled(False)
-        self.statusBar().showMessage(f"Exporting {snapshot.values.shape} as {format_.value.upper()}…")
-        self._submit(JobKind.EXPORT, lambda: self._write_export(snapshot.values, destinations, format_))
+                return False
+        return True
 
     @staticmethod
     def _write_export(values: Array, destinations: tuple[Path, ...], format_: ExportFormat) -> str:
@@ -750,11 +911,36 @@ class ViewerWindow(QtWidgets.QMainWindow):
             ValueError: The selected format cannot represent this array.
         """
         arrays = (values.real, values.imag) if len(destinations) == 2 else (values,)
+        return ViewerWindow._write_arrays(tuple((array, path, format_)
+                                               for path, array in zip(destinations, arrays, strict=True)))
+
+    @staticmethod
+    def _write_arrays(outputs: tuple[tuple[Array, Path, ExportFormat], ...]) -> str:
+        """Write already-confirmed arrays, allowing CSV/TXT choices per destination."""
+        ViewerWindow._write_payloads((path, serialize_array(array, format_)) for array, path, format_ in outputs)
+        saved = ", ".join(f"{path} [{array.shape}, {array.dtype}]" for array, path, _ in outputs)
+        return f"Saved: {saved}"
+
+    @staticmethod
+    def _write_payloads(payloads: Iterable[tuple[Path, bytes]]) -> None:
+        """Stage all files before committing and report any partial commit.
+
+        Args:
+            payloads: Lazily serialized destinations and complete file contents.
+
+        Raises:
+            OSError: Staging or commit failure; already committed paths are listed.
+            ValueError: A serializer rejected the requested format.
+
+        Side effects:
+            Replaces the previously confirmed destination files on success.
+        """
         staged: list[QtCore.QSaveFile] = []
+        destinations: list[Path] = []
         committed: list[Path] = []
         try:
-            for path, array in zip(destinations, arrays, strict=True):
-                payload = serialize_array(array, format_)
+            for path, payload in payloads:
+                destinations.append(path)
                 output = QtCore.QSaveFile(str(path))
                 staged.append(output)
                 if not output.open(QtCore.QIODevice.OpenModeFlag.WriteOnly):
@@ -772,8 +958,6 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 saved = ", ".join(str(path) for path in committed)
                 raise OSError(f"Export incomplete. Already saved: {saved}. Failure: {exc}") from exc
             raise
-        saved = ", ".join(str(path) for path in destinations)
-        return f"Saved: {saved} | Shape: {values.shape} | Dtype: {values.dtype}"
 
     def open_path(self, path: Path, key: str | None = None) -> None:
         """Load a file asynchronously, leaving the current view intact on failure.
@@ -941,7 +1125,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 self.display_channel.setEnabled(True)
                 self.display_channel.setToolTip(f"Choose an image channel or combination. Current: {document.key}")
             elif np.iscomplexobj(document.array):
-                for item in (Component.REAL, Component.IMAGINARY, Component.PHASE, Component.PHASE_DEG, Component.MAGNITUDE):
+                for item in Component:
                     self.display_channel.addItem(item.value, item.value)
                 self.display_channel.setCurrentIndex(self.display_channel.findData(component.value))
                 self.display_channel.setEnabled(True)
@@ -981,6 +1165,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.y_axis.setEnabled(selection.mode == ViewMode.MATRIX)
         if np.iscomplexobj(document.array):
             self.display_channel.setCurrentIndex(self.display_channel.findData(selection.component.value))
+        with QtCore.QSignalBlocker(self.db_floor):
+            self.db_floor.setValue(selection.db_floor)
         coordinates = selection.mode in (ViewMode.XY, ViewMode.POINTS)
         self.coordinate_box.setVisible(coordinates)
         if coordinates:
@@ -1106,6 +1292,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         for field in (self.colormap, self.color_low, self.color_high):
             self.display_form.setRowVisible(field, not signal)
         self.display_box.setTitle("Plot appearance" if signal else "Color and appearance")
+        self.display_form.setRowVisible(self.db_floor, np.iscomplexobj(document.array)
+                                        and self.display_channel.currentData() == Component.MAGNITUDE_DB)
         self.reset_limits_button.setText("Reset value bounds" if signal else "Reset filter / color limits")
         self.surface_controls.setVisible(not signal)
         self.filter_hint.setText(
@@ -1129,7 +1317,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         return Selection(ViewMode.MATRIX if matrix else ViewMode.SIGNAL,
                          self.x_axis.currentIndex(), self.y_axis.currentIndex() if matrix else None,
                          channel_axis if channel_axis >= 0 else None, self.channel.value(), slices,
-                         Component(self.display_channel.currentData()) if np.iscomplexobj(self.document.array) else Component.REAL)
+                         Component(self.display_channel.currentData()) if np.iscomplexobj(self.document.array) else Component.REAL,
+                         db_floor=self.db_floor.value())
 
     @staticmethod
     def _bound(entry: QtWidgets.QLineEdit) -> float | None:
@@ -1194,18 +1383,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         matrix = selection.mode == ViewMode.MATRIX
         cloud = selection.mode == ViewMode.POINTS
-        self._export_ready = True
-        self.export_box.setEnabled(not self._export_busy)
-        self._sync_export_controls()
+        self._sync_frame_controls()
         self._set_view_layout(selection.mode)
         self.profile_controls.setVisible(matrix)
         self.profile_controls.setEnabled(matrix)
-        self.surface_controls.setEnabled(matrix or cloud)
-        self.max_edge.setEnabled(matrix)
-        self.max_points.setEnabled(cloud)
-        self.point_size.setEnabled(cloud)
-        labels = self.document.csv_headers if self.document is not None and selection.x_axis == 1 else ()
-        self.raw_view.set_frame(frame, labels, image_source=self.document.image_source if self.document is not None else None)
+        self._sync_raw_view()
         self._surface_dirty = True
         self._surface_reset |= reset
         self._presentation_changed(reset=reset)
@@ -1214,11 +1396,28 @@ class ViewerWindow(QtWidgets.QMainWindow):
             if reset:
                 self.profile_view.reset_view()
         elif not cloud:
-            self.profile_view.set_data(frame.scalar, frame.valid, "XY signal" if frame.x_values is not None else "Signal", reset, x_start=frame.x_start,
+            self.profile_view.set_data(frame.scalar, frame.valid, "XY signal" if frame.xy else "Signal", reset, x_start=frame.x_start,
                                        display_values=frame.display_scalar, clipped=frame.clip_kind != 0,
                                        limits=frame.value_limits, x_values=frame.x_values)
+            self._profile_axis_label(frame.x_grid)
         else:
             self.profile_view.clear_selection()
+
+    def _sync_frame_controls(self) -> None:
+        """Refresh settings/export availability without drawing a data view."""
+        frame, selection = self.frame, self.frame_selection
+        if frame is None or selection is None:
+            return
+        matrix = selection.mode == ViewMode.MATRIX
+        cloud = selection.mode == ViewMode.POINTS
+        self._export_ready = True
+        self.export_box.setEnabled(not self._export_busy)
+        self._sync_export_controls()
+        self._refresh_control_visibility()
+        self.surface_controls.setEnabled(matrix or cloud)
+        self.max_edge.setEnabled(matrix)
+        self.max_points.setEnabled(cloud)
+        self.point_size.setEnabled(cloud)
         crop_text = f"X: {frame.x_start}..{frame.x_start + frame.scalar.shape[-1] - 1}"
         if matrix:
             crop_text = f"{crop_text}; Y: {frame.y_start}..{frame.y_start + frame.scalar.shape[0] - 1}"
@@ -1229,6 +1428,22 @@ class ViewerWindow(QtWidgets.QMainWindow):
             + (f" | Clamped: {np.count_nonzero(frame.clip_kind):,}" if np.any(frame.clip_kind) else "")
             + (" | Image colors; surface height uses grayscale" if frame.composite else "")
         )
+
+    def _sync_raw_view(self) -> None:
+        """Display the base window's single source; workspaces choose their own."""
+        frame, selection = self.frame, self.frame_selection
+        self.raw_view.set_matrices((self._raw_source_name(),) if self.document is not None else (),
+                                   0 if self.document is not None else -1)
+        if frame is None or selection is None:
+            self.raw_view.clear()
+            return
+        labels = self.document.csv_headers if self.document is not None and selection.x_axis == 1 else ()
+        self.raw_view.set_frame(frame, labels, image_source=self.document.image_source if self.document is not None else None,
+                                source_name=self._raw_source_name())
+
+    def _raw_source_name(self) -> str:
+        document = self.document
+        return (f"{document.path.name} / {document.key}" if document.key else document.path.name) if document is not None else ""
 
     def _set_view_layout(self, mode: ViewMode) -> None:
         """Expose flat signal/derivative tabs or restore the linked matrix split."""
@@ -1254,7 +1469,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 self.primary_view.setCurrentWidget(self.image_view)
                 self.secondary_view.setCurrentWidget(self.surface_view)
                 self.vertical.addWidget(self.profile_area)
-                self.profile_layout.setContentsMargins(0, 6, 0, 0)
+                self.profile_layout.setContentsMargins(0, CONTENT_MARGIN, 0, 0)
             self.tabs.setTabText(0, "1D plot" if signal else "2D image")
             self.tabs.setTabText(1, "1D Derivative" if signal else "3D point cloud" if cloud else "3D surface")
             self.tabs.setTabVisible(0, not cloud)
@@ -1320,7 +1535,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.height_slider.setEnabled(not automatic)
         if automatic and self.frame is not None and self.frame.scalar.ndim == 2:
             span = self.frame.limits[1] - self.frame.limits[0]
-            value = max(self.frame.scalar.shape) * 0.3 / span
+            frame = self.frame
+            extent = max(frame.scalar.shape[1] * frame.x_mapping.scale,
+                         frame.scalar.shape[0] * frame.y_mapping.scale)
+            value = extent * 0.3 / span
             with QtCore.QSignalBlocker(self.height_scale):
                 self.height_scale.setValue(value)
         elif automatic and self.frame is not None and self.frame.point_coordinates is not None:
@@ -1405,6 +1623,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         valid = frame.valid[local_index, :] if row else frame.valid[:, local_index]
         shown = frame.display_scalar[local_index, :] if row else frame.display_scalar[:, local_index]
         clipped = (frame.clip_kind[local_index, :] if row else frame.clip_kind[:, local_index]) != 0
+        grid = frame.x_grid if row else frame.y_grid
+        start = frame.x_start if row else frame.y_start
         channel_values: RealArray | None = None
         channel_names: tuple[ImageMember, ...] = ()
         document = self.document
@@ -1425,10 +1645,18 @@ class ViewerWindow(QtWidgets.QMainWindow):
                                     reset=self._reset_pending, x_start=frame.x_start if row else frame.y_start,
                                     display_values=shown, clipped=clipped, limits=frame.value_limits,
                                     channel_values=channel_values, channel_names=channel_names,
+                                    x_values=grid.values(start, len(values)) if grid is not None else None,
                                     alpha_weighted=bool(channel_names) and document is not None and document.key == ImageMember.RGBA_COLOR)
+        self._profile_axis_label(grid)
         self.image_view.set_profile(row, index)
         if self.tabs.currentIndex() == 1 and not self._surface_dirty:
             self.surface_view.set_profile(row, index)
+
+    def _profile_axis_label(self, grid: "AxisCoordinates | None") -> None:
+        for pane in (self.profile_view.signal_pane, self.profile_view.derivative_pane):
+            pane.plot_item.getAxis("bottom").enableAutoSIPrefix(grid is None)
+            if grid is not None:
+                pane.plot_item.setLabel("bottom", grid.label())
 
     def _projection_changed(self) -> None:
         if self.parallel.isChecked():
@@ -1516,8 +1744,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         """
         urls = event.mimeData().urls()
         if urls and urls[0].isLocalFile():
-            self.open_path(Path(urls[0].toLocalFile()))
+            self._open_dropped_path(Path(urls[0].toLocalFile()))
             event.acceptProposedAction()
+
+    def _open_dropped_path(self, path: Path) -> None:
+        self.open_path(path)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Stop preparation and release VTK before closing the Qt window.
@@ -1556,8 +1787,9 @@ def run(path: Path | None, key: str | None, mode: str | None,
         application = existing
     else:
         application = QtWidgets.QApplication([sys.argv[0]])
-    application.setStyle("Fusion")
-    window = ViewerWindow(max_edge, mode, channel_axis)
+    application.setStyle(CompactFusionStyle())
+    from .workspace_window import WorkspaceWindow
+    window = WorkspaceWindow(max_edge, mode, channel_axis)
     window.show()
     if path is not None:
         QtCore.QTimer.singleShot(0, lambda: window.open_path(path, key))
