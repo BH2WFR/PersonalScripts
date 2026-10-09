@@ -6,6 +6,8 @@ and differentiating; the independent A curve retains original opacity samples.
 Actual derivative calculations print their source, channel, indices and timing;
 cached tab revisits do not emit calculation diagnostics.
 The tab bar can be hidden when the standalone viewer supplies the page tabs.
+The owner may freeze Y before slice changes without changing X zoom or triggering
+hidden derivatives; empty panes retain their first automatic fit.
 
 Requirements: PySide6, pyqtgraph and numpy.
 Usage: embedded below matrix views or used alone for signal data.
@@ -587,6 +589,21 @@ class ProfileView(QtWidgets.QWidget):
         """Fit the current tab without calculating an unopened derivative."""
         pane = self.signal_pane if self.tabs.currentIndex() == 0 else self.derivative_pane
         pane.view_box.enableAutoRange()
+
+    def set_y_auto_range(self, enabled: bool) -> None:
+        """Control Y fitting before a slice update without changing X zoom.
+
+        Args:
+            enabled: True refits Y as samples change; False retains the current
+                signal and derivative Y ranges. Empty/unopened panes keep their
+                initial auto fit until they have plotted data.
+
+        Side effects:
+            Updates view-box flags only; does not compute hidden derivatives.
+        """
+        for pane in (self.signal_pane, self.derivative_pane):
+            if enabled or pane.view_box.childrenBounds()[1] is not None:
+                pane.view_box.enableAutoRange(axis=ViewBox.YAxis, enable=enabled)
 
     def set_theme(self, dark: bool) -> None:
         """Set plot background and axis colors.

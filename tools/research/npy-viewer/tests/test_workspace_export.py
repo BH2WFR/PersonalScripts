@@ -89,19 +89,19 @@ class WorkspaceExportTests(unittest.TestCase):
 
     def test_rename_and_complex_channel_choices(self) -> None:
         document = model.Document(Path("package.npz"), np.array([1+2j, 2+4j]), key="wave")
-        selection = replace(model.default_selection(document), component=model.Component.PHASE_DEG)
+        selection = replace(model.default_selection(document), component=model.Component.PHASE)
         entry = workspace.MatrixEntry(1, document, selection, "red", name="Phase sample")
         self.assertEqual(entry.label, "Phase sample")
         self.assertEqual(entry.source_label, "package.npz :: wave")
         choices = workspace.channel_choices(entry)
-        self.assertEqual(len(choices), len(model.Component))
-        self.assertEqual(workspace.active_channel(entry).label, "Phase (deg)")
+        self.assertEqual([choice.label for choice in choices], ["Real", "Imaginary", "Magnitude", "Phase (rad)", "Magnitude (dB)"])
+        self.assertEqual(workspace.active_channel(entry).label, "Phase (rad)")
         self.assertEqual(visible.default_stem(entry, exporting.ExportTarget.RESULT, preserve_complex=True),
                          "Phase_sample_complex_result")
         frame = model.prepare_frame(document, selection, model.Limits(), 0)
         layer = workspace.RenderLayer(1, entry.label, frame, "red", 1)
         snapshot = visible.prepare_displayed_export(entry, layer, exporting.ExportTarget.RESULT)
-        np.testing.assert_allclose(snapshot.values[:, 1], np.angle(document.array, deg=True))
+        np.testing.assert_allclose(snapshot.values[:, 1], np.angle(document.array))
 
 
 if __name__ == "__main__":

@@ -48,6 +48,58 @@ class WorkspaceTests(unittest.TestCase):
         self.assertNotEqual(workspace.family(model.ViewMode.SIGNAL), workspace.family(model.ViewMode.MATRIX))
         self.assertNotEqual(workspace.family(model.ViewMode.MATRIX), workspace.family(model.ViewMode.POINTS))
 
+    def test_height_bounds_use_crop_and_bounds_without_color_padding(self) -> None:
+        source = np.array([[np.nan, -50, 3, 100], [np.inf, -20, 8, 200]])
+        document = model.Document(Path("matrix.npy"), source)
+        selection = model.default_selection(document)
+        frame = model.prepare_frame(document, selection, model.Limits(0, 10, model.FilterMode.CLAMP), 2,
+                                    model.Crop(1, 2, 0, 1))
+        self.assertEqual(workspace.height_bounds(frame, 3), (0, 24))
+        hidden = model.prepare_frame(document, selection, model.Limits(0, 10), 2)
+        self.assertEqual(workspace.height_bounds(hidden, 3), (9, 24))
+        empty = model.prepare_frame(document, selection, model.Limits(500, 600), 2)
+        self.assertEqual(workspace.height_bounds(empty, 3), (0, 0))
+        constant = model.Document(Path("constant.npy"), np.full((4, 5), 7, dtype=np.int16))
+        frame = model.prepare_frame(constant, model.default_selection(constant), model.Limits(), 2)
+        self.assertNotEqual(frame.limits, (7, 7))
+        self.assertEqual(workspace.height_bounds(frame, 2), (14, 14))
+
+    def test_z_alignment_follows_height_without_changing_slice_data(self) -> None:
+        document = model.Document(Path("matrix.npy"), np.arange(20.).reshape(4, 5))
+        frame = model.prepare_frame(document, model.default_selection(document), model.Limits(), 2)
+        layer = workspace.RenderLayer(1, "matrix", frame, "red", 0.5, height=3)
+        mapping = workspace.align_axis(workspace.height_bounds(frame, 3), (10, 20), workspace.Alignment.STRETCH)
+        aligned = replace(layer, z=mapping)
+        self.assertAlmostEqual(aligned.z_mapping.forward(0), 10)
+        self.assertAlmostEqual(aligned.z_mapping.forward(19), 20)
+        self.assertNotEqual(layer.signature, aligned.signature)
+        original, moved = workspace.profile_series(layer, True, 2), workspace.profile_series(aligned, True, 2)
+        self.assertEqual(original.key, moved.key)
+        np.testing.assert_array_equal(moved.shown, document.array[2])
+        np.testing.assert_array_equal(moved.values, original.values)
+
+    def test_point_height_bounds_ignore_invalid_coordinates(self) -> None:
+        document = model.Document(Path("points.npy"), np.array([[1., 2, -100], [np.nan, 2, 500],
+                                                               [3, 4, 100], [5, 6, 50]]))
+        frame = model.prepare_frame(document, model.default_selection(document, model.ViewMode.POINTS),
+                                    model.Limits(-20, 30, model.FilterMode.CLAMP), 2)
+        self.assertEqual(workspace.height_bounds(frame, 2), (-40, 60))
+
+    def test_overlay_auto_height_includes_unbounded_nonreference(self) -> None:
+        entries = []
+        for uid, (low, high) in enumerate(((-5000, 5000), (-13_000_000, 13_000_000)), 1):
+            document = model.Document(Path(f"channel-{uid}.npy"), np.linspace(low, high, 20).reshape(4, 5))
+            selection = model.default_selection(document)
+            frame = model.prepare_frame(document, selection, model.Limits(), 2)
+            entries.append(workspace.MatrixEntry(uid, document, selection, "red", frame=frame))
+        scale = workspace.overlay_auto_height(entries, entries[0])
+        self.assertAlmostEqual(scale * 26_000_000, 1.5)
+        self.assertEqual(scale, workspace.overlay_auto_height(entries, entries[1]))
+        entries[1].align_z = workspace.Alignment.STRETCH
+        self.assertAlmostEqual(workspace.overlay_auto_height(entries, entries[0]) * 10_000, 1.5)
+        entries[1].settings["auto_height"] = False
+        self.assertAlmostEqual(workspace.overlay_auto_height(entries, entries[0]) * 10_000, 1.5)
+
     def test_aligned_slice_keeps_source_values_and_indices(self) -> None:
         source = np.arange(20.).reshape(4, 5)
         document = model.Document(Path("matrix.npy"), source)

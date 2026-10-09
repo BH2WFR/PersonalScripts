@@ -67,7 +67,7 @@ def run_merge(first: MergeInput, second: MergeInput, mode: MergeMode,
         samples remain nonfinite gaps rather than becoming zeros.
 
     Raises:
-        ValueError: Unequal shapes/grids, negative or dB magnitude, point clouds,
+        ValueError: Unequal shapes/grids, negative magnitude, point clouds,
             XY coordinates that are nonuniform/duplicate, or integer precision
             that cannot fit the chosen complex dtype.
         MemoryError: Insufficient memory for the full-resolution output.

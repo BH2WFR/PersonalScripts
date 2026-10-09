@@ -97,10 +97,11 @@ class TransformRecord:
 
 @dataclass(frozen=True)
 class TransformResult:
-    """Owned derived document and its proposed session name."""
+    """Owned derived document, proposed name and optional explicit interpretation."""
 
     document: Document
     name: str
+    selection: Selection | None = None
 
 
 @dataclass(frozen=True)

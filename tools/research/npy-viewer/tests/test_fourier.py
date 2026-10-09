@@ -15,6 +15,7 @@ from scipy.signal.windows import hann
 from test_data_model import model
 
 fourier = importlib.import_module("personal_npy_viewer.fourier")
+conversion = importlib.import_module("personal_npy_viewer.data_conversion")
 coordinates = importlib.import_module("personal_npy_viewer.coordinates")
 exporting = importlib.import_module("personal_npy_viewer.exporting")
 workspace = importlib.import_module("personal_npy_viewer.workspace")
@@ -170,11 +171,13 @@ class FourierTests(unittest.TestCase):
 
     def test_db_floor_and_zero_spectrum(self) -> None:
         document = model.Document(Path("spectrum.npy"), np.array([1, 0.1, 0, np.nan], dtype=np.complex128))
-        selection = replace(model.default_selection(document), component=model.Component.MAGNITUDE_DB, db_floor=-80)
-        frame = model.prepare_frame(document, selection, model.Limits(), 0)
-        np.testing.assert_allclose(frame.scalar, [0, -20, -80, np.nan], equal_nan=True)
-        zero = model.prepare_frame(replace(document, array=np.zeros(4, dtype=np.complex128)), selection, model.Limits(), 0)
-        np.testing.assert_array_equal(zero.scalar, [-80] * 4)
+        selection = model.default_selection(document)
+        options = conversion.ConversionOptions(full_complex=True, db_floor=-80)
+        result = conversion.run_conversion(document, selection, model.Crop(), model.Limits(), options, "Spectrum")
+        np.testing.assert_allclose(result.document.array, [0, -20, -80, np.nan], equal_nan=True)
+        zero = conversion.run_conversion(replace(document, array=np.zeros(4, dtype=np.complex128)), selection,
+                                         model.Crop(), model.Limits(), options, "Zero spectrum")
+        np.testing.assert_array_equal(zero.document.array, [-80] * 4)
 
     def test_paired_inverse_rejects_cropped_frequency_axis(self) -> None:
         spectrum = self.transform(np.arange(12.))

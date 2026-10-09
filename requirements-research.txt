@@ -5,6 +5,9 @@ matplotlib
 numpy
 scipy
 h5py
+openpyxl
+# Legacy Excel .xls input
+xlrd
 Pillow
 opencv-python
 PySide6

@@ -217,7 +217,7 @@ class FourierDialog(QtWidgets.QDialog):
              "External IFFT: Δ is the frequency-bin spacing. Choose the input order and matching normalization.\n" if inverse else
              "FFT produces a centered, complete complex spectrum. Δ is the source sampling interval; use s for time or pixel for images.\n")
             + "The source is unchanged. XY input is sorted by X and must be unique and uniformly sampled. "
-            "Source crop starts define the phase origin. NPY/MAT/CSV/TXT array exports do not store transform metadata.")
+            "Source crop starts define the phase origin. NPY/MAT/XLSX/CSV/TXT array exports do not store transform metadata.")
         if paired and record is not None:
             self.note.setToolTip(record.description)
         self._axes_changed()

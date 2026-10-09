@@ -45,6 +45,9 @@ class ImageView(QtWidgets.QWidget):
         self.graphics = pg.GraphicsLayoutWidget()
         self.graphics.ci.layout.setContentsMargins(*(PLOT_CONTENT_MARGIN,) * 4)
         native_view = pyside_graphics_view(self.graphics)
+        # Transparent layers and a moving InfiniteLine need their old pixels
+        # repainted together. This is event-driven; cached images are reused.
+        native_view.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         layout.addWidget(native_view)
         self.view_box = ViewBox()
         self.plot = PlotItem(viewBox=self.view_box)
@@ -165,7 +168,9 @@ class ImageView(QtWidgets.QWidget):
                 if frame.clip_outline is not None:
                     cap = QtGui.QColor(layer.clip_color)
                     rgba[frame.clip_outline] = (cap.red(), cap.green(), cap.blue(), 255)
-                item.setImage(rgba, autoLevels=False)
+                # autoDownsample averages uint8 RGBA into floats. Explicit byte
+                # levels remain valid both before and after that conversion.
+                item.setImage(rgba, autoLevels=False, levels=(0, 255))
                 self._layer_keys[layer.uid] = image_key
             height, width = frame.scalar.shape
             xm, ym = frame.x_mapping.then(layer.x), frame.y_mapping.then(layer.y)
@@ -221,7 +226,7 @@ class ImageView(QtWidgets.QWidget):
         rgba = np.zeros((*frame.scalar.shape, 4), dtype=np.uint8)
         color = self.clip_color
         rgba[frame.clip_outline] = (color.red(), color.green(), color.blue(), color.alpha())
-        self.clip_overlay.setImage(rgba, autoLevels=False)
+        self.clip_overlay.setImage(rgba, autoLevels=False, levels=(0, 255))
         h, w = frame.scalar.shape
         self.clip_overlay.setRect(frame.x_mapping.forward(frame.x_start - 0.5), frame.y_mapping.forward(frame.y_start - 0.5),
                                   w * frame.x_mapping.scale, h * frame.y_mapping.scale)

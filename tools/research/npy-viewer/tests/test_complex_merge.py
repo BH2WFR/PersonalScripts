@@ -61,9 +61,12 @@ class ComplexMergeTests(unittest.TestCase):
         imag = merge.MergeInput(doc, replace(selection, component=model.Component.IMAGINARY), "Imaginary")
         np.testing.assert_array_equal(merge.run_merge(real, imag, merge.MergeMode.CARTESIAN).document.array, source)
         magnitude = merge.MergeInput(doc, replace(selection, component=model.Component.MAGNITUDE), "Magnitude")
-        for component, unit in ((model.Component.PHASE, merge.PhaseUnit.RADIANS),
-                                (model.Component.PHASE_DEG, merge.PhaseUnit.DEGREES)):
-            phase = merge.MergeInput(doc, replace(selection, component=component), component.value)
+        for unit in (merge.PhaseUnit.RADIANS, merge.PhaseUnit.DEGREES):
+            if unit == merge.PhaseUnit.RADIANS:
+                phase = merge.MergeInput(doc, replace(selection, component=model.Component.PHASE), "Phase (rad)")
+            else:
+                degrees = model.Document(Path("phase_degrees.npy"), np.angle(source, deg=True))
+                phase = merge.MergeInput(degrees, model.default_selection(degrees), "Converted phase degrees")
             result = merge.run_merge(magnitude, phase, merge.MergeMode.POLAR, unit)
             np.testing.assert_allclose(result.document.array, source, atol=1e-14)
         np.testing.assert_array_equal(doc.array, source)
@@ -96,10 +99,6 @@ class ComplexMergeTests(unittest.TestCase):
             merge.run_merge(replace(source, document=replace(doc, array=-doc.array)), source, merge.MergeMode.POLAR)
         with self.assertRaisesRegex(ValueError, "precision"):
             merge.run_merge(replace(source, document=replace(doc, array=np.full(4, 2**63 + 1, dtype=np.uint64))), source, merge.MergeMode.CARTESIAN)
-        complex_doc = replace(doc, array=doc.array.astype(np.complex128))
-        db = replace(source, document=complex_doc, selection=replace(source.selection, component=model.Component.MAGNITUDE_DB))
-        with self.assertRaisesRegex(ValueError, "linear"):
-            merge.run_merge(db, source, merge.MergeMode.POLAR)
 
     def test_xy_reorders_matching_uniform_coordinates(self) -> None:
         a = model.Document(Path("a.csv"), np.array([[2., 30], [0, 10], [1, 20]]))

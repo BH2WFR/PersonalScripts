@@ -224,7 +224,7 @@ class SurfaceCanvas(QtInteractor):
         if layer is not None:
             frame = layer.frame
             world = self.picker.GetPickPosition()
-            prefix = f"{layer.label} | Display ({world[0]:.6g}, {world[1]:.6g}) | "
+            prefix = f"{layer.label} | Display ({world[0]:.6g}, {world[1]:.6g}, {world[2]:.6g}) | "
         if frame.point_coordinates is not None:
             dataset = self.picker.GetDataSet()
             point_id = self.picker.GetPointId()
@@ -387,7 +387,7 @@ class SurfaceView(QtWidgets.QWidget):
         """Render aligned surfaces/clouds in independent solid colors.
 
         Args:
-            layers: Compatible snapshots; XY alignment only affects actors.
+            layers: Compatible snapshots; XYZ alignment only affects actors.
             reset: Fit all geometry instead of retaining the shared camera.
         """
         signature = tuple(layer.signature for layer in layers)
@@ -395,6 +395,9 @@ class SurfaceView(QtWidgets.QWidget):
             if reset:
                 self.reset_view()
             return
+        # A lazily opened 3D tab may never have fitted a camera to any data.
+        # Preserve an existing data view, but fit the first nonempty overlay.
+        reset = reset or (self._surface_actor is None and not self.canvas.layers)
         camera = self.canvas.camera_position
         self.canvas.clear()
         self.canvas.picker.InitializePickList()
@@ -421,14 +424,14 @@ class SurfaceView(QtWidgets.QWidget):
                 actor = self.canvas.add_mesh(part, color=color, scalars=None, lighting=False,
                     opacity=layer.opacity, show_scalar_bar=False, reset_camera=False, render=False,
                     style="surface" if surface.faces.size else "points", point_size=layer.point_size)
-                actor.SetScale(layer.x.scale, layer.y.scale, layer.height)
-                actor.SetPosition(layer.x.offset, layer.y.offset, 0)
+                actor.SetScale(layer.x.scale, layer.y.scale, layer.z_mapping.scale)
+                actor.SetPosition(layer.x.offset, layer.y.offset, layer.z_mapping.offset)
                 self.canvas.layers.append((actor, layer))
                 self.canvas.picker.AddPickList(actor)
         if self.canvas.layers:
             first_frame = self.canvas.layers[0][1].frame
             self.canvas.show_grid(xtitle=first_frame.x_grid.label() if first_frame.x_grid else "Display X",
-                                  ytitle=first_frame.y_grid.label("Y") if first_frame.y_grid else "Display Y", ztitle="Scaled height",
+                                  ytitle=first_frame.y_grid.label("Y") if first_frame.y_grid else "Display Y", ztitle="Display Z",
                                   color="#adb9cb" if self.dark else "#465368", font_size=10)
             if reset:
                 self.canvas.view_isometric()
@@ -464,7 +467,8 @@ class SurfaceView(QtWidgets.QWidget):
             low, high = frame.limits
             if self.profile_style == ProfileStyle.SECTION_PLANE:
                 ends = [float(along[0]), float(along[-1])]
-                z0, z1 = (low - (high - low) * SECTION_HEIGHT_PADDING) * layer.height, (high + (high - low) * SECTION_HEIGHT_PADDING) * layer.height
+                z0 = layer.z_mapping.forward(low - (high - low) * SECTION_HEIGHT_PADDING)
+                z1 = layer.z_mapping.forward(high + (high - low) * SECTION_HEIGHT_PADDING)
                 vertices = np.array([[ends[0], across, z0], [ends[1], across, z0],
                                      [ends[1], across, z1], [ends[0], across, z1]])
                 if not row:
@@ -474,7 +478,7 @@ class SurfaceView(QtWidgets.QWidget):
                                             lighting=False, reset_camera=False, render=False)
             else:
                 z = np.where(series.valid, series.shown, 0).astype(np.float64)
-                z = (z + (high - low) * self.profile_lift) * layer.height
+                z = layer.z_mapping.array(z + (high - low) * self.profile_lift)
                 vertices = np.column_stack((along, np.full(len(along), across), z))
                 if not row:
                     vertices[:, [0, 1]] = vertices[:, [1, 0]]

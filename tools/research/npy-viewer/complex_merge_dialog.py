@@ -132,9 +132,8 @@ class ComplexMergeDialog(QtWidgets.QDialog):
             self.details[side].setText(f"{item.document.array.shape} · {item.document.array.dtype} · {item.selection.mode.value}")
             self.details[side].setToolTip(item.label)
             if side == 1 and item.document.is_complex:
-                if item.selection.component in (Component.PHASE, Component.PHASE_DEG):
-                    unit = PhaseUnit.DEGREES if item.selection.component == Component.PHASE_DEG else PhaseUnit.RADIANS
-                    self.phase_unit.setCurrentIndex(self.phase_unit.findData(unit))
+                if item.selection.component == Component.PHASE:
+                    self.phase_unit.setCurrentIndex(self.phase_unit.findData(PhaseUnit.RADIANS))
         self.generate.setEnabled(all(self._input(index) is not None for index in range(2)))
 
     def _mode_changed(self) -> None:

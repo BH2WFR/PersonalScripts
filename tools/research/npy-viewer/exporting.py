@@ -1,6 +1,6 @@
-"""Prepare full-resolution exports and serialize NPY, MAT and text tables.
+"""Prepare full-resolution arrays, numeric files and normalized grayscale images.
 
-Requirements: numpy and scipy (already required by the viewer).
+Requirements: numpy, scipy, Pillow and openpyxl (already used by the viewer).
 Usage: imported by app; functions never modify source arrays or open dialogs.
 """
 
@@ -13,10 +13,12 @@ import re
 from typing import cast
 
 import numpy as np
+from PIL import Image
 from scipy.io import savemat
 
 from .data_model import (Array, Crop, Document, ExportMode, FilterMode, Frame, RealArray,
-                         Selection, ViewMode, export_array, prepare_frame)
+                         Selection, ViewMode, apply_value_limits, export_array, prepare_frame)
+from .excel_io import serialize_excel
 
 
 class ExportTarget(StrEnum):
@@ -42,8 +44,11 @@ class ExportFormat(StrEnum):
 
     NPY = "npy"
     MAT = "mat"
+    XLSX = "xlsx"
     CSV = "csv"
     TXT = "txt"
+    PNG = "png"
+    BMP = "bmp"
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,7 @@ class ExportOptions:
     row: bool = True
     index: int = 0
     preserve_complex: bool = False
+    preserve_channels: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,22 +112,46 @@ def prepare_export(document: Document, selection: Selection, frame: Frame,
         MemoryError: Insufficient memory for a full-resolution snapshot.
     """
     parts = [document.path.stem]
-    if document.key:
+    if document.key and not (options.preserve_channels and document.is_image):
         parts.append(document.key)
     origin_x = origin_y = 0
     x_values: RealArray | None = None
     cloud = False
     xy = False
     selected = frame
+    all_channels = options.preserve_channels and options.target != ExportTarget.SLICE
+    source = document.image_source.pixels if all_channels and document.image_source is not None else document.array
     if options.target == ExportTarget.ORIGINAL:
-        values = document.array.copy()
+        values = source.copy()
         parts.append("original")
     else:
         if not options.crop_xy:
             selected = prepare_frame(document, selection, frame.value_limits, 2, Crop(), max_points=1)
         origin_x, origin_y = selected.x_start, selected.y_start
         mode = ExportMode.PROCESSED if options.bound_values else ExportMode.CROP
-        if options.preserve_complex and document.is_complex:
+        if all_channels:
+            if options.layout != ExportLayout.ARRAY:
+                raise ValueError("Whole multichannel matrices require Array layout. Export a channel for coordinate layouts.")
+            slices = [slice(None)] * source.ndim
+            x_axis, y_axis = selection.x_axis, selection.y_axis
+            if options.crop_xy:
+                slices[x_axis] = slice(selected.x_start, selected.x_start + selected.scalar.shape[-1])
+                if y_axis is not None:
+                    slices[y_axis] = slice(selected.y_start, selected.y_start + selected.scalar.shape[0])
+            values = source[tuple(slices)].copy()
+            if np.iscomplexobj(values):
+                if options.bound_values:
+                    raise ValueError("Complex values have no ordered Z interval. Disable value bounds or export a display component.")
+                if not options.preserve_complex:
+                    raise ValueError("Export a channel to select a real component of a complex multichannel matrix.")
+            elif options.bound_values:
+                real = cast(RealArray, values)
+                display, valid, clipped = apply_value_limits(real, np.isfinite(real), selected.value_limits)
+                values = export_array(replace(selected, scalar=real, raw=real, valid=valid,
+                                              display_scalar=display, clip_kind=clipped, xy=False,
+                                              point_coordinates=None), ExportMode.PROCESSED)
+            parts.append("all-channels")
+        elif options.preserve_complex and document.is_complex:
             if options.bound_values:
                 raise ValueError("Complex values have no ordered Z interval. Disable value bounds or export a display component.")
             if selected.raw is None:
@@ -220,10 +250,11 @@ def serialize_array(values: Array, format_: ExportFormat) -> bytes:
 
     Args:
         values: Numeric snapshot; complex text must be split by the caller.
-        format_: NPY, MATLAB Level 5, comma CSV, or tab TXT.
+        format_: NPY, MATLAB Level 5, XLSX, CSV/TXT, or normalized PNG/BMP.
 
     Returns:
-        Complete file contents. MAT stores variable 'matrix' and 1D as a column.
+        Complete file contents. MAT/XLSX store 'matrix' and 1D as a column.
+        Complex XLSX uses matrix_real/matrix_imag worksheets.
 
     Raises:
         ValueError: Text with complex or higher-dimensional data, unsupported MAT
@@ -237,6 +268,13 @@ def serialize_array(values: Array, format_: ExportFormat) -> bytes:
         validate_mat_array(values)
         buffer = BytesIO()
         savemat(buffer, {"matrix": values}, appendmat=False, do_compression=True, oned_as="column")
+        return buffer.getvalue()
+    if format_ == ExportFormat.XLSX:
+        return serialize_excel((("matrix", values),))
+    if format_ in (ExportFormat.PNG, ExportFormat.BMP):
+        pixels = normalized_grayscale(values)
+        buffer = BytesIO()
+        Image.fromarray(pixels).save(buffer, format=format_.value.upper())
         return buffer.getvalue()
     if format_ not in (ExportFormat.CSV, ExportFormat.TXT):
         raise ValueError(f"Unsupported format: {format_}")
@@ -253,6 +291,49 @@ def serialize_array(values: Array, format_: ExportFormat) -> bytes:
     np.savetxt(text, values, fmt=f"%.{precision}g" if precision else "%d",
                delimiter="," if format_ == ExportFormat.CSV else "\t")
     return text.getvalue().encode("utf-8")
+
+
+def normalized_grayscale(values: Array) -> np.ndarray[tuple[int, ...], np.dtype[np.uint8]]:
+    """Map finite 2D real values to an 8-bit grayscale image without modifying them.
+
+    Args:
+        values: A nonempty real numeric matrix, after requested crop/bounds.
+
+    Returns:
+        Same-shaped uint8 pixels. Finite min/max map to 0/255 with rounding;
+        constants and nonfinite gaps map to black. No transpose or resizing.
+
+    Raises:
+        ValueError: Complex, nonnumeric, non-2D, empty or entirely nonfinite data.
+    """
+    if values.ndim != 2 or not values.size or values.dtype.kind not in "biuf":
+        raise ValueError("PNG/BMP require a nonempty real 2D matrix. Export a real-valued channel first.")
+    real = cast(RealArray, values)
+    finite = np.isfinite(real)
+    if not np.any(finite):
+        raise ValueError("Cannot normalize a matrix with no finite values.")
+    pixels = np.zeros(values.shape, dtype=np.uint8)
+    samples = real[finite]
+    low, high = samples.min(), samples.max()
+    if low == high:
+        return pixels
+    if values.dtype.kind in "iu":
+        # Subtract in modular uint64 before converting to float: close values
+        # near uint64.max must not collapse to a constant in float64.
+        offset = samples.astype(np.uint64) - np.uint64(int(low) % (1 << 64))
+        unit = offset.astype(np.float64) / (int(high) - int(low))
+    else:
+        data = samples.astype(np.longdouble)
+        lower, upper = np.longdouble(low), np.longdouble(high)
+        with np.errstate(over="ignore"):
+            span = upper - lower
+        if np.isfinite(span):
+            unit = (data - lower) / span
+        else:
+            scale = max(abs(lower), abs(upper))
+            unit = (data / scale - lower / scale) / (upper / scale - lower / scale)
+    pixels[finite] = np.rint(np.clip(unit, 0, 1) * 255).astype(np.uint8)
+    return pixels
 
 
 def validate_mat_array(values: Array) -> None:

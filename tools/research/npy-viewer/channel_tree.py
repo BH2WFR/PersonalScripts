@@ -35,10 +35,23 @@ class ChannelTree(QtWidgets.QTreeWidget):
         return self.style().subElementRect(QtWidgets.QStyle.SubElement.SE_ItemViewItemCheckIndicator, option, self)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.RightButton:
+            # The context menu selects its editing target without activating
+            # single-mode visibility or toggling a checkbox under the pointer.
+            self.checkbox_click = False
+            event.accept()
+            return
         item = self.itemAt(event.position().toPoint())
         self.checkbox_click = bool(item is not None and self.columnAt(int(event.position().x())) == 0
                                    and self.check_rect(item).contains(event.position().toPoint()))
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        """Keep right-click releases out of the normal row-activation signal."""
+        if event.button() == QtCore.Qt.MouseButton.RightButton:
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         item = self.currentItem()

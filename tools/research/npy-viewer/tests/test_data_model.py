@@ -69,7 +69,6 @@ class DataModelTests(unittest.TestCase):
             model.Component.IMAGINARY: [4, 1],
             model.Component.MAGNITUDE: [5, 1],
             model.Component.PHASE: [np.arctan2(4, 3), np.pi / 2],
-            model.Component.PHASE_DEG: [53.13010235415598, 90],
         }
         for component, values in expected.items():
             with self.subTest(component=component):

@@ -1,6 +1,7 @@
 """Load numeric data and prepare linked views without changing source values.
 
-Requirements: numpy, opencv-python, Pillow, scipy and h5py.
+Requirements: numpy, opencv-python, Pillow, scipy, h5py and openpyxl;
+xlrd for legacy XLS input.
 Usage: imported by the viewer; CPU preparation can run in a worker thread.
 """
 
@@ -17,6 +18,8 @@ from numpy.typing import NDArray
 
 from .image_metadata import ImageMetadata, read_image_metadata
 from .csv_loader import read_csv
+from .excel_io import EXCEL_EXTENSIONS, read_excel
+from .table_data import HeaderMode, TableRange
 from .array_validation import validate_numeric_array
 from .mat_loader import read_mat
 from .coordinates import AxisCoordinates, AxisMap
@@ -111,7 +114,6 @@ class Component(StrEnum):
     IMAGINARY = "Imaginary"
     MAGNITUDE = "Magnitude"
     PHASE = "Phase (rad)"
-    PHASE_DEG = "Phase (deg)"
     MAGNITUDE_DB = "Magnitude (dB)"
 
 
@@ -134,6 +136,8 @@ class Document:
     transform: "TransformRecord | None" = None
     laplace: "LaplaceRecord | None" = None
     complex_provenance: str = ""
+    conversion_provenance: str = ""
+    import_provenance: str = ""
 
     @property
     def is_complex(self) -> bool:
@@ -251,13 +255,17 @@ class Frame:
         return self.y_grid.mapping if self.y_grid is not None else AxisMap()
 
 
-def load_document(path: Path, key: str | None = None) -> Document:
+def load_document(path: Path, key: str | None = None, *, region: TableRange = TableRange(),
+                  header: HeaderMode = HeaderMode.AUTO, delimiter: str | None = None) -> Document:
     """Read one array or image, preserving numeric precision and image channels.
 
     Args:
-        path: Existing NPY, NPZ, MAT, numeric CSV/TXT or supported image file.
+        path: Existing NPY, NPZ, MAT, Excel, numeric CSV/TXT or supported image file.
         key: NPZ member, MAT variable or image matrix label. None chooses the
             first usable array, RGB grayscale for color images, or monochrome.
+        region: One-based inclusive original table range for Excel/CSV/TXT only.
+        header: Table header treatment, applied after selecting the range.
+        delimiter: CSV/TXT delimiter; None auto-detects.
 
     Returns:
         Document containing numeric data, with RGB(A) image channel ordering.
@@ -270,7 +278,7 @@ def load_document(path: Path, key: str | None = None) -> Document:
         Prints image loading, header and decoder diagnostics to the console.
     """
     try:
-        return _read_document(path, key)
+        return _read_document(path, key, region, header, delimiter)
     except Exception as exc:
         if isinstance(exc, FileNotFoundError):
             reason = "The file does not exist or is no longer accessible."
@@ -289,7 +297,8 @@ def load_document(path: Path, key: str | None = None) -> Document:
         raise ValueError(f"Cannot open file:\n{path}{member}\n\n{reason}") from exc
 
 
-def _read_document(path: Path, key: str | None) -> Document:
+def _read_document(path: Path, key: str | None, region: TableRange, header: HeaderMode,
+                   delimiter: str | None) -> Document:
     """Decode one source; the public boundary adds file context to failures."""
     if path.is_dir():
         raise IsADirectoryError(str(path))
@@ -335,14 +344,20 @@ def _read_document(path: Path, key: str | None) -> Document:
         except (OSError, ValueError, TypeError, IndexError, NotImplementedError) as exc:
             raise ValueError(f"Cannot read this MATLAB MAT file.\n{exc}") from exc
         return Document(path, cast(Array, mat.values), mat.keys, mat.key)
+    elif suffix in EXCEL_EXTENSIONS:
+        table, keys, selected = read_excel(path, key, region, header)
+        validate_numeric_array(table.values, f"Worksheet {selected!r}")
+        return Document(path, table.values, keys, selected, csv_headers=table.headers,
+                        import_provenance=f"Excel input: {region}; {header.value}")
     elif suffix in TEXT_EXTENSIONS:
         try:
-            table = read_csv(path)
+            table = read_csv(path, region, header, delimiter)
         except (ValueError, UnicodeError) as exc:
             raise ValueError(f"Cannot read {path.name} as a numeric CSV table. "
                              f"Expected UTF-8 with comma, semicolon or tab separators.\n{exc}") from exc
         validate_numeric_array(table.values, "Text matrix")
-        return Document(path, table.values, csv_headers=table.headers)
+        return Document(path, table.values, csv_headers=table.headers,
+                        import_provenance=f"Text input: {region}; {header.value}; delimiter={delimiter or 'automatic'!r}")
     elif image:
         started = perf_counter()
         print(f"[Image] Opening: {path}", flush=True)
@@ -509,7 +524,7 @@ def default_selection(document: Document, mode: ViewMode | None = None,
         coordinate_axis = 1 if shape[1] == count else 0
         return Selection(mode, 1 - coordinate_axis, None, None, 0, (0, 0),
                          coordinate_axis=coordinate_axis, coordinate_order=tuple(range(count)))
-    if mode is None and document.path.suffix.lower() in TEXT_EXTENSIONS | {".mat"} and 1 in shape:
+    if mode is None and document.path.suffix.lower() in TEXT_EXTENSIONS | EXCEL_EXTENSIONS | {".mat"} and 1 in shape:
         mode = ViewMode.SIGNAL
     mode = mode or (ViewMode.SIGNAL if rank == 1 else ViewMode.MATRIX)
     if channel_axis is not None:
@@ -592,18 +607,13 @@ def _extract(document: Document, selection: Selection, crop: Crop) -> tuple[Real
                 data = np.abs(complex_data)
             case Component.PHASE:
                 data = np.angle(complex_data)
-            case Component.PHASE_DEG:
-                data = np.angle(complex_data, deg=True)
             case Component.MAGNITUDE_DB:
+                # Reuse the conversion tool's amplitude convention and zero handling.
+                from .data_conversion import ConversionOptions, convert_values
                 if not np.isfinite(selection.db_floor) or selection.db_floor >= 0:
                     raise ValueError("The dB floor must be finite and negative.")
-                magnitude = np.abs(complex_data)
-                finite = magnitude[np.isfinite(magnitude)]
-                peak = float(np.max(finite)) if finite.size else 0.0
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    data = 20 * np.log10(magnitude / peak) if peak > 0 else np.full(magnitude.shape, selection.db_floor, dtype=np.float64)
-                data = np.maximum(data, selection.db_floor)
-                data[~np.isfinite(magnitude)] = np.nan
+                data = (convert_values(complex_data, ConversionOptions(db_floor=selection.db_floor))[0]
+                        if np.any(np.isfinite(complex_data)) else np.full(complex_data.shape, np.nan))
     # Every complex branch above produces a real component without coercing integers.
     return cast(RealArray, data), rgb
 

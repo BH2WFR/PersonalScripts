@@ -5,11 +5,13 @@ are written under the Git-ignored tmp/npy-viewer-tests directory.
 """
 
 from dataclasses import replace
+from io import BytesIO
 import importlib
 from pathlib import Path
 import unittest
 
 import numpy as np
+from PIL import Image
 from scipy.io import loadmat
 
 from fixture_store import fixture_directory, preserve_document
@@ -172,6 +174,68 @@ class ExportFormatTests(unittest.TestCase):
         self.assertFalse(np.shares_memory(snapshot.values, self.source))
         self.source.fill(-100)
         np.testing.assert_array_equal(snapshot.values, expected)
+
+    def test_grayscale_image_roundtrip_and_orientation(self) -> None:
+        """Both codecs preserve one cell per pixel and finite min/max scaling."""
+        source = np.array([[-10., 0., 10.], [np.nan, np.inf, -np.inf]])
+        expected = np.array([[0, 128, 255], [0, 0, 0]], dtype=np.uint8)
+        for format_ in (exports.ExportFormat.PNG, exports.ExportFormat.BMP):
+            payload = exports.serialize_array(source, format_)
+            (self.folder / f"normalized.{format_.value}").write_bytes(payload)
+            with Image.open(BytesIO(payload)) as image:
+                self.assertEqual(image.mode, "L")
+                self.assertEqual(image.size, (3, 2))
+                np.testing.assert_array_equal(np.asarray(image), expected)
+        self.assertTrue(np.isnan(source[1, 0]))
+        self.assertEqual(source[0, 0], -10)
+
+    def test_grayscale_extremes_constants_and_rejections(self) -> None:
+        """Extreme floats and nearby uint64 values do not overflow or collapse."""
+        maximum = np.finfo(np.float64).max
+        samples = (
+            (np.array([[-maximum, 0, maximum]]), [[0, 128, 255]]),
+            (np.array([[2**64 - 3, 2**64 - 2, 2**64 - 1]], dtype=np.uint64), [[0, 128, 255]]),
+            (np.array([[-2**63, 0, 2**63 - 1]], dtype=np.int64), [[0, 128, 255]]),
+            (np.full((2, 3), 255), np.zeros((2, 3), dtype=np.uint8)),
+            (np.array([[False, True]]), [[0, 255]]),
+        )
+        for source, expected in samples:
+            with np.errstate(all="raise"):
+                np.testing.assert_array_equal(exports.normalized_grayscale(source), expected)
+        for source in (np.array([1, 2]), np.ones((2, 2), dtype=complex),
+                       np.zeros((2, 2, 3)), np.empty((0, 2)), np.full((2, 2), np.nan)):
+            with self.assertRaises(ValueError):
+                exports.serialize_array(source, exports.ExportFormat.PNG)
+
+    def test_image_matrix_keeps_all_channels_and_channel_export_is_scalar(self) -> None:
+        """RGBA original/result exports retain channels even with R active."""
+        source = np.arange(80, dtype=np.uint8).reshape(4, 5, 4)
+        path = self.folder / "rgba.png"
+        Image.fromarray(source).save(path)
+        document = model.load_document(path, "R")
+        selection = model.default_selection(document)
+        frame = model.prepare_frame(document, selection, model.Limits(25, 45, model.FilterMode.CLAMP),
+                                    2, model.Crop(1, 3, 1, 2))
+        options = exports.ExportOptions(preserve_channels=True)
+        result = exports.prepare_export(document, selection, frame, options)
+        np.testing.assert_array_equal(result.values, np.clip(source[1:3, 1:4], 25, 45))
+        self.assertIn("all-channels", result.stem)
+        original = exports.prepare_export(document, selection, frame,
+                                          replace(options, target=exports.ExportTarget.ORIGINAL))
+        np.testing.assert_array_equal(original.values, source)
+        channel = exports.prepare_export(document, selection, frame, replace(options, preserve_channels=False))
+        np.testing.assert_array_equal(channel.values, np.clip(source[1:3, 1:4, 0], 25, 45))
+        assert document.image_source is not None
+        self.assertFalse(np.shares_memory(result.values, document.image_source.pixels))
+
+    def test_whole_numeric_channels_follow_sample_axis(self) -> None:
+        """Whole-source signal cropping keeps all channels in their original axes."""
+        document = model.Document(Path("channels.npy"), self.source)
+        selection = model.default_selection(document, model.ViewMode.SIGNAL, channel_axis=1)
+        frame = model.prepare_frame(document, selection, model.Limits(), 2, model.Crop(1, 2))
+        snapshot = exports.prepare_export(document, selection, frame,
+                                          exports.ExportOptions(preserve_channels=True, bound_values=False))
+        np.testing.assert_array_equal(snapshot.values, self.source[1:3, :])
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ workspace and renderers; this module has no GUI or polling dependencies.
 """
 
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 
@@ -13,8 +14,10 @@ import numpy as np
 from .data_model import (BoolArray, Component, Crop, Document, FloatArray, Frame, Limits, RealArray,
                          Selection, ViewMode, default_selection, load_document)
 from .coordinates import AxisMap
+from .import_catalog import ImportChoice
 
 COLORS: tuple[str, ...] = ("#e53935", "#1976d2", "#279638", "#ab47bc", "#ef8c00", "#00a6a6", "#bc557f")
+AUTO_HEIGHT_FRACTION = 0.3
 type Setting = str | int | float | bool
 
 
@@ -83,6 +86,7 @@ class MatrixEntry:
     name: str = ""
     matrix_uid: int = 0
     image_key: str | None = None
+    align_z: Alignment = Alignment.ORIGINAL
 
     @property
     def label(self) -> str:
@@ -152,12 +156,18 @@ class LoadedFile:
     errors: tuple[str, ...] = ()
 
 
-def load_file(path: Path, key: str | None = None) -> LoadedFile:
-    """Load one file, expanding NPZ/MAT members while reporting invalid members.
+def load_file(path: Path, key: str | None = None, choices: tuple[ImportChoice, ...] | None = None) -> LoadedFile:
+    """Load selected archive/Excel members and their individual table ranges.
+
+    Without explicit choices, the legacy NPZ/MAT path expands supported members
+    and reports skipped errors; Excel defaults to its first worksheet. The GUI
+    inspects all archive/table metadata first and supplies explicit choices.
 
     Args:
         path: One user-selected source file.
         key: Optional first member to select.
+        choices: Explicit selected members/ranges; only these are read. A failed
+            selected member rejects the batch instead of changing the workspace.
 
     Returns:
         Supported documents in stable member order, with the requested member first.
@@ -166,6 +176,14 @@ def load_file(path: Path, key: str | None = None) -> LoadedFile:
         ValueError: No supported members, or an explicitly requested invalid member.
         OSError: File read failure.
     """
+    if choices is not None:
+        if not choices:
+            raise ValueError("Select at least one matrix or worksheet.")
+        documents = tuple(load_document(path, choice.key, region=choice.region,
+                                        header=choice.header, delimiter=choice.delimiter) for choice in choices)
+        for document in documents:
+            default_selection(document)
+        return LoadedFile(documents)
     if path.suffix.lower() == ".npz":
         loaded = np.load(path, allow_pickle=False)
         if not isinstance(loaded, np.lib.npyio.NpzFile):
@@ -215,6 +233,68 @@ def coordinate_bounds(frame: Frame) -> tuple[tuple[float, float], tuple[float, f
             (frame.y_mapping.forward(y[0]), frame.y_mapping.forward(y[1])))
 
 
+def height_bounds(frame: Frame, height: float) -> tuple[float, float]:
+    """Get full-resolution visible Z bounds after the positive height multiplier.
+
+    Args:
+        frame: Applied crop and value bounds; hidden/invalid samples are omitted.
+        height: Positive 3D height multiplier, before overlay Z alignment.
+
+    Returns:
+        Scaled minimum and maximum, or (0, 0) when no valid values remain.
+        Constant surfaces retain their actual height without color-range padding.
+        Reductions avoid allocating a copy of the full filtered array.
+    """
+    first = int(np.argmax(frame.valid)) if frame.valid.size else 0
+    if not frame.valid.size or not frame.valid.flat[first]:
+        return 0.0, 0.0
+    initial = frame.display_scalar.flat[first]
+    low = float(np.min(frame.display_scalar, where=frame.valid, initial=initial))
+    high = float(np.max(frame.display_scalar, where=frame.valid, initial=initial))
+    return low * height, high * height
+
+
+def overlay_auto_height(entries: Sequence[MatrixEntry], reference: MatrixEntry) -> float:
+    """Choose a shared surface scale from all visible, automatically scaled layers.
+
+    Args:
+        entries: Visible entries with prepared frames. Manual multipliers are
+            excluded; point clouds keep their physical scale of one.
+        reference: Alignment reference, defining the reference plane size.
+
+    Returns:
+        Positive multiplier fitting the combined Z span to 30% of the reference
+        plane size. With an automatic reference, account for each layer's Z
+        alignment before measuring that span. Source samples are not changed.
+    """
+    frame = reference.frame
+    if frame is None or frame.scalar.ndim != 2:
+        return 1.0
+    ref_auto = bool(reference.settings.get("auto_height", True))
+    reference_bounds = height_bounds(frame, 1) if ref_auto and any(
+        entry.uid != reference.uid and entry.align_z != Alignment.ORIGINAL for entry in entries) else frame.limits
+    bounds: list[tuple[float, float]] = []
+    for entry in entries:
+        current = entry.frame
+        if current is None or current.scalar.ndim != 2 or not entry.settings.get("auto_height", True):
+            continue
+        low, high = current.limits
+        if ref_auto and entry.uid != reference.uid and entry.align_z != Alignment.ORIGINAL:
+            source = height_bounds(current, 1)
+            mapping = align_axis(source, reference_bounds, entry.align_z)
+            low, high = mapping.forward(source[0]), mapping.forward(source[1])
+        bounds.append((low, high))
+    if not bounds:
+        return 1.0
+    low, high = min(low for low, _ in bounds), max(high for _, high in bounds)
+    span = high - low
+    if span <= 0:
+        span = max(abs(low) * 1e-6, 1.0)
+    extent = max(frame.scalar.shape[1] * frame.x_mapping.scale,
+                 frame.scalar.shape[0] * frame.y_mapping.scale)
+    return extent * AUTO_HEIGHT_FRACTION / span
+
+
 @dataclass(frozen=True, eq=False)
 class RenderLayer:
     """Immutable render snapshot; workers never access Qt widget state."""
@@ -231,12 +311,22 @@ class RenderLayer:
     clip_color: str = "#ff0000"
     threshold: float | None = None
     data_key: tuple[object, ...] = ()
+    z: AxisMap = AxisMap()
+
+    @property
+    def z_mapping(self) -> AxisMap:
+        """Map source heights into the 3D scene: height multiplier, then Z alignment.
+
+        This map affects geometry only; 2D images, profiles, derivatives and
+        numeric exports retain their existing source value semantics.
+        """
+        return AxisMap(self.height).then(self.z)
 
     @property
     def signature(self) -> tuple[object, ...]:
         """Small identity key for avoiding unchanged image/mesh rebuilds."""
         return (self.uid, self.label, id(self.frame), self.color, self.opacity, self.x, self.y,
-                self.height, self.point_size, self.clip_color)
+                self.height, self.point_size, self.clip_color, self.z)
 
 
 @dataclass(frozen=True, eq=False)

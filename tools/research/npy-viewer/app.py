@@ -2,6 +2,8 @@
 
 Signal/XY modes use full-height plot, derivative and raw-data tabs in one row.
 Matrix modes restore the image/surface viewer above its linked profile.
+Slice-index changes automatically fit Y by default; the profile context menu
+can disable this to retain Y scale. Manual Fit commands still fit data.
 The workspace selects source entries and retains their image channels or complex
 components independently. The base window also supports ordinary single views.
 Raw-table synchronization is separate from plot selection for workspace browsing.
@@ -9,8 +11,10 @@ The workspace Fourier dialog creates complex FFT/IFFT entries with physical
 coordinates shared by plots, surface picking, profiles and exports.
 The Transform menu also provides 1D Laplace planes (sigma/omega) and inverse
 contour reconstruction, retaining sampling metadata in the current session.
-The Export group saves originals, processed results or slices as NPY/MAT/CSV/TXT,
-with optional XY/XYZ coordinate layouts and automatic descriptive filenames.
+Pointwise dB, angle, logarithm and affine conversions create separate matrices.
+The modal Export dialog saves originals, processed results or slices as numeric
+files, or real 2D matrices as normalized 8-bit PNG/BMP. Export settings stay
+outside the left sidebar; save workers report their status inside the dialog.
 Value bounds share one input row and can be reverted independently of XY/color limits.
 Fusion keeps native widget painting with 2 px layout padding/vertical gaps and
 4 px horizontal gaps; the main content margins are 6 px except 2 px at the top.
@@ -35,6 +39,8 @@ from .coordinates import AxisCoordinates
 from .data_model import (COLORMAPS, DEFAULT_CLIP_COLOR, DEFAULT_MAX_POINTS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, Array, Component, Crop, Document, FilterMode, Frame, ImageMember,
                          Limits, RealArray, Selection, ViewMode, default_selection,
                          load_document, prepare_frame, select_image_member)
+from .excel_io import EXCEL_EXTENSIONS
+from .export_dialog import MatrixExportDialog
 from .exporting import (ExportFormat, ExportLayout, ExportOptions, ExportTarget,
                         output_paths, prepare_export, serialize_array)
 from .image_view import ImageView
@@ -68,7 +74,7 @@ LAYOUT_MARGIN_METRICS: frozenset[QtWidgets.QStyle.PixelMetric] = frozenset((
 ))
 SIGNAL_HINT = "1D wheel: zoom X · Ctrl+wheel: zoom XY · Left drag: pan"
 SURFACE_HINT = "3D middle / Ctrl+left: orbit · Ctrl+middle: pan · Right / Alt+middle: roll"
-FILE_FILTER = "Matrices and images (*.npy *.npz *.mat *.csv *.txt *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;MATLAB arrays (*.mat);;Text tables (*.csv *.txt);;All files (*)"
+FILE_FILTER = "Matrices and images (*.npy *.npz *.mat *.xlsx *.xlsm *.xls *.csv *.txt *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;Excel workbooks (*.xlsx *.xlsm *.xls);;MATLAB arrays (*.mat);;Text tables (*.csv *.txt);;All files (*)"
 
 
 class _StyleOptionFields(Protocol):
@@ -142,10 +148,12 @@ class JobKind(StrEnum):
     FRAME = "frame"
     EXPORT = "export"
     BUNDLE = "bundle"
+    INSPECT = "inspect"
     OVERLAY_FRAMES = "overlay_frames"
     FOURIER = "fourier"
     LAPLACE = "laplace"
     COMPLEX_MERGE = "complex_merge"
+    DATA_CONVERSION = "data_conversion"
 
 
 class JobSignals(QtCore.QObject):
@@ -211,6 +219,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._jobs: dict[int, Job] = {}
         self._slice_spins: dict[int, QtWidgets.QSpinBox] = {}
         self._profile_selected = True
+        self._profile_auto_y = True
         self._layout_mode: ViewMode | None = None
         self._export_busy = False
         self._export_ready = False
@@ -232,7 +241,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         root = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(root)
         layout.setContentsMargins(*WINDOW_MARGINS)
-        layout.addLayout(self._file_bar())
+        self.file_bar = QtWidgets.QWidget(root)
+        self.file_bar.setLayout(self._file_bar())
+        layout.addWidget(self.file_bar)
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         layout.addWidget(split, 1)
         scroll = QtWidgets.QScrollArea()
@@ -282,6 +293,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         split.setSizes([370, 1010])
         split.setStretchFactor(1, 1)
         self.setCentralWidget(root)
+        self.export_dialog = MatrixExportDialog(self.export_box, self)
+        self.statusBar().messageChanged.connect(self.export_dialog.status.setText)
         self.statusBar().showMessage("Open or drop an NPY, NPZ, MAT, CSV, TXT or image file. All indices are zero-based.")
         self.controls.setEnabled(False)
         self.profile_controls.setEnabled(False)
@@ -289,7 +302,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _file_bar(self) -> QtWidgets.QHBoxLayout:
         layout = QtWidgets.QHBoxLayout()
-        button = QtWidgets.QPushButton("Open file…")
+        button = self.open_file_button = QtWidgets.QPushButton("Open file…")
         button.setShortcut(QtGui.QKeySequence.StandardKey.Open)
         button.clicked.connect(self._choose_file)
         layout.addWidget(button)
@@ -313,7 +326,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.display_channel.setEnabled(False)
         self.display_channel.currentIndexChanged.connect(self._display_channel_changed)
         layout.addWidget(self.display_channel)
-        fit = QtWidgets.QPushButton("Fit views")
+        fit = self.fit_views_button = QtWidgets.QPushButton("Fit views")
         fit.clicked.connect(self._fit_views)
         layout.addWidget(fit)
         return layout
@@ -410,7 +423,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         for entry in (self.filter_low, self.filter_high):
             entry.returnPressed.connect(self._schedule_frame)
         layout.addWidget(filter_box)
-        layout.addWidget(self._export_controls())
+        self._export_controls()
 
         display_box = QtWidgets.QGroupBox("Color and appearance")
         display = QtWidgets.QFormLayout(display_box)
@@ -420,7 +433,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.db_floor.setValue(-120)
         self.db_floor.setSuffix(" dB")
         self.db_floor.setKeyboardTracking(False)
-        self.db_floor.setToolTip("Magnitude relative to the selected region's peak (0 dB). Values below this floor are displayed at the floor.")
+        self.db_floor.setToolTip("Magnitude relative to the selected region's peak (0 dB). Source complex values are unchanged.")
         self.db_floor.valueChanged.connect(self._schedule_frame)
         display.addRow("Magnitude floor", self.db_floor)
         display.setRowVisible(self.db_floor, False)
@@ -578,8 +591,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.export_save.setEnabled(False)
             return
         matrix = selection.mode == ViewMode.MATRIX
+        channel_only = self._export_channel_only()
+        all_channels = self._export_all_channels()
         previous = self.export_target.currentText()
-        targets = [ExportTarget.RESULT, ExportTarget.ORIGINAL]
+        targets = [ExportTarget.RESULT] if channel_only else [ExportTarget.RESULT, ExportTarget.ORIGINAL]
         if matrix:
             targets.insert(1, ExportTarget.SLICE)
         with QtCore.QSignalBlocker(self.export_target):
@@ -588,18 +603,20 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.export_target.setCurrentText(previous if previous in targets else ExportTarget.RESULT.value)
         target = ExportTarget(self.export_target.currentText())
         original = target == ExportTarget.ORIGINAL
+        all_channels = all_channels and target != ExportTarget.SLICE
         complex_input = document.is_complex
-        keep_complex = complex_input and (original or self.export_complex.isChecked())
+        keep_complex = complex_input and not channel_only and (original or all_channels or self.export_complex.isChecked())
         self.export_xy.setEnabled(not original)
         self.export_z.setEnabled(not original and not keep_complex)
-        self.export_form.setRowVisible(self.export_complex, complex_input and not original)
+        self.export_form.setRowVisible(self.export_complex, complex_input and not original and not channel_only and not all_channels)
         self.export_xy.setText("Apply X / Y crop" if matrix else "Apply sample-index crop")
         choices = [ExportLayout.ARRAY]
-        shape = document.array.shape if original else frame.scalar.shape
+        shape = ((document.image_source.pixels.shape if document.image_source is not None else document.array.shape)
+                 if all_channels else document.array.shape if original else frame.scalar.shape)
         complex_source = keep_complex
         signal = (len(shape) == 1 if original else
                   target == ExportTarget.SLICE or selection.mode in (ViewMode.SIGNAL, ViewMode.XY))
-        if not complex_source:
+        if not complex_source and not all_channels:
             if signal:
                 choices.extend((ExportLayout.XY_COLUMNS, ExportLayout.XY_ROWS))
             elif (len(shape) == 2 if original else matrix or selection.mode == ViewMode.POINTS):
@@ -611,27 +628,54 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.export_layout.setCurrentText(previous_layout if previous_layout in choices else ExportLayout.ARRAY.value)
         format_ = ExportFormat(self.export_format.currentData())
         text_format = format_ in (ExportFormat.CSV, ExportFormat.TXT)
-        supported = not (original and document.array.ndim > 2 and text_format)
+        image_format = format_ in (ExportFormat.PNG, ExportFormat.BMP)
+        supported = not (len(shape) > 2
+                         and (text_format or format_ == ExportFormat.XLSX))
         hint = ("Original source values; ignores crop and bounds. Array layout keeps the source shape."
                 if original else "Full resolution, current displayed component. Bounds use the applied Clamp / Hide mode; gaps become NaN.")
-        if frame.composite and not original:
+        if all_channels:
+            hint = ("All source channels, preserving their original order and axes."
+                    " Crop applies to the spatial/sample axes; value bounds apply independently to every channel."
+                    if not original else "All original source channels; ignores crop and bounds.")
+        elif frame.composite and not original:
             hint = f"{hint}\nColor views export grayscale. Select an individual image channel to export it."
         if keep_complex and not original:
             hint = "Full-resolution complex values, with optional XY crop. Value bounds are not applied."
         if complex_input:
             hint = f"{hint}\n" + ("Complex source detected: NPY / MAT retain both real and imaginary parts in one matrix." if keep_complex else
-                                    f"Exports {selection.component.value}; Original source matrix retains complex values.")
+                                    f"Exports {selection.component.value}; choose Selected matrix to preserve complex source values.")
         if complex_source and text_format:
             hint = f"{hint}\nCreates two files: *_real.{format_.value} and *_imag.{format_.value}."
+        if complex_source and format_ == ExportFormat.XLSX:
+            hint = f"{hint}\nOne workbook with matrix_real and matrix_imag worksheets."
         if not supported:
-            hint = f"{hint}\nText supports 1D/2D only. Select an image channel or use NPY / MAT."
+            hint = f"{hint}\nText / Excel support 1D/2D only. Select an image channel or use NPY / MAT."
         if self.export_layout.currentText() in (ExportLayout.XYZ_COLUMNS, ExportLayout.XYZ_ROWS):
             hint = f"{hint}\nXYZ = source column, row, value. Nonfinite points are omitted."
         if format_ == ExportFormat.MAT:
             hint = f"{hint}\nMAT variable: matrix. 1D arrays are saved as column vectors."
+        if format_ == ExportFormat.XLSX:
+            hint = f"{hint}\n1D arrays become columns. Large integers and NaN/Inf use numeric text to preserve values."
+        if image_format:
+            supported = matrix and target != ExportTarget.SLICE and len(shape) == 2 and not keep_complex and self.export_layout.currentText() == ExportLayout.ARRAY
+            hint = f"{hint}\nPNG/BMP: 8-bit grayscale, finite min/max normalized to 0/255 after crop/bounds. Constant values and NaN/Inf are black. One source cell per pixel; no axes or colormap."
+            if not supported:
+                hint = f"{hint}\nRequires a real 2D array in Array layout. Select a scalar channel for multichannel/complex data. For plots or overlays, use Export figure."
         self.export_hint.setText(hint)
         self.export_save.setEnabled(supported and not self._export_busy
                                     and (target != ExportTarget.SLICE or self._profile_selected))
+
+    def _export_channel_only(self) -> bool:
+        """Return whether the workspace explicitly requested its current channel."""
+        return False
+
+    def _export_all_channels(self) -> bool:
+        """Return whether the workspace requested all stored source channels."""
+        return False
+
+    def _export_parent(self) -> QtWidgets.QWidget:
+        """Parent save dialogs to the visible modal export window, if any."""
+        return self.export_dialog if self.export_dialog.isVisible() else self
 
     def _configure_crop(self) -> None:
         document = self.document
@@ -770,8 +814,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._update_profile()
 
     def _profile_index_changed(self) -> None:
+        # Apply the Y fitting preference before replacing samples so disabling
+        # automatic fitting preserves the previous slice's scale.
+        self._set_profile_auto_y(self._profile_auto_y)
         self._profile_selected = True
         self._update_profile()
+
+    def _set_profile_auto_y(self, enabled: bool) -> None:
+        """Choose whether slice movements refit Y; X zoom is unaffected."""
+        self._profile_auto_y = enabled
+        self.profile_view.set_y_auto_range(enabled)
 
     def _export_profile_index(self) -> int:
         """Return the selected source index, independently of display alignment."""
@@ -791,18 +843,24 @@ class ViewerWindow(QtWidgets.QMainWindow):
         document, frame, selection = self.document, self.frame, self.frame_selection
         if document is None or frame is None or selection is None or self._export_busy or not self._export_ready:
             return
-        options = ExportOptions(ExportTarget(self.export_target.currentText()),
+        self._sync_export_controls()
+        if not self.export_save.isEnabled():
+            return
+        target = ExportTarget(self.export_target.currentText())
+        all_channels = self._export_all_channels() and target != ExportTarget.SLICE
+        options = ExportOptions(target,
                                 ExportLayout(self.export_layout.currentText()),
                                 self.export_xy.isChecked(), self.export_z.isChecked() and self.export_z.isEnabled(),
                                 self.profile_direction.currentIndex() == 0, self._export_profile_index(),
-                                self.export_complex.isChecked())
+                                not self._export_channel_only() and (self.export_complex.isChecked() or all_channels),
+                                all_channels)
         if options.target == ExportTarget.SLICE and not self._profile_selected:
             return
         try:
             snapshot = prepare_export(document, selection, frame, options)
             snapshot = replace(snapshot, stem=self._export_stem(snapshot.stem))
         except (ValueError, MemoryError) as exc:
-            QtWidgets.QMessageBox.warning(self, "Cannot export array", str(exc))
+            QtWidgets.QMessageBox.warning(self._export_parent(), "Cannot export array", str(exc))
             return
         format_ = ExportFormat(self.export_format.currentData())
         directory = self._export_directory or document.path.parent
@@ -852,7 +910,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 resolved = path.resolve()
                 if resolved not in reserved:
                     break
-                QtWidgets.QMessageBox.warning(self, "Duplicate export path", "Each matrix needs a different output filename.")
+                QtWidgets.QMessageBox.warning(self._export_parent(), "Duplicate export path", "Each matrix needs a different output filename.")
             reserved.add(resolved)
             choices.append((path, selected_format))
             directory = path.parent
@@ -861,7 +919,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _choose_export_destination(self, default_path: Path, format_: ExportFormat,
                                    title: str) -> tuple[Path, ExportFormat] | None:
         """Ask for one filename; cancellation or an invalid extension writes nothing."""
-        dialog = QtWidgets.QFileDialog(self, title, str(default_path),
+        dialog = QtWidgets.QFileDialog(self._export_parent(), title, str(default_path),
                                       f"{format_.value.upper()} files (*.{format_.value})")
         dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
         dialog.setFileMode(QtWidgets.QFileDialog.FileMode.AnyFile)
@@ -877,7 +935,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if target.suffix.lower() in (".csv", ".txt") and format_ in (ExportFormat.CSV, ExportFormat.TXT):
             format_ = ExportFormat(target.suffix.lower()[1:])
         elif target.suffix.lower() != f".{format_.value}":
-            QtWidgets.QMessageBox.warning(self, "Cannot export array",
+            QtWidgets.QMessageBox.warning(self._export_parent(), "Cannot export array",
                                           f"Choose a .{format_.value} filename or change the export format.")
             return None
         return target, format_
@@ -887,7 +945,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         existing = [str(path) for path in destinations if path.exists()]
         if existing:
             message = "Replace the following files?\n\n" + "\n".join(existing)
-            answer = QtWidgets.QMessageBox.question(self, "Confirm overwrite", message,
+            answer = QtWidgets.QMessageBox.question(self._export_parent(), "Confirm overwrite", message,
                 QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
                 QtWidgets.QMessageBox.StandardButton.No)
             if answer != QtWidgets.QMessageBox.StandardButton.Yes:
@@ -1019,7 +1077,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.export_box.setEnabled(self._export_ready)
             self._sync_export_controls()
             self.statusBar().showMessage(f"Export failed: {message}")
-            QtWidgets.QMessageBox.warning(self, "Cannot export array", message)
+            QtWidgets.QMessageBox.warning(self._export_parent(), "Cannot export array", message)
             return
         self.controls.setEnabled(self.document is not None)
         if kind == JobKind.LOAD:
@@ -1068,9 +1126,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
                     details += "Profile R/G/B/M are multiplied by normalized alpha; A remains a separate source-value curve.\n"
         self.info.setText(f"{details}Shape: {document.array.shape}\nDtype: {document.array.dtype}\n"
                           f"Size: {document.array.nbytes / (1024 ** 2):,.2f} MiB\nIndices start at 0.")
-        if document.path.suffix.lower() in TEXT_EXTENSIONS:
+        if document.path.suffix.lower() in TEXT_EXTENSIONS | EXCEL_EXTENSIONS:
             header_text = ", ".join(document.csv_headers) if document.csv_headers else "none"
-            self.info.setText(f"{self.info.text()}\nCSV headers: {header_text}\nEmpty cells are NaN.")
+            self.info.setText(f"{self.info.text()}\nTable headers: {header_text}\nEmpty cells are NaN.")
         try:
             selection = default_selection(document, self._initial_mode, self._initial_channel_axis)
         except ValueError as exc:
@@ -1112,7 +1170,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
             if document is None:
                 return
             if document.keys and not document.is_image:
-                self.archive_label.setText("MAT variable" if document.path.suffix.lower() == ".mat" else "NPZ array")
+                self.archive_label.setText("MAT variable" if document.path.suffix.lower() == ".mat" else
+                                           "Worksheet" if document.path.suffix.lower() in EXCEL_EXTENSIONS else "NPZ array")
                 self.archive_key.addItems(list(document.keys))
                 self.archive_key.setCurrentText(document.key or "")
                 self.archive_key.setEnabled(True)
@@ -1129,7 +1188,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
                     self.display_channel.addItem(item.value, item.value)
                 self.display_channel.setCurrentIndex(self.display_channel.findData(component.value))
                 self.display_channel.setEnabled(True)
-                self.display_channel.setToolTip("Display the real part, imaginary part, phase (radians or degrees), or magnitude.")
+                self.display_channel.setToolTip("Display Real, Imaginary, Magnitude, Phase (rad), or Magnitude (dB). Use Data conversion for degrees or custom dB references.")
             else:
                 self.display_channel.addItem("Value", Component.REAL.value)
                 self.display_channel.setToolTip("This real-valued array has no image channels or complex components.")
@@ -1733,7 +1792,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             event: Native Qt drag-enter event.
         """
         urls = event.mimeData().urls()
-        if urls and urls[0].isLocalFile() and Path(urls[0].toLocalFile()).suffix.lower() in IMAGE_EXTENSIONS | TEXT_EXTENSIONS | {".npy", ".npz", ".mat"}:
+        if urls and urls[0].isLocalFile() and Path(urls[0].toLocalFile()).suffix.lower() in IMAGE_EXTENSIONS | TEXT_EXTENSIONS | EXCEL_EXTENSIONS | {".npy", ".npz", ".mat"}:
             event.acceptProposedAction()
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:

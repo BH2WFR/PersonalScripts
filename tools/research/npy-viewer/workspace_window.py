@@ -1,13 +1,16 @@
 """Channel-checkbox workspace with independent controls and automatic overlays.
 
 Requirements: the existing viewer dependencies; no additional packages.
-Usage: constructed by app.run. Open replaces the session; Add overlay appends one
-file and expands NPZ/MAT members. Dropping a file into a populated session appends.
+Usage: constructed by app.run. Open replaces the session; Add file appends one
+file and selects NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
+row/column ranges and headers. Dropping a file into a populated session appends.
 Numeric 2-by-N/N-by-2 sources (N > 2) prompt for XY or matrix interpretation;
 3-by-N/N-by-3 sources (N > 3) prompt for XYZ point cloud or matrix interpretation
 before insertion, unless --mode was supplied. Cancel preserves the workspace.
 Single-matrix mode is the default: clicking a channel clears other selections.
 Multiple-matrix mode permits compatible checkbox selections to overlay.
+Hide controls are exposed only in multiple mode. Auto Y on slice change is
+enabled by default; disabling it fixes both signal and derivative Y ranges.
 Multichannel matrices are noncheckable expandable groups; single-channel matrices
 are checkable leaves without a child row. In multiple mode, row clicks only edit.
 Removal only releases session entries.
@@ -16,8 +19,19 @@ After Fourier calculation, Yes displays only the new result; No adds it unchecke
 and retains the current selection, visibility and views.
 The Transform menu also offers finite-record 1D Laplace planes and contour-based
 inversion; both use the same background jobs and result-selection question.
+Data conversion adds dB, angle, magnitude, logarithm and affine operations with
+full/crop/slice scopes; results retain sample coordinates and are separate entries.
 Export figure opens a modal preview for current 2D/3D/signal/derivative views,
 including overlays, titles and legends, with pixel width and print DPI settings.
+File commands and Fit views share the matrix panel; the old top bar is hidden.
+Rename is available through the tree context menu/F2; Remove all is in Remove's
+arrow menu. Numeric export settings live in a separate modal window. Multichannel
+and complex sources offer Export channel, retaining just the selected component.
+Whole image/numeric-channel exports preserve source channels; PNG/BMP normalize
+one real 2D matrix to 8-bit grayscale, independently of plot image exports.
+Native context menus reuse processing/export controls. Tree right-click chooses
+an editing target without altering visibility; canvas clicks open menus while
+right drags retain the existing 3D camera gesture.
 """
 
 from collections.abc import Iterator
@@ -33,6 +47,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .app import DEFAULT_MAX_EDGE, FILE_FILTER, JobKind, ViewerWindow
 from .coordinates import AxisMap
 from .channel_tree import ChannelTree
+from .context_menus import WorkspaceMenus
 from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits,
                          Selection, ViewMode, default_selection, prepare_frame, select_image_member)
 from .overlay_profile import OverlayProfile
@@ -42,7 +57,12 @@ from .laplace import LaplaceDirection, LaplaceOptions, run_laplace
 from .laplace_dialog import LaplaceDialog
 from .complex_merge import MergeInput, MergeMatrix, MergeMode, PhaseUnit, run_merge
 from .complex_merge_dialog import ComplexMergeDialog
+from .data_conversion import ConversionOptions, run_conversion
+from .data_conversion_dialog import DataConversionDialog
+from .import_catalog import INSPECT_EXTENSIONS, ImportCatalog, ImportChoice, inspect_source
+from .import_dialog import ImportDialog
 from .exporting import ExportFormat, ExportLayout, ExportSnapshot, ExportTarget
+from .excel_io import serialize_excel
 from .figure_dialog import FigureExportDialog
 from .figure_export import FigureSource, FigureView, figure_stem, plot_source, surface_source
 from .plot_support import pyside_graphics_view
@@ -50,7 +70,8 @@ from .qt_widgets import NoWheelComboBox
 from .profile_view import CHANNEL_COLORS, JumpMode
 from .surface_view import ProfileStyle
 from .workspace import (COLORS, Alignment, ChannelChoice, LoadedFile, MatrixEntry, RenderLayer, Setting,
-                        active_channel, align_axis, channel_choices, coordinate_bounds, family, load_file, profile_series)
+                        active_channel, align_axis, channel_choices, coordinate_bounds, family, height_bounds, load_file,
+                        overlay_auto_height, profile_series)
 from .workspace_export import (ExportScope, default_stem, mat_variable_names,
                                prepare_displayed_export, serialize_displayed_mat)
 
@@ -104,6 +125,8 @@ class WorkspaceWindow(ViewerWindow):
         self._fourier_dialog: FourierDialog | None = None
         self._laplace_dialog: LaplaceDialog | None = None
         self._merge_dialog: ComplexMergeDialog | None = None
+        self._conversion_dialog: DataConversionDialog | None = None
+        self._import_dialog: ImportDialog | None = None
         self._single_render_key: tuple[int, int] | None = None
         self._loading_channel_uid: int | None = None
         super().__init__(max_edge, initial_mode, initial_channel_axis)
@@ -121,12 +144,13 @@ class WorkspaceWindow(ViewerWindow):
         for scope in ExportScope:
             self.export_scope.addItem(scope.value, scope.value)
         self.export_form.insertRow(0, "Scope", self.export_scope)
-        self.export_scope.currentIndexChanged.connect(self._sync_export_controls)
+        self.export_scope.currentIndexChanged.connect(self._export_scope_changed)
         self.figure_export_button = QtWidgets.QPushButton("Export figure…")
         self.figure_export_button.setToolTip("Save the current plot/camera, including visible overlays, as an image.")
         self.figure_export_button.clicked.connect(self._export_figure)
         self.export_form.addRow(self.figure_export_button)
         self._workspace_ready = True
+        self.context_menus = WorkspaceMenus(self)
         self._theme_changed()
 
     def _build_workspace(self) -> None:
@@ -141,13 +165,31 @@ class WorkspaceWindow(ViewerWindow):
         self.single_matrix_mode.setToolTip("Click a channel or single-channel matrix to show it exclusively. Click a multichannel matrix to expand its channels.")
         self.multiple_matrix_mode.setToolTip("Use channel checkboxes to overlay compatible matrices/channels. Row clicks only choose the editing target.")
         self.multiple_matrix_mode.toggled.connect(self._display_mode_changed)
+        self.open_file_action = QtGui.QAction("Open file…", self)
+        self.open_file_action.setShortcut(QtGui.QKeySequence.StandardKey.Open)
+        self.open_file_action.setToolTip("Open a file and replace the current session.")
+        self.open_file_action.triggered.connect(self._choose_file)
+        self.addAction(self.open_file_action)
+        self.open_file_button.setShortcut(QtGui.QKeySequence())
+        self.add_file_action = QtGui.QAction("Add file…", self)
+        self.add_file_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+O"))
+        self.add_file_action.triggered.connect(self._choose_overlay)
+        self.addAction(self.add_file_action)
         bar = QtWidgets.QHBoxLayout()
-        self.add_overlay = QtWidgets.QPushButton("Add file…")
-        self.add_overlay.clicked.connect(self._choose_overlay)
+        self.add_overlay = QtWidgets.QToolButton()
+        self.add_overlay.setDefaultAction(self.add_file_action)
+        self.add_overlay.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        file_menu = QtWidgets.QMenu(self.add_overlay)
+        file_menu.addActions([self.open_file_action, self.add_file_action])
+        self.add_overlay.setMenu(file_menu)
+        self.add_overlay.setToolTip("Add a file, or use the arrow menu to Open and replace the session. Files can also be dropped anywhere in the window.")
         bar.addWidget(self.add_overlay)
         self.fourier_button = QtWidgets.QPushButton("Transform…")
         self.fourier_button.setEnabled(False)
         transform_menu = QtWidgets.QMenu(self.fourier_button)
+        self.conversion_action = transform_menu.addAction("Data conversion…")
+        self.conversion_action.triggered.connect(self._choose_data_conversion)
+        transform_menu.addSeparator()
         self.fourier_action = transform_menu.addAction("Fourier…")
         self.fourier_action.triggered.connect(self._choose_fourier)
         self.laplace_action = transform_menu.addAction("Laplace…")
@@ -164,19 +206,27 @@ class WorkspaceWindow(ViewerWindow):
         layout.addLayout(bar)
         actions = QtWidgets.QHBoxLayout()
         self.none_visible = QtWidgets.QPushButton("Hide all")
+        self.none_visible.setVisible(self.multiple_matrix_mode.isChecked())
         self.none_visible.clicked.connect(self._hide_all)
         actions.addWidget(self.none_visible)
-        self.rename_matrix = QtWidgets.QPushButton("Rename…")
-        self.rename_matrix.clicked.connect(self._rename_selected)
-        actions.addWidget(self.rename_matrix)
-        self.remove_matrix = QtWidgets.QPushButton("Remove")
-        self.remove_matrix.clicked.connect(self._remove_selected)
+        self.remove_action = QtGui.QAction("Remove", self)
+        self.remove_action.triggered.connect(self._remove_selected)
+        self.remove_matrix = QtWidgets.QToolButton()
+        self.remove_matrix.setDefaultAction(self.remove_action)
+        self.remove_matrix.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.remove_matrix.setToolTip("Remove from this session; the source file is unchanged.")
         actions.addWidget(self.remove_matrix)
-        self.remove_all = QtWidgets.QPushButton("Remove all")
-        self.remove_all.clicked.connect(self._remove_all)
+        self.remove_all = QtGui.QAction("Remove all", self)
+        self.remove_all.triggered.connect(self._remove_all)
         self.remove_all.setToolTip("Remove all matrices from this session; source files are unchanged.")
-        actions.addWidget(self.remove_all)
+        remove_menu = QtWidgets.QMenu(self.remove_matrix)
+        remove_menu.addActions([self.remove_action, self.remove_all])
+        self.remove_matrix.setMenu(remove_menu)
+        old_bar = self.file_bar.layout()
+        assert old_bar is not None
+        old_bar.removeWidget(self.fit_views_button)
+        actions.addWidget(self.fit_views_button)
+        self.file_bar.hide()
         layout.addLayout(actions)
         self.matrix_list = ChannelTree()
         self.matrix_list.setColumnCount(3)
@@ -225,13 +275,18 @@ class WorkspaceWindow(ViewerWindow):
         form.addRow("Align relative to", self.reference)
         self.alignment_x = NoWheelComboBox()
         self.alignment_y = NoWheelComboBox()
-        for combo, start, end in ((self.alignment_x, "Left", "Right"), (self.alignment_y, "Top / minimum Y", "Bottom / maximum Y")):
+        self.alignment_z = NoWheelComboBox()
+        self.alignment_z.setToolTip("Align visible Z ranges to the reference after height scaling. Affects 3D geometry only; images, profiles and numeric exports keep source values.")
+        for combo, start, end in ((self.alignment_x, "Left", "Right"),
+                                  (self.alignment_y, "Top / minimum Y", "Bottom / maximum Y"),
+                                  (self.alignment_z, "Minimum Z", "Maximum Z")):
             for mode in Alignment:
                 label = start if mode == Alignment.START else end if mode == Alignment.END else mode.value
                 combo.addItem(label, mode.value)
             combo.currentIndexChanged.connect(self._alignment_changed)
         form.addRow("X alignment", self.alignment_x)
         form.addRow("Y alignment", self.alignment_y)
+        form.addRow("Z alignment (3D)", self.alignment_z)
         self.layer_color = QtWidgets.QPushButton("Solid color…")
         self.layer_color.clicked.connect(self._choose_layer_color)
         form.addRow(self.layer_color)
@@ -242,7 +297,7 @@ class WorkspaceWindow(ViewerWindow):
         self.layer_opacity.setValue(0.65)
         self.layer_opacity.valueChanged.connect(self._alignment_changed)
         form.addRow("2D / 3D opacity", self.layer_opacity)
-        note = QtWidgets.QLabel("Alignment changes display coordinates. Data and derivatives retain source coordinates. Visible-matrix export includes alignment. 2D values control opacity.")
+        note = QtWidgets.QLabel("X/Y alignment is included in visible-matrix exports. Z alignment and height scaling affect only 3D geometry. Data and derivatives retain source values. 2D values control opacity.")
         note.setWordWrap(True)
         form.addRow(note)
         left.insertWidget(0, self.alignment_box)
@@ -570,6 +625,10 @@ class WorkspaceWindow(ViewerWindow):
                     detail = f"{detail}\n\n{entry.document.laplace.description}"
                 if entry.document.complex_provenance:
                     detail = f"{detail}\n\n{entry.document.complex_provenance}"
+                if entry.document.conversion_provenance:
+                    detail = f"{detail}\n\n{entry.document.conversion_provenance}"
+                if entry.document.import_provenance:
+                    detail = f"{detail}\n\n{entry.document.import_provenance}"
                 item.setToolTip(0, detail)
                 item.setToolTip(1, detail)
                 children = {int(child.data(0, QtCore.Qt.ItemDataRole.UserRole)): child
@@ -613,14 +672,17 @@ class WorkspaceWindow(ViewerWindow):
                     item.setExpanded(any(member.uid == self.active_uid for member in members))
             self.reference.setCurrentIndex(self.reference.findData(self.reference_uid))
         self.alignment_box.setVisible(self._overlay())
+        self.none_visible.setVisible(self.multiple_matrix_mode.isChecked())
         self.remove_matrix.setEnabled(bool(self.entries))
+        self.remove_action.setEnabled(bool(self.entries))
         self.remove_all.setEnabled(bool(self.entries))
-        self.rename_matrix.setEnabled(bool(self.entries))
         selected = self._entry()
         self.fourier_action.setEnabled(selected is not None and self._channel_loaded(selected)
                                        and selected.selection.mode != ViewMode.POINTS)
         self.merge_action.setEnabled(bool(self._merge_sources()))
-        self.fourier_button.setEnabled(self.fourier_action.isEnabled() or self.merge_action.isEnabled())
+        self.conversion_action.setEnabled(selected is not None and self._channel_loaded(selected))
+        self.fourier_button.setEnabled(self.fourier_action.isEnabled() or self.merge_action.isEnabled()
+                                       or self.conversion_action.isEnabled())
         self.laplace_action.setEnabled(selected is not None and self._channel_loaded(selected)
             and not selected.document.is_image and (selected.selection.mode in (ViewMode.SIGNAL, ViewMode.XY)
                 or (selected.selection.mode == ViewMode.MATRIX and np.iscomplexobj(selected.document.array))))
@@ -649,6 +711,10 @@ class WorkspaceWindow(ViewerWindow):
             detail = f"{detail}\nComplex source: full real + imaginary values available for export."
         if document.complex_provenance:
             detail = f"{detail}\n\n{document.complex_provenance}"
+        if document.conversion_provenance:
+            detail = f"{detail}\n\n{document.conversion_provenance}"
+        if document.import_provenance:
+            detail = f"{detail}\n\n{document.import_provenance}"
         self.info.setToolTip(detail)
 
     def _rename_selected(self) -> None:
@@ -673,12 +739,18 @@ class WorkspaceWindow(ViewerWindow):
         entry = self._entry()
         if entry is None:
             return
-        with QtCore.QSignalBlocker(self.alignment_x), QtCore.QSignalBlocker(self.alignment_y), QtCore.QSignalBlocker(self.layer_opacity):
+        with QtCore.QSignalBlocker(self.alignment_x), QtCore.QSignalBlocker(self.alignment_y), QtCore.QSignalBlocker(self.alignment_z), QtCore.QSignalBlocker(self.layer_opacity):
             self.alignment_x.setCurrentIndex(self.alignment_x.findData(entry.align_x.value))
             self.alignment_y.setCurrentIndex(self.alignment_y.findData(entry.align_y.value))
+            self.alignment_z.setCurrentIndex(self.alignment_z.findData(entry.align_z.value))
             self.layer_opacity.setValue(entry.opacity)
         self.alignment_x.setEnabled(entry.uid != self.reference_uid)
         self.alignment_y.setEnabled(entry.uid != self.reference_uid and family(entry.selection.mode) != ViewMode.SIGNAL)
+        spatial = family(entry.selection.mode) != ViewMode.SIGNAL
+        self.alignment_z.setEnabled(entry.uid != self.reference_uid and spatial)
+        form = self.alignment_box.layout()
+        if isinstance(form, QtWidgets.QFormLayout):
+            form.setRowVisible(self.alignment_z, spatial)
         self._set_color_icon(self.layer_color, QtGui.QColor(entry.color))
 
     def _list_clicked(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
@@ -762,6 +834,10 @@ class WorkspaceWindow(ViewerWindow):
         if entry is None:
             return
         checked = item.checkState(0) == QtCore.Qt.CheckState.Checked
+        self._set_entry_visible(entry, checked)
+
+    def _set_entry_visible(self, entry: MatrixEntry, checked: bool) -> None:
+        """Apply a checkbox/menu visibility change with the same overlay validation."""
         if checked and self.single_matrix_mode.isChecked():
             self._show_only(entry)
             return
@@ -805,6 +881,7 @@ class WorkspaceWindow(ViewerWindow):
         if entry is not None:
             entry.align_x = Alignment(self.alignment_x.currentData())
             entry.align_y = Alignment(self.alignment_y.currentData())
+            entry.align_z = Alignment(self.alignment_z.currentData())
             entry.opacity = self.layer_opacity.value()
             self._render_workspace(reset=True)
 
@@ -851,7 +928,7 @@ class WorkspaceWindow(ViewerWindow):
 
     def _remove_all(self) -> None:
         self._rebuild.stop()
-        for kind in (JobKind.FRAME, JobKind.LOAD, JobKind.BUNDLE, JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE):
+        for kind in (JobKind.FRAME, JobKind.LOAD, JobKind.BUNDLE, JobKind.INSPECT, JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE, JobKind.DATA_CONVERSION):
             self._latest[kind] = -1
         self.entries.clear()
         self._preparing.clear()
@@ -957,7 +1034,31 @@ class WorkspaceWindow(ViewerWindow):
         self._merge_dialog = None
         dialog.deleteLater()
 
-    def _operation_dialog(self, kind: JobKind) -> FourierDialog | LaplaceDialog | ComplexMergeDialog | None:
+    def _choose_data_conversion(self) -> None:
+        """Capture the active channel and open pointwise conversion settings."""
+        self._store_entry()
+        entry = self._entry()
+        if entry is None or not self._channel_loaded(entry):
+            return
+        document, selection, crop, limits = entry.document, entry.selection, entry.crop, entry.limits
+        label = self._channel_label(entry)
+        index = self._export_profile_index() if self._profile_selected else None
+        dialog = DataConversionDialog(document, selection, label,
+                                      self.profile_direction.currentIndex() == 0, index, self)
+        self._conversion_dialog = dialog
+
+        def generate(options: ConversionOptions, name: str) -> None:
+            dialog.set_busy(True)
+            self._submit(JobKind.DATA_CONVERSION, partial(run_conversion, document, selection, crop, limits, options, label, name))
+
+        dialog.generate_requested.connect(generate)
+        dialog.exec()
+        self._conversion_dialog = None
+        dialog.deleteLater()
+
+    def _operation_dialog(self, kind: JobKind) -> FourierDialog | LaplaceDialog | ComplexMergeDialog | DataConversionDialog | None:
+        if kind == JobKind.DATA_CONVERSION:
+            return self._conversion_dialog
         if kind == JobKind.COMPLEX_MERGE:
             return self._merge_dialog
         return self._laplace_dialog if kind == JobKind.LAPLACE else self._fourier_dialog
@@ -965,7 +1066,8 @@ class WorkspaceWindow(ViewerWindow):
     def _transform_done(self, result: TransformResult, kind: JobKind = JobKind.FOURIER) -> None:
         """Add a completed result and ask whether to display it exclusively."""
         dialog = self._operation_dialog(kind)
-        operation = ("Complex matrix merge" if kind == JobKind.COMPLEX_MERGE else
+        operation = ("Data conversion" if kind == JobKind.DATA_CONVERSION else
+                     "Complex matrix merge" if kind == JobKind.COMPLEX_MERGE else
                      "Laplace transform" if kind == JobKind.LAPLACE else "Fourier transform")
         if dialog is not None:
             dialog.set_busy(False)
@@ -976,7 +1078,7 @@ class WorkspaceWindow(ViewerWindow):
         mode = ViewMode.SIGNAL if document.array.ndim == 1 else ViewMode.MATRIX
         forward = ((document.transform is not None and document.transform.direction == TransformDirection.FORWARD)
                    or (document.laplace is not None and document.laplace.direction == LaplaceDirection.FORWARD))
-        selection = replace(default_selection(document, mode),
+        selection = result.selection or replace(default_selection(document, mode),
                             component=Component.MAGNITUDE if forward or kind == JobKind.COMPLEX_MERGE else Component.REAL)
         entry = MatrixEntry(self._uid, document, selection, COLORS[(self._uid - 1) % len(COLORS)],
                             limits=Limits(mode=FilterMode(str(self._defaults["filter_mode"]))),
@@ -1018,7 +1120,46 @@ class WorkspaceWindow(ViewerWindow):
         self.matrix_box.setEnabled(False)
         self.display_channel.setEnabled(False)
         self.statusBar().showMessage(f"Loading {path.name}…")
-        self._submit(JobKind.BUNDLE, partial(load_file, path, key))
+        self._latest[JobKind.BUNDLE] = -1
+        self._latest[JobKind.INSPECT] = -1
+        if path.suffix.lower() in INSPECT_EXTENSIONS:
+            self._submit(JobKind.INSPECT, partial(inspect_source, path, key))
+        else:
+            self._submit(JobKind.BUNDLE, partial(load_file, path, key))
+
+    def _choose_import(self, catalog: ImportCatalog, number: int) -> None:
+        """Select archive members/ranges before allocating their numeric arrays."""
+        if catalog.tabular or len(catalog.members) > 1:
+            dialog = ImportDialog(catalog, self)
+            self._import_dialog = dialog
+            try:
+                accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted
+                choices = dialog.choices() if accepted else ()
+            finally:
+                self._import_dialog = None
+                dialog.deleteLater()
+        else:
+            member = catalog.members[0]
+            choices = (ImportChoice(member.key),) if not member.error else ()
+        if self._closing or self._latest.get(JobKind.INSPECT) != number:
+            return
+        if not choices:
+            self._cancel_opening()
+            return
+        self.statusBar().showMessage(f"Loading {len(choices)} selected matrices from {catalog.path.name}…")
+        self._submit(JobKind.BUNDLE, partial(load_file, catalog.path, choices=choices))
+
+    def _cancel_opening(self) -> None:
+        """Restore the unchanged workspace after cancelling an import dialog."""
+        self.matrix_box.setEnabled(True)
+        self.controls.setEnabled(self.document is not None)
+        self._sync_source_selectors(self.frame_selection.component if self.frame_selection else Component.REAL)
+        self._refresh_list()
+        self._render_workspace()
+        entry = self._entry()
+        if entry is not None and entry.frame is None:
+            self._request_frame()
+        self.statusBar().showMessage("Opening canceled; the current workspace was kept.")
 
     def _opening_selection(self, document: Document, mode: ViewMode | None = None,
                            channel_axis: int | None = None) -> Selection | None:
@@ -1075,7 +1216,12 @@ class WorkspaceWindow(ViewerWindow):
 
     def _job_done(self, number: int, kind_text: str, result: object) -> None:
         kind = JobKind(kind_text)
-        if kind in (JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE):
+        if kind == JobKind.INSPECT:
+            self._jobs.pop(number, None)
+            if not self._closing and self._latest.get(kind) == number:
+                self._choose_import(cast(ImportCatalog, result), number)
+            return
+        if kind in (JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE, JobKind.DATA_CONVERSION):
             self._jobs.pop(number, None)
             if not self._closing and self._latest.get(kind) == number:
                 self._transform_done(cast(TransformResult, result), kind)
@@ -1113,15 +1259,7 @@ class WorkspaceWindow(ViewerWindow):
             if self._closing or self._latest.get(kind) != number:
                 return
             if selection is None:
-                self.matrix_box.setEnabled(True)
-                self.controls.setEnabled(self.document is not None)
-                self._sync_source_selectors(self.frame_selection.component if self.frame_selection else Component.REAL)
-                self._refresh_list()
-                self._render_workspace()
-                entry = self._entry()
-                if entry is not None and entry.frame is None:
-                    self._request_frame()
-                self.statusBar().showMessage("Opening canceled; the current workspace was kept.")
+                self._cancel_opening()
                 return
             selections.append((document, selection))
         self.matrix_box.setEnabled(True)
@@ -1169,7 +1307,7 @@ class WorkspaceWindow(ViewerWindow):
             self._refresh_list()
             self._render_workspace()
             return
-        if kind in (JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE):
+        if kind in (JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE, JobKind.DATA_CONVERSION):
             self._jobs.pop(number, None)
             if not self._closing and self._latest.get(kind) == number:
                 dialog = self._operation_dialog(kind)
@@ -1177,18 +1315,18 @@ class WorkspaceWindow(ViewerWindow):
                     dialog.set_busy(False)
                 QtWidgets.QMessageBox.warning(dialog or self, "Cannot merge components" if kind == JobKind.COMPLEX_MERGE else "Cannot transform matrix", message)
             return
-        if kind not in (JobKind.BUNDLE, JobKind.OVERLAY_FRAMES):
+        if kind not in (JobKind.BUNDLE, JobKind.OVERLAY_FRAMES, JobKind.INSPECT):
             super()._job_failed(number, kind_text, message)
             return
         self._jobs.pop(number, None)
-        if self._closing or (kind == JobKind.BUNDLE and self._latest.get(kind) != number):
+        if self._closing or (kind in (JobKind.BUNDLE, JobKind.INSPECT) and self._latest.get(kind) != number):
             return
         if kind == JobKind.OVERLAY_FRAMES:
             self._finish_preparation(number)
         self.matrix_box.setEnabled(True)
         self.controls.setEnabled(self.document is not None)
         self._sync_source_selectors(self.frame_selection.component if self.frame_selection else Component.REAL)
-        QtWidgets.QMessageBox.warning(self, "Cannot open overlay" if kind == JobKind.BUNDLE else "Cannot prepare overlays", message)
+        QtWidgets.QMessageBox.warning(self, "Cannot open file" if kind in (JobKind.BUNDLE, JobKind.INSPECT) else "Cannot prepare overlays", message)
         self.statusBar().showMessage(f"Error: {message}")
 
     def _document_loaded(self, document: Document) -> None:
@@ -1358,24 +1496,29 @@ class WorkspaceWindow(ViewerWindow):
         if reference.frame is None:
             return ()
         rx, ry = coordinate_bounds(reference.frame)
-        auto_height = (max(reference.frame.scalar.shape[1] * reference.frame.x_mapping.scale,
-                           reference.frame.scalar.shape[0] * reference.frame.y_mapping.scale) * 0.3 / (reference.frame.limits[1] - reference.frame.limits[0])
-                       if reference.frame.scalar.ndim == 2 else 1.0)
+        auto_height = overlay_auto_height(visible, reference)
+        reference_height = auto_height if reference.settings.get("auto_height", True) else float(reference.settings.get("height_scale", 1))
+        align_heights = family(reference.selection.mode) != ViewMode.SIGNAL and any(
+            entry.uid != reference.uid and entry.align_z != Alignment.ORIGINAL for entry in visible)
+        rz = height_bounds(reference.frame, reference_height) if align_heights else (0.0, 0.0)
         layers: list[RenderLayer] = []
         for entry in visible:
             frame = entry.frame
             assert frame is not None
             x, y = coordinate_bounds(frame)
             own_reference = entry.uid == reference.uid
+            height = auto_height if entry.settings.get("auto_height", True) else float(entry.settings.get("height_scale", 1))
+            z = (align_axis(height_bounds(frame, height), rz, entry.align_z)
+                 if align_heights and not own_reference and entry.align_z != Alignment.ORIGINAL else AxisMap())
             jump = JumpMode(int(entry.settings.get("jump_mode", JumpMode.GAPS_ONLY)))
             threshold = (None if jump == JumpMode.GAPS_ONLY else float(np.pi) if jump == JumpMode.RADIANS
                          else 180.0 if jump == JumpMode.DEGREES else float(entry.settings.get("jump_threshold", 1)))
             layers.append(RenderLayer(entry.uid, self._channel_label(entry), frame, entry.color, entry.opacity,
                 align_axis(x, rx, Alignment.ORIGINAL if own_reference else entry.align_x),
                 align_axis(y, ry, Alignment.ORIGINAL if own_reference else entry.align_y),
-                auto_height if entry.settings.get("auto_height", True) else float(entry.settings.get("height_scale", 1)),
+                height,
                 float(entry.settings.get("point_size", 2)), str(entry.settings.get("clip_color", "#ff0000")), threshold,
-                (id(entry.document.array), entry.selection, frame.x_start, frame.y_start, frame.scalar.shape, frame.value_limits)))
+                (id(entry.document.array), entry.selection, frame.x_start, frame.y_start, frame.scalar.shape, frame.value_limits), z))
         return tuple(layers)
 
     def _render_workspace(self, reset: bool = False) -> None:
@@ -1435,6 +1578,8 @@ class WorkspaceWindow(ViewerWindow):
             if mode == ViewMode.MATRIX:
                 self.image_view.set_layers(layers, reset)
                 self._configure_profile_range()
+                if reset:
+                    self.overlay_profile.reset_view()
             elif mode == ViewMode.SIGNAL:
                 series = tuple(item for layer in layers if (item := profile_series(layer)) is not None)
                 self.overlay_profile.set_series(series, reset)
@@ -1495,6 +1640,11 @@ class WorkspaceWindow(ViewerWindow):
         if self.tabs.currentIndex() == 1 and not self._surface_dirty:
             self.surface_view.set_layer_profiles(row, position if self._profile_selected else None)
 
+    def _set_profile_auto_y(self, enabled: bool) -> None:
+        super()._set_profile_auto_y(enabled)
+        if self._workspace_ready:
+            self.overlay_profile.set_y_auto_range(enabled)
+
     def _profile_mapping(self) -> AxisMap:
         reference = (self._entry(self.reference_uid) if self._overlay() else
                      next((entry for entry in self.entries if entry.visible), None))
@@ -1516,6 +1666,18 @@ class WorkspaceWindow(ViewerWindow):
     def _sync_export_controls(self) -> None:
         if self._view_override is not None:
             return
+        if hasattr(self, "export_scope"):
+            scopes = [ExportScope.SELECTED]
+            if self._has_export_channels():
+                scopes.append(ExportScope.CHANNEL)
+            scopes.append(ExportScope.VISIBLE)
+            if [self.export_scope.itemData(index) for index in range(self.export_scope.count())] != scopes:
+                previous_scope = self.export_scope.currentData()
+                with QtCore.QSignalBlocker(self.export_scope):
+                    self.export_scope.clear()
+                    for scope in scopes:
+                        self.export_scope.addItem(scope.value, scope.value)
+                    self.export_scope.setCurrentIndex(max(0, self.export_scope.findData(previous_scope)))
         previous_layout = self.export_layout.currentText()
         previous_target = self.export_target.currentText()
         super()._sync_export_controls()
@@ -1542,6 +1704,52 @@ class WorkspaceWindow(ViewerWindow):
                     self.export_hint.setText("The selected matrix has no visible slice at this aligned position.")
         elif hasattr(self, "export_box"):
             self.export_box.setTitle("Export")
+        if entry is not None:
+            label = self._channel_label(entry) if self._export_channel_only() else entry.label
+            self.export_box.setTitle("Export selected channel" if self._export_channel_only() else "Export selected matrix")
+            self.export_dialog.setWindowTitle(f"Export — {label}")
+
+    def _has_export_channels(self) -> bool:
+        entry = self._entry()
+        return entry is not None and (entry.document.is_complex or len(channel_choices(entry)) > 1)
+
+    def _export_channel_only(self) -> bool:
+        return hasattr(self, "export_scope") and self.export_scope.currentData() == ExportScope.CHANNEL
+
+    def _export_all_channels(self) -> bool:
+        if not hasattr(self, "export_scope") or self.export_scope.currentData() != ExportScope.SELECTED:
+            return False
+        entry = self._entry()
+        if entry is None:
+            return False
+        source = entry.document.image_source
+        return (source is not None and len(source.channels) > 1) or entry.selection.channel_axis is not None
+
+    def _export_scope_changed(self) -> None:
+        with QtCore.QSignalBlocker(self.export_complex):
+            self.export_complex.setChecked(not self._export_channel_only())
+        self._sync_export_controls()
+
+    def _open_export_dialog(self, target: ExportTarget | None = None, *, channel: bool = False) -> None:
+        """Show persistent export settings for the active matrix or its channel.
+
+        Args:
+            target: Optional menu-selected result/original/slice target. None
+                retains the dialog's current scope and target.
+            channel: With a target, select the real-valued active channel.
+
+        Side effects:
+            Runs a modal dialog; saves still use the existing background worker.
+        """
+        self._sync_export_controls()
+        if target is not None:
+            scope = ExportScope.CHANNEL if channel and self._has_export_channels() else ExportScope.SELECTED
+            self.export_scope.setCurrentIndex(self.export_scope.findData(scope))
+            self.export_complex.setChecked(scope != ExportScope.CHANNEL)
+            self.export_target.setCurrentText(target)
+        self._sync_export_controls()
+        self.export_dialog.status.clear()
+        self.export_dialog.exec()
 
     def _visible_export_layers(self) -> tuple[RenderLayer, ...]:
         if self._overlay():
@@ -1553,6 +1761,7 @@ class WorkspaceWindow(ViewerWindow):
 
     def _sync_displayed_export_controls(self, previous_layout: str, previous_target: str) -> None:
         self.export_box.setTitle("Export visible matrices")
+        self.export_dialog.setWindowTitle("Export — all visible matrices")
         self.export_form.setRowVisible(self.export_complex, False)
         layers = self._visible_export_layers()
         first = self._entry(layers[0].uid) if layers else None
@@ -1571,9 +1780,10 @@ class WorkspaceWindow(ViewerWindow):
             self.export_layout.setCurrentText(previous_layout if previous_layout in choices else choices[0])
         format_ = ExportFormat(self.export_format.currentData())
         storage = ("One MAT file, with one named variable per matrix." if format_ == ExportFormat.MAT
+                   else "One XLSX workbook, with one worksheet per matrix." if format_ == ExportFormat.XLSX
                    else "One file per matrix; choose each filename in sequence. Cancel cancels the entire batch.")
         hint = (f"{len(layers)} visible matrices. Current channels, crop, value bounds and XY alignment are applied. "
-                "Full-resolution values; camera zoom and 3D height scaling are excluded. "
+                "Full-resolution values; camera zoom, 3D height scaling and 3D Z alignment are excluded. "
                 "XY gaps remain NaN; nonfinite XYZ points are omitted. "
                 f"{storage}")
         if any(layer.frame.composite for layer in layers):
@@ -1582,9 +1792,12 @@ class WorkspaceWindow(ViewerWindow):
             hint = f"{hint}\nComplex sources export their displayed components here. Choose Selected matrix and Export complex matrix to retain real + imaginary values."
         if sliced:
             hint = f"{hint}\nOnly matrices intersecting the current slice are included."
+        image_format = format_ in (ExportFormat.PNG, ExportFormat.BMP)
+        if image_format:
+            hint = f"{hint}\nPNG/BMP need one real 2D array: choose Selected matrix/channel. Use Export figure for an image of the overlay."
         self.export_hint.setText(hint)
         pending = bool(self._preparing) or self._rebuild.isActive() or not self._export_ready
-        self.export_save.setEnabled(bool(layers) and not pending and not self._export_busy
+        self.export_save.setEnabled(bool(layers) and not pending and not self._export_busy and not image_format
                                     and (not sliced or self._profile_selected))
 
     def _export_stem(self, suggested: str) -> str:
@@ -1592,11 +1805,21 @@ class WorkspaceWindow(ViewerWindow):
         if entry is not None and entry.name:
             return default_stem(entry, ExportTarget(self.export_target.currentText()),
                                 row=self.profile_direction.currentIndex() == 0, index=self._export_profile_index(),
-                                preserve_complex=self.export_complex.isChecked())
+                                preserve_complex=self.export_complex.isChecked() and not self._export_channel_only(),
+                                preserve_channels=self._export_all_channels())
         return suggested
 
-    def _export_figure(self) -> None:
-        """Open the figure preview without changing selection or numeric exports."""
+    def _export_figure(self, checked: bool = False, *, preferred: FigureView | None = None) -> None:
+        """Open the figure preview without changing selection or numeric exports.
+
+        Args:
+            checked: Unused checked state supplied by Qt button/action signals.
+            preferred: Canvas requested by a context menu; None uses the active
+                main tab. Unavailable choices fall back to the active view.
+
+        Side effects:
+            Opens a modal dialog and restores the previous tabs when it closes.
+        """
         visible = [entry for entry in self.entries if entry.visible and entry.frame is not None]
         if not visible:
             QtWidgets.QMessageBox.information(self, "No visible data", "Select a matrix or channel before exporting a figure.")
@@ -1624,8 +1847,10 @@ class WorkspaceWindow(ViewerWindow):
             initial = FigureView.DERIVATIVE if original_tab == 1 else FigureView.SIGNAL
         else:
             initial = FigureView.SURFACE if original_tab == 1 else choices[0]
+        if preferred is not None and preferred in choices:
+            initial = preferred
         directory = self._export_directory or visible[0].document.path.parent
-        dialog = FigureExportDialog(tuple(choices), initial, self._prepare_figure, directory, self)
+        dialog = FigureExportDialog(tuple(choices), initial, self._prepare_figure, directory, self._export_parent())
         try:
             dialog.exec()
             if dialog.saved_path is not None:
@@ -1728,17 +1953,17 @@ class WorkspaceWindow(ViewerWindow):
                         snapshot = replace(snapshot, values=snapshot.values.T)
                     snapshots.append(snapshot)
         except (ValueError, MemoryError) as exc:
-            QtWidgets.QMessageBox.warning(self, "Cannot export visible matrices", str(exc))
+            QtWidgets.QMessageBox.warning(self._export_parent(), "Cannot export visible matrices", str(exc))
             return
         if not snapshots:
-            QtWidgets.QMessageBox.warning(self, "Nothing to export", "No displayed matrix intersects the selected slice.")
+            QtWidgets.QMessageBox.warning(self._export_parent(), "Nothing to export", "No displayed matrix intersects the selected slice.")
             return
         captured = tuple(snapshots)
         format_ = ExportFormat(self.export_format.currentData())
         directory = self._export_directory or (self.document.path.parent if self.document else Path.cwd())
-        if format_ == ExportFormat.MAT:
+        if format_ in (ExportFormat.MAT, ExportFormat.XLSX):
             stem = f"{captured[0].stem[:100]}_and_{len(captured)-1}_matrices" if len(captured) > 1 else captured[0].stem
-            defaults = (directory / f"{stem}.mat",)
+            defaults = (directory / f"{stem}.{format_.value}",)
         else:
             defaults = tuple(directory / f"{snapshot.stem}.{format_.value}" for snapshot in captured)
         choices = self._choose_export_files(defaults, format_, "Export visible matrices")
@@ -1756,6 +1981,12 @@ class WorkspaceWindow(ViewerWindow):
                 self._write_payloads(((paths[0], serialize_displayed_mat(captured)),))
                 return f"Saved: {paths[0]} | Variables: {', '.join(mat_variable_names(captured))}"
             self._submit(JobKind.EXPORT, write_mat)
+        elif format_ == ExportFormat.XLSX:
+            def write_excel() -> str:
+                data = serialize_excel(tuple((snapshot.stem, snapshot.values) for snapshot in captured))
+                self._write_payloads(((paths[0], data),))
+                return f"Saved: {paths[0]} | {len(captured)} matrix worksheets"
+            self._submit(JobKind.EXPORT, write_excel)
         else:
             outputs = tuple((snapshot.values, path, selected_format)
                             for snapshot, (path, selected_format) in zip(captured, choices, strict=True))

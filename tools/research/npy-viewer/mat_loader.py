@@ -28,6 +28,36 @@ MAX_ERROR_VARIABLES = 12
 
 
 @dataclass(frozen=True)
+class MatMember:
+    """Top-level variable metadata; an error marks an unsupported member."""
+
+    name: str
+    shape: tuple[int, ...]
+    kind: str
+    error: str = ""
+
+
+def inspect_mat(path: Path) -> tuple[MatMember, ...]:
+    """Read names/shapes/types without loading MATLAB variable arrays.
+
+    Args:
+        path: Legacy or v7.3 MAT file.
+
+    Returns:
+        Metadata for all top-level user variables, including unsupported ones.
+
+    Raises:
+        ValueError/OSError: Damaged or unreadable metadata.
+    """
+    if h5py.is_hdf5(path):
+        with h5py.File(path, "r") as archive:
+            return _hdf_members(archive)
+    metadata = cast(list[tuple[str, tuple[int, ...], str]], whosmat(str(path), appendmat=False))
+    return tuple(MatMember(name, shape, kind, _metadata_problem(name, shape, kind) or "")
+                 for name, shape, kind in metadata)
+
+
+@dataclass(frozen=True)
 class MatData:
     """Selected array, all top-level variable names and the selected name."""
 
@@ -104,20 +134,27 @@ def _hdf_problem(node: object, name: str) -> str | None:
     return None
 
 
+def _hdf_members(archive: h5py.File) -> tuple[MatMember, ...]:
+    """Inspect local HDF5 nodes only; never follow external/soft links."""
+    members: list[MatMember] = []
+    for name in archive:
+        if not isinstance(name, str):
+            raise ValueError("The MAT file contains an invalid HDF5 variable name; expected text.")
+        if name.startswith("#"):
+            continue
+        if not isinstance(archive.get(name, getlink=True), h5py.HardLink):
+            members.append(MatMember(name, (), "linked", f"MAT variable {name!r}: linked HDF5 datasets are not supported."))
+            continue
+        node = archive[name]
+        shape = tuple(reversed(node.shape)) if isinstance(node, h5py.Dataset) and node.shape is not None else ()
+        kind = _matlab_class(node) if isinstance(node, (h5py.Dataset, h5py.Group)) else "unknown"
+        members.append(MatMember(name, shape, kind, _hdf_problem(node, name) or ""))
+    return tuple(members)
+
+
 def _read_hdf(path: Path, key: str | None) -> MatData:
     with h5py.File(path, "r") as archive:
-        problems: dict[str, str | None] = {}
-        # Internal reference containers are not user variables. Only metadata
-        # is inspected here; unsupported datasets are never materialized.
-        for name in archive:
-            if not isinstance(name, str):
-                raise ValueError("The MAT file contains an invalid HDF5 variable name; expected text.")
-            if name.startswith("#"):
-                continue
-            if not isinstance(archive.get(name, getlink=True), h5py.HardLink):
-                problems[name] = f"MAT variable {name!r}: linked HDF5 datasets are not supported."
-            else:
-                problems[name] = _hdf_problem(archive[name], name)
+        problems = {item.name: item.error or None for item in _hdf_members(archive)}
         selected = _choose_variable(problems, key)
         dataset = archive[selected]
         if not isinstance(dataset, h5py.Dataset):

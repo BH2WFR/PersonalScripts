@@ -24,6 +24,7 @@ class ExportScope(StrEnum):
     """Choose one source matrix or independent tables matching visible results."""
 
     SELECTED = "Selected matrix"
+    CHANNEL = "Selected channel"
     VISIBLE = "All visible matrices (as displayed)"
 
 
@@ -37,14 +38,16 @@ def safe_stem(name: str) -> str:
 
 
 def default_stem(entry: MatrixEntry, target: ExportTarget, *, displayed: bool = False,
-                 row: bool = True, index: int = 0, preserve_complex: bool = False) -> str:
+                 row: bool = True, index: int = 0, preserve_complex: bool = False,
+                 preserve_channels: bool = False) -> str:
     """Name exports by matrix alias, active channel and processing target."""
     identity = entry.name or Path(entry.document.path.name).stem
     if not entry.name and entry.document.key is not None and not entry.document.is_image:
         identity = f"{identity}_{entry.document.key}"
     if not entry.name and entry.instance > 1:
         identity = f"{identity}_{entry.instance}"
-    channel = ("" if target == ExportTarget.ORIGINAL else "_complex"
+    channel = ("" if target == ExportTarget.ORIGINAL else "_all-channels"
+               if preserve_channels and target != ExportTarget.SLICE else "_complex"
                if preserve_complex and entry.document.is_complex else f"_{active_channel(entry).label}")
     suffix = ("original" if target == ExportTarget.ORIGINAL else
               f"{'row' if row else 'column'}-{index}" if target == ExportTarget.SLICE else "result")
