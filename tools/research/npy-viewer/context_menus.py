@@ -6,6 +6,7 @@ opening a menu does not calculate derivatives or change channel visibility.
 The 3D menu offers equal XYZ data-unit scaling for all visible layers.
 Image, signal and derivative menus independently toggle equal X:Y unit scaling.
 The matrix's signal menu can add visible slices as independent in-memory matrices.
+The tree menu also packages every source matrix, checked or hidden, in one archive.
 """
 
 from collections.abc import Callable
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import ViewMode
+from .bundle_export import BUNDLE_FORMATS
 from .exporting import ExportTarget
 from .figure_export import FigureView
 from .plot_support import pyside_graphics_view
@@ -210,6 +212,12 @@ class WorkspaceMenus(QtCore.QObject):
             self._add(menu, "Remove matrix", window._remove_selected)
             menu.addSeparator()
         self._file_actions(menu)
+        bundle = menu.addMenu("Save all matrices as…")
+        bundle.setEnabled(bool(window.entries) and window.matrix_box.isEnabled() and not window._export_busy)
+        bundle.setToolTipsVisible(True)
+        for format_ in BUNDLE_FORMATS:
+            action = self._add(bundle, f"{format_.value.upper()}…", partial(window._save_all_matrices, format_))
+            action.setToolTip("All source matrices, including hidden ones, without crop or value bounds. Images split native channels; NPZ/MAT preserve complex arrays, XLSX splits real/imaginary sheets. View settings are not saved.")
         self._add(menu, "Fit all views", window._fit_views, enabled=any(member.visible for member in window.entries))
         if multiple:
             self._add(menu, "Hide all", window._hide_all, enabled=bool(window.entries))

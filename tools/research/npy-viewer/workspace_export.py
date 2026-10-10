@@ -120,10 +120,11 @@ def mat_variable_names(snapshots: tuple[ExportSnapshot, ...]) -> tuple[str, ...]
 
 
 def serialize_displayed_mat(snapshots: tuple[ExportSnapshot, ...]) -> bytes:
-    """Save independent visible tables as uniquely named MATLAB Level 5 variables.
+    """Save named numeric arrays as uniquely named MATLAB Level 5 variables.
 
     Args:
-        snapshots: Owned real-valued XY/XYZ tables in displayed coordinates.
+        snapshots: Owned real/complex arrays. Used for displayed coordinate
+            tables and for complete original matrices in workspace bundles.
 
     Returns:
         MAT bytes containing one numeric variable per snapshot.
@@ -132,7 +133,7 @@ def serialize_displayed_mat(snapshots: tuple[ExportSnapshot, ...]) -> bytes:
         ValueError: No snapshots or precision unsupported by MATLAB Level 5.
     """
     if not snapshots:
-        raise ValueError("No visible matrices to export.")
+        raise ValueError("No matrices to export.")
     for snapshot in snapshots:
         validate_mat_array(snapshot.values)
     buffer = BytesIO()

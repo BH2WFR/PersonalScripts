@@ -2,6 +2,8 @@
 
 Requirements: numpy and PySide6. Usage: opened modally by WorkspaceWindow.
 No transform runs until Generate is pressed; calculations use the existing worker.
+Forward complex inputs start with the channel/full-complex choice made by the
+workspace; the checkbox and summary identify the values used in the calculation.
 """
 
 import math
@@ -25,6 +27,8 @@ class LaplaceDialog(QtWidgets.QDialog):
         crop: Applied sample-index crop, offered for forward transforms only.
         source_name: Session label shown to the user.
         parent: Owning viewer window.
+        display_component: Start a forward transform with the selected scalar
+            component; default False uses full complex values.
 
     Side effects:
         Emits generate_requested(options, name); never computes on control changes.
@@ -33,7 +37,8 @@ class LaplaceDialog(QtWidgets.QDialog):
     generate_requested = QtCore.Signal(object, str)
 
     def __init__(self, document: Document, selection: Selection, crop: Crop,
-                 source_name: str, parent: QtWidgets.QWidget | None = None) -> None:
+                 source_name: str, parent: QtWidgets.QWidget | None = None, *,
+                 display_component: bool = False) -> None:
         super().__init__(parent)
         self.document, self.selection, self.crop = document, selection, crop
         self._busy = False
@@ -69,6 +74,7 @@ class LaplaceDialog(QtWidgets.QDialog):
         self.fft_size.setRange(0, 2_147_483_647)
         self.fft_size.setSpecialValueText("Same as input")
         self.component = QtWidgets.QCheckBox(f"Transform current display component ({selection.component.value})")
+        self.component.setChecked(document.is_complex and display_component and not self.inverse)
         self.bounds = QtWidgets.QCheckBox("Apply current value bounds before transforming")
         self.fill_zero = QtWidgets.QCheckBox("Replace NaN / Inf / filtered samples with zero")
         self.single = QtWidgets.QCheckBox("Single precision (complex64)")
@@ -127,7 +133,7 @@ class LaplaceDialog(QtWidgets.QDialog):
             "Columns must cover the full uniform DFT angular-frequency grid, with normalization dt × FFT. "
             "A row nearer sigma = 0 usually reduces numerical error. Cropping and value bounds are ignored."
             if self.inverse else
-            "Output: rows = sigma, columns = omega (rad / time unit). Full complex values are retained by default. "
+            "Output: rows = sigma, columns = omega (rad / time unit). Input representation is shown below. "
             "Kernel time starts at the first selected sample; its original coordinate is restored by inversion. "
             "This computes a finite-record numerical Laplace transform. XY input must have unique, uniformly spaced X values. "
             "Exponential weighting can amplify roundoff; use a moderate sigma range.")
@@ -191,7 +197,8 @@ class LaplaceDialog(QtWidgets.QDialog):
         size = self.fft_size.value() or count
         memory = self.sigma_count.value() * size * (8 if self.single.isChecked() else 16)
         extra = " Automatic sigma bounds use actual X spacing." if self.selection.mode == ViewMode.XY and auto else ""
-        self.estimate.setText(f"Output: ({self.sigma_count.value()}, {size}) complex values; {memory / 1024**2:.2f} MiB. "
+        channel = (self.selection.component.value if self.component.isChecked() else "Full complex values") if self.document.is_complex else "Real values"
+        self.estimate.setText(f"Input: {channel}. Output: ({self.sigma_count.value()}, {size}) complex values; {memory / 1024**2:.2f} MiB. "
                               f"Limit: {MAX_OUTPUT_BYTES / 1024**3:g} GiB; reduce rows or crop large inputs.{extra}")
 
     def _generate(self) -> None:

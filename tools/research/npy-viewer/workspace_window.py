@@ -30,6 +30,9 @@ After Fourier calculation, Yes displays only the new result; No adds it unchecke
 and retains the current selection, visibility and views.
 The Transform menu also offers finite-record 1D Laplace planes and contour-based
 inversion; both use the same background jobs and result-selection question.
+Data conversion and forward Laplace ask complex sources for the active channel
+or full complex input before their settings dialog. Inverse Laplace explicitly
+requires both parts; its question disables current-channel input with a reason.
 Data conversion adds dB, angle, magnitude, logarithm and affine operations with
 full/crop/slice scopes; results retain sample coordinates and are separate entries.
 Export figure opens a modal preview for current 2D/3D/signal/derivative views,
@@ -40,6 +43,10 @@ arrow menu. Numeric export settings live in a separate modal window. Complex
 sources first ask for the current channel or both complex components, including
 signal and slice exports; cancellation leaves settings unchanged. The active
 source is explicitly identified as complex in the matrix panel and export dialog.
+The matrix context menu can save all source groups in one NPZ/MAT/XLSX bundle,
+including hidden and generated matrices. Full original arrays are copied in a
+worker; view settings, bounds and crops are excluded. Images split native channels,
+complex arrays stay intact in NPZ/MAT and use paired real/imag sheets in XLSX.
 Multichannel sources offer Export channel, retaining just the selected component.
 Whole image/numeric-channel exports preserve source channels; PNG/BMP normalize
 one real 2D matrix to 8-bit grayscale, independently of plot image exports.
@@ -61,6 +68,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .app import DEFAULT_MAX_EDGE, FILE_FILTER, JobKind, ViewerWindow
 from .coordinates import AxisMap
 from .channel_tree import ChannelTree
+from .bundle_export import BUNDLE_FORMATS, prepare_bundle, serialize_bundle
 from .context_menus import WorkspaceMenus
 from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits, RealArray,
                          Selection, ViewMode, default_selection, prepare_frame, select_image_member)
@@ -71,6 +79,7 @@ from .laplace import LaplaceDirection, LaplaceOptions, run_laplace
 from .laplace_dialog import LaplaceDialog
 from .complex_merge import MergeInput, MergeMatrix, MergeMode, PhaseUnit, run_merge
 from .complex_merge_dialog import ComplexMergeDialog
+from .complex_input import ComplexDataChoice, choose_complex_data
 from .data_conversion import ConversionOptions, run_conversion
 from .data_conversion_dialog import DataConversionDialog
 from .import_catalog import INSPECT_EXTENSIONS, ImportCatalog, ImportChoice, inspect_source
@@ -1015,7 +1024,22 @@ class WorkspaceWindow(ViewerWindow):
                 and not (entry.selection.mode == ViewMode.MATRIX and np.iscomplexobj(entry.document.array))):
             return
         document, selection, crop, limits, label = entry.document, entry.selection, entry.crop, entry.limits, entry.label
-        dialog = LaplaceDialog(document, selection, crop, label, self)
+        display_component = False
+        if document.is_complex:
+            inverse = selection.mode == ViewMode.MATRIX
+            choice = choose_complex_data(self, label, active_channel(entry).label,
+                title="Inverse Laplace — complex input" if inverse else "Laplace — complex input",
+                action="inverse-transformed" if inverse else "transformed", prefer_complex=inverse,
+                details=("Inversion uses one complete frequency row, ignoring crop and value bounds."
+                         if inverse else "Transforms one 1D signal into a 2D complex Laplace plane. "
+                         "Full complex input retains both parts and ignores value bounds. "
+                         "The next dialog selects sampling and the input range."),
+                channel_unavailable=("Inverse Laplace requires the complete complex spectrum; "
+                                     "a display component cannot restore the original signal." if inverse else None))
+            if choice is None:
+                return
+            display_component = choice == ComplexDataChoice.CHANNEL
+        dialog = LaplaceDialog(document, selection, crop, label, self, display_component=display_component)
         self._laplace_dialog = dialog
 
         def generate(options: LaplaceOptions, name: str) -> None:
@@ -1070,15 +1094,27 @@ class WorkspaceWindow(ViewerWindow):
         if entry is None or not self._channel_loaded(entry):
             return
         document, selection, crop, limits = entry.document, entry.selection, entry.crop, entry.limits
-        label = self._channel_label(entry)
+        full_complex = False
+        if document.is_complex:
+            choice = choose_complex_data(self, entry.label, active_channel(entry).label,
+                title="Data conversion — complex input", action="converted", prefer_complex=False,
+                details="Full complex input supports amplitude dB, magnitude and scale/offset; value bounds are ignored. "
+                        "Magnitude and dB produce real results; scale/offset preserves complex values. "
+                        "Other operations require Current channel. The next dialog selects the range and operation.")
+            if choice is None:
+                return
+            full_complex = choice == ComplexDataChoice.COMPLEX
+        label = entry.label if document.is_complex else self._channel_label(entry)
         index = self._export_profile_index() if self._profile_selected else None
         dialog = DataConversionDialog(document, selection, label,
-                                      self.profile_direction.currentIndex() == 0, index, self)
+                                      self.profile_direction.currentIndex() == 0, index, self, full_complex=full_complex)
         self._conversion_dialog = dialog
 
         def generate(options: ConversionOptions, name: str) -> None:
             dialog.set_busy(True)
-            self._submit(JobKind.DATA_CONVERSION, partial(run_conversion, document, selection, crop, limits, options, label, name))
+            source_label = (f"{label} / {'Complex' if options.full_complex else selection.component.value}"
+                            if document.is_complex else label)
+            self._submit(JobKind.DATA_CONVERSION, partial(run_conversion, document, selection, crop, limits, options, source_label, name))
 
         dialog.generate_requested.connect(generate)
         dialog.exec()
@@ -2153,6 +2189,42 @@ class WorkspaceWindow(ViewerWindow):
             outputs = tuple((snapshot.values, path, selected_format)
                             for snapshot, (path, selected_format) in zip(captured, choices, strict=True))
             self._submit(JobKind.EXPORT, lambda: self._write_arrays(outputs))
+
+    def _save_all_matrices(self, format_: ExportFormat) -> None:
+        """Save each matrix group once, including unchecked and derived sources.
+
+        Args:
+            format_: NPZ, MAT or XLSX selected from the matrix context menu.
+
+        Side effects:
+            Asks for one destination, then copies/serializes the captured sources
+            in the export worker. Uses existing overwrite checks and atomic save.
+            No selection, source buffer or display setting is changed.
+        """
+        if (not self.entries or self._export_busy or not self.matrix_box.isEnabled()
+                or format_ not in BUNDLE_FORMATS):
+            return
+        sources = tuple((members[0].label, members[0].document) for members in self._groups().values())
+        directory = self._export_directory or sources[0][1].path.parent
+        default = directory / f"matrices_{len(sources)}.{format_.value}"
+        choices = self._choose_export_files((default,), format_, "Save all matrices — original data, including hidden matrices")
+        if choices is None:
+            return
+        path, selected_format = choices[0]
+        if not self._confirm_export_destinations((path,)):
+            return
+        self._export_directory = path.parent
+        self._export_busy = True
+        self.export_box.setEnabled(False)
+        self.statusBar().showMessage(f"Saving all {len(sources)} matrices to {path.name}…")
+
+        def write_bundle() -> str:
+            snapshots = prepare_bundle(sources)
+            self._write_payloads(((path, serialize_bundle(snapshots, selected_format)),))
+            print(f"[Bundle export] Saved {len(sources)} matrices ({len(snapshots)} arrays) to {path}", flush=True)
+            return f"Saved: {path} | {len(sources)} matrices; {len(snapshots)} original arrays"
+
+        self._submit(JobKind.EXPORT, write_bundle)
 
     def _refresh_surface(self) -> None:
         if self._overlay():

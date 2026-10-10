@@ -141,7 +141,8 @@ class LaplaceTests(unittest.TestCase):
 
     def test_inverse_invalid_or_incomplete_data(self) -> None:
         plane = self.forward(np.arange(8.))
-        for kwargs in ({"inverse_row": 99}, {"range": fourier.TransformRange.CROP}, {"apply_bounds": True}):
+        for kwargs in ({"inverse_row": 99}, {"range": fourier.TransformRange.CROP}, {"apply_bounds": True},
+                       {"display_component": True}):
             with self.assertRaises(ValueError):
                 self.inverse(plane, **kwargs)
         with self.assertRaisesRegex(ValueError, "incomplete"):

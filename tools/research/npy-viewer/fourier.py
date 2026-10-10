@@ -2,7 +2,8 @@
 
 Requirements: numpy and scipy. Usage: run_transform from a viewer worker.
 Generated FFT arrays store centered, complete complex spectra; IFFT accepts
-centered or standard external spectra. Rendering never changes these arrays.
+centered or standard external complex spectra. IFFT rejects real sources,
+display-component input and frequency cropping. Rendering never changes arrays.
 Full slices use the selected original row/column across its entire source axis;
 cropped slices retain inclusive X/Y bounds and their original coordinate origin.
 Real channels independently replace NaN/+Inf/-Inf and finite outliers using
@@ -253,6 +254,12 @@ def run_transform(document: Document, selection: Selection, crop: Crop, limits: 
         Prints input identity, parameters, sizes and calculation timing.
     """
     started = perf_counter()
+    inverse = options.direction == TransformDirection.INVERSE
+    if inverse:
+        if not document.is_complex or options.display_component:
+            raise ValueError("IFFT requires full complex input (real + imaginary), not a real matrix or display channel.")
+        if options.range.uses_crop or options.apply_bounds:
+            raise ValueError("IFFT requires the complete frequency axes without crop or value bounds. Choose Full matrix / signal or Full 1D Slice.")
     # Extract original values first: bounds must not turn +/-Inf or finite
     # outliers into NaN before their independent treatments are chosen.
     source = transform_input(document, selection, crop, replace(options, apply_bounds=False), limits)
@@ -261,7 +268,6 @@ def run_transform(document: Document, selection: Selection, crop: Crop, limits: 
     values, treatments = prepare_fourier_values(source.values, limits if bound_values else Limits(),
                                                 options.value_policy, phase=phase)
     rank = values.ndim
-    inverse = options.direction == TransformDirection.INVERSE
     record = document.transform
     paired = inverse and record is not None and record.direction == TransformDirection.FORWARD and not options.display_component
     axes = options.axes or (tuple(i for i, axis in enumerate(source.source_axes) if axis in record.axes)

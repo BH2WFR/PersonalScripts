@@ -303,6 +303,22 @@ class FourierTests(unittest.TestCase):
                                    fourier.TransformOptions(direction=fourier.TransformDirection.INVERSE,
                                      range=fourier.TransformRange.CROP), "Spectrum")
 
+    def test_inverse_requires_full_complex_input(self) -> None:
+        options = fourier.TransformOptions(direction=fourier.TransformDirection.INVERSE, input_centered=False)
+        for values in (np.arange(8.), np.ones((4, 5), dtype=np.int16)):
+            with self.subTest(shape=values.shape), self.assertRaisesRegex(ValueError, "full complex input"):
+                self.transform(values, options)
+        spectrum = np.fft.fft(np.arange(8.) + 2j)
+        for bad in (replace(options, display_component=True), replace(options, apply_bounds=True),
+                    replace(options, range=fourier.TransformRange.CROP)):
+            with self.subTest(options=bad), self.assertRaises(ValueError):
+                self.transform(spectrum, bad)
+        # Complex dtype remains eligible even when every imaginary part is zero.
+        zeros = np.zeros(8, dtype=np.complex128)
+        result = self.transform(zeros, options)
+        np.testing.assert_array_equal(result.array, zeros)
+        self.assertTrue(result.is_complex)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,9 @@
 
 Requirements: PySide6 and the viewer data model. Usage: opened by WorkspaceWindow;
 Generate submits a worker job, while changing settings never recomputes arrays.
+The workspace first asks complex sources for a channel or full-complex input.
+Full-complex mode offers only compatible operations; changing an operation never
+silently substitutes a scalar channel. The input choice remains editable here.
 """
 
 import math
@@ -25,6 +28,8 @@ class DataConversionDialog(QtWidgets.QDialog):
         row: Current slice direction, True for a row.
         index: Selected source slice index, or None if no slice is selected.
         parent: Owning viewer.
+        full_complex: Initial input choice; None uses full complex except when
+            the active channel is phase. Ignored for real sources.
 
     Side effects:
         Emits generate_requested(options, name) after validating numeric inputs.
@@ -34,7 +39,7 @@ class DataConversionDialog(QtWidgets.QDialog):
 
     def __init__(self, document: Document, selection: Selection, source_name: str,
                  row: bool = True, index: int | None = None,
-                 parent: QtWidgets.QWidget | None = None) -> None:
+                 parent: QtWidgets.QWidget | None = None, *, full_complex: bool | None = None) -> None:
         super().__init__(parent)
         self._busy = False
         self.document, self.selection = document, selection
@@ -43,7 +48,9 @@ class DataConversionDialog(QtWidgets.QDialog):
         self.setModal(True)
         self.resize(650, 530)
         layout = QtWidgets.QVBoxLayout(self)
-        source = QtWidgets.QLabel(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}")
+        component = f"\nCurrent channel: {selection.component.value}" if document.is_complex else ""
+        source = QtWidgets.QLabel(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}{component}")
+        source.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         source.setWordWrap(True)
         layout.addWidget(source)
         self.settings = QtWidgets.QWidget()
@@ -59,7 +66,9 @@ class DataConversionDialog(QtWidgets.QDialog):
                 self.range_selector.addItem(scope.value, scope)
         self.form.addRow("Input range", self.range_selector)
         self.full_complex = QtWidgets.QCheckBox("Use full complex values (instead of selected component)")
-        self.full_complex.setChecked(document.is_complex)
+        complex_input = (selection.component != Component.PHASE) if full_complex is None else full_complex
+        self.full_complex.setChecked(document.is_complex and complex_input)
+        self.full_complex.setToolTip("Full complex input offers amplitude dB, magnitude and scale/offset. Uncheck to convert the displayed real channel.")
         self.form.addRow(self.full_complex)
         self.form.setRowVisible(self.full_complex, document.is_complex)
         self.bounds = QtWidgets.QCheckBox("Apply current value bounds before conversion")
@@ -102,15 +111,23 @@ class DataConversionDialog(QtWidgets.QDialog):
         self.reference_mode.currentIndexChanged.connect(self._update_controls)
         self.full_complex.toggled.connect(self._update_controls)
         self.use_floor.toggled.connect(self._update_controls)
-        if document.is_complex and selection.component == Component.PHASE:
+        if document.is_complex and selection.component == Component.PHASE and not self.full_complex.isChecked():
             self.operation.setCurrentIndex(self.operation.findData(Conversion.RAD2DEG))
         self._update_controls()
 
     def _update_controls(self) -> None:
+        full_complex = self.document.is_complex and self.full_complex.isChecked()
+        previous = self.operation.currentData()
+        operations = [operation for operation in Conversion if not full_complex or operation in COMPLEX_CONVERSIONS]
+        if [self.operation.itemData(index) for index in range(self.operation.count())] != operations:
+            with QtCore.QSignalBlocker(self.operation):
+                self.operation.clear()
+                for operation in operations:
+                    self.operation.addItem(operation.value, operation)
+                self.operation.setCurrentIndex(max(0, self.operation.findData(previous)))
         operation = Conversion(self.operation.currentData())
         db = operation in DB_CONVERSIONS
-        self.full_complex.setEnabled(self.document.is_complex and operation in COMPLEX_CONVERSIONS)
-        full_complex = self.full_complex.isEnabled() and self.full_complex.isChecked()
+        self.full_complex.setEnabled(self.document.is_complex)
         self.bounds.setEnabled(not full_complex and not is_phase_view(self.document, self.selection))
         for widget in (self.reference_mode, self.reference, self.use_floor, self.floor):
             self.form.setRowVisible(widget, db)
@@ -147,7 +164,7 @@ class DataConversionDialog(QtWidgets.QDialog):
                 raise ValueError("Scale and offset must be finite numbers.")
             options = ConversionOptions(
                 operation, TransformRange(self.range_selector.currentData()),
-                self.full_complex.isEnabled() and self.full_complex.isChecked(),
+                self.document.is_complex and self.full_complex.isChecked(),
                 self.bounds.isEnabled() and self.bounds.isChecked(), reference_mode, reference,
                 floor, gain, offset, self.row, self.index if self.index is not None else 0,
             )

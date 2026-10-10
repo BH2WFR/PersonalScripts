@@ -19,6 +19,9 @@ date/time cells report their coordinates. XLS/XLSM are data-only input; export
 writes XLSX workbooks. Imported indices start at zero after excluding headings.
 Transform > Laplace converts an indexed/XY signal (including complex values)
 to a complex 2D plane with sigma rows and angular-frequency omega columns.
+Complex sources first choose the current channel or both real/imaginary parts;
+the forward settings retain that choice. Inverse Laplace requires full complex
+input and disables the channel choice with an explanation.
 The 2D view fits those axes independently so narrow sigma ranges remain readable.
 Choose dt/unit, sigma range/count, optional zero padding, precision and explicit
 crop/bounds/zero filling. Defaults preserve the full input, with 129 sigma rows
@@ -33,6 +36,9 @@ frequencies and time zero at the first selected sample. Full frequency columns
 are required for inversion. Exported arrays omit the in-session metadata.
 Transform > Data conversion creates a new full-resolution matrix from the active
 channel, its current crop or selected slice, with optional source value bounds.
+Complex sources first choose current-channel or full-complex input. The settings
+offer only operations compatible with that choice; there is no automatic fallback
+from complex values to a scalar channel when changing the operation.
 Operations include amplitude dB (20 log10(abs(x)/reference)), power dB
 (10 log10(x/reference)), deg2rad, rad2deg, magnitude, log10, ln and affine scaling.
 dB defaults to a 0 dB peak and -120 dB floor; fixed positive references and an
@@ -192,6 +198,17 @@ row/column limits and unsupported precision raise errors; NPY preserves dtypes.
 MAT stores 1D arrays as column vectors. Default filenames include the source
 member, processing ranges and layout; existing names receive a numeric suffix.
 Export scope chooses the selected source, its current channel or all visible matrices.
+The matrix-list context menu also offers Save all matrices as NPZ/MAT/XLSX.
+This packs each source group once, including unchecked matrices and generated
+results, using full original values without display-channel conversion, cropping,
+bounds or alignment. Images contribute their original channels as separate 2D
+arrays; derived display combinations are not duplicated. NPZ preserves array
+shapes/dtypes and complex values without pickle; MAT keeps complex variables and
+stores 1D arrays as columns; XLSX uses separate real/imaginary worksheets and
+column vectors. Names follow each format's restrictions and gain unique suffixes.
+NPY remains a single-array format. Bundles save numeric data, not view settings,
+physical-axis metadata or inverse-transform history. Packing runs in the export
+worker, and the single destination is replaced atomically after serialization.
 The 1D slice context menu offers Add visible slices to matrices: each current
 curve becomes an independent, unchecked 1D entry in the session. It retains
 source-index crop, physical/aligned coordinates, alpha weighting and its own
@@ -249,7 +266,10 @@ the entire selected source axis and crop Slice retains the crop's axis origin.
 A completion dialog offers to display only the new result (Yes) or
 keep the current view and add it unchecked (No).
 FFT uses complete centered spectra; IFFT restores recorded axes and
-normalization for generated spectra. Sampling intervals/units, axes, padding,
+normalization for generated spectra. IFFT is available only for complex sources,
+locks full complex input and excludes cropped frequency scopes and value bounds.
+Full 1D slices remain available along complete frequency axes.
+Sampling intervals/units, axes, padding,
 normalization, precision, optional mean removal and periodic windows are configurable.
 XY input must have unique uniformly spaced X. Point clouds are unsupported. Calculations run on
 demand in a worker at full resolution. Frequency coordinates are shared by plots,
@@ -317,12 +337,14 @@ def main() -> int:
             "default and can be disabled. Derivatives compute only when requested and reuse unchanged results. "
             "Transform tools create new matrices: Fourier FFT/IFFT, 1D Laplace and its inverse, data conversions (dB, angles, "
             "logs, magnitude, scale/offset), and complex merging from real/imaginary or magnitude/phase channels. "
+            "Conversion and Laplace ask channel/complex for complex sources; inverse transforms require full complex input. "
             "Fourier supports full/cropped matrices and slices, with separate complex/channel handling of invalid values. "
             "Full complex and phase inputs ignore value bounds. Fourier/Laplace require uniform XY sampling; no point clouds. "
             "Review sampling and preprocessing in each dialog. Plain array exports do not retain transform metadata. "
             "Export original matrices, processed results or slices as NPY, MAT, XLSX, CSV or TXT; choose a whole matrix, "
             "one channel or all visible results. Complex sources ask for channel or complex data; text splits real/imaginary files. "
             "A slice menu keeps independent in-memory 1D matrices, asking channel/complex for complex sources. "
+            "Save all matrices packs checked and hidden originals into NPZ/MAT/XLSX. "
             "Signals can export as XY tables and matrices as XYZ point clouds. Real 2D arrays also export as normalized grayscale PNG/BMP. "
             "Export figure opens a preview dialog for the current 2D, 3D, 1D or derivative view. Save PNG/TIFF/JPEG, or "
             "SVG for 2D/1D; set image dimensions, DPI, transparency, title and legend. Zoom, camera and visible styling "

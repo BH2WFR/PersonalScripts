@@ -9,6 +9,8 @@ bounds in every scope and zero-fill invalid samples. Real channels offer
 independent zero/valid-extremum treatments for NaN, +/-Inf and finite outliers,
 with clamp-to-boundary as the outlier default, independently of display Hide.
 No samples are removed from the input grid; statistics run only on Generate.
+Real sources offer FFT only. IFFT locks full complex input and excludes cropped
+frequency scopes; switching from FFT cannot retain a display-component input.
 """
 
 import math
@@ -68,9 +70,11 @@ class FourierDialog(QtWidgets.QDialog):
         layout.addWidget(self.settings)
         self.direction = NoWheelComboBox()
         for value in TransformDirection:
-            self.direction.addItem(value.value, value)
-        if document.transform is not None and document.transform.direction == TransformDirection.FORWARD:
-            self.direction.setCurrentIndex(1)
+            if value == TransformDirection.FORWARD or document.is_complex:
+                self.direction.addItem(value.value, value)
+        self.direction.setToolTip("IFFT is available only for complex sources and always uses both real and imaginary parts.")
+        if document.is_complex and document.transform is not None and document.transform.direction == TransformDirection.FORWARD:
+            self.direction.setCurrentIndex(self.direction.findData(TransformDirection.INVERSE))
         form.addRow("Operation", self.direction)
         self.range = NoWheelComboBox()
         matrix = selection.mode == ViewMode.MATRIX
@@ -190,7 +194,22 @@ class FourierDialog(QtWidgets.QDialog):
                 and record.direction == TransformDirection.FORWARD and not self.component.currentData())
 
     def _reconfigure(self) -> None:
-        inverse, paired = self.direction.currentData() == TransformDirection.INVERSE, self._paired()
+        inverse = self.direction.currentData() == TransformDirection.INVERSE
+        if inverse:
+            with QtCore.QSignalBlocker(self.component), QtCore.QSignalBlocker(self.range):
+                self.component.setCurrentIndex(0)
+                if TransformRange(self.range.currentData()).uses_crop:
+                    self.range.setCurrentIndex(self.range.findData(TransformRange.FULL))
+        self.component.setEnabled(not inverse)
+        self.component.setToolTip("IFFT requires both original complex parts; display channels cannot restore the signal."
+                                 if inverse else "Choose the full complex source or its current scalar display channel.")
+        range_model = self.range.model()
+        if isinstance(range_model, QtGui.QStandardItemModel):
+            for index in range(self.range.count()):
+                item = range_model.item(index)
+                if item is not None:
+                    item.setEnabled(not inverse or not TransformRange(self.range.itemData(index)).uses_crop)
+        paired = self._paired()
         selection, document = self.selection, self.document
         scope = TransformRange(self.range.currentData())
         axes = (selection.y_axis, selection.x_axis) if selection.y_axis is not None else (selection.x_axis,)
@@ -250,7 +269,7 @@ class FourierDialog(QtWidgets.QDialog):
         self.note.setText(
             ("Paired IFFT restores recorded coordinates and normalization. Use the complete frequency axes. "
              "Windows, mean removal and value bounds are not undone.\n" if paired else
-             "External IFFT: Δ is the frequency-bin spacing. Choose the input order and matching normalization.\n" if inverse else
+             "External IFFT: use full complex frequency axes. Δ is the frequency-bin spacing. Choose the input order and matching normalization.\n" if inverse else
              "FFT produces a centered, complete complex spectrum. Δ is the source sampling interval; use s for time or pixel for images.\n")
             + "The source is unchanged. XY input is sorted by X and must be unique and uniformly sampled. "
             "Source crop starts define the phase origin. NPY/MAT/XLSX/CSV/TXT array exports do not store transform metadata.")

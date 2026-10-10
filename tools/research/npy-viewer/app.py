@@ -18,6 +18,8 @@ Pointwise dB, angle, logarithm and affine conversions create separate matrices.
 The modal Export dialog saves originals, processed results or slices as numeric
 files, or real 2D matrices as normalized 8-bit PNG/BMP. Export settings stay
 outside the left sidebar; save workers report their status inside the dialog.
+Workspace bundles reuse the save-file dialog and atomic writer; NPZ is offered
+by the workspace bundle menu, not by the single-array export format selector.
 Value bounds share one input row and can be reverted independently of XY/color limits.
 Complex Phase disables Z/value-bound controls; X/Y cropping remains available.
 Fusion keeps native widget painting with 2 px layout padding/vertical gaps and
@@ -651,7 +653,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.export_form.addRow("Layout", self.export_layout)
         self.export_format = NoWheelComboBox()
         for format_ in ExportFormat:
-            self.export_format.addItem(format_.value.upper(), format_.value)
+            if format_ != ExportFormat.NPZ:
+                self.export_format.addItem(format_.value.upper(), format_.value)
         self.export_form.addRow("Format", self.export_format)
         self.export_hint = QtWidgets.QLabel()
         self.export_hint.setWordWrap(True)

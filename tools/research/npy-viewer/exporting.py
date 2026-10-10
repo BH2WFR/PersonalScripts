@@ -40,9 +40,10 @@ class ExportLayout(StrEnum):
 
 
 class ExportFormat(StrEnum):
-    """Supported output formats; TXT uses tab-separated numeric fields."""
+    """Output formats; NPZ is for workspace bundles, TXT is tab-separated."""
 
     NPY = "npy"
+    NPZ = "npz"
     MAT = "mat"
     XLSX = "xlsx"
     CSV = "csv"
