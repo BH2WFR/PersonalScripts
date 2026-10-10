@@ -1187,10 +1187,11 @@ def main() -> int:
     Environment.print_env_info(
         probe_versions=invocation.probe_environment_versions
     )
-    print(
-        f"  {FLCyan}Target Conda env:{CRst} "
-        f"{FLYellow}{target_conda_env}{CRst}\n"
-    )
+    if Environment.get_conda_env() is not None:
+        print(
+            f"  {FLCyan}Target Conda env:{CRst} "
+            f"{FLYellow}{target_conda_env}{CRst}\n"
+        )
 
     script_dir = config.script_root
     if not os.path.isdir(script_dir):

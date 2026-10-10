@@ -150,7 +150,7 @@ def run_laplace(document: Document, selection: Selection, crop: Crop, limits: Li
 def _forward(document: Document, selection: Selection, crop: Crop, limits: Limits,
              options: LaplaceOptions, source_name: str, name: str) -> TransformResult:
     """Evaluate each sigma contour with a full FFT, using only one working row."""
-    if selection.mode not in (ViewMode.SIGNAL, ViewMode.XY) or options.range == TransformRange.SLICE:
+    if selection.mode not in (ViewMode.SIGNAL, ViewMode.XY) or options.range.is_slice:
         raise ValueError("Forward Laplace requires a 1D signal / XY interpretation. Save a matrix slice as 1D NPY first.")
     source = transform_input(document, selection, crop, TransformOptions(
         range=options.range, display_component=options.display_component, apply_bounds=options.apply_bounds), limits)

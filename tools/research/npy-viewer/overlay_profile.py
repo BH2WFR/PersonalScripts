@@ -2,6 +2,9 @@
 
 Requirements: numpy, PySide6 and pyqtgraph. Usage: embedded in the workspace;
 uses the ordinary profile's controls, zoom behavior and compact numeric axes.
+Each layer keeps independent nonfinite colors and clipping emphasis.
+Hover readouts reserve two lines for the matrix name and source coordinates;
+full readings remain in the tooltip without resizing the plot during hovering.
 """
 
 from time import perf_counter
@@ -15,6 +18,7 @@ from .data_model import FloatArray, RealArray
 from .derivatives import DerivativeResult, differentiate
 from .profile_view import CurvePane, CurveStyle, ProfileView, _compact_sample
 from .workspace import ProfileSeries
+from .value_markers import curve_markers
 
 
 class OverlayProfile(ProfileView):
@@ -28,6 +32,7 @@ class OverlayProfile(ProfileView):
         self._drawn: list[tuple[object, ...] | None] = [None, None]
         self._items: list[list[pg.PlotDataItem]] = [[], []]
         super().__init__()
+        self.readout.setFixedHeight(2 * self.readout.fontMetrics().lineSpacing())
         self.color_button.hide()
         self.title.setText("Overlay")
         self.derivative_note.setText("Derivatives use original X coordinates; red dots mark undefined samples.")
@@ -64,7 +69,7 @@ class OverlayProfile(ProfileView):
 
     def _signature(self) -> tuple[object, ...]:
         return (self.style_selector.currentIndex(), *(
-            (series.key, series.mapping, series.layer.color, series.layer.clip_color, series.label)
+            (series.key, series.mapping, series.layer.color, series.layer.clip_color, series.layer.markers, series.label)
             for series in self._series))
 
     def _clear_pane(self, pane: CurvePane, index: int) -> None:
@@ -101,9 +106,24 @@ class OverlayProfile(ProfileView):
                 y = capped.y
                 self._curve(pane, 0, x, y, series.layer.color, series.label)
                 cap_x = series.mapping.array(np.interp(capped.cap_x, indices, series.source_x))
-                self._curve(pane, 0, cap_x, capped.cap_y, series.layer.clip_color, cap=True)
+                if series.layer.markers.highlight_clipped:
+                    self._curve(pane, 0, cap_x, capped.cap_y, series.layer.clip_color, cap=True)
+                    marked = series.clipped & np.isfinite(series.source_x)
+                    dots = pg.PlotDataItem(series.mapping.array(series.source_x[marked]), series.shown[marked],
+                                          pen=None, symbol="o", symbolSize=6, symbolPen=None,
+                                          symbolBrush=series.layer.clip_color)
+                    pane.plot_item.addItem(dots)
+                    self._items[0].append(dots)
             else:
                 self._curve(pane, 0, x, y, series.layer.color, series.label)
+            for group in curve_markers(series.values, series.shown, series.valid, series.layer.markers):
+                coordinates = series.mapping.array(series.source_x[group.indices])
+                finite_x = np.isfinite(coordinates)
+                dots = pg.PlotDataItem(coordinates[finite_x], group.heights[finite_x], pen=None, symbol="o",
+                                      symbolSize=series.layer.markers.size, symbolPen=None, symbolBrush=group.color)
+                dots.setZValue(2)
+                pane.plot_item.addItem(dots)
+                self._items[0].append(dots)
         self._drawn[0] = signature
 
     def _redraw(self) -> None:

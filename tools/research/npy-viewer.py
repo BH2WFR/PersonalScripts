@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Browse NPY, NPZ, MAT, Excel, CSV/TXT and images in a linked Qt matrix/signal viewer.
 
+The detailed notes below are for maintainers and coding agents. Keep the CLI
+description a concise user-facing overview; document implementation behavior
+and detailed defaults here instead of expanding command-line help.
+
 Numeric files accept nonempty dense 1D/2D boolean, integer, real and complex
 arrays. MATLAB legacy/v7.3 files expose supported top-level variables like NPZ
 members in the matrix list. MATLAB row/column vectors default to
@@ -64,6 +68,17 @@ leaving the top of the window for plots. Right-click matrix rows for visibility,
 rename, color, processing and export actions; right-clicking selects the editing
 target without changing visibility. Plot context menus offer fitting, figure
 export and view-specific controls. A 3D right drag still rolls the camera.
+The 3D menu's XYZ scale 1:1:1 (data units) action disables automatic height
+scaling, sets Z multipliers to one for all visible layers, and resets stretched
+XYZ alignments to original coordinates while retaining translation alignments.
+It fits the 3D camera without changing its orientation or projection. Equal
+data-unit scales do not calibrate pixel coordinates into physical distances.
+By default, matrix heights span roughly 30% of the longer XY side; point clouds
+keep a height multiplier of one.
+Image, signal and derivative context menus offer X:Y scale 1:1 (data units).
+Uncheck it for independent axes. The choice persists across single/overlay views;
+locked plots link wheel zoom and retain equal unit lengths when resized/exported,
+expanding a visible range if necessary. This does not convert physical units.
 NPZ/MAT/Excel members appear in a resizable tree with file/member names. Multichannel
 matrices are expandable groups without checkboxes; single-channel matrices are
 checkable rows without a channel child. Single matrix mode is the default:
@@ -99,6 +114,16 @@ including overlays. Disable Auto Y on slice change in the profile context menu
 to retain Y scale. X zoom is unchanged; Fit curve can refit the current plot.
 First-time derivative display still fits its data and remains lazily computed.
 Both 3D slice styles use the shared 3D color setting, including in overlay mode.
+Show Inf / -Inf / NaN markers is off by default, with editable blue/green/magenta
+colors per channel. Signals place Inf/-Inf at the visible finite maximum/minimum
+and NaN at zero; without finite visible samples the infinity markers also use zero.
+Nonfinite X coordinates cannot be plotted. Matrix images mark original pixels
+with opaque colors. 1D nonfinite dots default to 3 px; the
+per-channel size control accepts 0.5 to 20 px and leaves 2D pixel coloring intact.
+Highlight clipped values defaults on; turning it off retains
+clamping and normal curve/image/surface colors. Appearance options preserve raw
+values, processed numeric export semantics and lazy derivative caches. Figure
+exports include the currently enabled annotations.
 Raw data names its source channel; the header dropdown browses source matrices by name
 without changing plot selection and is disabled with zero or one matrix.
 Unchecked channels remain hidden from the raw table.
@@ -153,16 +178,29 @@ matrices can become XYZ point clouds (nonfinite points omitted); 1D signals
 can become two-row/column XY tables, retaining original sample coordinates.
 Color channel exports use grayscale; whole-image export keeps source channels.
 Original export preserves the source dtype and complex values.
-Complex crop/slice exports default to preserving both
-components without value bounds; uncheck Export complex matrix to save only
-the current display component. Detection uses the source dtype, including zero
-imaginary parts. Complex CSV/TXT produces matching _real/_imag files.
+Complex single-matrix exports first ask for Current channel or Complex data
+(real + imaginary), including 1D signals, 2D matrices and their 1D slices.
+The matrix panel and export window explicitly identify complex sources.
+Both components are preserved without value bounds when choosing Complex data;
+Current channel exports only the displayed scalar values. Choosing Current channel
+from Export original matrix exports the full component without crop or bounds.
+Detection uses the source dtype, including zero imaginary parts. Complex CSV/TXT
+produces matching _real/_imag files. Visible-matrix exports keep displayed channels.
 XLSX uses one worksheet per matrix (real/imaginary sheets for complex data),
 with 1D values in columns. Large integers and NaN/Inf use numeric text. Excel
 row/column limits and unsupported precision raise errors; NPY preserves dtypes.
 MAT stores 1D arrays as column vectors. Default filenames include the source
 member, processing ranges and layout; existing names receive a numeric suffix.
 Export scope chooses the selected source, its current channel or all visible matrices.
+The 1D slice context menu offers Add visible slices to matrices: each current
+curve becomes an independent, unchecked 1D entry in the session. It retains
+source-index crop, physical/aligned coordinates, alpha weighting and its own
+value-bound settings. Complex sources ask for the displayed scalar channels or
+both parts in one complex 1D array (without value bounds), just as slice file
+export does. Identical complex slices from one source are added only once;
+cancelling any question cancels the batch. RGB(A)/MA views contribute each
+displayed trace. Moving/removing the source does
+not change these copies. This writes no files and does not persist after closing.
 Visible exports apply the displayed channel, crop, value bounds and XY alignment,
 retaining each source as a separate full-resolution XY or XYZ table. Camera
 zoom, 3D height multipliers and Z alignment are excluded. MAT packs separate named variables;
@@ -192,13 +230,28 @@ Closing the dialog restores the original tabs. Saves replace files atomically.
 
 Fourier opens a modal FFT/IFFT dialog for the selected signal, image channel,
 complex matrix, crop or slice. Results become independent complex matrices in
-the tree. A completion dialog offers to display only the new result (Yes) or
+the tree. Input range distinguishes full matrices/signals, cropped matrices/signals,
+full 1D Slice and cropped 1D Slice, with the selected source row/column named.
+Full scopes ignore current X/Y and value bounds. Cropped real channels use the
+inclusive X/Y region and Z/value bounds. Finite outliers default to their nearest
+bound, with 0/valid maximum/valid minimum alternatives, independently of the
+viewer's Clamp/Hide mode. NaN, +Inf and -Inf each offer 0 (default), valid maximum
+or valid minimum. Extrema use original finite, in-bound samples from the selected
+input, before replacement; an empty reference pool requires zero filling.
+Full complex input replaces an entire sample with 0+0j if either component is
+nonfinite. Complex phase channels only offer zero filling; nonfinite original
+complex samples are phase gaps. Both full complex and phase input ignore Z/value
+bounds but retain X/Y cropping. Phase views also disable value bounds in the UI.
+Samples are never deleted or compressed; replacement counts are logged and stored
+in transform provenance. Original data remain unchanged.
+The dialog snapshots row/column, crop and bounds when opened; full Slice spans
+the entire selected source axis and crop Slice retains the crop's axis origin.
+A completion dialog offers to display only the new result (Yes) or
 keep the current view and add it unchecked (No).
 FFT uses complete centered spectra; IFFT restores recorded axes and
 normalization for generated spectra. Sampling intervals/units, axes, padding,
 normalization, precision, optional mean removal and periodic windows are configurable.
-NaN/Inf are rejected unless explicit zero filling is enabled; XY input must have
-unique uniformly spaced X. Point clouds are unsupported. Calculations run on
+XY input must have unique uniformly spaced X. Point clouds are unsupported. Calculations run on
 demand in a worker at full resolution. Frequency coordinates are shared by plots,
 surfaces, profiles, derivatives and coordinate-table exports. Complex display
 offers Real, Imaginary, Magnitude, Phase (rad) and Magnitude (dB). The dB view
@@ -244,73 +297,39 @@ def main() -> int:
         a Qt window and runs its event loop. Prints dependency errors.
     """
     parser = argparse.ArgumentParser(
-        description=("Browse NPY/NPZ/MAT/Excel/CSV/TXT/images as a raw table, 2D image, 3D surface or point cloud, and 1D/XY profiles with derivatives. "
-                     "Multi-member NPZ/MAT files offer a checkbox list with Select all/none and dimensions; only selected members load. "
-                     "XLSX/XLSM/XLS worksheets use the same list, with independent one-based row/column bounds and header modes. CSV/TXT also offer ranges, headers and delimiters. "
-                     "Excel reads cached formula results; missing XLSX/XLSM caches report the source cell. Legacy XLS uses xlrd; blank results become gaps and Excel errors/date cells report their coordinates. XLS/XLSM are data-only input; Excel export uses XLSX. Table indices restart at zero after import. "
-                     "Numeric files require nonempty dense 1D/2D arrays. MAT supports legacy/v7.3 numeric and logical variables, including complex arrays; "
-                     "select a variable with --key or the GUI. MAT vectors default to signal mode; two/three-row or column matrices also support XY/XYZ modes. "
-                     "Numeric 2-by-N/N-by-2 arrays with N > 2 prompt for 1D XY or 2D; 3-by-N/N-by-3 arrays with N > 3 prompt for XYZ point cloud or 2D, including archive members. Cancel preserves the workspace. Images and explicit --mode choices skip the prompt; complex XY/XYZ is unavailable. "
-                     "Unsupported types, higher-dimensional arrays and unreadable files show a clear error dialog. "
-                     "The left-side matrix/channel tree selects sources and their image channels, combinations, numeric channels or complex components (Real, Imaginary, Magnitude, Phase (rad), Magnitude (dB)). Magnitude dB uses peak 0 dB and an adjustable floor. Data conversion supports custom dB references and degree-valued matrices. "
-                     "Open file (Ctrl+O) replaces the session; Add file (Ctrl+Shift+O) or dropping another file appends. File commands and Fit views sit in the matrix panel. "
-                     "Matrix context menus offer visibility, rename, color, processing and export actions; right-click selects the editing target without changing visibility. Plot context menus offer fitting, figure export and view-specific controls; 3D right-drag still rolls the camera. "
-                     "Selected NPZ/MAT/Excel members join a resizable tree with independent channel settings and colors. Rename changes session labels, not source files. "
-                     "Multichannel matrices are expandable groups without checkboxes; single-channel matrices have a checkbox on the matrix row and no child row. "
-                     "Single matrix mode is the default: clicking a channel or single-channel matrix displays it exclusively; clicking a multichannel matrix expands its channels without changing visibility. "
-                     "Multiple matrices mode permits compatible channel checkboxes to overlay, including channels of one matrix. Row clicks only change the editing target in this mode. Switching back to single mode keeps the edited checked channel, or the first checked channel. "
-                     "Hide / Hide all controls are hidden in Single matrix mode. Auto Y on slice change is enabled by default, including overlays; disable it in the profile context menu to retain signal/derivative Y ranges. X zoom stays unchanged and derivatives remain lazy; Fit curve refits manually. "
-                     "Adding files in single mode retains the list and shows only the new file's first member. Remove / Remove all release session entries without deleting files. Indexed signals and XY tables can share a plot. "
-                     "Raw data names its source matrix/channel. Its header dropdown browses matrices by name without changing plot selection, is disabled with zero or one matrix, and keeps unchecked channels hidden. "
-                     "Curve legends sit beside the title outside the plot and scroll if necessary. "
-                     "Align X/Y to a selectable reference, initially the first matrix, using original coordinates, start/end, center or stretch. "
-                     "Overlaid surfaces/clouds also support Z alignment (original/minimum/maximum/center/stretch), applied after height scaling relative to the same reference. Z alignment moves only 3D geometry, clipping caps and slice markers; numeric exports and source values are unchanged. "
-                     "Alignment is display-only; raw data and derivatives retain source coordinates. Visible-matrix export includes alignment. 2D scalar values control opacity; 3D uses solid colors. "
-                     "Automatic overlay height uses all visible automatically scaled surfaces; manual multipliers remain independent. The first nonempty 3D overlay automatically fits its camera. "
-                     "Raised curves and translucent sections use the shared 3D color setting in single and overlay modes. "
-                     "XY derivatives use actual X spacing; repeated X values are gaps. Derivative tabs load on demand and reuse unchanged results. "
-                     "Derivative calculations print source indices and timing. "
-                     "Revert value bounds independently of X/Y cropping and color limits. "
-                     "Context-menu Export opens a separate settings dialog for originals, results and slices as NPY/MAT/XLSX/CSV/TXT, with independent XY cropping and value bounds. No export controls occupy the sidebar. "
-                     "Multichannel/complex sources offer Export channel for the active real-valued component; whole-matrix exports preserve source channels, including image alpha. Rename remains in the context menu/F2; Remove all is in Remove's arrow menu. "
-                     "Real 2D arrays in Array layout support PNG/BMP: finite min/max normalized to 0/255 in 8-bit grayscale after crop/bounds, one cell per pixel. Constants/gaps are black; entirely nonfinite inputs are rejected. Complex/multichannel sources require a scalar channel. Use Export figure for rendered colors, axes or overlays. "
-                     "Export 2D matrices as XYZ clouds or 1D signals as two-row/column XY tables. "
-                     "Complex text exports split into _real/_imag files; MAT uses variable matrix and column vectors for 1D. "
-                     "Selected complex matrices default to exporting both components (also for crops/slices); uncheck Export complex matrix to save the displayed component. Original export always retains complex storage. "
-                     "Default export filenames include source, ranges and layout. "
-                     "Export scope selects one matrix, its current channel, or all visible results in aligned XY/XYZ tables, preserving separate matrices. MAT stores named variables; XLSX stores worksheets; NPY/CSV/TXT save separate files. "
-                     "Complex XLSX splits real/imaginary sheets; 1D becomes a column. Large integers and NaN/Inf use numeric text. Excel size/precision limits are checked. "
-                     "Separate outputs each get a save dialog with a suggested name; cancelling any dialog cancels the batch before writing. "
-                     "Export figure previews the current 2D/3D/1D/derivative view with overlays, zoom and camera preserved. "
-                     "Save PNG/TIFF/JPEG, or SVG for 2D/1D; choose pixel width/height, optional aspect locking, DPI (default 300), transparency, title and legend. "
-                     "2D/curve figures use full source detail; 3D retains current mesh sampling. Derivatives remain lazy. "
-                     "Transform > Data conversion creates a separate matrix using amplitude/power dB, deg2rad/rad2deg, magnitude, log10, ln or scale+offset. Choose full input, current crop or slice, optionally applying value bounds first. "
-                     "dB uses a peak or fixed positive reference and an optional floor (default -120 dB). Amplitude uses absolute magnitude; power expects nonnegative power values. Invalid values remain gaps. All-zero peak input uses reference 1. "
-                     "Full complex values can be used for amplitude dB, magnitude and affine scaling. XY converts Y only; points convert Z only. Coordinates and order are retained, including repeated X. Image composites use grayscale height. Results retain source/formula tooltips and can be exported normally. "
-                     "Transform > Fourier opens FFT/IFFT settings for a signal, scalar image channel, complex matrix, crop or slice and adds a new complex result to the tree. "
-                     "Transform > Complex matrix merge combines two selected source channels as real + imaginary or linear magnitude + phase (rad/deg). Shapes and grids must match; display crops, bounds and alignment are ignored. XY inputs require matching unique uniform X grids. "
-                     "Transform > Laplace converts a 1D/XY signal to a complex sigma/omega plane; its 2D view fits each axis independently. Choose dt/unit, sigma range/count, padding and precision; optional crop/bounds/zero filling are explicit. "
-                     "Default: 129 sigma rows over +/-4/duration, full centered angular-frequency columns, normalization dt*FFT. The first selected sample is the kernel time origin. Output is limited to 1 GiB and abs(sigma)*duration to 30. "
-                     "Inverse Laplace restores a complex 1D signal from one complete sigma row; recorded planes default to sigma nearest zero and restore source sampling/length automatically. "
-                     "External/reloaded planes need sigma, angular-frequency interval, column order, original length, unit and origin. This is a finite-record numerical transform; preprocessing is not undone. "
-                     "After calculation, Yes displays only the new result; No keeps the current view and adds the result unchecked. "
-                     "Choose sampling intervals/units, axes, padding, normalization, precision and optional windows/mean removal; all default preprocessing is off. "
-                     "Full-resolution transforms run only on Generate. FFT stores centered full spectra; paired IFFT restores recorded coordinates and normalization. "
-                     "Fourier/Laplace XY input needs unique uniform sampling; NaN/Inf require explicit zero filling. These frequency transforms do not accept point clouds. "
-                     "Frequency axes carry through views, derivatives and XY/XYZ exports. Data conversion provides configurable dB references and floors. "
-                     "Plain array exports omit transform metadata; external IFFT needs manual order, frequency spacing and normalization. IFFT cannot undo windows, mean removal or bounds. "
-                     "Images expose file bit depth, individual channels, grayscale matrices and RGB/RGBA/monochrome color views. "
-                     "Monochrome images hide RGB color; all images offer RGBA modes only with source alpha. No synthetic A channel is added. "
-                     "RGB/RGBA and gray+alpha profiles show separate channel curves and lazy per-channel derivatives. "
-                     "RGBA/gray+alpha profiles weight color/monochrome by normalized alpha, keeping the separate A curve unchanged. "
-                     "1D/XY data use full-height 1D plot, 1D Derivative and Raw data tabs in one row, hiding unrelated 2D/3D controls. "
-                     "Raw 8-bit image integers optionally display/copy in hexadecimal; floating-point and 16-bit images stay decimal. "
-                     "Native Fusion widgets use compact layouts: main content margins are top 2 px and other sides 6 px, panel padding and vertical gaps 2 px, horizontal gaps 4 px. "
-                     "The three resize dividers are blue, with amber hover and orange drag feedback. "
-                     "Combo boxes ignore wheel changes even with focus; click/keyboard selection and open-list scrolling remain available. "
-                     "TXT must contain a numeric CSV-style table. Image loading prints format, depth and decoder diagnostics."),
+        description=(
+            "Browse NPY/NPZ/MAT/Excel/CSV/TXT and images in linked raw-data, 2D image, 3D surface/point-cloud and 1D/XY/"
+            " views, with slices and lazy derivatives. "
+            "Open a file from the command line or use the matrix panel. Ctrl+O replaces the session; Ctrl+Shift+O or dropping"
+            " another file adds it. Single matrix mode shows one channel; Multiple matrices mode overlays compatible data with"
+            " separate colors, settings and a selectable alignment reference. Right-click matrices or plots for processing, "
+            "fitting and export actions. "
+            "Numeric files support dense 1D/2D boolean, integer, real and complex arrays. MAT supports legacy and v7.3 files. "
+            "NPZ/MAT/Excel files offer member/sheet selection; Excel and CSV/TXT imports allow ranges and header handling. "
+            "Two-row/column arrays can open as XY signals, and three-row/column arrays as XYZ point clouds. Ambiguous shapes "
+            "prompt for a choice. Unsupported data and unreadable files show an error dialog. "
+            "Images expose bit depth, individual channels, grayscale combinations and RGB/RGBA/monochrome color views. "
+            "Complex data offer Real, Imaginary, Magnitude, Phase (rad) and Magnitude (dB). Raw data can copy selections; "
+            "8-bit image values also support hexadecimal display. "
+            "Crop by source indices or value bounds, select a row/column slice, and adjust 3D sampling and height. "
+            "Plot menus offer X:Y=1:1 or XYZ=1:1:1 data scales. Slice plots auto-fit Y by default; disable Auto Y to retain it. "
+            "Optional Inf/-Inf/NaN markers have configurable colors and 1D size. Clipped-value highlighting is enabled by "
+            "default and can be disabled. Derivatives compute only when requested and reuse unchanged results. "
+            "Transform tools create new matrices: Fourier FFT/IFFT, 1D Laplace and its inverse, data conversions (dB, angles, "
+            "logs, magnitude, scale/offset), and complex merging from real/imaginary or magnitude/phase channels. "
+            "Fourier supports full/cropped matrices and slices, with separate complex/channel handling of invalid values. "
+            "Full complex and phase inputs ignore value bounds. Fourier/Laplace require uniform XY sampling; no point clouds. "
+            "Review sampling and preprocessing in each dialog. Plain array exports do not retain transform metadata. "
+            "Export original matrices, processed results or slices as NPY, MAT, XLSX, CSV or TXT; choose a whole matrix, "
+            "one channel or all visible results. Complex sources ask for channel or complex data; text splits real/imaginary files. "
+            "A slice menu keeps independent in-memory 1D matrices, asking channel/complex for complex sources. "
+            "Signals can export as XY tables and matrices as XYZ point clouds. Real 2D arrays also export as normalized grayscale PNG/BMP. "
+            "Export figure opens a preview dialog for the current 2D, 3D, 1D or derivative view. Save PNG/TIFF/JPEG, or "
+            "SVG for 2D/1D; set image dimensions, DPI, transparency, title and legend. Zoom, camera and visible styling "
+            "are retained. Separate numeric outputs receive suggested filenames."
+        ),
         epilog=(f"Dependencies: {DEPENDENCIES} (xlrd only for XLS input). Indices and axis numbers are zero-based. "
-                "1D wheel zooms X; Ctrl+wheel zooms XY. 3D middle drag or Ctrl+left drag orbits; "
+                "1D wheel zooms X (XY while 1:1 is locked); Ctrl+wheel zooms XY. 3D middle drag or Ctrl+left drag orbits; "
                 "right drag or Alt+middle drag rolls the view."),
     )
     parser.add_argument("file", nargs="?", type=Path, help="File to open; omit for an empty GUI")

@@ -8,6 +8,12 @@ cached tab revisits do not emit calculation diagnostics.
 The tab bar can be hidden when the standalone viewer supplies the page tabs.
 The owner may freeze Y before slice changes without changing X zoom or triggering
 hidden derivatives; empty panes retain their first automatic fit.
+Optional nonfinite dots annotate the original samples without filling gaps.
+Their screen diameter is configurable per channel, defaulting to three pixels.
+Clipping emphasis can be hidden while retaining the clamped curve geometry.
+Hover readouts stay on one line, with complete readings in the tooltip. Inf/NaN
+are shown directly as sample values without extra marker annotations.
+Current full-resolution traces are exposed read-only for independent slice copies.
 
 Requirements: PySide6, pyqtgraph and numpy.
 Usage: embedded below matrix views or used alone for signal data.
@@ -32,6 +38,7 @@ from .derivatives import DerivativeResult, differentiate
 from .plot_support import compact_axis, graphics_scene, pyside_graphics_view
 from .profile_legend import ProfileLegend
 from .qt_widgets import NoWheelComboBox
+from .value_markers import MarkerStyle, curve_markers
 
 WHEEL_ZOOM_FACTOR = 1.15
 DERIVATIVE_DELAY_MS = 70
@@ -107,7 +114,7 @@ class JumpMode(IntEnum):
 
 
 class ProfileViewBox(ViewBox):
-    """Pan normally; use the wheel for X zoom and Ctrl+wheel for both axes."""
+    """Pan freely; zoom X with the wheel, or XY with Ctrl/an equal-unit lock."""
 
     def childrenBounds(self, frac: Sequence[float] | None = None,
                        orthoRange: Sequence[Sequence[float] | None] = (None, None),
@@ -139,7 +146,7 @@ class ProfileViewBox(ViewBox):
         return bounds
 
     def wheelEvent(self, ev: object, axis: int | None = None) -> None:
-        """Zoom about the pointer without letting X-only zoom alter the Y range.
+        """Zoom X, or both axes with Ctrl or an active equal-unit aspect lock.
 
         Args:
             ev: Native PySide6 graphics-scene wheel event.
@@ -147,7 +154,8 @@ class ProfileViewBox(ViewBox):
         """
         if not isinstance(ev, QtWidgets.QGraphicsSceneWheelEvent):
             return
-        both = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
+        both = (bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
+                or self.state["aspectLocked"] is not False)
         factor = WHEEL_ZOOM_FACTOR ** (-ev.delta() / 120)
         center = self.mapSceneToView(ev.scenePos())
         self.disableAutoRange()
@@ -210,7 +218,7 @@ class CurvePane(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.native_view)
-        self.setToolTip("Wheel: zoom X only. Ctrl+wheel: zoom X and Y. Left drag: pan.")
+        self.setToolTip("Wheel: zoom X only (both axes when X:Y=1:1 is locked). Ctrl+wheel: zoom X and Y. Left drag: pan.")
 
     def set_samples(self, values: RealArray, valid: BoolArray,
                     color: QtGui.QColor, mode: CurveStyle, x_start: int = 0,
@@ -307,6 +315,8 @@ class ProfileView(QtWidgets.QWidget):
         self.alpha_weighted = False
         self._traces: tuple[ProfileTrace, ...] = ()
         self.clip_color = QtGui.QColor(DEFAULT_CLIP_COLOR)
+        self.marker_style = MarkerStyle()
+        self._nonfinite_items: list[pg.PlotDataItem] = []
         self.color = QtGui.QColor("#48b9ff")
         self._has_data = False
         self._external_tabs = False
@@ -342,9 +352,10 @@ class ProfileView(QtWidgets.QWidget):
         self.readout = QtWidgets.QLabel("Move over the curve to inspect a sample")
         self.readout.setMinimumWidth(120)
         self.readout.setMaximumWidth(250)
-        self.readout.setMaximumHeight(3 * self.readout.fontMetrics().lineSpacing())
-        self.readout.setWordWrap(True)
-        self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.readout.setFixedHeight(self.readout.fontMetrics().lineSpacing())
+        self.readout.setWordWrap(False)
+        self.readout.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         bar.addWidget(self.readout, 1)
         layout.addLayout(bar)
@@ -518,6 +529,15 @@ class ProfileView(QtWidgets.QWidget):
             self._derivative_reset = True
         self._has_data = True
 
+    @property
+    def signal_traces(self) -> tuple[ProfileTrace, ...]:
+        """Return full-resolution current traces, without computing derivatives.
+
+        Callers must treat these arrays as read-only and copy any data retained
+        independently of the current slice. Includes displayed alpha weighting.
+        """
+        return self._traces
+
     def set_external_tabs(self, external: bool) -> None:
         """Hide nested tabs when the main viewer controls the selected page.
 
@@ -577,6 +597,7 @@ class ProfileView(QtWidgets.QWidget):
         self.color_button.setEnabled(True)
         self.clip_curve_item.clear()
         self.clip_points_item.clear()
+        self._clear_nonfinite_markers()
         self.derivative_pane.clear_curves()
         self.undefined_markers.clear()
         self.signal_pane.crosshair.hide()
@@ -651,7 +672,7 @@ class ProfileView(QtWidgets.QWidget):
             else:
                 self.signal_pane.set_samples(trace.shown, trace.valid, color, mode,
                                               self.x_start, self.x_values, channel=trace.channel)
-            if curve is not None and trace.clipped is not None:
+            if self.marker_style.highlight_clipped and curve is not None and trace.clipped is not None:
                 caps_x.append(curve.cap_x)
                 caps_y.append(curve.cap_y)
                 marked = trace.clipped.copy()
@@ -672,8 +693,33 @@ class ProfileView(QtWidgets.QWidget):
         else:
             self.clip_curve_item.clear()
             self.clip_points_item.clear()
+        self._clear_nonfinite_markers()
+        for trace in self._traces:
+            for group in curve_markers(trace.values, trace.shown, trace.valid, self.marker_style):
+                x = group.indices + self.x_start if self.x_values is None else self.x_values[group.indices]
+                finite_x = np.isfinite(x)
+                item = pg.PlotDataItem(x[finite_x], group.heights[finite_x], pen=None, symbol="o",
+                                      symbolSize=self.marker_style.size, symbolPen=None, symbolBrush=group.color)
+                item.setZValue(ANNOTATION_Z_VALUE + 1)
+                self.plot_item.addItem(item)
+                self._nonfinite_items.append(item)
         self._derivative_dirty = True
         self._redraw_derivative()
+
+    def _clear_nonfinite_markers(self) -> None:
+        for item in self._nonfinite_items:
+            self.plot_item.removeItem(item)
+        self._nonfinite_items.clear()
+
+    def set_marker_style(self, style: MarkerStyle) -> None:
+        """Update annotation colors/flags without recomputing derivatives.
+
+        Args:
+            style: Appearance only; source samples and curve gaps are retained.
+        """
+        if style != self.marker_style:
+            self.marker_style = style
+            self._redraw()
 
     def _redraw_derivative(self) -> None:
         """Render a changed derivative only when its tab is selected."""
@@ -838,6 +884,8 @@ class ProfileView(QtWidgets.QWidget):
                         full_readings.append(f"d{quantity}/dx={full_value}")
                 else:
                     suffix = " [filtered]" if not trace.valid[index] else ""
+                    if self.marker_style.show_nonfinite and not np.isfinite(trace.values[index]):
+                        suffix = ""
                     if trace.clipped is not None and trace.clipped[index]:
                         suffix = f" [clamped to {format_sample(trace.shown, index)}]"
                     readings.append(f"{trace.label}={_compact_sample(trace.values, index)}{suffix}")
@@ -853,6 +901,8 @@ class ProfileView(QtWidgets.QWidget):
                 self.readout.setToolTip(self.readout.text())
             return
         suffix = "  [filtered / nonfinite]" if not self.valid[index] else ""
+        if self.marker_style.show_nonfinite and not np.isfinite(self.values[index]):
+            suffix = ""
         if self.clipped is not None and self.clipped[index] and self.display_values is not None:
             suffix = f"  [clamped to {format_sample(self.display_values, index)}]"
         self.readout.setText(f"x={source_x}   y={format_sample(self.values, index)}{suffix}   [sample {source_index}]")

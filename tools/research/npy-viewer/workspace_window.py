@@ -11,9 +11,20 @@ Single-matrix mode is the default: clicking a channel clears other selections.
 Multiple-matrix mode permits compatible checkbox selections to overlay.
 Hide controls are exposed only in multiple mode. Auto Y on slice change is
 enabled by default; disabling it fixes both signal and derivative Y ranges.
+The 3D context menu can restore XYZ 1:1:1 data-unit scaling for visible layers,
+disabling automatic height scaling and removing stretched axis alignment.
+Nonfinite annotations and optional clipping emphasis retain per-channel settings;
+they do not change numeric exports or invalidate cached derivatives.
 Multichannel matrices are noncheckable expandable groups; single-channel matrices
 are checkable leaves without a child row. In multiple mode, row clicks only edit.
 Removal only releases session entries.
+The 1D slice context menu can add every visible curve as an independent signal,
+including RGB(A) traces and overlay slices. Copies keep crop, axis coordinates,
+alpha weighting and value-bound settings. They are added unchecked so the 2D
+view remains available; this persists only in the current session, not on disk.
+Complex sources ask for displayed channels or one raw complex slice. Each source
+is asked once; identical complex slices of its visible channels are consolidated.
+Complex copies ignore scalar bounds, matching complex slice file exports.
 Raw data has an independent matrix-name dropdown; unchecked channels stay hidden.
 After Fourier calculation, Yes displays only the new result; No adds it unchecked
 and retains the current selection, visibility and views.
@@ -25,8 +36,11 @@ Export figure opens a modal preview for current 2D/3D/signal/derivative views,
 including overlays, titles and legends, with pixel width and print DPI settings.
 File commands and Fit views share the matrix panel; the old top bar is hidden.
 Rename is available through the tree context menu/F2; Remove all is in Remove's
-arrow menu. Numeric export settings live in a separate modal window. Multichannel
-and complex sources offer Export channel, retaining just the selected component.
+arrow menu. Numeric export settings live in a separate modal window. Complex
+sources first ask for the current channel or both complex components, including
+signal and slice exports; cancellation leaves settings unchanged. The active
+source is explicitly identified as complex in the matrix panel and export dialog.
+Multichannel sources offer Export channel, retaining just the selected component.
 Whole image/numeric-channel exports preserve source channels; PNG/BMP normalize
 one real 2D matrix to 8-bit grayscale, independently of plot image exports.
 Native context menus reuse processing/export controls. Tree right-click chooses
@@ -48,7 +62,7 @@ from .app import DEFAULT_MAX_EDGE, FILE_FILTER, JobKind, ViewerWindow
 from .coordinates import AxisMap
 from .channel_tree import ChannelTree
 from .context_menus import WorkspaceMenus
-from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits,
+from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits, RealArray,
                          Selection, ViewMode, default_selection, prepare_frame, select_image_member)
 from .overlay_profile import OverlayProfile
 from .fourier import TransformDirection, TransformOptions, TransformResult, run_transform
@@ -61,6 +75,7 @@ from .data_conversion import ConversionOptions, run_conversion
 from .data_conversion_dialog import DataConversionDialog
 from .import_catalog import INSPECT_EXTENSIONS, ImportCatalog, ImportChoice, inspect_source
 from .import_dialog import ImportDialog
+from .export_dialog import ComplexExportChoice, choose_complex_export
 from .exporting import ExportFormat, ExportLayout, ExportSnapshot, ExportTarget
 from .excel_io import serialize_excel
 from .figure_dialog import FigureExportDialog
@@ -69,6 +84,8 @@ from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelComboBox
 from .profile_view import CHANNEL_COLORS, JumpMode
 from .surface_view import ProfileStyle
+from .slice_snapshot import freeze_slice
+from .value_markers import DEFAULT_MARKER_SIZE, MarkerStyle
 from .workspace import (COLORS, Alignment, ChannelChoice, LoadedFile, MatrixEntry, RenderLayer, Setting,
                         active_channel, align_axis, channel_choices, coordinate_bounds, family, height_bounds, load_file,
                         overlay_auto_height, profile_series)
@@ -79,6 +96,7 @@ SETTINGS: tuple[str, ...] = (
     "filter_low", "filter_high", "filter_mode", "color_low", "color_high", "colormap",
     "max_edge", "max_points", "point_size", "auto_height", "height_scale", "db_floor",
     "crop_x_start", "crop_x_end", "crop_y_start", "crop_y_end",
+    "show_nonfinite", "highlight_clipped", "nonfinite_size",
 )
 PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color")
 
@@ -438,6 +456,8 @@ class WorkspaceWindow(ViewerWindow):
                 settings[name] = widget.value()
         settings.update(self._read_profile_settings())
         settings["clip_color"] = self._clip_color.name()
+        settings.update({f"nonfinite_{kind.name.lower()}_color": color.name()
+                         for kind, color in self._nonfinite_colors.items()})
         entry = self._entry()
         if self._workspace_ready and not self._overlay() and entry is not None and not entry.visible:
             for name in PROFILE_SETTINGS:
@@ -453,7 +473,7 @@ class WorkspaceWindow(ViewerWindow):
         entry.crop = self._crop
         try:
             selection = self._selection()
-            limits = Limits(self._bound(self.filter_low), self._bound(self.filter_high), FilterMode(self.filter_mode.currentText()))
+            limits = self._value_limits(selection)
         except ValueError:
             return
         previous = entry.selection
@@ -525,8 +545,15 @@ class WorkspaceWindow(ViewerWindow):
                 profile._invalidate_derivative()
         self._clip_color = QtGui.QColor(str(entry.settings.get("clip_color", "#ff0000")))
         self._set_color_icon(self.clip_color_button, self._clip_color)
+        for kind, default in MarkerStyle().colors():
+            color = QtGui.QColor(str(entry.settings.get(f"nonfinite_{kind.name.lower()}_color", default)))
+            self._nonfinite_colors[kind] = color
+            self._set_color_icon(self.nonfinite_color_buttons[kind], color)
+        self._sync_marker_controls()
         if restore_views:
             self.profile_view.color = QtGui.QColor(str(entry.settings.get("curve_color", "#48b9ff")))
+            self.image_view.set_marker_style(self._marker_style())
+            self.profile_view.set_marker_style(self._marker_style())
             self.image_view.set_clip_color(self._clip_color)
             self.profile_view.set_clip_color(self._clip_color)
             self.surface_view.set_clip_color(self._clip_color.name())
@@ -698,6 +725,8 @@ class WorkspaceWindow(ViewerWindow):
             return
         document = entry.document
         summary = f"{document.array.shape} · {document.array.dtype} · {document.array.nbytes / 1024**2:,.3f} MiB"
+        if document.is_complex:
+            summary = f"Complex matrix · Display: {active_channel(entry).label}\n{summary}"
         source = document.image_source
         if source is not None:
             summary = f"{summary}\n{source.layout} · {source.metadata.depth}"
@@ -964,7 +993,7 @@ class WorkspaceWindow(ViewerWindow):
         document, selection, crop, limits, label = entry.document, entry.selection, entry.crop, entry.limits, entry.label
         index = self._export_profile_index() if self._profile_selected else None
         dialog = FourierDialog(document, selection, crop, label,
-                               self.profile_direction.currentIndex() == 0, index, self)
+                               self.profile_direction.currentIndex() == 0, index, self, limits=limits)
         self._fourier_dialog = dialog
 
         def generate(options: TransformOptions, name: str) -> None:
@@ -1518,7 +1547,13 @@ class WorkspaceWindow(ViewerWindow):
                 align_axis(y, ry, Alignment.ORIGINAL if own_reference else entry.align_y),
                 height,
                 float(entry.settings.get("point_size", 2)), str(entry.settings.get("clip_color", "#ff0000")), threshold,
-                (id(entry.document.array), entry.selection, frame.x_start, frame.y_start, frame.scalar.shape, frame.value_limits), z))
+                (id(entry.document.array), entry.selection, frame.x_start, frame.y_start, frame.scalar.shape, frame.value_limits), z,
+                MarkerStyle(bool(entry.settings.get("show_nonfinite", False)),
+                            bool(entry.settings.get("highlight_clipped", True)),
+                            str(entry.settings.get("nonfinite_positive_color", "#0000ff")),
+                            str(entry.settings.get("nonfinite_negative_color", "#00ff00")),
+                            str(entry.settings.get("nonfinite_nan_color", "#ff00ff")),
+                            float(entry.settings.get("nonfinite_size", DEFAULT_MARKER_SIZE)))))
         return tuple(layers)
 
     def _render_workspace(self, reset: bool = False) -> None:
@@ -1663,6 +1698,108 @@ class WorkspaceWindow(ViewerWindow):
                 return series.index
         return super()._export_profile_index()
 
+    def _can_add_slices(self) -> bool:
+        """Allow snapshots only while a prepared matrix slice is displayed."""
+        return (self._layout_mode == ViewMode.MATRIX and self._profile_selected
+                and self.matrix_box.isEnabled() and self._export_ready
+                and not self._preparing and not self._rebuild.isActive()
+                and any(entry.visible and entry.frame is not None for entry in self.entries))
+
+    def _add_slice_matrices(self) -> None:
+        """Add owned scalar/complex slice copies without changing the view.
+
+        Each curve becomes one unchecked 1D matrix. Applied crop, bounds,
+        coordinates, alpha weighting and colors are retained independently;
+        source removal or later slice movement cannot alter the copies.
+        Complex sources ask for displayed channels or raw complex data once per
+        matrix. Identical raw complex slices are copied only once, without value
+        bounds. Cancelling any question aborts the batch before insertion.
+        No file is written and no derivative calculation is requested.
+        """
+        if not self._can_add_slices():
+            return
+        self._store_entry()
+        row = self.profile_direction.currentIndex() == 0
+        profile = self.overlay_profile if self._profile_uses_overlay else self.profile_view
+        staged: list[tuple[Document, str, dict[str, Setting], str, Limits]] = []
+        names = {entry.label for entry in self.entries}
+        choices: dict[int, ComplexExportChoice] = {}
+        complex_slices: set[tuple[int, int, int, int, AxisMap]] = set()
+
+        def capture(entry: MatrixEntry, frame: Frame, values: RealArray, index: int,
+                    label: str, color: str, alignment: AxisMap = AxisMap()) -> bool:
+            """Stage a curve, returning False when the user cancels the batch."""
+            preserve_complex = False
+            if entry.document.is_complex:
+                group = entry.matrix_uid or entry.uid
+                if group not in choices:
+                    channels = ", ".join(active_channel(member).label for member in self.entries
+                                         if (member.matrix_uid or member.uid) == group and member.visible)
+                    choice = choose_complex_export(self, entry.label, channels, prefer_complex=False,
+                                                   slice_only=True, in_memory=True)
+                    if choice is None:
+                        return False
+                    choices[group] = choice
+                preserve_complex = choices[group] == ComplexExportChoice.COMPLEX
+                if preserve_complex:
+                    start = frame.x_start if row else frame.y_start
+                    key = (group, index, start, len(values), alignment)
+                    if key in complex_slices:
+                        return True
+                    complex_slices.add(key)
+                    label = f"{entry.label} / Complex"
+            base = f"{label} · Slice {'Row' if row else 'Column'} {index}"
+            name, suffix = base, 2
+            while name in names:
+                name, suffix = f"{base} ({suffix})", suffix + 1
+            names.add(name)
+            document = freeze_slice(entry.document, frame, values, row=row, index=index,
+                                    name=label, alignment=alignment, preserve_complex=preserve_complex)
+            limits = Limits() if preserve_complex else frame.value_limits
+            settings = self._defaults.copy()
+            settings.update(entry.settings)
+            settings.update({"filter_low": "" if limits.lower is None else str(limits.lower),
+                             "filter_high": "" if limits.upper is None else str(limits.upper),
+                             "filter_mode": limits.mode.value, "curve_color": color,
+                             "curve_style": profile.style_selector.currentIndex(),
+                             "crop_x_start": 0, "crop_x_end": len(values) - 1,
+                             "crop_y_start": 0, "crop_y_end": 0})
+            staged.append((document, name, settings, color, limits))
+            return True
+
+        # Capture every buffer before changing the workspace; a failed copy
+        # must not leave a partially inserted set of curves.
+        try:
+            if self._profile_uses_overlay:
+                for series in self.overlay_profile._series:
+                    entry = self._entry(series.layer.uid)
+                    if entry is not None and series.index is not None:
+                        if not capture(entry, series.layer.frame, series.values, series.index,
+                                       series.layer.label, series.layer.color, series.mapping):
+                            return
+            else:
+                entry = next((entry for entry in self.entries if entry.visible and entry.frame is not None), None)
+                if entry is not None and entry.frame is not None:
+                    for trace in self.profile_view.signal_traces:
+                        label = self._channel_label(entry)
+                        if trace.channel is not None:
+                            label = f"{label} / {trace.label}"
+                        color = CHANNEL_COLORS[trace.channel] if trace.channel is not None else self.profile_view.color.name()
+                        if not capture(entry, entry.frame, trace.values, self.profile_index.value(), label, color):
+                            return
+        except (ValueError, MemoryError) as exc:
+            QtWidgets.QMessageBox.warning(self, "Cannot add Slice matrices", str(exc))
+            return
+        if not staged:
+            return
+        for document, name, settings, color, limits in staged:
+            self._uid += 1
+            self.entries.append(MatrixEntry(self._uid, document, default_selection(document, ViewMode.SIGNAL),
+                                            color, visible=False, limits=limits, settings=settings, name=name))
+            print(f"[Slice] Added: {name}; shape={document.array.shape}; dtype={document.array.dtype}; session only", flush=True)
+        self._refresh_list()
+        self.statusBar().showMessage(f"Added {len(staged)} independent 1D Slice matrices (unchecked; session only). Select one in the matrix list to view it.")
+
     def _sync_export_controls(self) -> None:
         if self._view_override is not None:
             return
@@ -1708,6 +1845,10 @@ class WorkspaceWindow(ViewerWindow):
             label = self._channel_label(entry) if self._export_channel_only() else entry.label
             self.export_box.setTitle("Export selected channel" if self._export_channel_only() else "Export selected matrix")
             self.export_dialog.setWindowTitle(f"Export — {label}")
+            kind = "Complex matrix (real + imaginary)" if entry.document.is_complex else "Real-valued source"
+            self.export_dialog.source_info.setText(f"Source: {entry.label}\n{kind} · Current channel: {active_channel(entry).label}")
+        else:
+            self.export_dialog.source_info.clear()
 
     def _has_export_channels(self) -> bool:
         entry = self._entry()
@@ -1736,17 +1877,37 @@ class WorkspaceWindow(ViewerWindow):
         Args:
             target: Optional menu-selected result/original/slice target. None
                 retains the dialog's current scope and target.
-            channel: With a target, select the real-valued active channel.
+            channel: With a target, prefer the active channel. Complex sources
+                explicitly choose current-channel or complex-data export first.
 
         Side effects:
             Runs a modal dialog; saves still use the existing background worker.
         """
         self._sync_export_controls()
-        if target is not None:
+        entry = self._entry()
+        selected_target = target or ExportTarget(self.export_target.currentText())
+        complex_choice: ComplexExportChoice | None = None
+        if (entry is not None and entry.document.is_complex
+                and (target is not None or self.export_scope.currentData() != ExportScope.VISIBLE)):
+            preferred = not channel if target is not None else self.export_complex.isChecked() and not self._export_channel_only()
+            complex_choice = choose_complex_export(self, entry.label, active_channel(entry).label,
+                                                   prefer_complex=preferred, slice_only=selected_target == ExportTarget.SLICE)
+            if complex_choice is None:
+                return
+            channel = complex_choice == ComplexExportChoice.CHANNEL
+        if target is not None or complex_choice is not None:
             scope = ExportScope.CHANNEL if channel and self._has_export_channels() else ExportScope.SELECTED
             self.export_scope.setCurrentIndex(self.export_scope.findData(scope))
             self.export_complex.setChecked(scope != ExportScope.CHANNEL)
-            self.export_target.setCurrentText(target)
+            if complex_choice == ComplexExportChoice.CHANNEL and selected_target == ExportTarget.ORIGINAL:
+                # Original-source export always preserves its dtype. Export the
+                # full display component via the unprocessed result instead.
+                selected_target = ExportTarget.RESULT
+                self.export_xy.setChecked(False)
+                self.export_z.setChecked(False)
+            self.export_target.setCurrentText(selected_target)
+            if complex_choice == ComplexExportChoice.COMPLEX and self.export_format.currentData() in (ExportFormat.PNG, ExportFormat.BMP):
+                self.export_format.setCurrentIndex(self.export_format.findData(ExportFormat.NPY))
         self._sync_export_controls()
         self.export_dialog.status.clear()
         self.export_dialog.exec()
@@ -1762,6 +1923,7 @@ class WorkspaceWindow(ViewerWindow):
     def _sync_displayed_export_controls(self, previous_layout: str, previous_target: str) -> None:
         self.export_box.setTitle("Export visible matrices")
         self.export_dialog.setWindowTitle("Export — all visible matrices")
+        self.export_dialog.source_info.setText("Sources: all visible matrices / channels, exported as displayed scalar values.")
         self.export_form.setRowVisible(self.export_complex, False)
         layers = self._visible_export_layers()
         first = self._entry(layers[0].uid) if layers else None
@@ -2019,12 +2181,61 @@ class WorkspaceWindow(ViewerWindow):
             with self._single_view_context():
                 super()._height_changed()
 
+    def _equal_xyz_scale(self) -> None:
+        """Restore equal data-unit scales for every visible surface or cloud.
+
+        Side effects:
+            Disables automatic height scaling, sets height multipliers to one,
+            and changes stretched overlay axes to original coordinates. Pure
+            translation alignments are retained. Refreshes controls and fits
+            only the 3D camera, preserving its orientation and projection.
+            Source samples, crops and physical coordinate grids are unchanged;
+            pixel indices are not converted into calibrated spatial units.
+        """
+        if self._layout_mode not in (ViewMode.MATRIX, ViewMode.POINTS):
+            return
+        visible = [entry for entry in self.entries if entry.visible and entry.frame is not None]
+        if not visible:
+            return
+        self._store_entry()
+        unstretched = False
+        for entry in visible:
+            entry.settings["auto_height"] = False
+            entry.settings["height_scale"] = 1.0
+            for axis in ("align_x", "align_y", "align_z"):
+                if getattr(entry, axis) == Alignment.STRETCH:
+                    setattr(entry, axis, Alignment.ORIGINAL)
+                    unstretched = True
+        if self._entry() in visible:
+            with QtCore.QSignalBlocker(self.auto_height), QtCore.QSignalBlocker(self.height_scale):
+                self.auto_height.setChecked(False)
+                self.height_scale.setValue(1.0)
+            self._update_height_controls()
+        self._sync_alignment()
+        self._single_render_key = None
+        self._render_workspace()
+        self.surface_view.canvas.reset_camera()
+        self.surface_view.canvas.render()
+        message = "XYZ scale = 1:1:1 in data units for all visible layers. Pixel coordinates are not physical distances."
+        if unstretched:
+            message = f"{message} Stretch alignment reset to original coordinates."
+        self.statusBar().showMessage(message)
+
     def _choose_clip_color(self) -> None:
         super()._choose_clip_color()
         if self._overlay() or ((entry := self._entry()) is not None and not entry.visible):
             self._store_entry()
             self._single_render_key = None
             self._render_workspace()
+
+    def _markers_changed(self) -> None:
+        """Keep annotation flags/colors with the active channel, including overlays."""
+        self._sync_marker_controls()
+        if not self._workspace_ready:
+            return
+        self._store_entry()
+        self._single_render_key = None
+        self._render_workspace()
 
     def _profile_appearance_changed(self) -> None:
         if self._overlay():

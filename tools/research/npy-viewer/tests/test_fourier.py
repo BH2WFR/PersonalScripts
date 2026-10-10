@@ -15,6 +15,7 @@ from scipy.signal.windows import hann
 from test_data_model import model
 
 fourier = importlib.import_module("personal_npy_viewer.fourier")
+special = importlib.import_module("personal_npy_viewer.fourier_values")
 conversion = importlib.import_module("personal_npy_viewer.data_conversion")
 coordinates = importlib.import_module("personal_npy_viewer.coordinates")
 exporting = importlib.import_module("personal_npy_viewer.exporting")
@@ -91,6 +92,47 @@ class FourierTests(unittest.TestCase):
             np.testing.assert_allclose(self.inverse(result.document).array, expected, atol=1e-12)
         np.testing.assert_array_equal(document.array, values)
 
+    def test_full_slices_preserve_entire_axis_despite_current_crop(self) -> None:
+        """Full slices use source indices, including rows/columns outside crop."""
+        values = np.arange(80.).reshape(8, 10)
+        original = values.copy()
+        crop = model.Crop(2, 7, 3, 6)
+        limits = model.Limits(24, 45, model.FilterMode.CLAMP)
+        for row, index in ((True, 0), (False, 9)):
+            with self.subTest(row=row):
+                options = fourier.TransformOptions(range=fourier.TransformRange.FULL_SLICE, row=row, index=index)
+                spectrum = self.transform(values, options, crop, limits)
+                expected = values[index, :] if row else values[:, index]
+                np.testing.assert_allclose(spectrum.array, np.fft.fftshift(np.fft.fft(expected)), atol=1e-12)
+                restored = self.inverse(spectrum)
+                np.testing.assert_allclose(restored.array, expected, atol=1e-12)
+                self.assertEqual(restored.axes[0].origin, 0)
+                self.assertIn("Slice:", spectrum.transform.description)
+                self.assertIn("Full input", spectrum.transform.description)
+        np.testing.assert_array_equal(values, original)
+
+    def test_cropped_matrix_and_slices_apply_value_bounds_without_resampling(self) -> None:
+        """FFT defaults to boundary values in both viewer modes, retaining the grid."""
+        values = np.arange(80.).reshape(8, 10)
+        original = values.copy()
+        crop = model.Crop(2, 7, 3, 6)
+        for scope, row, index, source in (
+            (fourier.TransformRange.CROP, True, 0, values[3:7, 2:8]),
+            (fourier.TransformRange.SLICE, True, 4, values[4, 2:8]),
+            (fourier.TransformRange.SLICE, False, 3, values[3:7, 3]),
+        ):
+            for mode in (model.FilterMode.CLAMP, model.FilterMode.HIDE):
+                with self.subTest(scope=scope, row=row, mode=mode):
+                    limits = model.Limits(43, 45, mode)
+                    options = fourier.TransformOptions(range=scope, row=row, index=index, apply_bounds=True)
+                    expected = np.clip(source, 43, 45)
+                    spectrum = self.transform(values, options, crop, limits)
+                    np.testing.assert_allclose(spectrum.array, np.fft.fftshift(np.fft.fftn(expected)), atol=1e-12)
+                    np.testing.assert_allclose(self.inverse(spectrum).array, expected, atol=1e-12)
+                    self.assertEqual(spectrum.array.shape, source.shape)
+                    self.assertIn("value bounds", spectrum.transform.description)
+        np.testing.assert_array_equal(values, original)
+
     def test_external_inverse_orders(self) -> None:
         values = np.arange(9.) + 1j
         spectrum = np.fft.fft(values)
@@ -114,13 +156,12 @@ class FourierTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fourier.run_transform(bad, selection, model.Crop(), model.Limits(), fourier.TransformOptions(), "XY")
 
-    def test_missing_samples_are_explicit(self) -> None:
+    def test_missing_samples_default_to_zero_and_record_counts(self) -> None:
         values = np.array([1., np.nan, 3., np.inf])
-        with self.assertRaisesRegex(ValueError, "NaN/Inf"):
-            self.transform(values)
-        result = self.transform(values, fourier.TransformOptions(fill_zero=True))
+        result = self.transform(values)
         np.testing.assert_allclose(self.inverse(result).array, [1, 0, 3, 0], atol=1e-12)
-        self.assertIn("zero-filled 2", result.transform.description)
+        self.assertIn("NaN: 1 -> 0", result.transform.description)
+        self.assertIn("+Inf: 1 -> 0", result.transform.description)
 
     def test_window_mean_and_bounds_are_opt_in(self) -> None:
         values = np.arange(8.)
@@ -130,8 +171,84 @@ class FourierTests(unittest.TestCase):
         expected = np.clip(values, 2, 5)
         expected = (expected - expected.mean()) * hann(8, sym=False)
         np.testing.assert_allclose(self.inverse(self.transform(values, options, limits=limits)).array, expected, atol=1e-12)
-        with self.assertRaisesRegex(ValueError, "real display"):
-            self.transform(values + 1j, options, limits=limits)
+        complex_values = values + 1j
+        expected_complex = (complex_values - complex_values.mean()) * hann(8, sym=False)
+        np.testing.assert_allclose(self.inverse(self.transform(complex_values, options, limits=limits)).array,
+                                   expected_complex, atol=1e-12)
+
+    def test_independent_special_values_and_pre_replacement_extrema(self) -> None:
+        source = np.array([-1., .5, 2., 3.5, 5., np.nan, np.inf, -np.inf])
+        original = source.copy()
+        method = special.ValueReplacement
+        policy = special.FourierValuePolicy(nan=method.MAXIMUM, positive=method.MINIMUM)
+        for mode in model.FilterMode:
+            options = fourier.TransformOptions(apply_bounds=True, value_policy=policy)
+            spectrum = self.transform(source, options, limits=model.Limits(0, 4, mode))
+            expected = [0, .5, 2, 3.5, 4, 3.5, .5, 0]
+            np.testing.assert_allclose(self.inverse(spectrum).array, expected, atol=1e-12)
+            self.assertIn("outside bounds: 2 -> Clamp to bounds", spectrum.transform.description)
+        for replacement, value in ((method.ZERO, 0), (method.MINIMUM, .5), (method.MAXIMUM, 3.5)):
+            options = fourier.TransformOptions(apply_bounds=True, value_policy=replace(policy, clipped=replacement))
+            spectrum = self.transform(source, options, limits=model.Limits(0, 4))
+            np.testing.assert_allclose(self.inverse(spectrum).array,
+                                       [value, .5, 2, 3.5, value, 3.5, .5, 0], atol=1e-12)
+        np.testing.assert_array_equal(source, original)
+
+    def test_extrema_require_valid_samples_only_when_replacements_needed(self) -> None:
+        method = special.ValueReplacement
+        policy = special.FourierValuePolicy(nan=method.MAXIMUM, clipped=method.MINIMUM)
+        with self.assertRaisesRegex(ValueError, "No finite, in-bound"):
+            self.transform(np.array([np.nan, np.inf]), fourier.TransformOptions(value_policy=policy))
+        with self.assertRaisesRegex(ValueError, "No finite, in-bound"):
+            self.transform(np.array([9., 10.]), fourier.TransformOptions(apply_bounds=True, value_policy=policy),
+                           limits=model.Limits(0, 1))
+        np.testing.assert_allclose(self.inverse(self.transform(np.array([np.nan, np.inf, -np.inf]))).array, 0)
+        np.testing.assert_allclose(self.inverse(self.transform(np.array([9., 10.]),
+                                   fourier.TransformOptions(value_policy=policy))).array, [9, 10])
+        clamped = self.transform(np.array([9., 10.]), fourier.TransformOptions(apply_bounds=True), limits=model.Limits(0, 1))
+        np.testing.assert_allclose(self.inverse(clamped).array, 1)
+
+    def test_full_complex_replaces_whole_invalid_sample_and_ignores_z(self) -> None:
+        source = np.array([complex(1, 2), complex(np.nan, 3), complex(4, np.inf),
+                           complex(-np.inf, 5), 0j, complex(6, -7)])
+        original = source.copy()
+        options = fourier.TransformOptions(apply_bounds=True, value_policy=special.FourierValuePolicy(
+            nan=special.ValueReplacement.MAXIMUM, positive=special.ValueReplacement.MINIMUM))
+        spectrum = self.transform(source, options, limits=model.Limits(0, 1))
+        expected = np.array([1+2j, 0j, 0j, 0j, 0j, 6-7j])
+        np.testing.assert_allclose(self.inverse(spectrum).array, expected, atol=1e-12)
+        self.assertIn("invalid complex samples: 3 -> 0+0j", spectrum.transform.description)
+        self.assertNotIn("value bounds:", spectrum.transform.description)
+        np.testing.assert_array_equal(source, original)
+
+    def test_channel_extrema_are_selected_component_and_slice_local(self) -> None:
+        source = np.array([[1+10j, 2+30j, complex(np.nan, 20), 4+40j],
+                           [50+100j, 60+200j, 70+300j, 80+400j]])
+        document = model.Document(Path("complex.npy"), source)
+        for component in (model.Component.REAL, model.Component.IMAGINARY, model.Component.MAGNITUDE):
+            selection = replace(model.default_selection(document), component=component)
+            options = fourier.TransformOptions(range=fourier.TransformRange.FULL_SLICE, index=0,
+                display_component=True, value_policy=special.FourierValuePolicy(nan=special.ValueReplacement.MAXIMUM))
+            result = fourier.run_transform(document, selection, model.Crop(), model.Limits(), options, "Channel")
+            expected = (source[0].real.copy() if component == model.Component.REAL else source[0].imag.copy()
+                        if component == model.Component.IMAGINARY else np.abs(source[0]))
+            expected[np.isnan(expected)] = np.max(expected[np.isfinite(expected)])
+            np.testing.assert_allclose(self.inverse(result.document).array, expected, atol=1e-12)
+
+    def test_phase_ignores_bounds_and_zero_fills_invalid_source_angles(self) -> None:
+        source = np.array([1j, -1j, 0j, complex(np.inf, 1), complex(1, np.inf), complex(np.nan, 1)])
+        document = model.Document(Path("phase.npy"), source)
+        selection = replace(model.default_selection(document), component=model.Component.PHASE)
+        options = fourier.TransformOptions(display_component=True, apply_bounds=True,
+            value_policy=special.FourierValuePolicy(nan=special.ValueReplacement.MAXIMUM))
+        result = fourier.run_transform(document, selection, model.Crop(), model.Limits(0, .1), options, "Phase")
+        np.testing.assert_allclose(self.inverse(result.document).array, [np.pi/2, -np.pi/2, 0, 0, 0, 0], atol=1e-12)
+        self.assertIn("NaN: 3 -> 0", result.document.transform.description)
+        frame = model.prepare_frame(document, selection, model.Limits(5, -5), 0, model.Crop(0, 4))
+        np.testing.assert_allclose(frame.display_scalar[:3], [np.pi/2, -np.pi/2, 0])
+        self.assertEqual(frame.value_limits, model.Limits())
+        self.assertFalse(np.any(frame.clip_kind))
+        np.testing.assert_array_equal(frame.valid, [True, True, True, False, False])
 
     def test_sampling_validation_precision_and_source_independence(self) -> None:
         for options in (fourier.TransformOptions(spacing=(0.,)), fourier.TransformOptions(output_shape=(3,)),

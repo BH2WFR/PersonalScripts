@@ -128,7 +128,8 @@ class LaplaceTests(unittest.TestCase):
         for options in (laplace.LaplaceOptions(spacing=0), laplace.LaplaceOptions(sigma_min=1, sigma_max=0),
                         laplace.LaplaceOptions(sigma_count=1), laplace.LaplaceOptions(fft_size=2),
                         laplace.LaplaceOptions(sigma_min=-1e4, sigma_max=1e4),
-                        laplace.LaplaceOptions(range=fourier.TransformRange.SLICE)):
+                        laplace.LaplaceOptions(range=fourier.TransformRange.SLICE),
+                        laplace.LaplaceOptions(range=fourier.TransformRange.FULL_SLICE)):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 self.forward(values, options)
         with self.assertRaises(MemoryError):

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import typing
+from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -31,6 +32,21 @@ class RuntimeKind(StrEnum):
     TSX = "tsx"
     DENO = "deno"
     BUN = "bun"
+
+
+@dataclass(frozen=True)
+class PythonEnvironment:
+    """Identity of the running interpreter, independent of shell activation.
+
+    Frozen executables embed Python and cannot be used as Python interpreters.
+    Conda names are display labels; prefix is the authoritative environment ID.
+    """
+
+    executable: str
+    prefix: str
+    version: str
+    frozen: bool
+    conda_env: str | None
 
 
 class Environment:
@@ -316,15 +332,62 @@ class Environment:
 
     @staticmethod
     def get_conda_env() -> typing.Optional[str]:
-        """Return the conda environment name, or ``None`` if not running in conda."""
-        prefix = sys.prefix
-        if not any(kw in prefix.lower() for kw in ("conda", "anaconda", "miniconda")):
+        """Return the actual interpreter's Conda label, ignoring shell activation.
+
+        Frozen applications and ordinary/venv interpreters return None. A
+        conda-meta directory identifies Conda, including custom installation
+        paths. The conda package record identifies a base installation; other
+        environments use their directory name. No subprocesses are started.
+        """
+        if getattr(sys, "frozen", False):
             return None
-        parent = os.path.dirname(prefix)
-        if os.path.basename(parent) == "envs":
-            return os.path.basename(prefix)
-        if os.path.isdir(os.path.join(prefix, "conda-meta")):
-            return "base"
+        prefix = Path(sys.prefix)
+        metadata = prefix / "conda-meta"
+        if not metadata.is_dir():
+            return None
+        # Conda itself can also be installed in a named environment.
+        if prefix.parent.name.casefold() != "envs" and any(metadata.glob("conda-[0-9]*.json")):
+            return Environment.DEFAULT_CONDA_ENV
+        return prefix.name
+
+    @staticmethod
+    def get_python_environment() -> PythonEnvironment:
+        """Describe this process's Python, without consulting activation variables.
+
+        Returns:
+            Interpreter/application path, environment prefix, Python version,
+            frozen status, and optional Conda label. Performs filesystem reads
+            only; never selects another interpreter from PATH.
+        """
+        return PythonEnvironment(
+            executable=os.path.abspath(sys.executable),
+            prefix=os.path.abspath(sys.prefix),
+            version=sys.version.split()[0],
+            frozen=bool(getattr(sys, "frozen", False)),
+            conda_env=Environment.get_conda_env(),
+        )
+
+    @staticmethod
+    def find_conda_executable() -> str | None:
+        """Find a native Conda executable for launchers that must regain control.
+
+        Uses current-prefix locations first, then CONDA_EXE and PATH. Discovery
+        does not establish whether the running Python belongs to Conda.
+        Windows batch wrappers are resolved to their sibling Scripts/conda.exe
+        to avoid CALL's second expansion of user-supplied file arguments.
+        """
+        prefix = Path(sys.prefix)
+        roots = [prefix]
+        if prefix.parent.name.casefold() == "envs":
+            roots.append(prefix.parent.parent)
+        candidates = [str(root / "Scripts" / "conda.exe") for root in roots]
+        candidates.extend(filter(None, [os.environ.get("CONDA_EXE"), Environment.find_conda()]))
+        for candidate in candidates:
+            path = Path(candidate)
+            if path.suffix.lower() in (".bat", ".cmd"):
+                path = path.parent.parent / "Scripts" / "conda.exe"
+            if path.is_file() and (sys.platform != "win32" or path.suffix.lower() == ".exe"):
+                return os.path.abspath(path)
         return None
 
     @staticmethod
@@ -406,13 +469,13 @@ class Environment:
                 f"{gui_color}{linux_gui.value}{CRst}"
             )
 
-        lines.append(f"{FLCyan}Python:{CRst}       {sys.version.split()[0]}")
-        lines.append(f"              {FGray}{sys.executable}{CRst}")
+        runtime = Environment.get_python_environment()
+        conda_tag = f" {FLYellow}Conda{CRst}" if runtime.conda_env is not None else ""
+        frozen_tag = " (bundled application)" if runtime.frozen else ""
+        lines.append(f"{FLCyan}Python:{CRst}       {runtime.version}{conda_tag}{frozen_tag}")
+        lines.append(f"              {FGray}{runtime.executable}{CRst}")
 
-        conda_env = Environment.get_conda_env()
-        if conda_env is None:
-            lines.append(f"{FLCyan}Conda env:{CRst}    {FLRed}(no conda){CRst}")
-        else:
+        if runtime.conda_env is not None:
             conda_exe = Environment.find_conda()
             conda_ver = (
                 Environment._get_shell_version(conda_exe)
@@ -420,7 +483,8 @@ class Environment:
                 else None
             )
             ver_part = f"  {FGray}({conda_ver}){CRst}" if conda_ver else ""
-            lines.append(f"{FLCyan}Conda env:{CRst}    {FLYellow}{conda_env}{CRst}{ver_part}")
+            lines.append(f"{FLCyan}Conda env:{CRst}    {FLYellow}{runtime.conda_env}{CRst}{ver_part}")
+            lines.append(f"              {FGray}{runtime.prefix}{CRst}")
             if conda_exe:
                 lines.append(f"              {FGray}{conda_exe}{CRst}")
 

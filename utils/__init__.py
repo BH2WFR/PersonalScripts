@@ -21,7 +21,7 @@ import socket
 from .ansi import *
 from .cmd_check import CmdCheck
 from .console import Console
-from .environment import Environment, RuntimeKind
+from .environment import Environment, PythonEnvironment, RuntimeKind
 from .system import LinuxGui, System
 from .paths import Paths
 from .input import Input
@@ -46,5 +46,5 @@ __all__ = [
     "CEraseDisplay", "CEraseDisplayToEnd", "CEraseDisplayToStart",
     "CEraseDisplayAllScroll", "CEraseLine", "CEraseLineToEnd",
     "CEraseLineToStart", "CmdCheck", "Console", "Environment", "LinuxGui",
-    "System", "Paths", "Input", "Cursor", "MenuOption", "Menu", "RuntimeKind",
+    "System", "Paths", "Input", "Cursor", "MenuOption", "Menu", "RuntimeKind", "PythonEnvironment",
 ]

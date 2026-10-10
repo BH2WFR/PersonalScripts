@@ -3,6 +3,9 @@
 Requirements: PySide6, pyqtgraph, numpy and matplotlib colormaps.
 Usage: embedded in the viewer's matrix tab.
 Laplace sigma/omega planes fit their axes independently for readable contours.
+An explicit X:Y aspect choice overrides that default across matrix switches.
+Optional opaque pixel annotations distinguish Inf, -Inf and NaN; clipping
+outlines can be hidden independently of actual value clamping.
 """
 
 import math
@@ -13,9 +16,10 @@ import pyqtgraph as pg
 from pyqtgraph.graphicsItems.PlotItem.PlotItem import PlotItem
 from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
 
-from .data_model import DEFAULT_CLIP_COLOR, Frame, format_sample
+from .data_model import DEFAULT_CLIP_COLOR, ColorArray, Frame, format_sample
 from .plot_support import compact_axis, graphics_scene, pyside_graphics_view
 from .workspace import RenderLayer
+from .value_markers import MarkerStyle, nonfinite_mask
 
 PLOT_CONTENT_MARGIN = 2
 
@@ -31,10 +35,13 @@ class ImageView(QtWidgets.QWidget):
         super().__init__(parent)
         self.frame: Frame | None = None
         self._independent_axes = False
+        self._equal_xy_override: bool | None = None
         self._layers: tuple[RenderLayer, ...] = ()
         self._layer_items: dict[int, pg.ImageItem] = {}
+        self._layer_annotations: dict[int, pg.ImageItem] = {}
         self._layer_keys: dict[int, tuple[object, ...]] = {}
         self.clip_color = QtGui.QColor(DEFAULT_CLIP_COLOR)
+        self.marker_style = MarkerStyle()
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.readout = QtWidgets.QLabel("Move over the image to inspect a pixel")
@@ -64,7 +71,7 @@ class ImageView(QtWidgets.QWidget):
         self.item.setOpts(autoDownsample=True)
         self.plot.addItem(self.item)
         self.clip_overlay = pg.ImageItem(axisOrder="row-major")
-        self.clip_overlay.setOpts(autoDownsample=True)
+        self.clip_overlay.setOpts(autoDownsample=False)
         self.plot.addItem(self.clip_overlay)
         self.bar = pg.ColorBarItem(values=(0, 1), colorMap=pg.colormap.get("viridis"), interactive=False)
         self.bar.setImageItem(self.item, insert_in=self.plot)
@@ -112,9 +119,10 @@ class ImageView(QtWidgets.QWidget):
             self.reset_view()
 
     def _clear_layers(self) -> None:
-        for item in self._layer_items.values():
+        for item in (*self._layer_items.values(), *self._layer_annotations.values()):
             self.plot.removeItem(item)
         self._layer_items.clear()
+        self._layer_annotations.clear()
         self._layer_keys.clear()
         self._layers = ()
 
@@ -122,13 +130,27 @@ class ImageView(QtWidgets.QWidget):
         independent = bool(frame.x_grid and frame.x_grid.symbol == "ω"
                            and frame.y_grid and frame.y_grid.symbol == "σ")
         if independent != self._independent_axes:
-            self.view_box.setAspectLocked(not independent)
+            if self._equal_xy_override is None:
+                self.view_box.setAspectLocked(not independent)
             self._independent_axes = independent
         self.plot.setLabel("bottom", frame.x_grid.label() if frame.x_grid else "Column (x)")
         self.plot.setLabel("left", frame.y_grid.label("Y") if frame.y_grid else "Row (y)")
         self.plot.getAxis("bottom").enableAutoSIPrefix(frame.x_grid is None)
         self.plot.getAxis("left").enableAutoSIPrefix(frame.y_grid is None)
         self.view_box.invertY(not (frame.y_grid and frame.y_grid.frequency))
+
+    def set_equal_xy(self, enabled: bool) -> None:
+        """Choose equal data-unit scaling or free axes for this image viewport.
+
+        Args:
+            enabled: True locks X:Y to 1:1; False permits independent scales.
+
+        Side effects:
+            Retains the explicit choice across data/coordinate-domain changes.
+            May expand a visible axis range to maintain equal unit lengths.
+        """
+        self._equal_xy_override = enabled
+        self.view_box.setAspectLocked(enabled, ratio=1.0)
 
     def set_layers(self, layers: tuple[RenderLayer, ...], reset: bool = False) -> None:
         """Overlay scalar matrices using fixed RGB colors and value-based opacity.
@@ -148,6 +170,7 @@ class ImageView(QtWidgets.QWidget):
         for uid in tuple(self._layer_items):
             if uid not in wanted:
                 self.plot.removeItem(self._layer_items.pop(uid))
+                self.plot.removeItem(self._layer_annotations.pop(uid))
                 self._layer_keys.pop(uid, None)
         for order, layer in enumerate(layers):
             frame = layer.frame
@@ -157,7 +180,12 @@ class ImageView(QtWidgets.QWidget):
                 item.setOpts(autoDownsample=True)
                 self.plot.addItem(item)
                 self._layer_items[layer.uid] = item
-            image_key = (layer.data_key or id(frame), layer.color, layer.clip_color)
+                annotations = pg.ImageItem(axisOrder="row-major")
+                annotations.setOpts(autoDownsample=False)
+                self.plot.addItem(annotations)
+                self._layer_annotations[layer.uid] = annotations
+            annotations = self._layer_annotations[layer.uid]
+            image_key = (layer.data_key or id(frame), layer.color, layer.clip_color, layer.markers)
             if self._layer_keys.get(layer.uid) != image_key:
                 low, high = frame.limits
                 intensity = np.nan_to_num(np.clip((frame.display_scalar.astype(np.float64) - low) / (high - low), 0, 1))
@@ -165,12 +193,16 @@ class ImageView(QtWidgets.QWidget):
                 color = QtGui.QColor(layer.color)
                 rgba[..., :3] = (color.red(), color.green(), color.blue())
                 rgba[..., 3] = np.asarray((0.08 + 0.92 * intensity) * frame.valid * 255, dtype=np.uint8)
-                if frame.clip_outline is not None:
-                    cap = QtGui.QColor(layer.clip_color)
-                    rgba[frame.clip_outline] = (cap.red(), cap.green(), cap.blue(), 255)
                 # autoDownsample averages uint8 RGBA into floats. Explicit byte
                 # levels remain valid both before and after that conversion.
                 item.setImage(rgba, autoLevels=False, levels=(0, 255))
+                marks = self._annotation_image(frame, layer.markers, QtGui.QColor(layer.clip_color))
+                if marks is None:
+                    annotations.clear()
+                    annotations.hide()
+                else:
+                    annotations.setImage(marks, autoLevels=False, levels=(0, 255))
+                    annotations.show()
                 self._layer_keys[layer.uid] = image_key
             height, width = frame.scalar.shape
             xm, ym = frame.x_mapping.then(layer.x), frame.y_mapping.then(layer.y)
@@ -178,7 +210,10 @@ class ImageView(QtWidgets.QWidget):
                          width * xm.scale, height * ym.scale)
             item.setOpacity(layer.opacity)
             item.setZValue(order)
-        self.marker.setZValue(len(layers) + 1)
+            annotations.setRect(xm.forward(frame.x_start - 0.5), ym.forward(frame.y_start - 0.5),
+                                width * xm.scale, height * ym.scale)
+            annotations.setZValue(len(layers) + order)
+        self.marker.setZValue(2 * len(layers) + 1)
         self.readout.setText("Move over the overlay to inspect source and display coordinates")
         if reset:
             self.reset_view()
@@ -219,18 +254,43 @@ class ImageView(QtWidgets.QWidget):
 
     def _update_clip_overlay(self) -> None:
         frame = self.frame
-        if frame is None or frame.clip_outline is None:
+        rgba = self._annotation_image(frame, self.marker_style, self.clip_color) if frame is not None else None
+        if frame is None or rgba is None:
             self.clip_overlay.clear()
             self.clip_overlay.hide()
             return
-        rgba = np.zeros((*frame.scalar.shape, 4), dtype=np.uint8)
-        color = self.clip_color
-        rgba[frame.clip_outline] = (color.red(), color.green(), color.blue(), color.alpha())
         self.clip_overlay.setImage(rgba, autoLevels=False, levels=(0, 255))
         h, w = frame.scalar.shape
         self.clip_overlay.setRect(frame.x_mapping.forward(frame.x_start - 0.5), frame.y_mapping.forward(frame.y_start - 0.5),
                                   w * frame.x_mapping.scale, h * frame.y_mapping.scale)
         self.clip_overlay.show()
+
+    @staticmethod
+    def _annotation_image(frame: Frame, style: MarkerStyle, clip_color: QtGui.QColor) -> ColorArray | None:
+        """Build opaque pixel annotations only when enabled matches exist."""
+        rgba: ColorArray | None = None
+        if style.highlight_clipped and frame.clip_outline is not None and np.any(frame.clip_outline):
+            rgba = np.zeros((*frame.scalar.shape, 4), dtype=np.uint8)
+            rgba[frame.clip_outline] = (clip_color.red(), clip_color.green(), clip_color.blue(), 255)
+        if style.show_nonfinite:
+            for kind, name in style.colors():
+                mask = nonfinite_mask(frame.scalar, kind)
+                if np.any(mask):
+                    if rgba is None:
+                        rgba = np.zeros((*frame.scalar.shape, 4), dtype=np.uint8)
+                    color = QtGui.QColor(name)
+                    rgba[mask] = (color.red(), color.green(), color.blue(), 255)
+        return rgba
+
+    def set_marker_style(self, style: MarkerStyle) -> None:
+        """Refresh single-matrix annotations without changing data or zoom.
+
+        Args:
+            style: Appearance flags and nonfinite colors for the shown channel.
+        """
+        if self.marker_style != style:
+            self.marker_style = style
+            self._update_clip_overlay()
 
     def reset_view(self) -> None:
         """Fit the complete matrix bounds, excluding the infinite profile line."""
@@ -271,7 +331,8 @@ class ImageView(QtWidgets.QWidget):
                 row = math.floor(frame.y_mapping.then(layer.y).inverse(point.y()) + 0.5)
                 x, y = column - frame.x_start, row - frame.y_start
                 if 0 <= x < frame.scalar.shape[1] and 0 <= y < frame.scalar.shape[0]:
-                    suffix = " [hidden/nonfinite]" if not frame.valid[y, x] else ""
+                    suffix = (" [nonfinite marker; original value]" if layer.markers.show_nonfinite
+                              and not np.isfinite(frame.scalar[y, x]) else " [hidden/nonfinite]" if not frame.valid[y, x] else "")
                     labels.append(f"{layer.label}: source ({column}, {row}), value={format_sample(frame.scalar, y, x)}{suffix}")
             self.readout.setText(" | ".join(labels))
             return
@@ -287,6 +348,8 @@ class ImageView(QtWidgets.QWidget):
             return
         value = format_sample(self.frame.scalar, y, x)
         suffix = "  [filtered / nonfinite]" if not self.frame.valid[y, x] else ""
+        if self.marker_style.show_nonfinite and not np.isfinite(self.frame.scalar[y, x]):
+            suffix = "  [nonfinite marker; original value]"
         if self.frame.clip_kind[y, x]:
             suffix = f"  [clamped to {format_sample(self.frame.display_scalar, y, x)}]"
         label = "luminance" if self.frame.composite else "value"

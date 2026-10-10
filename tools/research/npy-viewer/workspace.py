@@ -15,6 +15,7 @@ from .data_model import (BoolArray, Component, Crop, Document, FloatArray, Frame
                          Selection, ViewMode, default_selection, load_document)
 from .coordinates import AxisMap
 from .import_catalog import ImportChoice
+from .value_markers import MarkerStyle
 
 COLORS: tuple[str, ...] = ("#e53935", "#1976d2", "#279638", "#ab47bc", "#ef8c00", "#00a6a6", "#bc557f")
 AUTO_HEIGHT_FRACTION = 0.3
@@ -179,11 +180,12 @@ def load_file(path: Path, key: str | None = None, choices: tuple[ImportChoice, .
     if choices is not None:
         if not choices:
             raise ValueError("Select at least one matrix or worksheet.")
-        documents = tuple(load_document(path, choice.key, region=choice.region,
-                                        header=choice.header, delimiter=choice.delimiter) for choice in choices)
-        for document in documents:
+        selected_documents: tuple[Document, ...] = tuple(
+            load_document(path, choice.key, region=choice.region,
+                          header=choice.header, delimiter=choice.delimiter) for choice in choices)
+        for document in selected_documents:
             default_selection(document)
-        return LoadedFile(documents)
+        return LoadedFile(selected_documents)
     if path.suffix.lower() == ".npz":
         loaded = np.load(path, allow_pickle=False)
         if not isinstance(loaded, np.lib.npyio.NpzFile):
@@ -312,6 +314,7 @@ class RenderLayer:
     threshold: float | None = None
     data_key: tuple[object, ...] = ()
     z: AxisMap = AxisMap()
+    markers: MarkerStyle = MarkerStyle()
 
     @property
     def z_mapping(self) -> AxisMap:
@@ -326,7 +329,7 @@ class RenderLayer:
     def signature(self) -> tuple[object, ...]:
         """Small identity key for avoiding unchanged image/mesh rebuilds."""
         return (self.uid, self.label, id(self.frame), self.color, self.opacity, self.x, self.y,
-                self.height, self.point_size, self.clip_color, self.z)
+                self.height, self.point_size, self.clip_color, self.z, self.markers)
 
 
 @dataclass(frozen=True, eq=False)

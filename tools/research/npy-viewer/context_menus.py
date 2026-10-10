@@ -3,6 +3,9 @@
 Requirements: PySide6 and the existing viewer modules. Usage: WorkspaceMenus
 attaches to WorkspaceWindow. Actions reuse its normal controls and validation;
 opening a menu does not calculate derivatives or change channel visibility.
+The 3D menu offers equal XYZ data-unit scaling for all visible layers.
+Image, signal and derivative menus independently toggle equal X:Y unit scaling.
+The matrix's signal menu can add visible slices as independent in-memory matrices.
 """
 
 from collections.abc import Callable
@@ -227,6 +230,16 @@ class WorkspaceMenus(QtCore.QObject):
         canvas.reset_camera_clipping_range()
         canvas.render()
 
+    def _equal_xy(self, view: FigureView, enabled: bool) -> None:
+        """Apply the viewport's aspect choice in single and overlay modes."""
+        window = self.window
+        if view == FigureView.IMAGE:
+            window.image_view.set_equal_xy(enabled)
+            return
+        for profile in (window.profile_view, window.overlay_profile):
+            pane = profile.derivative_pane if view == FigureView.DERIVATIVE else profile.signal_pane
+            pane.view_box.setAspectLocked(enabled, ratio=1.0)
+
     def view_menu(self, view: FigureView) -> QtWidgets.QMenu:
         """Offer plot-specific actions without computing hidden derivatives.
 
@@ -249,7 +262,20 @@ class WorkspaceMenus(QtCore.QObject):
         self._add(menu, "Fit all views", window._fit_views, enabled=ready)
         self._add(menu, "Export this view as image…", partial(window._export_figure, preferred=view), enabled=ready)
         menu.addSeparator()
+        if view != FigureView.SURFACE:
+            box = (window.image_view.view_box if view == FigureView.IMAGE else
+                   profile.derivative_pane.view_box if view == FigureView.DERIVATIVE else profile.signal_pane.view_box)
+            locked = box.state["aspectLocked"] is not False
+            equal_xy = self._add(menu, "X:Y scale 1:1 (data units)", partial(self._equal_xy, view, not locked),
+                                 enabled=ready, checked=locked)
+            equal_xy.setToolTip("Equal lengths for one X unit and one Y unit. Zoom links both axes while locked; uncheck for free scaling.")
         if view == FigureView.SURFACE:
+            equal_scale = self._add(menu, "XYZ scale 1:1:1 (data units)", window._equal_xyz_scale, enabled=ready)
+            equal_scale.setToolTip(
+                "Apply to all visible layers: disable Auto height scale, set Height multiplier to 1, "
+                "and reset stretched XYZ alignments to original coordinates. Translation alignments remain. "
+                "One data unit has the same length on every axis; pixel coordinates are not calibrated distances."
+            )
             camera = menu.addMenu("Camera")
             camera.setEnabled(ready)
             canvas = window.surface_view.canvas
@@ -267,6 +293,10 @@ class WorkspaceMenus(QtCore.QObject):
             grid = bool(pane.plot_item.getAxis("bottom").grid)
             self._add(menu, "Grid", lambda: pane.plot_item.showGrid(x=not grid, y=not grid, alpha=.2), enabled=ready, checked=grid)
         if matrix:
+            if view == FigureView.SIGNAL:
+                freeze = self._add(menu, "Add visible slices to matrices", window._add_slice_matrices,
+                                   enabled=window._can_add_slices())
+                freeze.setToolTip("Copy current slices into independent 1D matrices. Complex sources ask for the current channel or both complex parts (without value bounds). Added unchecked; no file is saved.")
             if view in (FigureView.SIGNAL, FigureView.DERIVATIVE):
                 self._add(menu, "Auto Y on slice change",
                           partial(window._set_profile_auto_y, not window._profile_auto_y),
@@ -284,8 +314,15 @@ class WorkspaceMenus(QtCore.QObject):
         menu.addSeparator()
         active = window._entry()
         editable = active is not None and window.controls.isEnabled() and window.matrix_box.isEnabled()
+        if view in (FigureView.IMAGE, FigureView.SIGNAL):
+            self._add(menu, "Show Inf / -Inf / NaN markers (active matrix)", window.show_nonfinite.toggle,
+                      enabled=editable, checked=window.show_nonfinite.isChecked())
+        if view != FigureView.DERIVATIVE:
+            self._add(menu, "Highlight clipped values (active matrix)", window.highlight_clipped.toggle,
+                      enabled=editable and window.highlight_clipped.isEnabled(), checked=window.highlight_clipped.isChecked())
         self._add(menu, "Revert crop (active matrix)", window._reset_crop, enabled=editable)
-        self._add(menu, "Revert value bounds (active matrix)", window._reset_value_bounds, enabled=editable)
+        self._add(menu, "Revert value bounds (active matrix)", window._reset_value_bounds,
+                  enabled=editable and window.revert_value_bounds.isEnabled())
         self._processing(menu)
         self._add(menu, "Export settings…", self._export_settings, enabled=editable)
         return menu

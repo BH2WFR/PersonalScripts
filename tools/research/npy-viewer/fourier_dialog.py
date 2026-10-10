@@ -2,6 +2,13 @@
 
 Requirements: numpy and PySide6. Usage: constructed by WorkspaceWindow.
 The owner runs immutable requests on its worker pool and completes the dialog.
+Input scopes distinguish full/cropped matrices or signals and full/cropped 1D
+slices. Crop scopes automatically include the active value bounds; full scopes
+ignore both spatial and value bounds. Full complex and phase inputs ignore Z
+bounds in every scope and zero-fill invalid samples. Real channels offer
+independent zero/valid-extremum treatments for NaN, +/-Inf and finite outliers,
+with clamp-to-boundary as the outlier default, independently of display Hide.
+No samples are removed from the input grid; statistics run only on Generate.
 """
 
 import math
@@ -11,9 +18,10 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .coordinates import AxisCoordinates
 from .qt_widgets import NoWheelComboBox
-from .data_model import Crop, Document, ImageMember, Selection, ViewMode
+from .data_model import Crop, Document, ImageMember, Limits, Selection, ViewMode, is_phase_view
 from .fourier import (TransformDirection, TransformNorm, TransformOptions,
                       TransformRange, TransformWindow)
+from .fourier_values import FourierValuePolicy, ValueReplacement
 
 
 class FourierDialog(QtWidgets.QDialog):
@@ -27,6 +35,8 @@ class FourierDialog(QtWidgets.QDialog):
         row: Current profile direction.
         index: Source row/column index; None disables slice input.
         parent: Owning viewer window.
+        limits: Current value bounds, automatically applied by cropped scopes.
+            Defaults to no value bounds. Full scopes always ignore them.
 
     Side effects:
         Emits generate_requested with immutable options and a result alias.
@@ -36,9 +46,12 @@ class FourierDialog(QtWidgets.QDialog):
     generate_requested = QtCore.Signal(object, str)
 
     def __init__(self, document: Document, selection: Selection, crop: Crop, source_name: str,
-                 row: bool, index: int | None, parent: QtWidgets.QWidget | None = None) -> None:
+                 row: bool, index: int | None, parent: QtWidgets.QWidget | None = None,
+                 *, limits: Limits = Limits()) -> None:
         super().__init__(parent)
         self.document, self.selection, self.crop = document, selection, crop
+        self.limits = limits
+        self._apply_bounds = False
         self.row, self.index = row, index
         self._busy = False
         self._shape: tuple[int, ...] = ()
@@ -60,10 +73,15 @@ class FourierDialog(QtWidgets.QDialog):
             self.direction.setCurrentIndex(1)
         form.addRow("Operation", self.direction)
         self.range = NoWheelComboBox()
-        for value in (TransformRange.FULL, TransformRange.CROP):
-            self.range.addItem(value.value, value)
+        matrix = selection.mode == ViewMode.MATRIX
+        self.range.addItem("Full 2D matrix" if matrix else "Full 1D signal", TransformRange.FULL)
+        self.range.addItem("Cropped 2D matrix (X/Y + Z bounds)" if matrix else
+                           "Cropped 1D signal (X + value bounds)", TransformRange.CROP)
         if selection.mode == ViewMode.MATRIX and index is not None:
-            self.range.addItem(f"{'Row' if row else 'Column'} {index} (within crop)", TransformRange.SLICE)
+            identity = f"{'Row' if row else 'Column'} {index}"
+            self.range.addItem(f"Full 1D Slice — {identity}", TransformRange.FULL_SLICE)
+            self.range.addItem(f"Cropped 1D Slice — {identity} (X/Y + Z bounds)", TransformRange.SLICE)
+        self.range.setToolTip("Full scopes ignore current X/Y and value bounds. Cropped real-channel inputs use X/Y and Z bounds with the treatment below; full complex and phase inputs use X/Y only.")
         form.addRow("Input range", self.range)
         self.channel = NoWheelComboBox()
         for key in document.keys:
@@ -121,10 +139,26 @@ class FourierDialog(QtWidgets.QDialog):
             self.window_selector.addItem(value.value, value)
         self.window_selector.setToolTip("Periodic window, separately on each transformed axis. No amplitude compensation.")
         form.addRow("Window", self.window_selector)
-        self.bounds = QtWidgets.QCheckBox("Apply current value bounds before transform")
-        form.addRow(self.bounds)
-        self.fill_zero = QtWidgets.QCheckBox("Replace NaN / Inf / hidden samples with zero")
-        form.addRow(self.fill_zero)
+        self.bounds = QtWidgets.QLabel()
+        self.bounds.setWordWrap(True)
+        form.addRow("Value bounds", self.bounds)
+        treatment_box = QtWidgets.QGroupBox("Special values")
+        self.treatment_form = QtWidgets.QFormLayout(treatment_box)
+        self.nan_replacement = NoWheelComboBox()
+        self.positive_replacement = NoWheelComboBox()
+        self.negative_replacement = NoWheelComboBox()
+        self.clipped_replacement = NoWheelComboBox()
+        for label, combo in (("NaN", self.nan_replacement), ("+Inf", self.positive_replacement),
+                             ("-Inf", self.negative_replacement), ("Outside value bounds", self.clipped_replacement)):
+            if combo is self.clipped_replacement:
+                combo.addItem(ValueReplacement.BOUNDARY.value, ValueReplacement.BOUNDARY)
+            for method in (ValueReplacement.ZERO, ValueReplacement.MAXIMUM, ValueReplacement.MINIMUM):
+                combo.addItem(method.value, method)
+            self.treatment_form.addRow(label, combo)
+        self.treatment_note = QtWidgets.QLabel()
+        self.treatment_note.setWordWrap(True)
+        self.treatment_form.addRow(self.treatment_note)
+        form.addRow(treatment_box)
         self.single = QtWidgets.QCheckBox("Single precision (complex64); default: complex128")
         self.single.toggled.connect(self._summary)
         form.addRow(self.single)
@@ -158,13 +192,14 @@ class FourierDialog(QtWidgets.QDialog):
     def _reconfigure(self) -> None:
         inverse, paired = self.direction.currentData() == TransformDirection.INVERSE, self._paired()
         selection, document = self.selection, self.document
+        scope = TransformRange(self.range.currentData())
         axes = (selection.y_axis, selection.x_axis) if selection.y_axis is not None else (selection.x_axis,)
-        region = Crop() if self.range.currentData() == TransformRange.FULL else self.crop
+        region = self.crop if scope.uses_crop else Crop()
         sizes: list[int] = []
         for axis, start, end in ((selection.y_axis, region.y_start, region.y_end), (selection.x_axis, region.x_start, region.x_end)):
             if axis is not None:
                 sizes.append((document.array.shape[axis] - 1 if end is None else end) - start + 1)
-        if self.range.currentData() == TransformRange.SLICE:
+        if scope.is_slice:
             along = 1 if self.row else 0
             axes, sizes = (axes[along],), [sizes[along]]
         self._source_axes = tuple(axis for axis in axes if axis is not None)
@@ -172,7 +207,8 @@ class FourierDialog(QtWidgets.QDialog):
         record = document.transform
         with QtCore.QSignalBlocker(self.axes):
             self.axes.clear()
-            self.axes.addItem("X" if len(sizes) == 1 else "Both X and Y (2D)", tuple(range(len(sizes))))
+            self.axes.addItem("Slice (1D)" if scope.is_slice else "X" if len(sizes) == 1 else
+                              "Both X and Y (2D)", tuple(range(len(sizes))))
             if len(sizes) == 2:
                 self.axes.addItem("X only (each row)", (1,))
                 self.axes.addItem("Y only (each column)", (0,))
@@ -190,7 +226,7 @@ class FourierDialog(QtWidgets.QDialog):
             axis = self._source_axes[i]
             grid = document.axes[axis] if document.axes else AxisCoordinates(
                 unit="cycles/sample" if inverse else "pixel" if document.is_image else "sample")
-            label.setText("Y" if len(sizes) == 2 and i == 0 else "X")
+            label.setText("Y" if (len(sizes) == 2 and i == 0) or (scope.is_slice and not self.row) else "X")
             spacing.setText(f"{grid.spacing:.15g}")
             unit.setText(grid.unit)
             spacing.setEnabled(not paired and selection.mode != ViewMode.XY)
@@ -210,7 +246,7 @@ class FourierDialog(QtWidgets.QDialog):
         self.mean.setEnabled(not inverse)
         self.window_selector.setEnabled(not inverse)
         self.trim.setVisible(paired)
-        self.bounds.setEnabled(not (np.iscomplexobj(document.array) and not self.component.currentData()))
+        self._configure_values(scope)
         self.note.setText(
             ("Paired IFFT restores recorded coordinates and normalization. Use the complete frequency axes. "
              "Windows, mean removal and value bounds are not undone.\n" if paired else
@@ -221,6 +257,33 @@ class FourierDialog(QtWidgets.QDialog):
         if paired and record is not None:
             self.note.setToolTip(record.description)
         self._axes_changed()
+
+    def _configure_values(self, scope: TransformRange) -> None:
+        """Show the applicable treatment policy without scanning source arrays."""
+        full_complex = self.document.is_complex and not self.component.currentData()
+        phase = is_phase_view(self.document, self.selection) and bool(self.component.currentData())
+        restricted = full_complex or phase
+        matrix = self.selection.mode == ViewMode.MATRIX
+        extent = ("X/Y only" if matrix else "X only") if restricted else ("X/Y + Z bounds" if matrix else "X + value bounds")
+        self.range.setItemText(self.range.findData(TransformRange.CROP),
+                               f"Cropped {'2D matrix' if matrix else '1D signal'} ({extent})")
+        sliced = self.range.findData(TransformRange.SLICE)
+        if sliced >= 0:
+            self.range.setItemText(sliced, f"Cropped 1D Slice — {'Row' if self.row else 'Column'} {self.index} ({extent})")
+        self._apply_bounds = (not restricted and scope.uses_crop
+                              and (self.limits.lower is not None or self.limits.upper is not None))
+        bounds_text = ("Not applied to full complex / phase input" if restricted else
+                       f"Minimum={self.limits.lower}, maximum={self.limits.upper}" if self._apply_bounds else
+                       "None set" if scope.uses_crop else "Not applied (full input)")
+        self.bounds.setText(bounds_text)
+        for combo in (self.nan_replacement, self.positive_replacement, self.negative_replacement, self.clipped_replacement):
+            self.treatment_form.setRowVisible(combo, not restricted)
+        self.clipped_replacement.setEnabled(self._apply_bounds)
+        self.treatment_note.setText(
+            "Nonfinite real or imaginary part: replace the whole sample with 0+0j. Valid complex samples retain both components."
+            if full_complex else "Invalid phase samples become 0. Phase uses no Z/value bounds."
+            if phase else "Extrema use finite, in-bound samples from this input before replacement. "
+            "With no valid samples, choose 0. Outside-bound treatment also applies to samples hidden in the viewer.")
 
     def _axes_changed(self) -> None:
         selected = self.axes.currentData() or ()
@@ -253,9 +316,14 @@ class FourierDialog(QtWidgets.QDialog):
                 axes=tuple(self.axes.currentData()), spacing=intervals, units=tuple(field[2].text().strip() or "sample" for field in fields),
                 output_shape=tuple(field[3].value() for field in fields), norm=TransformNorm(self.norm.currentData()),
                 window=TransformWindow.NONE if inverse else TransformWindow(self.window_selector.currentData()),
-                subtract_mean=not inverse and self.mean.isChecked(), fill_zero=self.fill_zero.isChecked(),
+                subtract_mean=not inverse and self.mean.isChecked(),
+                value_policy=FourierValuePolicy(
+                    nan=ValueReplacement(self.nan_replacement.currentData()),
+                    positive=ValueReplacement(self.positive_replacement.currentData()),
+                    negative=ValueReplacement(self.negative_replacement.currentData()),
+                    clipped=ValueReplacement(self.clipped_replacement.currentData())),
                 single_precision=self.single.isChecked(), display_component=bool(self.component.currentData()),
-                apply_bounds=self.bounds.isEnabled() and self.bounds.isChecked(), input_centered=self.centered.isChecked(),
+                apply_bounds=self._apply_bounds, input_centered=self.centered.isChecked(),
                 image_key=self.channel.currentData() if self.document.is_image else None,
                 row=self.row, index=self.index or 0, trim_padding=self._paired() and self.trim.isChecked())
         except (ValueError, TypeError) as exc:

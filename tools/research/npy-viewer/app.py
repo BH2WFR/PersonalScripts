@@ -2,6 +2,9 @@
 
 Signal/XY modes use full-height plot, derivative and raw-data tabs in one row.
 Matrix modes restore the image/surface viewer above its linked profile.
+Optional Inf/-Inf/NaN markers use blue/green/magenta by default in 1D/2D;
+1D marker size is adjustable from 0.5 to 20 pixels, defaulting to 3 pixels.
+clipping emphasis defaults on and can be disabled without changing bounds.
 Slice-index changes automatically fit Y by default; the profile context menu
 can disable this to retain Y scale. Manual Fit commands still fit data.
 The workspace selects source entries and retains their image channels or complex
@@ -16,6 +19,7 @@ The modal Export dialog saves originals, processed results or slices as numeric
 files, or real 2D matrices as normalized 8-bit PNG/BMP. Export settings stay
 outside the left sidebar; save workers report their status inside the dialog.
 Value bounds share one input row and can be reverted independently of XY/color limits.
+Complex Phase disables Z/value-bound controls; X/Y cropping remains available.
 Fusion keeps native widget painting with 2 px layout padding/vertical gaps and
 4 px horizontal gaps; the main content margins are 6 px except 2 px at the top.
 Splitter handles are blue, turning amber on hover and orange while dragging.
@@ -38,7 +42,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .coordinates import AxisCoordinates
 from .data_model import (COLORMAPS, DEFAULT_CLIP_COLOR, DEFAULT_MAX_POINTS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, Array, Component, Crop, Document, FilterMode, Frame, ImageMember,
                          Limits, RealArray, Selection, ViewMode, default_selection,
-                         load_document, prepare_frame, select_image_member)
+                         is_phase_view, load_document, prepare_frame, select_image_member)
 from .excel_io import EXCEL_EXTENSIONS
 from .export_dialog import MatrixExportDialog
 from .exporting import (ExportFormat, ExportLayout, ExportOptions, ExportTarget,
@@ -49,6 +53,7 @@ from .raw_view import RawDataView
 from .qt_widgets import NoWheelComboBox
 from .surface_view import (DEFAULT_POINT_SIZE, DEFAULT_PROFILE_COLOR, DEFAULT_PROFILE_LIFT,
                            DEFAULT_SECTION_OPACITY, ProfileStyle, SurfaceView)
+from .value_markers import DEFAULT_MARKER_SIZE, MAX_MARKER_SIZE, MIN_MARKER_SIZE, MarkerStyle, NonfiniteKind
 
 DEFAULT_MAX_EDGE = 512
 MAX_QT_INDEX = 2_147_483_647
@@ -228,6 +233,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._matrix_tab = 0
         self._crop = Crop()
         self._clip_color = QtGui.QColor(DEFAULT_CLIP_COLOR)
+        self._nonfinite_colors: dict[NonfiniteKind, QtGui.QColor] = {
+            kind: QtGui.QColor(color) for kind, color in MarkerStyle().colors()}
         self._profile_color_2d = QtGui.QColor(DEFAULT_PROFILE_COLOR)
         self._profile_color_3d = QtGui.QColor(DEFAULT_PROFILE_COLOR)
         self._pool = QtCore.QThreadPool(self)
@@ -406,12 +413,50 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.clip_color_button = QtWidgets.QPushButton("Clipping color")
         self._set_color_icon(self.clip_color_button, self._clip_color)
         self.clip_color_button.clicked.connect(self._choose_clip_color)
-        filters.addRow(self.clip_color_button)
-        filter_hint = QtWidgets.QLabel("Clamp: thick cap lines / solid 3D planes. NaN/Inf stay gaps; derivatives omit clipped samples.")
+        self.highlight_clipped = QtWidgets.QCheckBox("Highlight clipped values")
+        self.highlight_clipped.setChecked(True)
+        self.highlight_clipped.setToolTip("Emphasize clamped samples in 1D, 2D and 3D. Turning this off keeps value clamping active.")
+        self.highlight_clipped.toggled.connect(self._markers_changed)
+        highlight_row = QtWidgets.QHBoxLayout()
+        highlight_row.addWidget(self.highlight_clipped)
+        highlight_row.addWidget(self.clip_color_button)
+        filters.addRow(highlight_row)
+        self.show_nonfinite = QtWidgets.QCheckBox("Show Inf / -Inf / NaN markers (1D / 2D)")
+        self.show_nonfinite.setToolTip(
+            "1D: Inf at the visible finite maximum, -Inf at the minimum, NaN at zero. "
+            "No finite samples: use zero. 2D: color the original pixel. Source values and derivatives are unchanged."
+        )
+        self.show_nonfinite.toggled.connect(self._markers_changed)
+        filters.addRow(self.show_nonfinite)
+        self.nonfinite_color_row = QtWidgets.QWidget()
+        nonfinite_colors = QtWidgets.QHBoxLayout(self.nonfinite_color_row)
+        nonfinite_colors.setContentsMargins(0, 0, 0, 0)
+        self.nonfinite_color_buttons: dict[NonfiniteKind, QtWidgets.QPushButton] = {}
+        for kind, color in self._nonfinite_colors.items():
+            button = QtWidgets.QPushButton(f"{kind.value} color")
+            self._set_color_icon(button, color)
+            button.clicked.connect(lambda _checked=False, selected=kind: self._choose_nonfinite_color(selected))
+            nonfinite_colors.addWidget(button)
+            self.nonfinite_color_buttons[kind] = button
+        self.nonfinite_color_row.setEnabled(False)
+        filters.addRow(self.nonfinite_color_row)
+        self.nonfinite_size = QtWidgets.QDoubleSpinBox()
+        self.nonfinite_size.setRange(MIN_MARKER_SIZE, MAX_MARKER_SIZE)
+        self.nonfinite_size.setDecimals(1)
+        self.nonfinite_size.setSingleStep(0.5)
+        self.nonfinite_size.setValue(DEFAULT_MARKER_SIZE)
+        self.nonfinite_size.setSuffix(" px")
+        self.nonfinite_size.setKeyboardTracking(False)
+        self.nonfinite_size.setEnabled(False)
+        self.nonfinite_size.setToolTip("Inf / -Inf / NaN dot diameter in 1D plots, including slices. 2D retains whole-pixel coloring.")
+        self.nonfinite_size.valueChanged.connect(self._markers_changed)
+        filters.addRow("1D nonfinite marker size", self.nonfinite_size)
+        filter_hint = QtWidgets.QLabel("Clamp retains boundary values. Highlighting is optional; nonfinite and clipped samples stay excluded from derivatives.")
         self.filter_hint = filter_hint
         filter_hint.setWordWrap(True)
         filters.addRow(filter_hint)
         apply_filter = QtWidgets.QPushButton("Apply")
+        self.apply_value_bounds = apply_filter
         apply_filter.clicked.connect(self._schedule_frame)
         self.revert_value_bounds = QtWidgets.QPushButton("Revert")
         self.revert_value_bounds.setToolTip("Clear minimum and maximum and restore values within the current X/Y crop.")
@@ -520,6 +565,43 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.image_view.set_clip_color(color)
             self.profile_view.set_clip_color(color)
             self.surface_view.set_clip_color(color.name())
+
+    def _marker_style(self) -> MarkerStyle:
+        return MarkerStyle(self.show_nonfinite.isChecked(), self.highlight_clipped.isChecked(),
+                           self._nonfinite_colors[NonfiniteKind.POSITIVE].name(),
+                           self._nonfinite_colors[NonfiniteKind.NEGATIVE].name(),
+                           self._nonfinite_colors[NonfiniteKind.NAN].name(), self.nonfinite_size.value())
+
+    def _sync_marker_controls(self) -> None:
+        cloud = self.mode.currentData() == ViewMode.POINTS.value
+        phase = (self.document is not None and self.document.is_complex
+                 and self.display_channel.currentData() == Component.PHASE)
+        for widget in (self.filter_low, self.filter_high, self.filter_mode, self.apply_value_bounds,
+                       self.revert_value_bounds, self.highlight_clipped):
+            widget.setEnabled(not phase)
+        self.filter_hint.setText("Phase does not use Z/value bounds. X/Y cropping remains available." if phase else
+                                "Clamp retains boundary values. Highlighting is optional; nonfinite and clipped samples stay excluded from derivatives.")
+        self.show_nonfinite.setEnabled(not cloud)
+        self.nonfinite_color_row.setEnabled(self.show_nonfinite.isChecked() and not cloud)
+        self.nonfinite_size.setEnabled(self.show_nonfinite.isChecked() and not cloud)
+        self.clip_color_button.setEnabled(self.highlight_clipped.isChecked() and not phase)
+
+    def _choose_nonfinite_color(self, kind: NonfiniteKind) -> None:
+        color = QtWidgets.QColorDialog.getColor(self._nonfinite_colors[kind], self, f"{kind.value} marker color")
+        if color.isValid():
+            self._nonfinite_colors[kind] = color
+            self._set_color_icon(self.nonfinite_color_buttons[kind], color)
+            self._markers_changed()
+
+    def _markers_changed(self) -> None:
+        """Apply appearance options without rebuilding samples or derivatives."""
+        self._sync_marker_controls()
+        style = self._marker_style()
+        self.image_view.set_marker_style(style)
+        self.profile_view.set_marker_style(style)
+        if self.surface_view.highlight_clipped != style.highlight_clipped:
+            self._surface_dirty = True
+            self._refresh_surface()
 
     def _crop_controls(self) -> QtWidgets.QGroupBox:
         box = QtWidgets.QGroupBox("Crop by source index (inclusive)")
@@ -1355,11 +1437,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
                                         and self.display_channel.currentData() == Component.MAGNITUDE_DB)
         self.reset_limits_button.setText("Reset value bounds" if signal else "Reset filter / color limits")
         self.surface_controls.setVisible(not signal)
-        self.filter_hint.setText(
-            "Clamp: thick cap lines. NaN/Inf stay gaps; derivatives omit clipped samples."
-            if signal else
-            "Clamp: thick cap lines / solid 3D planes. NaN/Inf stay gaps; derivatives omit clipped samples."
-        )
+        self._sync_marker_controls()
 
     def _selection(self) -> Selection:
         assert self.document is not None
@@ -1389,6 +1467,13 @@ class ViewerWindow(QtWidgets.QMainWindow):
             raise ValueError("Bounds must be finite numbers, or blank for automatic limits.")
         return value
 
+    def _value_limits(self, selection: Selection) -> Limits:
+        """Read current bounds, ignoring any stale settings for complex phase."""
+        if self.document is not None and is_phase_view(self.document, selection):
+            return Limits()
+        return Limits(self._bound(self.filter_low), self._bound(self.filter_high),
+                      FilterMode(self.filter_mode.currentText()))
+
     def _schedule_frame(self) -> None:
         if not self._updating and self.document is not None:
             self._export_ready = False
@@ -1404,8 +1489,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.export_box.setEnabled(False)
         try:
             selection = self._selection()
-            limits = Limits(self._bound(self.filter_low), self._bound(self.filter_high),
-                            FilterMode(self.filter_mode.currentText()))
+            limits = self._value_limits(selection)
             # Reject invalid color fields before starting expensive work.
             if selection.mode in (ViewMode.MATRIX, ViewMode.POINTS):
                 self._color_levels(self.frame.limits if self.frame else (0, 1))
@@ -1443,6 +1527,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         matrix = selection.mode == ViewMode.MATRIX
         cloud = selection.mode == ViewMode.POINTS
         self._sync_frame_controls()
+        style = self._marker_style()
+        self.image_view.set_marker_style(style)
+        self.profile_view.set_marker_style(style)
         self._set_view_layout(selection.mode)
         self.profile_controls.setVisible(matrix)
         self.profile_controls.setEnabled(matrix)
@@ -1632,7 +1719,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
             try:
                 self.surface_view.set_frame(self.frame, self.colormap.currentText(),
                                             self._color_levels(self.frame.limits), self.height_scale.value(),
-                                            self._surface_reset, self.point_size.value())
+                                            self._surface_reset, self.point_size.value(),
+                                            highlight_clipped=self.highlight_clipped.isChecked())
             except (ValueError, RuntimeError) as exc:
                 self.statusBar().showMessage(f"3D rendering error: {exc}")
                 return

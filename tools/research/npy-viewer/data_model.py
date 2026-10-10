@@ -3,6 +3,9 @@
 Requirements: numpy, opencv-python, Pillow, scipy, h5py and openpyxl;
 xlrd for legacy XLS input.
 Usage: imported by the viewer; CPU preparation can run in a worker thread.
+Complex phase views ignore Z/value bounds while retaining spatial crops.
+Nonfinite complex source samples produce phase gaps, even when atan2 would
+otherwise return a finite angle; zero complex samples retain NumPy's zero angle.
 """
 
 from dataclasses import dataclass, replace
@@ -87,7 +90,7 @@ class ImageSource:
 class FilterMode(StrEnum):
     """Treatment of finite values outside the selected numeric interval."""
 
-    CLAMP = "Clamp + highlight"
+    CLAMP = "Clamp"
     HIDE = "Hide outside"
 
 
@@ -171,6 +174,19 @@ class Selection:
     coordinate_axis: int | None = None
     coordinate_order: tuple[int, ...] = (0, 1, 2)
     db_floor: float = -120.0
+
+
+def is_phase_view(document: Document, selection: Selection) -> bool:
+    """Return whether a complex source is displayed as an angular phase channel.
+
+    Args:
+        document: Source array; real arrays never count as complex phase views.
+        selection: Current interpreted component, independently of spatial crop.
+
+    Returns:
+        True only for the phase component of a complex source.
+    """
+    return document.is_complex and selection.component == Component.PHASE
 
 
 @dataclass(frozen=True)
@@ -606,7 +622,7 @@ def _extract(document: Document, selection: Selection, crop: Crop) -> tuple[Real
             case Component.MAGNITUDE:
                 data = np.abs(complex_data)
             case Component.PHASE:
-                data = np.angle(complex_data)
+                data = np.where(np.isfinite(complex_data), np.angle(complex_data), np.nan)
             case Component.MAGNITUDE_DB:
                 # Reuse the conversion tool's amplitude convention and zero handling.
                 from .data_conversion import ConversionOptions, convert_values
@@ -715,6 +731,8 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
     """
     if max_edge < 0 or max_edge == 1:
         raise ValueError("Surface edge limit must be zero (full resolution) or at least 2.")
+    if is_phase_view(document, selection):
+        limits = Limits()
     if limits.lower is not None and limits.upper is not None and limits.lower > limits.upper:
         raise ValueError("Filter minimum must not exceed maximum.")
     if any(bound is not None and not np.isfinite(bound) for bound in (limits.lower, limits.upper)):

@@ -276,7 +276,7 @@ Canonical implementations live there; do not add implementations to the
 | Print a box-drawing banner | `Console.print_banner("TITLE")` |
 | Print a horizontal separator | `Console.print_separator(width=..., color_ansi_esc=...)` |
 | Resolve an ANSI color constant name | `Console.resolve_ansi_color("FLYellow")` |
-| Print env info (conda, python, shell) | `Environment.print_env_info(probe_versions=...)`; disabling probes avoids starting external tools |
+| Print env info (conda, python, shell) | `Environment.print_env_info(probe_versions=...)`; disabling probes avoids starting external tools; Python gets a yellow Conda tag only for an actual Conda interpreter, otherwise Conda details are hidden |
 | Standard KeyboardInterrupt exit | `Console.print_keyboard_interrupt_message_and_exit()` |
 | Standard exit message | `Console.print_exit_message_and_exit()` or `Console.print_error_and_exit()` |
 | Desktop notification | `System.notify(title, body)` |
@@ -291,7 +291,9 @@ Canonical implementations live there; do not add implementations to the
 | Find a program using a child environment | `Environment.which(name, environment=..., cwd=...) -> str \| None`; explicit PATH/PATHEXT search relative to cwd, absolute result preserves symlinks; no options retains native shutil.which behavior |
 | Expand templates using an explicit environment | `Paths.expand_template(text, environment, placeholders)`; one pass, undefined references are errors |
 | Resolve dependent child environment values | `Paths.resolve_environment(inherited, overrides, literals, placeholders)`; cycles rejected, literal inputs win, self-reference reads inherited value |
-| Conda environment name | `Environment.get_conda_env() -> Optional[str]` |
+| Conda environment name | `Environment.get_conda_env() -> Optional[str]`; checks current `sys.prefix/conda-meta`, not activation variables or path keywords; frozen apps return None; base is identified by its Conda package record, other prefixes use directory names |
+| Actual running Python | `Environment.get_python_environment() -> PythonEnvironment`; immutable executable, prefix, version, frozen status and optional Conda label; no subprocess probes. Prefix, not name, is the authoritative identity. Frozen executable paths are applications, not reusable Python interpreters |
+| Native Conda launcher | `Environment.find_conda_executable() -> str \| None`; current-prefix locations, then `CONDA_EXE` and PATH; resolves Windows batch wrappers to `Scripts/conda.exe`; discovery never classifies the running interpreter |
 | Resolve a named Conda environment's Python | `Environment.resolve_conda_python(env_name, timeout=15) -> str`; current-environment fast path, otherwise Conda JSON discovery with ambiguity/existence checks; resolves only, does not activate |
 | Prepend literal directories to this process's PATH | `Environment.prepend_path(paths)`; preserves order and the previous PATH, no expansion/deduplication, no trailing empty entry for unset/empty PATH |
 | Terminal width / CJK display width | `Console.get_terminal_width()`, `Console.display_width(s)` |

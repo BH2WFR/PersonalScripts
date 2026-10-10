@@ -10,7 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_conversion import (COMPLEX_CONVERSIONS, DB_CONVERSIONS, DEFAULT_DB_FLOOR,
                               Conversion, ConversionOptions, DBReference)
-from .data_model import Component, Document, Selection, ViewMode
+from .data_model import Component, Document, Selection, ViewMode, is_phase_view
 from .fourier import TransformRange
 from .qt_widgets import NoWheelComboBox
 
@@ -54,7 +54,7 @@ class DataConversionDialog(QtWidgets.QDialog):
             self.operation.addItem(operation.value, operation)
         self.form.addRow("Operation", self.operation)
         self.range_selector = NoWheelComboBox()
-        for scope in TransformRange:
+        for scope in (TransformRange.FULL, TransformRange.CROP, TransformRange.SLICE):
             if scope != TransformRange.SLICE or (selection.mode == ViewMode.MATRIX and index is not None):
                 self.range_selector.addItem(scope.value, scope)
         self.form.addRow("Input range", self.range_selector)
@@ -111,7 +111,7 @@ class DataConversionDialog(QtWidgets.QDialog):
         db = operation in DB_CONVERSIONS
         self.full_complex.setEnabled(self.document.is_complex and operation in COMPLEX_CONVERSIONS)
         full_complex = self.full_complex.isEnabled() and self.full_complex.isChecked()
-        self.bounds.setEnabled(not full_complex)
+        self.bounds.setEnabled(not full_complex and not is_phase_view(self.document, self.selection))
         for widget in (self.reference_mode, self.reference, self.use_floor, self.floor):
             self.form.setRowVisible(widget, db)
         self.reference.setEnabled(self.reference_mode.currentData() == DBReference.FIXED)

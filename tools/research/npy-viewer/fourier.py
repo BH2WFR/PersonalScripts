@@ -3,6 +3,13 @@
 Requirements: numpy and scipy. Usage: run_transform from a viewer worker.
 Generated FFT arrays store centered, complete complex spectra; IFFT accepts
 centered or standard external spectra. Rendering never changes these arrays.
+Full slices use the selected original row/column across its entire source axis;
+cropped slices retain inclusive X/Y bounds and their original coordinate origin.
+Real channels independently replace NaN/+Inf/-Inf and finite outliers using
+fourier_values; statistics use original finite, in-bound samples. Full complex
+input replaces invalid samples as whole complex zeros. Phase uses zero filling.
+Neither full complex nor phase input applies value bounds. Other tools sharing
+transform_input retain their own preprocessing, with phase bounds also ignored.
 """
 
 from dataclasses import dataclass, replace
@@ -17,7 +24,8 @@ from scipy.signal.windows import get_window
 from .coordinates import AxisCoordinates, reciprocal_unit
 from .data_model import (Array, ComplexArray, Crop, Document, FloatArray, ImageMember, Limits, RealArray,
                          Selection, ViewMode, _extract, _extract_raw, apply_value_limits,
-                         prepare_frame, select_image_member)
+                         is_phase_view, prepare_frame, select_image_member)
+from .fourier_values import FourierValuePolicy, prepare_fourier_values
 
 
 class TransformDirection(StrEnum):
@@ -28,7 +36,18 @@ class TransformDirection(StrEnum):
 class TransformRange(StrEnum):
     FULL = "Full matrix / signal"
     CROP = "Current X / Y crop"
-    SLICE = "Current row / column (within crop)"
+    FULL_SLICE = "Full 1D Slice"
+    SLICE = "Current 1D Slice (within crop)"
+
+    @property
+    def is_slice(self) -> bool:
+        """Whether the input extracts one source row or column as a 1D signal."""
+        return self in (TransformRange.FULL_SLICE, TransformRange.SLICE)
+
+    @property
+    def uses_crop(self) -> bool:
+        """Whether inclusive source X/Y bounds apply before transformation."""
+        return self in (TransformRange.CROP, TransformRange.SLICE)
 
 
 class TransformWindow(StrEnum):
@@ -57,7 +76,7 @@ class TransformOptions:
     norm: TransformNorm = TransformNorm.BACKWARD
     window: TransformWindow = TransformWindow.NONE
     subtract_mean: bool = False
-    fill_zero: bool = False
+    value_policy: FourierValuePolicy = FourierValuePolicy()
     single_precision: bool = False
     display_component: bool = False
     apply_bounds: bool = False
@@ -123,7 +142,7 @@ def transform_input(document: Document, selection: Selection, crop: Crop,
     Args:
         document: Numeric source or image with retained original pixels.
         selection: Current axis/component interpretation.
-        crop: Applied crop; ignored for the full-input choice.
+        crop: Applied crop; ignored for full matrices/signals and full slices.
         options: Range, component, preprocessing and image-member choices.
         limits: Applied value bounds, used only when explicitly requested.
 
@@ -143,7 +162,7 @@ def transform_input(document: Document, selection: Selection, crop: Crop,
         if key != document.key:
             document = select_image_member(document, key)
         selection = replace(selection, channel_axis=None, channel=0)
-    region = Crop() if options.range == TransformRange.FULL else crop
+    region = crop if options.range.uses_crop else Crop()
     explicit = selection.mode == ViewMode.XY
     if explicit:
         frame = prepare_frame(document, selection, Limits(), 2, region)
@@ -172,18 +191,18 @@ def transform_input(document: Document, selection: Selection, crop: Crop,
         grids = tuple(replace(document.axes[axis], origin=document.axes[axis].mapping.forward(start))
                       if document.axes else AxisCoordinates(float(start), unit="pixel" if document.is_image else "sample")
                       for axis, start in zip(source_axes, starts, strict=True))
-    range_label = "Full input" if options.range == TransformRange.FULL else f"Crop: {region}"
-    if options.range == TransformRange.SLICE:
+    range_label = f"Crop: {region}" if options.range.uses_crop else "Full input"
+    if options.range.is_slice:
         if values.ndim != 2:
             raise ValueError("A row/column slice requires a 2D matrix.")
         local = options.index - (region.y_start if options.row else region.x_start)
         if not 0 <= local < values.shape[0 if options.row else 1]:
-            raise ValueError("The selected source slice is outside the crop.")
+            raise ValueError("The selected source slice is outside the input range.")
         values = values[local, :] if options.row else values[:, local]
         along = 1 if options.row else 0
         grids, source_axes = (grids[along],), (source_axes[along],)
-        range_label = f"{'Row' if options.row else 'Column'} {options.index}; {region}"
-    if options.apply_bounds:
+        range_label = f"Slice: {'Row' if options.row else 'Column'} {options.index}; {range_label}"
+    if options.apply_bounds and not is_phase_view(document, selection):
         if np.iscomplexobj(values):
             raise ValueError("Value bounds require a real display component, not full complex input.")
         if any(bound is not None and not np.isfinite(bound) for bound in (limits.lower, limits.upper)):
@@ -226,16 +245,21 @@ def run_transform(document: Document, selection: Selection, crop: Crop, limits: 
         In-memory document with complex values and uniform physical coordinates.
 
     Raises:
-        ValueError: Invalid grid/axes/size, nonfinite values, cropped paired
-            spectrum, overflow, or incompatible inverse settings.
+        ValueError: Invalid grid/axes/size, missing extrema for replacements,
+            cropped paired spectrum, overflow, or incompatible inverse settings.
         MemoryError: Insufficient memory for the requested transform.
 
     Side effects:
         Prints input identity, parameters, sizes and calculation timing.
     """
     started = perf_counter()
-    source = transform_input(document, selection, crop, options, limits)
-    values = source.values
+    # Extract original values first: bounds must not turn +/-Inf or finite
+    # outliers into NaN before their independent treatments are chosen.
+    source = transform_input(document, selection, crop, replace(options, apply_bounds=False), limits)
+    phase = options.display_component and is_phase_view(document, selection)
+    bound_values = options.apply_bounds and not np.iscomplexobj(source.values) and not phase
+    values, treatments = prepare_fourier_values(source.values, limits if bound_values else Limits(),
+                                                options.value_policy, phase=phase)
     rank = values.ndim
     inverse = options.direction == TransformDirection.INVERSE
     record = document.transform
@@ -267,23 +291,17 @@ def run_transform(document: Document, selection: Selection, crop: Crop, limits: 
         origin = grids[axis].origin * spacing if not document.axes and not source.explicit_coordinates else grids[axis].origin
         grids[axis] = replace(grids[axis], origin=origin, spacing=spacing,
                               unit=options.units[axis] if options.units and not paired else grids[axis].unit)
-    missing = ~np.isfinite(values)
-    if np.any(missing) and not options.fill_zero:
-        raise ValueError(f"Input contains {np.count_nonzero(missing):,} NaN/Inf samples. Enable explicit zero filling or repair the source.")
     dtype = np.complex64 if options.single_precision else np.complex128
     with np.errstate(over="ignore", invalid="ignore"):
         work = np.array(values, dtype=dtype, copy=True)
-    if np.any(~np.isfinite(work) & ~missing):
+    if np.any(~np.isfinite(work)):
         raise ValueError("Input overflows the selected precision. Use double precision or rescale the data.")
     if values.dtype.kind in "iu":
         with np.errstate(over="ignore", invalid="ignore"):
             if not np.array_equal(work.real.astype(values.dtype), values):
                 raise ValueError("Selected FFT precision would round large integer samples. Use double precision or explicitly rescale the source.")
-    work[missing] = 0
-    notes: list[str] = []
-    if options.fill_zero and np.any(missing):
-        notes.append(f"zero-filled {np.count_nonzero(missing)} samples")
-    if options.apply_bounds:
+    notes = list(treatments)
+    if bound_values:
         notes.append(f"value bounds: {limits}")
     if options.subtract_mean:
         work -= np.mean(work, axis=axes, keepdims=True)

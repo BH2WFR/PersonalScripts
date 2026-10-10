@@ -3,6 +3,7 @@
 Requirements: PySide6, numpy, pyvista, pyvistaqt and vtk.
 Usage: SurfaceView is the matrix viewer's 3D tab.
 Single and overlaid slice markers use the shared 3D selection color.
+Clipping caps retain their geometry when optional highlight coloring is off.
 """
 
 import math
@@ -283,6 +284,7 @@ class SurfaceView(QtWidgets.QWidget):
         self._clip_actors: list[vtkActor] = []
         self._colored_caps: list[pv.PolyData] = []
         self.clip_color = DEFAULT_CLIP_COLOR
+        self.highlight_clipped = True
         self._layers: tuple[RenderLayer, ...] = ()
         self._layer_signature: tuple[tuple[object, ...], ...] = ()
         self._layer_profiles: list[vtkActor] = []
@@ -301,7 +303,8 @@ class SurfaceView(QtWidgets.QWidget):
         layout.addWidget(self.resolution)
 
     def set_frame(self, frame: Frame, cmap: str, levels: tuple[float, float],
-                  z_scale: float, reset: bool, point_size: float = DEFAULT_POINT_SIZE) -> None:
+                  z_scale: float, reset: bool, point_size: float = DEFAULT_POINT_SIZE, *,
+                  highlight_clipped: bool = True) -> None:
         """Replace surface geometry while optionally retaining the camera.
 
         Args:
@@ -311,6 +314,8 @@ class SurfaceView(QtWidgets.QWidget):
             z_scale: Positive visual height multiplier; readouts stay unscaled.
             reset: Fit a new isometric view when True.
             point_size: Pixel diameter for point-cloud samples.
+            highlight_clipped: Paint caps in the clipping color; False keeps
+                normal scalar/image colors without removing clamping.
         """
         surface = frame.surface
         if surface is None:
@@ -328,6 +333,7 @@ class SurfaceView(QtWidgets.QWidget):
         self.canvas.picker.InitializePickList()
         self.canvas.frame = frame
         self.z_scale = z_scale
+        self.highlight_clipped = highlight_clipped
         self.readout.setText("Move over the surface to inspect a source sample")
         if len(surface.points):
             mesh = pv.PolyData(surface.points, surface.faces) if surface.faces.size else pv.PolyData(surface.points)
@@ -354,12 +360,14 @@ class SurfaceView(QtWidgets.QWidget):
                 self.canvas.picker.AddPickList(actor)
             for cap in caps:
                 colored = SOURCE_COLOR_FIELD in cap.point_data
-                if colored:
+                if colored and highlight_clipped:
                     self._paint_cap(cap)
                     self._colored_caps.append(cap)
-                actor = self.canvas.add_mesh(cap, color=None if colored else self.clip_color,
-                                             scalars=SOURCE_COLOR_FIELD if colored else None, rgb=colored, lighting=False,
-                                             point_size=max(6, point_size), show_scalar_bar=False,
+                cap.point_data["Value"] = np.asarray(cap.points)[:, 2]
+                actor = self.canvas.add_mesh(cap, color=self.clip_color if highlight_clipped and not colored else None,
+                                             scalars=SOURCE_COLOR_FIELD if colored else None if highlight_clipped else "Value",
+                                             rgb=colored, cmap=cmap, clim=levels, lighting=False,
+                                             point_size=max(6, point_size) if highlight_clipped else point_size, show_scalar_bar=False,
                                              reset_camera=False, render=False)
                 actor.SetScale(1, 1, z_scale)
                 self._clip_actors.append(actor)
@@ -418,7 +426,8 @@ class SurfaceView(QtWidgets.QWidget):
             if frame.point_coordinates is not None:
                 mesh.point_data[SOURCE_INDEX_FIELD] = surface.rows - frame.x_start
             remaining, caps = self._partition_surface(mesh, frame)
-            for part, color in ((remaining, layer.color), *((cap, layer.clip_color) for cap in caps)):
+            cap_color = layer.clip_color if layer.markers.highlight_clipped else layer.color
+            for part, color in ((remaining, layer.color), *((cap, cap_color) for cap in caps)):
                 if not part.n_points:
                     continue
                 actor = self.canvas.add_mesh(part, color=color, scalars=None, lighting=False,
@@ -553,6 +562,8 @@ class SurfaceView(QtWidgets.QWidget):
             color: Hex RGB color selected in the shared clipping controls.
         """
         self.clip_color = color
+        if not self.highlight_clipped:
+            return
         chosen = QtGui.QColor(color)
         rgb = (chosen.redF(), chosen.greenF(), chosen.blueF())
         for actor in self._clip_actors:

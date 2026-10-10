@@ -136,7 +136,7 @@ def _full_detail(exporter: Exporter) -> Iterator[None]:
 
 @contextmanager
 def _plot_geometry(plot: PlotItem, height: float) -> Iterator[QtCore.QRectF]:
-    """Reflow a plot's axes for export and restore its geometry and view state."""
+    """Reflow axes, honoring locked unit ratios; restore the viewer afterward."""
     native: object = plot
     view_box: object = plot.getViewBox()
     if not isinstance(native, QtWidgets.QGraphicsWidget) or not isinstance(view_box, QtCore.QObject):
@@ -152,17 +152,22 @@ def _plot_geometry(plot: PlotItem, height: float) -> Iterator[QtCore.QRectF]:
         rect = native.sceneBoundingRect()
         yield rect
         return
-    # Freeze source coordinates while changing the plot's aspect. Only the
-    # canvas is reflowed: tick text, titles and markers keep their proportions.
+    # Reflow annotations without distorting an explicitly locked coordinate
+    # aspect. Locked views expand a range to fit the new export canvas.
     with QtCore.QSignalBlocker(view_box):
         try:
             box.disableAutoRange()
             box.setAspectLocked(False)
             native.setGeometry(QtCore.QRectF(geometry.x(), geometry.y(), geometry.width(), height))
             plot.layout.activate()
+            if state["aspectLocked"] is not False:
+                box.setAspectLocked(True, ratio=state["aspectLocked"])
             box.setRange(xRange=state["viewRange"][0], yRange=state["viewRange"][1], padding=0)
             for name in ("left", "bottom", "right", "top"):
                 axis = plot.getAxis(name)
+                # Range signals are blocked to preserve the live viewer's
+                # linked plots, so refresh export ticks explicitly.
+                axis.linkedViewChanged(box)
                 axis.setGrid(axis.grid)
             yield native.sceneBoundingRect()
         finally:
@@ -171,6 +176,7 @@ def _plot_geometry(plot: PlotItem, height: float) -> Iterator[QtCore.QRectF]:
             box.setState(state)
             for name in ("left", "bottom", "right", "top"):
                 axis = plot.getAxis(name)
+                axis.linkedViewChanged(box)
                 axis.setGrid(axis.grid)
 
 

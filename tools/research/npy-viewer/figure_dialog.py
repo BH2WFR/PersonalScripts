@@ -119,6 +119,7 @@ class FigureExportDialog(QtWidgets.QDialog):
         note = QtWidgets.QLabel(
             "Unlock the aspect ratio to set width and height independently. "
             "Dimensions include the title and wrapped legend. Plots reflow to fit; "
+            "a locked X:Y unit ratio is preserved by expanding the visible range. "
             "3D renders into the new viewport. DPI sets print size.\n\n"
             "Axes and lines scale with the plot. Viewer controls and hover cursors are excluded. "
             "2D images and curves use full source detail; 3D uses the current mesh sampling. "

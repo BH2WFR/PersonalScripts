@@ -46,4 +46,20 @@ not an actual runtime configuration or an automatic default/fallback.
 | `ZL-IP-ADDRESS-S3-ID` | Yes | S3 access key ID. |
 | `ZL-IP-ADDRESS-S3-SECRET` | Yes | S3 secret access key. |
 
+## `tools/windows/script-to-app.py`
+
+Generated `.cmd` launchers set the following internal-only variables inside
+`setlocal`. They are not user configuration: recorded values override inherited
+values, and changes expire when the launcher exits. Regenerate the launcher to
+select a different interpreter or environment.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `ZL_APP_PYTHON` | Internal | Absolute path of the Python interpreter used to generate the launcher. |
+| `ZL_APP_TARGET` | Internal | Absolute path of the target Python script. |
+| `ZL_APP_PREFIX` | Internal | Exact Python environment directory; used for validation and Conda `--prefix`. |
+| `ZL_APP_CONDA_NAME` | Internal | Conda display name, or an empty string for non-Conda Python. |
+| `ZL_APP_CONDA` | Internal | Native Conda executable path, or an empty string for non-Conda Python. |
+| `ZL_APP_EXIT_CODE` | Internal | Decimal exit code captured immediately after target execution. |
+
 Do not commit real passwords or access keys to this repository.

@@ -22,10 +22,49 @@ if "personal_npy_viewer" not in sys.modules:
     spec.loader.exec_module(package)
 model = importlib.import_module("personal_npy_viewer.data_model")
 clipping = importlib.import_module("personal_npy_viewer.clipping")
+markers = importlib.import_module("personal_npy_viewer.value_markers")
 
 
 class ClippingTests(unittest.TestCase):
     """Clamps affect display buffers, with strict endpoint and gap semantics."""
+
+    def test_nonfinite_markers_preserve_source_and_use_clamped_extrema(self) -> None:
+        source = np.array([-10., -2., 4., 10., np.nan, np.inf, -np.inf])
+        document = preserve_document(model.Document(Path("marker-source.npy"), source), "unit-inputs/test_clipping")
+        frame = model.prepare_frame(document, model.default_selection(document),
+                                    model.Limits(-3, 3, model.FilterMode.CLAMP), 0)
+        before = frame.scalar.copy()
+        valid = frame.valid.copy()
+        self.assertEqual(markers.curve_markers(frame.scalar, frame.display_scalar, frame.valid, markers.MarkerStyle()), ())
+        groups = markers.curve_markers(frame.scalar, frame.display_scalar, frame.valid,
+                                        markers.MarkerStyle(show_nonfinite=True))
+        self.assertEqual([group.color for group in groups], ["#0000ff", "#00ff00", "#ff00ff"])
+        self.assertEqual([group.indices.tolist() for group in groups], [[5], [6], [4]])
+        self.assertEqual([group.heights.tolist() for group in groups], [[3], [-3], [0]])
+        np.testing.assert_array_equal(frame.scalar, before)
+        np.testing.assert_array_equal(frame.valid, valid)
+
+    def test_nonfinite_markers_use_only_visible_finite_values(self) -> None:
+        source = np.array([-100., 5., 5., 200., np.inf, -np.inf, np.nan])
+        document = preserve_document(model.Document(Path("marker-filtered.npy"), source), "unit-inputs/test_clipping")
+        frame = model.prepare_frame(document, model.default_selection(document),
+                                    model.Limits(0, 10, model.FilterMode.HIDE), 0)
+        groups = markers.curve_markers(frame.scalar, frame.display_scalar, frame.valid,
+                                        markers.MarkerStyle(show_nonfinite=True, nan_color="#123456"))
+        self.assertEqual([group.heights.tolist() for group in groups], [[5], [5], [0]])
+        self.assertEqual(groups[-1].color, "#123456")
+
+    def test_nonfinite_markers_have_finite_fallback_and_integer_support(self) -> None:
+        source = np.array([np.inf, -np.inf, np.nan])
+        document = preserve_document(model.Document(Path("marker-empty.npy"), source), "unit-inputs/test_clipping")
+        frame = model.prepare_frame(document, model.default_selection(document), model.Limits(), 0)
+        groups = markers.curve_markers(frame.scalar, frame.display_scalar, frame.valid,
+                                        markers.MarkerStyle(show_nonfinite=True))
+        self.assertEqual([group.heights.tolist() for group in groups], [[0], [0], [0]])
+        for dtype in (np.int64, np.uint64, np.bool_):
+            values = np.ones(4, dtype=dtype)
+            self.assertEqual(markers.curve_markers(values, values, np.ones(4, dtype=np.bool_),
+                                                    markers.MarkerStyle(show_nonfinite=True)), ())
 
     def test_bounds_keep_source_values_and_nonfinite_gaps(self) -> None:
         """Clamp both sides without replacing NaN/Inf or altering the source."""

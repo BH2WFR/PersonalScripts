@@ -9,7 +9,7 @@ import math
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .data_model import Crop, Document, Selection, ViewMode
+from .data_model import Crop, Document, Selection, ViewMode, is_phase_view
 from .fourier import TransformRange
 from .qt_widgets import NoWheelComboBox
 from .laplace import (DEFAULT_SIGMA_COUNT, MAX_OUTPUT_BYTES, LaplaceDirection,
@@ -175,7 +175,8 @@ class LaplaceDialog(QtWidgets.QDialog):
                     dt = float("nan")
             self.estimate.setText(f"Output: {self.output_count.value()} complex samples; dt = {dt:.9g}. Full complex input; double-precision inverse.")
             return
-        self.bounds.setEnabled(not np.iscomplexobj(self.document.array) or self.component.isChecked())
+        self.bounds.setEnabled((not np.iscomplexobj(self.document.array) or self.component.isChecked())
+                               and not is_phase_view(self.document, self.selection))
         auto = self.auto_sigma.isChecked()
         self.sigma_min.setEnabled(not auto)
         self.sigma_max.setEnabled(not auto)
