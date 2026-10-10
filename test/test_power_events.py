@@ -198,8 +198,30 @@ class GuiTests(unittest.TestCase):
                     window.table.selectRow(0)
                     application.processEvents()
                     self.assertIn("wake evidence", window.detail.toPlainText())
+                    # Export through the actual buttons, retaining only visible rows.
+                    csv_path = Path(directory) / "visible.csv"
+                    with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(csv_path.with_suffix("")), "CSV (*.csv)")) as dialog:
+                        window.export_button.click()
+                    self.assertEqual(dialog.call_args.args[2], "power-events.csv")
+                    with csv_path.open(encoding="utf-8", newline="") as stream:
+                        rows = list(csv.DictReader(stream))
+                    self.assertEqual([row["event"] for row in rows], ["Wake"])
+                    self.assertEqual(rows[0]["summary"], "wake")
+                    json_path = Path(directory) / "visible.json"
+                    with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(json_path), "JSON (*.json)")):
+                        window.export_json_button.click()
+                    self.assertEqual(len(json.loads(json_path.read_text(encoding="utf-8"))["events"]), 1)
+                    # Declining replacement must preserve the destination.
+                    csv_path.write_text("existing content", encoding="utf-8")
+                    with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(csv_path.with_suffix("")), "CSV (*.csv)")), patch.object(
+                        QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.StandardButton.No,
+                    ):
+                        window.export_button.click()
+                    self.assertEqual(csv_path.read_text(encoding="utf-8"), "existing content")
                     window._select_types(False)
                     self.assertEqual(window.proxy.rowCount(), 0)
+                    self.assertFalse(window.export_button.isEnabled())
+                    self.assertFalse(window.export_json_button.isEnabled())
                     window.close()
                     application.processEvents()
             finally:

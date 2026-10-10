@@ -3,8 +3,10 @@
 
 Choose a relative or custom local-time range, query in a cancellable worker,
 and toggle event checkboxes without rescanning logs. Select a row for its raw
-evidence; export visible rows to UTF-8 CSV or JSON. Window geometry, columns,
-relative range and type filters persist through QSettings. No service is
+evidence; use Export CSV or Export JSON to save visible rows in display order.
+CSV uses UTF-8 without BOM and includes local timestamps with UTC offsets.
+Window geometry, columns, relative range and type filters persist through
+QSettings. No service is
 installed and no auditing, logging or power settings are changed.
 
 Sources:
@@ -738,12 +740,16 @@ def _launch_gui() -> int:
             layout.addWidget(splitter, 1)
             self.summary = QtWidgets.QLabel("Ready")
             self.summary.setWordWrap(True)
-            self.export_button = QtWidgets.QPushButton("Export visible...")
+            self.export_button = QtWidgets.QPushButton("Export CSV...")
             self.export_button.setEnabled(False)
-            self.export_button.clicked.connect(self._export)
+            self.export_button.clicked.connect(lambda: self._export(".csv"))
+            self.export_json_button = QtWidgets.QPushButton("Export JSON...")
+            self.export_json_button.setEnabled(False)
+            self.export_json_button.clicked.connect(lambda: self._export(".json"))
             footer = QtWidgets.QHBoxLayout()
             footer.addWidget(self.summary, 1)
             footer.addWidget(self.export_button)
+            footer.addWidget(self.export_json_button)
             layout.addLayout(footer)
             self.statusBar().showMessage("Ready")
 
@@ -813,6 +819,7 @@ def _launch_gui() -> int:
             self.query_button.setEnabled(False)
             self.cancel_button.setEnabled(True)
             self.export_button.setEnabled(False)
+            self.export_json_button.setEnabled(False)
             self.summary.setText("Querying... Previous results remain visible until the query completes.")
             self.worker.start()
 
@@ -853,6 +860,7 @@ def _launch_gui() -> int:
             self.query_button.setEnabled(True)
             self.cancel_button.setEnabled(False)
             self.export_button.setEnabled(self.proxy.rowCount() > 0)
+            self.export_json_button.setEnabled(self.proxy.rowCount() > 0)
             if self.closing:
                 self.close()
 
@@ -872,6 +880,7 @@ def _launch_gui() -> int:
             self.proxy.invalidate()
             self.detail.clear()
             self.export_button.setEnabled(self.worker is None and self.proxy.rowCount() > 0)
+            self.export_json_button.setEnabled(self.worker is None and self.proxy.rowCount() > 0)
             if self.result is None:
                 self.summary.setText("No query results yet.")
                 return
@@ -893,20 +902,25 @@ def _launch_gui() -> int:
                 f"\n{event.summary}\n\nOriginal evidence:\n{event.raw}"
             )
 
-        def _export(self) -> None:
-            """Export visible rows in display order through a native save dialog."""
+        def _export(self, suffix: str) -> None:
+            """Save visible rows in display order using the requested .csv or .json format."""
             if self.result is None:
                 return
-            filename, selected = QtWidgets.QFileDialog.getSaveFileName(
-                self, "Export visible events", "power-events.json", "JSON (*.json);;CSV (*.csv)"
+            format_name = suffix[1:].upper()
+            filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, f"Export visible events as {format_name}", f"power-events{suffix}",
+                f"{format_name} (*{suffix})",
             )
             if not filename:
                 return
             path = Path(filename)
             if not path.suffix:
-                path = path.with_suffix(".csv" if selected.startswith("CSV") else ".json")
+                path = path.with_suffix(suffix)
                 if path.exists() and QtWidgets.QMessageBox.question(self, "Replace file?", f"Replace {path.name}?") != QtWidgets.QMessageBox.StandardButton.Yes:
                     return
+            if path.suffix.lower() != suffix:
+                QtWidgets.QMessageBox.warning(self, "Invalid extension", f"Choose a {suffix} export file.")
+                return
             events = [self.model.events[self.proxy.mapToSource(self.proxy.index(row, 0)).row()]
                       for row in range(self.proxy.rowCount())]
             try:
@@ -960,8 +974,10 @@ def main() -> int:
 Description:
   GUI history viewer for startup, shutdown, sleep, wake, lock and unlock.
   Choose a local date/time range; check event types to show or hide loaded rows.
-  Supports cancellation, raw evidence, saved display preferences and CSV/JSON
-  export. Queries the last 24 hours initially. No monitoring service is installed.
+  Supports cancellation, raw evidence and saved display preferences.
+  Export CSV / Export JSON saves visible rows in their current display order.
+  CSV uses UTF-8 without BOM and local timestamps with UTC offsets.
+  Queries the last 24 hours initially. No monitoring service is installed.
   Availability depends on retained logs and permissions; missing events are not
   proof of absence. Linux lock history and Windows Modern Standby are limited.
 
