@@ -281,8 +281,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
 | `tools/windows/file-association.py` | Windows-only tool that **registers a selected EXE as an Open With handler for specified file extensions:**<br />Useful for registering file associations for portable applications. | **Windows only**<br />**Elevation required** |
-| `tools/macos/script-to-app.py` | Creates an Open With `.app` launcher in `~/Applications/PersonalScripts/`, using a selected Python environment without bundling its dependencies. Supports Unicode names and file paths; the `.app` can be moved or renamed. | **macOS only** |
-| `tools/windows/script-to-app.py` | Windows-only tool that creates a CMD launcher for any Python script and places it under `Program Files`:<br />Makes any Python script available as an Open With application and can automatically include Python dependencies. | **Windows only**<br />**Elevation required** |
+| `tools/script-to-app.py` | Creates Open With launchers for Python scripts on Windows, macOS and Linux desktops, organized under `PersonalScripts` with a selected Python environment and no bundled dependencies. Supports custom output directories and Unicode names; macOS apps can be moved or renamed, while Linux offers explicit MIME types or an all-files attempt whose availability depends on the file manager. | **Windows / macOS / Linux desktop**<br />Windows elevation or a writable directory; Linux Bash and a desktop terminal (`desktop-file-utils` optional) |
 
 ### Text Processing
 
@@ -315,6 +314,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 | `tools/windows/restart-service.py` | Windows-only **force-restart tool for system services:**<br />Supports wait and no-wait modes and includes a `Windows Audio` preset, which **can temporarily fix failure to redirect audio from the remote computer in an RDP session**. | **Windows only**<br />**Elevation required** |
 | `tools/power-current.py` | Charger and battery telemetry viewer that **shows the computer's current charging power on macOS**.<br />Uses `ioreg` on macOS, PowerShell CIM/WMI on Windows, and `/sys/class/power_supply` on Linux. Some fields may be unavailable because of firmware or driver limitations. (**The best experience is on macOS.**) | **Best on macOS**; other systems are also supported with incomplete data |
 | `tools/disk-smart-info.py` | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools` |
+| `tools/macos/rdp-clipboard-image-fix.py` | Repairs images that cannot be pasted correctly on macOS after being copied from a Windows device controlled remotely through Windows App (RDP), converting clipboard TIFF images mislabeled as PNG into valid PNG clipboard data.<br />Use `--force` to repair immediately without confirmation. | **macOS only**; built-in `osascript` and AppKit |
 
 ### Software Launching
 

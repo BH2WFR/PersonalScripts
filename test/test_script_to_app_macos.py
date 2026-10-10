@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import Environment, PythonEnvironment
 
-SPEC = importlib.util.spec_from_file_location("mac_script_to_app", ROOT / "tools/macos/script-to-app.py")
+SPEC = importlib.util.spec_from_file_location("mac_script_to_app", ROOT / "tools/script-to-app.py")
 assert SPEC is not None and SPEC.loader is not None
 app = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(app)

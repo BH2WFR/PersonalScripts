@@ -86,6 +86,7 @@ ignore-list:
     linux-gui-specific:
         # 规范：no-gui, wayland, x11
         no-gui:
+            - "script-to-app.py"
             - "keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
             - "research/matrix-viewer.py"

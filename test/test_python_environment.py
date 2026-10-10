@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import Environment, PythonEnvironment, FLYellow, CRst
 
-SPEC = importlib.util.spec_from_file_location("script_to_app_test_target", ROOT / "tools/windows/script-to-app.py")
+SPEC = importlib.util.spec_from_file_location("script_to_app_test_target", ROOT / "tools/script-to-app.py")
 assert SPEC is not None and SPEC.loader is not None
 app = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(app)
@@ -97,7 +97,8 @@ class IdentityTests(ScratchCase):
         for name in (None, "science"):
             runtime = PythonEnvironment("chosen-python.exe", "chosen-prefix", "3.13.12", False, name)
             output = io.StringIO()
-            with patch.object(Environment, "get_python_environment", return_value=runtime), \
+            with patch.object(sys, "platform", "win32"), \
+                    patch.object(Environment, "get_python_environment", return_value=runtime), \
                     patch.object(Environment, "find_conda_executable", return_value="conda.exe"), \
                     patch.object(Environment, "resolve_runtime", return_value=("conda.exe", "conda 26")), \
                     patch.object(app.System, "is_elevated", return_value=True), \
@@ -126,7 +127,8 @@ class SelectionTests(ScratchCase):
     def test_custom_conda_queries_only_the_selected_executable(self) -> None:
         prefix = self.root / "custom-env"
         runtime = PythonEnvironment(str(prefix / "python.exe"), str(prefix), "3.13.12", False, "custom-env")
-        with patch.object(Environment, "get_python_environment", return_value=runtime), \
+        with patch.object(sys, "platform", "win32"), \
+                patch.object(Environment, "get_python_environment", return_value=runtime), \
                 patch.object(Environment, "find_conda_executable", return_value=None), \
                 patch.object(Environment, "resolve_runtime", return_value=("chosen-conda.exe", "conda 26")), \
                 patch.object(Environment, "resolve_conda_python", return_value=runtime.executable) as resolve, \
