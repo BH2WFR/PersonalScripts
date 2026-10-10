@@ -8,3 +8,4 @@ mss
 Pillow
 pynput
 pypdf
+PySide6
