@@ -4,6 +4,12 @@
 Select current Python, a named environment from a chosen Conda installation,
 or a custom Python executable. Validate selections and display the interpreter
 version, path, and environment before creating the application.
+Applications are created in ~/Applications/PersonalScripts/ without elevation.
+Finder Open With passes file paths to the script as command-line arguments.
+Unicode application names and file paths are supported. The application bundle
+can be moved or renamed; the target script and Python environment must remain
+at their recorded locations. This creates a launcher, not a standalone package
+containing Python or its dependencies. Regenerate older apps to apply fixes.
 
 Requirements:
     - macOS, Python 3.13+, and the built-in osacompile and Terminal tools.
@@ -23,6 +29,8 @@ import argparse
 import shlex
 import plistlib
 from typing import Optional, Union
+from unicodedata import normalize
+from uuid import NAMESPACE_URL, uuid5
 
 SUBDIR = "PersonalScripts"
 
@@ -31,6 +39,11 @@ help_message = f'''
   Create a macOS .app bundle that wraps a Python script as a
   double-clickable application.  The generated .app can be
   associated with file types via Finder "Get Info" -> "Open With".
+  Output: ~/Applications/PersonalScripts/ (no administrator access needed).
+  Unicode app names and file paths are supported. The .app can be moved
+  or renamed; the target script and selected Python must stay in place.
+  Python and dependencies are referenced, not copied into the .app.
+  Regenerate existing apps to apply launcher fixes.
 
   When launched, the .app opens a Terminal window and runs the
   target Python script, passing any file paths as arguments.
@@ -57,9 +70,21 @@ def _title_case(name: str) -> str:
     return name.replace("_", " ").replace("-", " ").title().replace(" ", "")
 
 
-def _escape_applescript(s: str) -> str:
-    """Escape a string for embedding in an AppleScript double-quoted literal."""
-    return s.replace("\\", "\\\\").replace('"', '\\"')
+def _build_bundle_id(app_name: str) -> str:
+    """Build a stable ASCII bundle identifier independently of the display name.
+
+    Args:
+        app_name: Application filename, including its optional .app suffix.
+            Unicode, whitespace and punctuation are accepted.
+
+    Returns:
+        Reverse-DNS identifier containing only ASCII letters, digits, periods
+        and hyphens. Canonically equivalent Unicode names share an identifier;
+        distinct names are hashed rather than stripped to a common fallback.
+    """
+    name = normalize("NFC", app_name.removesuffix(".app"))
+    identifier = uuid5(NAMESPACE_URL, f"script-to-app:{name}")
+    return f"com.script-to-app.{identifier}"
 
 
 def _format_process_output(value: Optional[Union[bytes, str]]) -> str:
@@ -161,15 +186,15 @@ def _create_app_bundle(
     """Create the .app using osacompile so it receives Apple Events (odoc).
 
     Uses ``osacompile`` to build a native AppleScript applet with both
-    ``on run`` (direct launch / drag-and-drop) and ``on open`` ("Open With"
-    from Finder) handlers.
+    ``on run`` (direct launch) and ``on open`` (drag-and-drop / "Open With"
+    from Finder) handlers. The app resolves its internal runner at launch so
+    moving or renaming the bundle does not invalidate its resource path.
     """
     import tempfile
     import subprocess
 
     runner = _build_shell_launcher(target_script, runtime, conda_executable)
     runner_path = os.path.join(app_path, "Contents", "Resources", "python-launcher.sh")
-    shell_cmd = shlex.join(["/bin/bash", runner_path])
 
     # AppleScript applet — needs both on run AND on open to receive files
     # from Finder's "Open With" context menu (which sends an odoc Apple Event).
@@ -179,7 +204,9 @@ def _create_app_bundle(
     # to a temp .command file and use "open -a Terminal" to run it.
     applescript = f'''\
 on runPythonScript(fileArgs)
-    set shellCmd to "{_escape_applescript(shell_cmd)}"
+    set bundlePath to POSIX path of (path to me)
+    set runnerPath to bundlePath & "Contents/Resources/python-launcher.sh"
+    set shellCmd to "/bin/bash " & quoted form of runnerPath
     repeat with a in fileArgs
         set shellCmd to shellCmd & " " & quoted form of a
     end repeat
@@ -235,7 +262,7 @@ def _write_info_plist(app_contents: str, app_name: str, bundle_id: str) -> None:
     with open(plist_path, "rb") as f:
         plist = plistlib.load(f)
 
-    display_name = app_name.replace(".app", "")
+    display_name = app_name.removesuffix(".app")
     plist.update({
         "CFBundleIdentifier": bundle_id,
         "CFBundleName": display_name,
@@ -329,7 +356,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"{FLRed}Cancelled.{CRst}")
         return 0
 
-    bundle_id = f"com.script-to-app.{app_name.replace('.app', '').lower()}"
+    bundle_id = _build_bundle_id(app_name)
     os.makedirs(output_dir, exist_ok=True)
     if os.path.exists(app_path):
         shutil.rmtree(app_path)

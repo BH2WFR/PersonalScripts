@@ -281,7 +281,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
 | `tools/windows/file-association.py` | Windows-only tool that **registers a selected EXE as an Open With handler for specified file extensions:**<br />Useful for registering file associations for portable applications. | **Windows only**<br />**Elevation required** |
-| `tools/macos/script-to-app.py` | macOS-only tool that **packages any Python script as a macOS `.app`:**<br />Makes any Python script available as an Open With application and can automatically include Python dependencies. | **macOS only** |
+| `tools/macos/script-to-app.py` | Creates an Open With `.app` launcher in `~/Applications/PersonalScripts/`, using a selected Python environment without bundling its dependencies. Supports Unicode names and file paths; the `.app` can be moved or renamed. | **macOS only** |
 | `tools/windows/script-to-app.py` | Windows-only tool that creates a CMD launcher for any Python script and places it under `Program Files`:<br />Makes any Python script available as an Open With application and can automatically include Python dependencies. | **Windows only**<br />**Elevation required** |
 
 ### Text Processing
@@ -326,7 +326,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/research/npy-viewer.py` | **GUI viewer for `.npy`/`.npz` matrices:**<br />Views 1D and 2D arrays; 2D matrices support image, 3D surface, and 1D row/column profile views. Also opens image files as 2D matrices. | **Python pkgs:** `numpy`, `opencv-python`, `Pillow`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk` |
+| `tools/research/npy-viewer.py` | **GUI viewer for `.npy`/`.npz` matrices:**<br />Views 1D and 2D arrays; 2D matrices support image, 3D surface, and 1D row/column profile views. Also opens images as 2D matrices and accepts multiple files into one workspace from the command line. | **Python pkgs:** `numpy`, `opencv-python`, `Pillow`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk` |
 | `tools/research/pattern-generator.py` | **Structured-light projection pattern generator:**<br />Generates sinusoidal stripes with selectable left/top-edge, center, or right/bottom-edge pixel sampling, plus standard Gray-code sequences.<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
 
 ### Test/Helper Scripts

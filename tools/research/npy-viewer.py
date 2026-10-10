@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """Browse NPY, NPZ, MAT, Excel, CSV/TXT and images in a linked Qt matrix/signal viewer.
 
-The detailed notes below are for maintainers and coding agents. Keep the CLI
-description a concise user-facing overview; document implementation behavior
-and detailed defaults here instead of expanding command-line help.
+This module docstring serves as the matrix viewer project's AGENTS.md:
+the detailed notes below provide project instructions for maintainers and
+coding agents. Keep the CLI description a concise user-facing overview;
+document implementation behavior and detailed defaults here instead of
+expanding command-line help.
+
+Store test matrices that need permanent preservation in
+npy-viewer/test-matrixes/ relative to this script (repository-relative:
+tools/research/npy-viewer/test-matrixes/). This directory already contains
+many test matrices; reuse them where appropriate. To avoid Git repository
+bloat, each matrix file should preferably be no larger than 20 KB.
 
 Numeric files accept nonempty dense 1D/2D boolean, integer, real and complex
 arrays. MATLAB legacy/v7.3 files expose supported top-level variables like NPZ
@@ -286,8 +294,15 @@ Requirements:
     pyvista, pyvistaqt, vtk, scipy, h5py and openpyxl (requirements-research.txt).
     xlrd is required for legacy .xls input; other formats do not require it.
 
+Command-line files load sequentially into one workspace in argument order.
+Import errors or canceled selections skip that file and continue with the next.
+--key, --mode and --channel-axis apply to each command-line file; mode/axis
+overrides select the first imported matrix in each file. Single matrix mode
+displays the last successfully added file's first matrix and retains the others.
+
 Usage:
-    python npy-viewer.py [file] [--key NAME] [--max-edge 512]
+    python npy-viewer.py [file ...] [--key NAME] [--max-edge 512]
+    python npy-viewer.py first.npy second.npy --mode matrix
     python npy-viewer.py data.npy --mode signal --channel-axis 1
     python npy-viewer.py measurements.csv --mode xy
     python npy-viewer.py coordinates.npy --mode points
@@ -320,7 +335,9 @@ def main() -> int:
         description=(
             "Browse NPY/NPZ/MAT/Excel/CSV/TXT and images in linked raw-data, 2D image, 3D surface/point-cloud and 1D/XY/"
             " views, with slices and lazy derivatives. "
-            "Open a file from the command line or use the matrix panel. Ctrl+O replaces the session; Ctrl+Shift+O or dropping"
+            "Open one or more files from the command line, loaded in order into one workspace, or use the matrix panel. "
+            "Failed or canceled imports are skipped. Single matrix mode displays the last added file and retains the others. "
+            "Ctrl+O replaces the session; Ctrl+Shift+O or dropping"
             " another file adds it. Single matrix mode shows one channel; Multiple matrices mode overlays compatible data with"
             " separate colors, settings and a selectable alignment reference. Right-click matrices or plots for processing, "
             "fitting and export actions. "
@@ -354,13 +371,13 @@ def main() -> int:
                 "1D wheel zooms X (XY while 1:1 is locked); Ctrl+wheel zooms XY. 3D middle drag or Ctrl+left drag orbits; "
                 "right drag or Alt+middle drag rolls the view."),
     )
-    parser.add_argument("file", nargs="?", type=Path, help="File to open; omit for an empty GUI")
-    parser.add_argument("--key", help="Initial MAT variable, NPZ member, Excel worksheet or image matrix label (e.g. R, G, B, A, Monochrome)")
+    parser.add_argument("files", nargs="*", type=Path, metavar="file", help="Files to open in argument order; omit for an empty GUI")
+    parser.add_argument("--key", help="Initial MAT variable, NPZ member, Excel worksheet or image matrix label for each file (e.g. R, G, B, A, Monochrome)")
     parser.add_argument("--mode", choices=("matrix", "signal", "xy", "points"),
-                        help="Interpret as a matrix, indexed signal, XY table (2 rows/columns), or XYZ cloud (3 rows/columns)")
-    parser.add_argument("--channel-axis", type=int, help="Channel axis (negative indices accepted)")
+                        help="Interpret the first imported matrix in each file as a matrix, indexed signal, XY table (2 rows/columns), or XYZ cloud (3 rows/columns)")
+    parser.add_argument("--channel-axis", type=int, help="Channel axis for the first imported matrix in each file (negative indices accepted)")
     parser.add_argument("--max-edge", type=int, default=512, help="3D maximum grid edge; 0 = full resolution (default: 512)")
-    args = parser.parse_args()
+    args = parser.parse_intermixed_args()
     if args.max_edge < 0 or args.max_edge == 1:
         parser.error("--max-edge must be 0 (full resolution) or at least 2")
 
@@ -386,8 +403,8 @@ def main() -> int:
         print(f"Install with: conda run -n base python -m pip install {DEPENDENCIES}")
         return 1
     System.enable_dpi_awareness()
-    run = cast(Callable[[Path | None, str | None, str | None, int | None, int], int], app_module.run)
-    return run(args.file, args.key, args.mode, args.channel_axis, args.max_edge)
+    run = cast(Callable[[list[Path], str | None, str | None, int | None, int], int], app_module.run)
+    return run(args.files, args.key, args.mode, args.channel_axis, args.max_edge)
 
 
 if __name__ == "__main__":

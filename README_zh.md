@@ -273,7 +273,7 @@
 | 脚本                                | 描述                                                         | 依赖                                    |
 | ----------------------------------- | ------------------------------------------------------------ | --------------------------------------- |
 | `tools/windows/file-association.py` | 仅 Windows，**为指定扩展名的文件在系统中注册指定 EXE 作为打开方式的工具**：<br />可用于给一些便携软件注册对指定扩展名的打开方式 | **仅 Windows**<br />**需要提权** |
-| `tools/macos/script-to-app.py`      | 仅 macOS，**将任意 Python 脚本打包为 macOS `.app` 包的工具**：<br />用于**将任意 Python 脚本作为文件的打开方式**，可自动加入 Python 依赖 | **仅 macOS** |
+| `tools/macos/script-to-app.py` | 在 `~/Applications/PersonalScripts/` 创建可用作文件打开方式的 `.app` 启动器，使用选定的 Python 环境，不打包依赖。支持中文名称和文件路径，`.app` 可移动或重命名。 | **仅 macOS** |
 | `tools/windows/script-to-app.py` | 仅 Windows，针对任意 Python 脚本制作 CMD 启动器并放置到 `Program Files`：<br />用于**将任意 Python 脚本作为文件的打开方式**，可自动加入 Python 依赖 | **仅 Windows**<br />**需要提权** |
 
 ### 文本处理
@@ -324,7 +324,7 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/research/npy-viewer.py` | **`.npy`/`.npz` 矩阵 GUI 查看器**：<br />支持查看一维、二维矩阵；对于二维矩阵，支持二维、三维、切片一维视图；支持将图片文件当成二维矩阵打开 | **Python 库**：`numpy`、`opencv-python`、`Pillow`、`matplotlib`、`PySide6`、`pyqtgraph`、`pyvista`、`pyvistaqt`、`vtk` |
+| `tools/research/npy-viewer.py` | **`.npy`/`.npz` 矩阵 GUI 查看器**：<br />支持查看一维、二维矩阵；对于二维矩阵，支持二维、三维、切片一维视图。支持将图片文件当成二维矩阵打开，并通过命令行将多个文件载入同一工作区。 | **Python 库**：`numpy`、`opencv-python`、`Pillow`、`matplotlib`、`PySide6`、`pyqtgraph`、`pyvista`、`pyvistaqt`、`vtk` |
 | `tools/research/pattern-generator.py` | **结构光投影图案生成器**：<br />生成可选择左/上边缘、像素中心或右/下边缘采样的正弦条纹，以及标准格雷码序列。<br />非专业人员请勿使用 | **Python 库**：`opencv-python`、`numpy` |
 
 ### 测试/辅助脚本

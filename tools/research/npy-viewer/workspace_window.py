@@ -55,7 +55,8 @@ an editing target without altering visibility; canvas clicks open menus while
 right drags retain the existing 3D camera gesture.
 """
 
-from collections.abc import Iterator
+from collections import deque
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -143,6 +144,7 @@ class WorkspaceWindow(ViewerWindow):
         self._painting_active = False
         self._rendering = False
         self._append_pending = False
+        self._pending_files: deque[tuple[Path, str | None, ViewMode | None, int | None]] = deque()
         self._workspace_ready = False
         self._profile_uses_overlay = False
         self._render_layers: tuple[RenderLayer, ...] = ()
@@ -965,6 +967,7 @@ class WorkspaceWindow(ViewerWindow):
             self._remove_all()
 
     def _remove_all(self) -> None:
+        self._pending_files.clear()
         self._rebuild.stop()
         for kind in (JobKind.FRAME, JobKind.LOAD, JobKind.BUNDLE, JobKind.INSPECT, JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE, JobKind.DATA_CONVERSION):
             self._latest[kind] = -1
@@ -1167,6 +1170,34 @@ class WorkspaceWindow(ViewerWindow):
         self.reference_uid = entry.uid
         self._activate(entry, reset_selection=True)
 
+    def open_paths(self, paths: Sequence[Path], key: str | None = None) -> None:
+        """Load command-line files sequentially into a single workspace.
+
+        Args:
+            paths: Files in argument order; an empty sequence starts no load.
+            key: Initial archive member or image channel applied to each file.
+
+        Side effects:
+            Starts asynchronous loading and queues the remaining files. Initial
+            mode/channel-axis overrides apply to each file's first matrix.
+            Failed or canceled imports continue to the next queued file.
+            A subsequent explicit open_path call discards the remaining queue.
+        """
+        self._pending_files.clear()
+        if not paths:
+            return
+        mode, channel_axis = self._initial_mode, self._initial_channel_axis
+        self.open_path(paths[0], key)
+        self._pending_files.extend((path, key, mode, channel_axis) for path in paths[1:])
+
+    def _open_next_path(self) -> None:
+        """Append the next queued file after the preceding import has finished."""
+        if self._closing or not self._pending_files:
+            return
+        path, key, mode, channel_axis = self._pending_files.popleft()
+        self._initial_mode, self._initial_channel_axis = mode, channel_axis
+        self._start_open_path(path, key, append=True)
+
     def open_path(self, path: Path, key: str | None = None, *, append: bool = False) -> None:
         """Load one file asynchronously, replacing or appending session entries.
 
@@ -1175,6 +1206,23 @@ class WorkspaceWindow(ViewerWindow):
             key: Optional archive member to select first.
             append: True retains loaded matrices. Single mode displays only the
                 new file's first member; multiple mode adds compatible overlays.
+
+        Side effects:
+            Discards queued command-line imports and starts this file's load.
+        """
+        self._pending_files.clear()
+        self._start_open_path(path, key, append=append)
+
+    def _start_open_path(self, path: Path, key: str | None, *, append: bool) -> None:
+        """Start one asynchronous import without changing the pending file queue.
+
+        Args:
+            path: Supported numeric/image file.
+            key: Initial archive member or image channel, or None for the default.
+            append: Retain existing workspace entries when True.
+
+        Side effects:
+            Disables controls and submits background inspection or loading.
         """
         self._store_entry()
         self._append_pending = append and bool(self.entries)
@@ -1225,6 +1273,7 @@ class WorkspaceWindow(ViewerWindow):
         if entry is not None and entry.frame is None:
             self._request_frame()
         self.statusBar().showMessage("Opening canceled; the current workspace was kept.")
+        self._open_next_path()
 
     def _opening_selection(self, document: Document, mode: ViewMode | None = None,
                            channel_axis: int | None = None) -> Selection | None:
@@ -1359,6 +1408,7 @@ class WorkspaceWindow(ViewerWindow):
         self._activate(added[0], reset_selection=not self._append_pending)
         if problems:
             QtWidgets.QMessageBox.warning(self, "Some matrices were not displayed", "\n\n".join(problems))
+        self._open_next_path()
 
     def _job_failed(self, number: int, kind_text: str, message: str) -> None:
         kind = JobKind(kind_text)
@@ -1393,6 +1443,8 @@ class WorkspaceWindow(ViewerWindow):
         self._sync_source_selectors(self.frame_selection.component if self.frame_selection else Component.REAL)
         QtWidgets.QMessageBox.warning(self, "Cannot open file" if kind in (JobKind.BUNDLE, JobKind.INSPECT) else "Cannot prepare overlays", message)
         self.statusBar().showMessage(f"Error: {message}")
+        if kind in (JobKind.BUNDLE, JobKind.INSPECT):
+            self._open_next_path()
 
     def _document_loaded(self, document: Document) -> None:
         entry = self._entry()

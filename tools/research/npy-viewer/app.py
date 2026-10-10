@@ -30,7 +30,7 @@ Requirements: numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
 pyvista, pyvistaqt, vtk, scipy and h5py. Usage: run the npy-viewer.py launcher.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from enum import StrEnum
 import math
@@ -1915,15 +1915,15 @@ class ViewerWindow(QtWidgets.QMainWindow):
         event.accept()
 
 
-def run(path: Path | None, key: str | None, mode: str | None,
+def run(paths: Sequence[Path], key: str | None, mode: str | None,
         channel_axis: int | None, max_edge: int) -> int:
     """Create the Qt application and run the viewer until its window closes.
 
     Args:
-        path: Optional initial file.
-        key: Optional NPZ member, MAT variable or image matrix label.
-        mode: Optional matrix/signal interpretation.
-        channel_axis: Optional initial channel axis.
+        paths: Initial files in load order; empty opens a blank workspace.
+        key: Optional NPZ member, MAT variable or image matrix label per file.
+        mode: Optional interpretation of the first imported matrix per file.
+        channel_axis: Optional channel axis of the first imported matrix per file.
         max_edge: 3D maximum sampling edge; zero means full resolution.
 
     Returns:
@@ -1941,6 +1941,6 @@ def run(path: Path | None, key: str | None, mode: str | None,
     from .workspace_window import WorkspaceWindow
     window = WorkspaceWindow(max_edge, mode, channel_axis)
     window.show()
-    if path is not None:
-        QtCore.QTimer.singleShot(0, lambda: window.open_path(path, key))
+    if paths:
+        QtCore.QTimer.singleShot(0, lambda: window.open_paths(paths, key))
     return application.exec()

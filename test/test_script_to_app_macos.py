@@ -9,6 +9,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -77,7 +78,29 @@ class MacAppTests(unittest.TestCase):
         self.assertIn("on open theFiles", captured[0])
         self.assertIn("on run argv", captured[0])
         self.assertIn("python-launcher.sh", captured[0])
+        self.assertIn("POSIX path of (path to me)", captured[0])
+        self.assertNotIn(str(bundle), captured[0])
         self.assertIn("trap 'rm -f", captured[0])
+
+    def test_unicode_names_have_valid_distinct_ids_and_preserved_display_names(self) -> None:
+        names = ("矩阵 查看器.app", "信号 查看器.app", "Viewer_1.app", "my.app.viewer.app")
+        identifiers = [app._build_bundle_id(name) for name in names]
+        self.assertEqual(len(set(identifiers)), len(names))
+        self.assertEqual(app._build_bundle_id("Café.app"), app._build_bundle_id("Cafe\u0301.app"))
+        contents = self.root / "Contents"
+        contents.mkdir()
+        plist_path = contents / "Info.plist"
+        for name, identifier in zip(names, identifiers):
+            self.assertRegex(identifier, r"\A[A-Za-z0-9.-]+\Z")
+            self.assertEqual(app._build_bundle_id(name), identifier)
+            with plist_path.open("wb") as stream:
+                plistlib.dump({"CFBundleExecutable": "applet"}, stream)
+            app._write_info_plist(str(contents), name, identifier)
+            with plist_path.open("rb") as stream:
+                info = plistlib.load(stream)
+            self.assertEqual(info["CFBundleDisplayName"], name.removesuffix(".app"))
+            self.assertEqual(info["CFBundleIdentifier"], identifier)
+            self.assertEqual(info["CFBundleExecutable"], "applet")
 
     def test_confirmation_and_menu_exit_preserve_existing_app(self) -> None:
         applications = self.root / "Applications/PersonalScripts"
