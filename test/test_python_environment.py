@@ -99,6 +99,7 @@ class IdentityTests(ScratchCase):
             output = io.StringIO()
             with patch.object(Environment, "get_python_environment", return_value=runtime), \
                     patch.object(Environment, "find_conda_executable", return_value="conda.exe"), \
+                    patch.object(Environment, "resolve_runtime", return_value=("conda.exe", "conda 26")), \
                     patch.object(app.System, "is_elevated", return_value=True), \
                     patch.object(app, "_write_launcher") as write, \
                     patch("builtins.input", return_value=""), contextlib.redirect_stdout(output):
@@ -110,6 +111,70 @@ class IdentityTests(ScratchCase):
             self.assertIn(runtime.prefix, output.getvalue())
             self.assertEqual("Conda env" in output.getvalue(), name is not None)
             self.assertEqual(write.call_args.args[2], runtime)
+
+
+class SelectionTests(ScratchCase):
+    """Keep failed runtime selections in the menu and honor explicit installations."""
+
+    def test_current_python_is_default_and_exit_cancels(self) -> None:
+        runtime = PythonEnvironment("python.exe", "prefix", "3.13.12", False, None)
+        for key, expected in (("", (runtime, None)), ("4", None)):
+            with patch.object(Environment, "get_python_environment", return_value=runtime), \
+                    patch("builtins.input", return_value=key), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(app._select_python_environment(), expected)
+
+    def test_custom_conda_queries_only_the_selected_executable(self) -> None:
+        prefix = self.root / "custom-env"
+        runtime = PythonEnvironment(str(prefix / "python.exe"), str(prefix), "3.13.12", False, "custom-env")
+        with patch.object(Environment, "get_python_environment", return_value=runtime), \
+                patch.object(Environment, "find_conda_executable", return_value=None), \
+                patch.object(Environment, "resolve_runtime", return_value=("chosen-conda.exe", "conda 26")), \
+                patch.object(Environment, "resolve_conda_python", return_value=runtime.executable) as resolve, \
+                patch("builtins.input", side_effect=["2", "2", "chosen-conda.exe", "custom-env"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(app._select_python_environment(), (runtime, "chosen-conda.exe"))
+        resolve.assert_called_once_with("custom-env", conda_executable="chosen-conda.exe")
+
+    def test_invalid_conda_environment_returns_to_main_menu(self) -> None:
+        output = io.StringIO()
+        with patch.object(Environment, "find_conda_executable", return_value="conda.exe"), \
+                patch.object(Environment, "resolve_runtime", return_value=("conda.exe", "conda 26")), \
+                patch.object(Environment, "resolve_conda_python", side_effect=RuntimeError("Environment missing")), \
+                patch("builtins.input", side_effect=["2", "1", "missing", "4"]), \
+                contextlib.redirect_stdout(output):
+            self.assertIsNone(app._select_python_environment())
+        self.assertIn("Environment missing", output.getvalue())
+        self.assertEqual(output.getvalue().count("Custom Python"), 2)
+
+    def test_invalid_custom_python_returns_to_menu_then_accepts_valid_python(self) -> None:
+        runtime = PythonEnvironment("python.exe", "prefix", "3.13.12", False, None)
+        with patch.object(Environment, "get_python_environment", side_effect=[runtime, ValueError("Invalid Python"), runtime]) as probe, \
+                patch("builtins.input", side_effect=["3", "missing.exe", "3", "python.exe"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(app._select_python_environment(), (runtime, None))
+        self.assertEqual(probe.call_args.kwargs, {"executable": os.path.abspath("python.exe")})
+
+    def test_missing_custom_conda_returns_to_main_menu(self) -> None:
+        output = io.StringIO()
+        missing = str(self.root / "missing-conda.exe")
+        with patch.object(Environment, "find_conda_executable", return_value=None), \
+                patch("builtins.input", side_effect=["2", "2", missing, "4"]), \
+                contextlib.redirect_stdout(output):
+            self.assertIsNone(app._select_python_environment())
+        self.assertIn("not a native executable", output.getvalue())
+        self.assertEqual(output.getvalue().count("Custom Python"), 2)
+
+    def test_explicit_conda_bypasses_matching_current_environment(self) -> None:
+        prefix = self.root / "other-base"
+        (prefix / "conda-meta").mkdir(parents=True)
+        executable = prefix / ("python.exe" if sys.platform == "win32" else "bin/python")
+        executable.parent.mkdir(exist_ok=True)
+        executable.touch()
+        response = subprocess.CompletedProcess([], 0, json.dumps({"root_prefix": str(prefix), "envs": [str(prefix)]}), "")
+        with patch.object(Environment, "get_conda_env", return_value="base"), \
+                patch.object(subprocess, "run", return_value=response) as run:
+            self.assertEqual(Environment.resolve_conda_python("base", conda_executable="other-conda.exe"), str(executable))
+        self.assertEqual(run.call_args.args[0][0], "other-conda.exe")
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows batch integration")
@@ -168,6 +233,9 @@ class BatchTests(ScratchCase):
         subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(prefix)], check=True, capture_output=True)
         runtime = PythonEnvironment(str(prefix / "Scripts/python.exe"), str(prefix), sys.version.split()[0], False, None)
         with patch.dict(os.environ, {"CONDA_DEFAULT_ENV": "unrelated", "CONDA_PREFIX": "unrelated"}):
+            inspected = Environment.get_python_environment(executable=runtime.executable)
+            self.assertEqual(inspected.prefix, runtime.prefix)
+            self.assertIsNone(inspected.conda_env)
             probe = subprocess.run(
                 [runtime.executable, "-c", "from utils import Environment; print(Environment.get_conda_env())"],
                 cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",

@@ -292,9 +292,10 @@ Canonical implementations live there; do not add implementations to the
 | Expand templates using an explicit environment | `Paths.expand_template(text, environment, placeholders)`; one pass, undefined references are errors |
 | Resolve dependent child environment values | `Paths.resolve_environment(inherited, overrides, literals, placeholders)`; cycles rejected, literal inputs win, self-reference reads inherited value |
 | Conda environment name | `Environment.get_conda_env() -> Optional[str]`; checks current `sys.prefix/conda-meta`, not activation variables or path keywords; frozen apps return None; base is identified by its Conda package record, other prefixes use directory names |
-| Actual running Python | `Environment.get_python_environment() -> PythonEnvironment`; immutable executable, prefix, version, frozen status and optional Conda label; no subprocess probes. Prefix, not name, is the authoritative identity. Frozen executable paths are applications, not reusable Python interpreters |
-| Native Conda launcher | `Environment.find_conda_executable() -> str \| None`; current-prefix locations, then `CONDA_EXE` and PATH; resolves Windows batch wrappers to `Scripts/conda.exe`; discovery never classifies the running interpreter |
-| Resolve a named Conda environment's Python | `Environment.resolve_conda_python(env_name, timeout=15) -> str`; current-environment fast path, otherwise Conda JSON discovery with ambiguity/existence checks; resolves only, does not activate |
+| Actual running or selected Python | `Environment.get_python_environment(executable=None, timeout=15) -> PythonEnvironment`; immutable executable, prefix, version, frozen status and optional Conda label. No argument describes the current process without probes; an explicit executable is inspected in an isolated subprocess and invalid results raise ValueError. Prefix, not name, is the authoritative identity. Frozen executable paths are applications, not reusable Python interpreters |
+| Interactive Python selection | `Environment.select_python_environment() -> tuple[PythonEnvironment, str \| None] \| None`; shared Windows/macOS current/custom-Conda/custom-Python menu. Validates the chosen installation and interpreter, returns identity plus optional Conda executable, retries invalid choices, and returns None on exit. Internal choice enums keep both menus identical |
+| Native Conda launcher | `Environment.find_conda_executable(prefix=None) -> str \| None`; current or supplied prefix locations, then `CONDA_EXE` and PATH; resolves Windows batch wrappers to `Scripts/conda.exe`, searches `bin/conda` and `condabin/conda` on macOS/Linux and checks executability; discovery never classifies the running interpreter |
+| Resolve a named Conda environment's Python | `Environment.resolve_conda_python(env_name, timeout=15, conda_executable=None) -> str`; current-environment fast path, otherwise Conda JSON discovery with ambiguity/existence checks. An explicit Conda executable bypasses the fast path and queries only that installation; resolves only, does not activate |
 | Prepend literal directories to this process's PATH | `Environment.prepend_path(paths)`; preserves order and the previous PATH, no expansion/deduplication, no trailing empty entry for unset/empty PATH |
 | Terminal width / CJK display width | `Console.get_terminal_width()`, `Console.display_width(s)` |
 | Detect interactive stdin (including Windows NUL) | `Console.has_interactive_input() -> bool` |
@@ -416,6 +417,10 @@ New private helpers under `utils` must also receive a short architectural note
 when they coordinate shared behavior or define an important reuse boundary.
 Mark them as internal so scripts do not treat them as public API. Trivial local
 implementation details do not need individual quick-reference rows.
+
+`Environment._conda_environment_name` is the internal metadata classifier shared
+by current-process identity and external Python probes. Scripts use the public
+environment methods rather than duplicating this classification.
 
 ### When a `utils` function is almost right but not quite
 

@@ -55,11 +55,16 @@ select a different interpreter or environment.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `ZL_APP_PYTHON` | Internal | Absolute path of the Python interpreter used to generate the launcher. |
+| `ZL_APP_PYTHON` | Internal | Absolute path of the Python interpreter selected in the generation menu; defaults to the current interpreter. |
 | `ZL_APP_TARGET` | Internal | Absolute path of the target Python script. |
 | `ZL_APP_PREFIX` | Internal | Exact Python environment directory; used for validation and Conda `--prefix`. |
 | `ZL_APP_CONDA_NAME` | Internal | Conda display name, or an empty string for non-Conda Python. |
 | `ZL_APP_CONDA` | Internal | Native Conda executable path, or an empty string for non-Conda Python. |
 | `ZL_APP_EXIT_CODE` | Internal | Decimal exit code captured immediately after target execution. |
+
+The macOS `tools/macos/script-to-app.py` bundle runner also uses
+`ZL_APP_EXIT_CODE` as an internal shell variable holding the selected Python
+process's exit code. It is assigned after execution, has no user-configurable
+default, and is not exported or persisted outside the launcher process.
 
 Do not commit real passwords or access keys to this repository.

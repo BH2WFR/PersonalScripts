@@ -3,14 +3,16 @@
 
 Try same-terminal elevation before prompting; writable output directories can
 still be used when elevation is unavailable.
-Record the actual interpreter and, for Conda, its name and exact prefix.
+Select the current Python, a named environment from a chosen Conda installation,
+or a custom Python executable. Invalid selections return to the menu.
+Record the selected interpreter and, for Conda, its name and exact prefix.
 Launchers validate that environment and the target before running, and keep
 errors visible with instructions to delete and regenerate an invalid launcher.
 
 Requirements:
     - Windows 10+ and Python 3.13+.
     - system: gsudo or sudo (optional, for same-terminal elevation).
-    - system: conda.exe (required only when this script runs in Conda Python).
+    - system: conda.exe (required only when selecting a Conda Python).
 
 Usage:
     python script-to-app.py
@@ -28,14 +30,18 @@ from typing import Optional
 
 SUBDIR = "PersonalScripts"
 
+
 help_message = f'''
 {FLYellow}Description:{CRst}
   Create a Windows .cmd launcher for a Python script under Program Files.
   The generated .cmd can be selected from "Open with" and receives opened
   file paths as command-line arguments.
-  Records this Python interpreter, or its exact Conda environment and name.
+  Choose current Python, custom Conda Python, custom Python, or exit before confirming.
+  Custom Conda selection asks for conda.exe and an environment name; invalid
+  executables or environments return to the selection menu.
+  Records the selected Python interpreter, or its exact Conda environment and name.
   Invalid environments or missing scripts display an error and regeneration advice.
-  Bundled executables cannot generate launchers; run this source with the desired Python.
+  Bundled executables must select an external Python interpreter.
 
 {FLYellow}Examples:{CRst}
   {FGray}# Full CLI usage{CRst}
@@ -116,6 +122,11 @@ def _resolve_output_dir(arg_value: Optional[str]) -> str:
         return os.path.abspath(os.path.expanduser(arg_value))
     program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
     return os.path.join(program_files, SUBDIR)
+
+
+def _select_python_environment() -> tuple[PythonEnvironment, str | None] | None:
+    """Use the shared cross-platform environment selection menu."""
+    return Environment.select_python_environment()
 
 
 def _build_launcher_content(
@@ -218,15 +229,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
-    runtime = Environment.get_python_environment()
-    if runtime.frozen:
-        Console.print_error_and_exit(
-            "A bundled application is not a Python interpreter. Run script-to-app.py with the desired Python."
-        )
-    conda_executable = Environment.find_conda_executable() if runtime.conda_env is not None else None
-    if runtime.conda_env is not None and conda_executable is None:
-        Console.print_error_and_exit("Cannot find conda.exe for this Conda Python. Make Conda available and try again.")
-
     if not System.is_elevated():
         # The shared helper replays sys.argv, including calls through main(argv).
         original_argv = sys.argv
@@ -266,6 +268,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         else:
             print(f"{FLRed}Cancelled.{CRst}")
             return 0
+
+    selection = _select_python_environment()
+    if selection is None:
+        print(f"{FLYellow}Cancelled.{CRst}")
+        return 0
+    runtime, conda_executable = selection
 
     print()
     print(f"{FLYellow}  Target script  :{CRst} {FLCyan}{target_script}{CRst}")

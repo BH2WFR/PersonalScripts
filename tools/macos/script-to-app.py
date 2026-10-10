@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+"""Create a macOS .app that opens a Python script in Terminal.
+
+Select current Python, a named environment from a chosen Conda installation,
+or a custom Python executable. Validate selections and display the interpreter
+version, path, and environment before creating the application.
+
+Requirements:
+    - macOS, Python 3.13+, and the built-in osacompile and Terminal tools.
+    - Conda executable (required only when selecting a Conda Python).
+
+Usage:
+    python script-to-app.py
+    python script-to-app.py --target-script ~/tools/example.py --app-name Example
+"""
+
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -19,6 +34,11 @@ help_message = f'''
 
   When launched, the .app opens a Terminal window and runs the
   target Python script, passing any file paths as arguments.
+  Choose current Python, custom Conda Python, custom Python, or exit.
+  Custom Conda selection asks for a Conda executable and environment name.
+  Invalid selections return to the menu. Confirmation shows the selected
+  Python version, executable, and environment directory.
+  Missing scripts or invalid environments display regeneration instructions.
 
 {FLYellow}Examples:{CRst}
   {FGray}# Full CLI usage{CRst}
@@ -27,7 +47,9 @@ help_message = f'''
   {FGray}# Interactive mode (no arguments){CRst}
   python script-to-app.py
 
-{FLYellow}macOS only.{CRst}
+{FLYellow}Requirements:{CRst}
+  macOS, Python 3.13+, osacompile, and Terminal (included with macOS).
+  Conda executable (required only when selecting a Conda Python).
 '''
 
 
@@ -94,7 +116,48 @@ def _resolve_app_name(arg_value: Optional[str], script_path: str) -> str:
     return name or default_name
 
 
-def _create_app_bundle(app_path: str, target_script: str) -> None:
+def _build_shell_launcher(
+    target_script: str, runtime: PythonEnvironment, conda_executable: str | None,
+) -> str:
+    """Build the bundle's Bash runner, preserving file arguments and exit codes."""
+    if runtime.frozen:
+        raise ValueError("Select an external Python interpreter for a bundled application.")
+    command = [runtime.executable]
+    if runtime.conda_env is not None:
+        if not conda_executable:
+            raise ValueError("A Conda executable is required for the selected environment.")
+        command = [conda_executable, "run", "--no-capture-output", "--prefix", runtime.prefix, *command]
+    invocation = shlex.join(command)
+    check = (
+        "import os,sys; sys.exit(not (os.path.realpath(sys.prefix) == "
+        "os.path.realpath(sys.argv[1]) and os.path.isdir(os.path.join(sys.prefix, "
+        "'conda-meta')) == (sys.argv[2] == '1')))"
+    )
+    probe = shlex.join(["-I", "-c", check, runtime.prefix, "1" if runtime.conda_env is not None else "0"])
+    return f'''#!/bin/bash
+invalid_launcher() {{
+    printf '%s\\n' "$1" 'Delete this .app and regenerate it using script-to-app.py with the intended Python environment.'
+    read -r -p 'Press Enter to close...' || true
+    exit 1
+}}
+[[ -f {shlex.quote(target_script)} ]] || invalid_launcher 'ERROR: Target script is missing or is not a file.'
+[[ -x {shlex.quote(runtime.executable)} ]] || invalid_launcher 'ERROR: The selected Python executable is unavailable.'
+{invocation} {probe} || invalid_launcher 'ERROR: The recorded Python environment is missing, changed, or cannot start.'
+cd -- {shlex.quote(os.path.dirname(target_script))} || invalid_launcher 'ERROR: Cannot access the script directory.'
+{invocation} -E {shlex.quote(target_script)} "$@"
+ZL_APP_EXIT_CODE=$?
+if [[ "$ZL_APP_EXIT_CODE" -ne 0 ]]; then
+    printf 'Script execution failed with exit code: %s\\n' "$ZL_APP_EXIT_CODE"
+    read -r -p 'Press Enter to close...' || true
+fi
+exit "$ZL_APP_EXIT_CODE"
+'''
+
+
+def _create_app_bundle(
+    app_path: str, target_script: str, runtime: PythonEnvironment,
+    conda_executable: str | None,
+) -> None:
     """Create the .app using osacompile so it receives Apple Events (odoc).
 
     Uses ``osacompile`` to build a native AppleScript applet with both
@@ -104,14 +167,9 @@ def _create_app_bundle(app_path: str, target_script: str) -> None:
     import tempfile
     import subprocess
 
-    workdir = os.path.dirname(target_script)
-    python_exe = sys.executable
-
-    # Shell command that Terminal will execute
-    shell_cmd = (
-        f"cd {shlex.quote(workdir)} && "
-        f"{shlex.quote(python_exe)} {shlex.quote(target_script)}"
-    )
+    runner = _build_shell_launcher(target_script, runtime, conda_executable)
+    runner_path = os.path.join(app_path, "Contents", "Resources", "python-launcher.sh")
+    shell_cmd = shlex.join(["/bin/bash", runner_path])
 
     # AppleScript applet — needs both on run AND on open to receive files
     # from Finder's "Open With" context menu (which sends an odoc Apple Event).
@@ -125,7 +183,7 @@ on runPythonScript(fileArgs)
     repeat with a in fileArgs
         set shellCmd to shellCmd & " " & quoted form of a
     end repeat
-    set scriptContent to "#!/bin/bash" & linefeed & shellCmd & "; rm \\"$0\\"; exit" & linefeed
+    set scriptContent to "#!/bin/bash" & linefeed & "trap 'rm -f -- \\"$0\\"' EXIT" & linefeed & shellCmd & linefeed
     set tmpPath to "/tmp/script_launcher_" & (do shell script "uuidgen") & ".command"
     do shell script "printf '%s' " & quoted form of scriptContent & " > " & quoted form of tmpPath & " && chmod +x " & quoted form of tmpPath & " && open -a Terminal " & quoted form of tmpPath
 end runPythonScript
@@ -161,6 +219,10 @@ end open'''
             Console.print_error_and_exit(f"osacompile failed: {detail}")
     finally:
         os.unlink(tmp_path)
+
+    os.makedirs(os.path.dirname(runner_path), exist_ok=True)
+    with open(runner_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(runner)
 
 
 def _write_info_plist(app_contents: str, app_name: str, bundle_id: str) -> None:
@@ -222,16 +284,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # ----- resolve output path -----
     output_dir = os.path.expanduser(f"~/Applications/{SUBDIR}")
-    os.makedirs(output_dir, exist_ok=True)
-
     app_path = os.path.join(output_dir, app_name)
     while os.path.exists(app_path):
         print()
         print(f"{FLYellow}{app_path}{CRst} {FLRed}already exists.{CRst}")
         choice = input(f"Overwrite? [y/N] or enter a new name: ").strip()
         if choice.lower() in ("y", "yes"):
-            import shutil
-            shutil.rmtree(app_path)
             break
         elif choice:
             # Treat as a new name
@@ -244,10 +302,26 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
 
     # ----- confirm & create -----
+    if os.path.dirname(os.path.abspath(app_path)) != os.path.abspath(output_dir):
+        Console.print_error_and_exit("App name must be a filename inside the Applications output directory.")
+    app_name = os.path.basename(app_path)
+    selection = Environment.select_python_environment()
+    if selection is None:
+        print(f"{FLYellow}Cancelled.{CRst}")
+        return 0
+    runtime, conda_executable = selection
+
     print()
     print(f"{FLYellow}  Target script  :{CRst} {FLCyan}{target_script}{CRst}")
     print(f"{FLYellow}  App path       :{CRst} {FLCyan}{app_path}{CRst}")
-    print(f"{FLYellow}  Python path    :{CRst} {FLCyan}{sys.executable}{CRst}")
+    environment_type = "Conda" if runtime.conda_env is not None else "Non-Conda Python"
+    print(f"{FLYellow}  Environment    :{CRst} {FLCyan}{environment_type}{CRst}")
+    print(f"{FLYellow}  Python version :{CRst} {FLCyan}{runtime.version}{CRst}")
+    print(f"{FLYellow}  Python path    :{CRst} {FLCyan}{runtime.executable}{CRst}")
+    print(f"{FLYellow}  Environment dir:{CRst} {FLCyan}{runtime.prefix}{CRst}")
+    if runtime.conda_env is not None:
+        print(f"{FLYellow}  Conda env      :{CRst} {FLCyan}{runtime.conda_env}{CRst}")
+        print(f"{FLYellow}  Conda path     :{CRst} {FLCyan}{conda_executable}{CRst}")
     print()
 
     confirm = input(f"{FLYellow}Create this .app?{CRst} [Y/n]: ").strip().lower()
@@ -256,7 +330,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     bundle_id = f"com.script-to-app.{app_name.replace('.app', '').lower()}"
-    _create_app_bundle(app_path, target_script)
+    os.makedirs(output_dir, exist_ok=True)
+    if os.path.exists(app_path):
+        shutil.rmtree(app_path)
+    _create_app_bundle(app_path, target_script, runtime, conda_executable)
     _write_info_plist(os.path.join(app_path, "Contents"), app_name, bundle_id)
 
     # Register with Launch Services so it shows in "Open With" immediately

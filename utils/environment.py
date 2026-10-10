@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -14,6 +14,22 @@ from pathlib import Path
 from .ansi import *
 from .cmd_check import CmdCheck
 from .system import LinuxGui, System
+from .menu import Menu
+from .menu_option import MenuOption
+from .paths import Paths
+
+
+class _PythonChoice(StrEnum):
+    CURRENT = "current"
+    CONDA = "conda"
+    CUSTOM = "custom"
+    EXIT = "exit"
+
+
+class _CondaChoice(StrEnum):
+    CURRENT = "current"
+    CUSTOM = "custom"
+    BACK = "back"
 
 
 class RuntimeKind(StrEnum):
@@ -73,6 +89,7 @@ class Environment:
     @staticmethod
     def resolve_conda_python(
         env_name: str, *, timeout: float = CONDA_INFO_TIMEOUT_SECONDS,
+        conda_executable: str | None = None,
     ) -> str:
         """Resolve the Python executable belonging to a named Conda environment.
 
@@ -85,6 +102,8 @@ class Environment:
             env_name: Exact environment name, or base; comparisons use normcase.
             timeout: Positive timeout in seconds for the Conda info query,
                 default 15. No version probes are performed.
+            conda_executable: Explicit Conda installation to query. Bypasses the
+                current-interpreter fast path and never falls back to PATH.
 
         Returns:
             Absolute path to the requested environment's Python executable.
@@ -99,11 +118,12 @@ class Environment:
         """
         # ── current-interpreter fast path ──────────────────
         current_env = Environment.get_conda_env()
-        if current_env is not None and os.path.normcase(current_env) == os.path.normcase(env_name):
+        if conda_executable is None and current_env is not None and os.path.normcase(current_env) == os.path.normcase(env_name):
             return os.path.abspath(sys.executable)
 
         # ── query the configured Conda installation ────────
-        conda_executable = Environment.find_conda()
+        if conda_executable is None:
+            conda_executable = Environment.find_conda()
         if conda_executable is None:
             raise RuntimeError(
                 f"Cannot resolve Conda environment '{env_name}': conda is not in PATH."
@@ -339,9 +359,14 @@ class Environment:
         paths. The conda package record identifies a base installation; other
         environments use their directory name. No subprocesses are started.
         """
-        if getattr(sys, "frozen", False):
+        return Environment._conda_environment_name(sys.prefix, bool(getattr(sys, "frozen", False)))
+
+    @staticmethod
+    def _conda_environment_name(prefix_path: str, frozen: bool) -> str | None:
+        """Classify current and externally probed prefixes by the same metadata."""
+        if frozen:
             return None
-        prefix = Path(sys.prefix)
+        prefix = Path(prefix_path)
         metadata = prefix / "conda-meta"
         if not metadata.is_dir():
             return None
@@ -351,14 +376,52 @@ class Environment:
         return prefix.name
 
     @staticmethod
-    def get_python_environment() -> PythonEnvironment:
-        """Describe this process's Python, without consulting activation variables.
+    def get_python_environment(
+        *, executable: str | None = None, timeout: float = CONDA_INFO_TIMEOUT_SECONDS,
+    ) -> PythonEnvironment:
+        """Describe actual Python identity, without consulting activation variables.
+
+        Args:
+            executable: Optional external Python path to validate and inspect in
+                isolated mode. None describes this process without subprocesses.
+            timeout: Maximum seconds for an external interpreter probe.
 
         Returns:
             Interpreter/application path, environment prefix, Python version,
-            frozen status, and optional Conda label. Performs filesystem reads
-            only; never selects another interpreter from PATH.
+            frozen status, and optional Conda label. Never falls back to PATH.
+
+        Raises:
+            ValueError: An explicit interpreter is missing, cannot run, times
+                out, or returns invalid identity data.
         """
+        if executable is not None:
+            path = os.path.abspath(os.path.expanduser(executable))
+            if not os.path.isfile(path) or (sys.platform == "win32" and Path(path).suffix.lower() != ".exe"):
+                raise ValueError(f"Not a Python executable: {path}")
+            probe = (
+                "import json,sys; print(json.dumps([sys.executable, sys.prefix, "
+                "sys.version.split()[0], bool(getattr(sys, 'frozen', False))]))"
+            )
+            try:
+                result = subprocess.run(
+                    [path, "-I", "-c", probe], stdin=subprocess.DEVNULL,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=timeout, check=False,
+                )
+                values = json.loads(result.stdout)
+            except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+                raise ValueError(f"Cannot inspect Python: {path} ({exc})") from exc
+            if (result.returncode != 0 or not isinstance(values, list) or len(values) != 4
+                    or not all(isinstance(value, str) and value for value in values[:3])
+                    or not isinstance(values[3], bool)):
+                raise ValueError(f"Invalid Python identity returned by: {path}")
+            python_path, prefix, version, frozen = values
+            if frozen:
+                raise ValueError(f"A bundled application is not a Python interpreter: {path}")
+            return PythonEnvironment(
+                executable=python_path, prefix=prefix, version=version, frozen=frozen,
+                conda_env=Environment._conda_environment_name(prefix, frozen),
+            )
         return PythonEnvironment(
             executable=os.path.abspath(sys.executable),
             prefix=os.path.abspath(sys.prefix),
@@ -368,27 +431,115 @@ class Environment:
         )
 
     @staticmethod
-    def find_conda_executable() -> str | None:
+    def find_conda_executable(*, prefix: str | None = None) -> str | None:
         """Find a native Conda executable for launchers that must regain control.
 
         Uses current-prefix locations first, then CONDA_EXE and PATH. Discovery
         does not establish whether the running Python belongs to Conda.
         Windows batch wrappers are resolved to their sibling Scripts/conda.exe
         to avoid CALL's second expansion of user-supplied file arguments.
+        An optional prefix searches another Python environment before PATH.
         """
-        prefix = Path(sys.prefix)
-        roots = [prefix]
-        if prefix.parent.name.casefold() == "envs":
-            roots.append(prefix.parent.parent)
-        candidates = [str(root / "Scripts" / "conda.exe") for root in roots]
+        prefix_path = Path(sys.prefix if prefix is None else prefix)
+        roots = [prefix_path]
+        if prefix_path.parent.name.casefold() == "envs":
+            roots.append(prefix_path.parent.parent)
+        candidates = (
+            [str(root / "Scripts" / "conda.exe") for root in roots]
+            if sys.platform == "win32"
+            else [str(root / subdir / "conda") for root in roots for subdir in ("bin", "condabin")]
+        )
         candidates.extend(filter(None, [os.environ.get("CONDA_EXE"), Environment.find_conda()]))
         for candidate in candidates:
             path = Path(candidate)
-            if path.suffix.lower() in (".bat", ".cmd"):
+            if sys.platform == "win32" and path.suffix.lower() in (".bat", ".cmd"):
                 path = path.parent.parent / "Scripts" / "conda.exe"
-            if path.is_file() and (sys.platform != "win32" or path.suffix.lower() == ".exe"):
+            if path.is_file() and (
+                path.suffix.lower() == ".exe" if sys.platform == "win32" else os.access(path, os.X_OK)
+            ):
                 return os.path.abspath(path)
         return None
+
+    @staticmethod
+    def select_python_environment() -> tuple[PythonEnvironment, str | None] | None:
+        """Interactively choose current Python, custom Conda Python, or custom Python.
+
+        Returns:
+            Validated interpreter identity and optional Conda executable, or None
+            when the user exits. Invalid selections return to the main menu.
+
+        Side effects:
+            Displays menus, reads terminal input, and runs bounded runtime probes.
+        """
+        current = Environment.get_python_environment()
+        current_label = (
+            f"Conda {current.conda_env}" if current.conda_env is not None else "non-Conda Python"
+        )
+        if current.frozen:
+            current_label = "bundled application; select an external Python"
+        while True:
+            choice = Menu.select([
+                MenuOption(["1"], f"Use current Python ({current_label}, {current.executable})", _PythonChoice.CURRENT),
+                MenuOption(["2"], "Custom Conda Python", _PythonChoice.CONDA),
+                MenuOption(["3"], "Custom Python", _PythonChoice.CUSTOM),
+                MenuOption(["4", "Q"], "Exit", _PythonChoice.EXIT),
+            ], prompt="Python environment", default_key="1")
+            if choice == _PythonChoice.EXIT:
+                return None
+            try:
+                conda_executable: str | None = None
+                if choice == _PythonChoice.CURRENT:
+                    if current.frozen:
+                        raise ValueError("This application is bundled. Select a custom Python or Conda Python.")
+                    runtime = current
+                elif choice == _PythonChoice.CONDA:
+                    available_conda = Environment.find_conda_executable()
+                    options: list[MenuOption] = []
+                    if available_conda is not None:
+                        options.append(MenuOption(
+                            ["1"], f"Use current Conda ({available_conda})", _CondaChoice.CURRENT,
+                        ))
+                    options.extend([
+                        MenuOption(["2"], "Use a custom Conda executable path", _CondaChoice.CUSTOM),
+                        MenuOption(["3", "B"], "Back", _CondaChoice.BACK),
+                    ])
+                    source = Menu.select(options, prompt="Conda installation", required=True)
+                    if source == _CondaChoice.BACK:
+                        continue
+                    conda_path = available_conda if source == _CondaChoice.CURRENT else input(
+                        f"{FLYellow}Path to Conda executable > {CRst}"
+                    ).strip().strip('"')
+                    if not conda_path:
+                        raise ValueError("A Conda executable path is required.")
+                    conda_path = Paths.resolve_path(conda_path, os.getcwd())
+                    conda_executable, _ = Environment.resolve_runtime(RuntimeKind.CONDA, executable=conda_path)
+                    env_name = input(f"{FLYellow}Conda environment name > {CRst}").strip()
+                    if not env_name:
+                        raise ValueError("A Conda environment name is required.")
+                    python_path = Environment.resolve_conda_python(env_name, conda_executable=conda_executable)
+                    runtime = Environment.get_python_environment(executable=python_path)
+                    if runtime.conda_env is None or os.path.normcase(os.path.realpath(runtime.prefix)) != os.path.normcase(
+                        os.path.realpath(os.path.dirname(python_path) if sys.platform == "win32" else os.path.dirname(os.path.dirname(python_path)))
+                    ):
+                        raise ValueError("The selected Python does not belong to the requested Conda environment.")
+                    runtime = replace(runtime, conda_env=env_name)
+                else:
+                    python_path = input(f"{FLYellow}Path to Python executable > {CRst}").strip().strip('"')
+                    if not python_path:
+                        raise ValueError("A Python executable path is required.")
+                    runtime = Environment.get_python_environment(
+                        executable=Paths.resolve_path(python_path, os.getcwd()),
+                    )
+
+                if runtime.conda_env is not None and conda_executable is None:
+                    conda_path = Environment.find_conda_executable(prefix=runtime.prefix)
+                    if conda_path is None:
+                        raise ValueError("Cannot find Conda executable. Select Custom Conda Python to specify it.")
+                    conda_executable, _ = Environment.resolve_runtime(RuntimeKind.CONDA, executable=conda_path)
+                return runtime, conda_executable
+            except (ValueError, RuntimeError) as exc:
+                print(f"{FLRed}{exc}{CRst}")
+                print(f"{FLYellow}Returning to the Python environment menu.{CRst}")
 
     @staticmethod
     def find_conda() -> typing.Optional[str]:
