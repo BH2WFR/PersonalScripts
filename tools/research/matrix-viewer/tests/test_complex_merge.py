@@ -15,9 +15,9 @@ from PIL import Image
 from fixture_store import fixture_directory
 from test_data_model import model
 
-merge = importlib.import_module("personal_npy_viewer.complex_merge")
-exporting = importlib.import_module("personal_npy_viewer.exporting")
-coordinates = importlib.import_module("personal_npy_viewer.coordinates")
+merge = importlib.import_module("personal_matrix_viewer.complex_merge")
+exporting = importlib.import_module("personal_matrix_viewer.exporting")
+coordinates = importlib.import_module("personal_matrix_viewer.coordinates")
 
 
 class ComplexMergeTests(unittest.TestCase):

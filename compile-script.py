@@ -221,7 +221,7 @@ def _build_pyinstaller(script_dir: str, script_rel: str, out_dir: str) -> int:
     """Compile *script_rel* with PyInstaller --onedir, output to *out_dir*."""
     script_path = os.path.join(script_dir, script_rel)
     parent_dir = os.path.dirname(out_dir)
-    app_name = os.path.basename(out_dir)  # e.g. "npy-viewer_pyinstaller"
+    app_name = os.path.basename(out_dir)  # e.g. "matrix-viewer_pyinstaller"
 
     # Use a temp build path under BUILD/ so it's easy to clean
     work_dir = os.path.join(parent_dir, "_pyi_build_temp_")
@@ -310,7 +310,7 @@ def main() -> int:
         return 0
 
     print(f"\n  {FLYellow}Enter number to select a script{CRst} (or {FLYellow}Enter{CRst} to exit)")
-    print(f"  Examples: {FGray}5{CRst} or {FGray}research/npy-viewer{CRst}\n")
+    print(f"  Examples: {FGray}5{CRst} or {FGray}research/matrix-viewer{CRst}\n")
 
     selected: str
     while True:

@@ -324,7 +324,7 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/research/npy-viewer.py` | **`.npy`/`.npz` 矩阵 GUI 查看器**：<br />支持查看一维、二维矩阵；对于二维矩阵，支持二维、三维、切片一维视图。支持将图片文件当成二维矩阵打开，并通过命令行将多个文件载入同一工作区。 | **Python 库**：`numpy`、`opencv-python`、`Pillow`、`matplotlib`、`PySide6`、`pyqtgraph`、`pyvista`、`pyvistaqt`、`vtk` |
+| `tools/research/matrix-viewer.py` | **矩阵与信号 GUI 查看器**：<br />一款非常好用的科研用矩阵查看与分析工具。<br />支持查看一维、二维矩阵和点云（`npy/npz/mat/csv/xls/xlsx`格式）；对于二维矩阵，支持二维、三维、切片一维视图、切片一维导数视图。支持将图片文件当成二维矩阵打开。支持按照定义域和值域裁剪矩阵，并导出矩阵或切片。支持同时打开多个矩阵后相互比较。支持打开复数矩阵，可以查看其幅值和相位。支持傅里叶变换/拉普拉斯变换，支持将值转换为分贝。 | **Python 库**：`numpy`、`opencv-python`、`Pillow`、`matplotlib`、`PySide6`、`pyqtgraph`、`pyvista`、`pyvistaqt`、`vtk`、`scipy`、`h5py`、`openpyxl`、`xlrd` |
 | `tools/research/pattern-generator.py` | **结构光投影图案生成器**：<br />生成可选择左/上边缘、像素中心或右/下边缘采样的正弦条纹，以及标准格雷码序列。<br />非专业人员请勿使用 | **Python 库**：`opencv-python`、`numpy` |
 
 ### 测试/辅助脚本

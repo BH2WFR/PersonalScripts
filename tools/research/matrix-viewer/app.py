@@ -27,7 +27,7 @@ Fusion keeps native widget painting with 2 px layout padding/vertical gaps and
 Splitter handles are blue, turning amber on hover and orange while dragging.
 
 Requirements: numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
-pyvista, pyvistaqt, vtk, scipy and h5py. Usage: run the npy-viewer.py launcher.
+pyvista, pyvistaqt, vtk, scipy and h5py. Usage: run the matrix-viewer.py launcher.
 """
 
 from collections.abc import Callable, Iterable, Sequence

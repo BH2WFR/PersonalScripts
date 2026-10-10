@@ -13,10 +13,10 @@ import numpy as np
 
 from test_data_model import model
 
-conversion = importlib.import_module("personal_npy_viewer.data_conversion")
-coordinates = importlib.import_module("personal_npy_viewer.coordinates")
-exporting = importlib.import_module("personal_npy_viewer.exporting")
-fourier = importlib.import_module("personal_npy_viewer.fourier")
+conversion = importlib.import_module("personal_matrix_viewer.data_conversion")
+coordinates = importlib.import_module("personal_matrix_viewer.coordinates")
+exporting = importlib.import_module("personal_matrix_viewer.exporting")
+fourier = importlib.import_module("personal_matrix_viewer.fourier")
 
 
 class DataConversionTests(unittest.TestCase):

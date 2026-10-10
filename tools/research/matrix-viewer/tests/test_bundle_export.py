@@ -16,10 +16,10 @@ from scipy.io import loadmat
 
 from test_data_model import model
 
-bundle = importlib.import_module("personal_npy_viewer.bundle_export")
-exports = importlib.import_module("personal_npy_viewer.exporting")
-workspace_export = importlib.import_module("personal_npy_viewer.workspace_export")
-metadata = importlib.import_module("personal_npy_viewer.image_metadata")
+bundle = importlib.import_module("personal_matrix_viewer.bundle_export")
+exports = importlib.import_module("personal_matrix_viewer.exporting")
+workspace_export = importlib.import_module("personal_matrix_viewer.workspace_export")
+metadata = importlib.import_module("personal_matrix_viewer.image_metadata")
 
 
 class BundleExportTests(unittest.TestCase):

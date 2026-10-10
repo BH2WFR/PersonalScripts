@@ -13,9 +13,9 @@ import numpy as np
 
 from test_data_model import model
 
-laplace = importlib.import_module("personal_npy_viewer.laplace")
-fourier = importlib.import_module("personal_npy_viewer.fourier")
-coordinates = importlib.import_module("personal_npy_viewer.coordinates")
+laplace = importlib.import_module("personal_matrix_viewer.laplace")
+fourier = importlib.import_module("personal_matrix_viewer.fourier")
+coordinates = importlib.import_module("personal_matrix_viewer.coordinates")
 
 
 class LaplaceTests(unittest.TestCase):

@@ -1,7 +1,7 @@
 """Verify export layouts, independent processing and lossless file round trips.
 
 Requirements: viewer dependencies. Usage: unittest discovery. All data files
-are written under the Git-ignored tmp/npy-viewer-tests directory.
+are written under the Git-ignored tmp/matrix-viewer-tests directory.
 """
 
 from dataclasses import replace
@@ -17,7 +17,7 @@ from scipy.io import loadmat
 from fixture_store import fixture_directory, preserve_document
 from test_array_export import model
 
-exports = importlib.import_module("personal_npy_viewer.exporting")
+exports = importlib.import_module("personal_matrix_viewer.exporting")
 
 
 class ExportFormatTests(unittest.TestCase):

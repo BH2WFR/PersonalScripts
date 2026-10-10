@@ -18,11 +18,11 @@ from scipy.io import savemat
 from fixture_store import fixture_directory
 from test_data_model import model
 
-catalog = importlib.import_module("personal_npy_viewer.import_catalog")
-excel = importlib.import_module("personal_npy_viewer.excel_io")
-exports = importlib.import_module("personal_npy_viewer.exporting")
-tables = importlib.import_module("personal_npy_viewer.table_data")
-workspace = importlib.import_module("personal_npy_viewer.workspace")
+catalog = importlib.import_module("personal_matrix_viewer.import_catalog")
+excel = importlib.import_module("personal_matrix_viewer.excel_io")
+exports = importlib.import_module("personal_matrix_viewer.exporting")
+tables = importlib.import_module("personal_matrix_viewer.table_data")
+workspace = importlib.import_module("personal_matrix_viewer.workspace")
 
 
 class TableImportTests(TestCase):

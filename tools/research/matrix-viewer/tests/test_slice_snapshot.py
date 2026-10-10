@@ -13,8 +13,8 @@ import numpy as np
 
 from test_data_model import model
 
-snapshot = importlib.import_module("personal_npy_viewer.slice_snapshot")
-coordinates = importlib.import_module("personal_npy_viewer.coordinates")
+snapshot = importlib.import_module("personal_matrix_viewer.slice_snapshot")
+coordinates = importlib.import_module("personal_matrix_viewer.coordinates")
 
 
 class SliceSnapshotTests(unittest.TestCase):

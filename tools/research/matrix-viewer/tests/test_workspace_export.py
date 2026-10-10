@@ -15,9 +15,9 @@ from scipy.io import loadmat
 
 from test_data_model import model
 
-workspace = importlib.import_module("personal_npy_viewer.workspace")
-exporting = importlib.import_module("personal_npy_viewer.exporting")
-visible = importlib.import_module("personal_npy_viewer.workspace_export")
+workspace = importlib.import_module("personal_matrix_viewer.workspace")
+exporting = importlib.import_module("personal_matrix_viewer.exporting")
+visible = importlib.import_module("personal_matrix_viewer.workspace_export")
 
 
 class WorkspaceExportTests(unittest.TestCase):

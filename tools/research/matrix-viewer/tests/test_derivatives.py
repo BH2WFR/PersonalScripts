@@ -13,7 +13,7 @@ import numpy as np
 from fixture_store import preserve_array
 
 PACKAGE = Path(__file__).resolve().parents[1]
-PACKAGE_NAME = "personal_npy_viewer"
+PACKAGE_NAME = "personal_matrix_viewer"
 if PACKAGE_NAME not in sys.modules:
     spec = importlib.util.spec_from_file_location(
         PACKAGE_NAME, PACKAGE / "__init__.py", submodule_search_locations=[str(PACKAGE)],

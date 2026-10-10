@@ -13,16 +13,16 @@ import numpy as np
 from fixture_store import preserve_array, preserve_document
 
 PACKAGE = Path(__file__).resolve().parents[1]
-if "personal_npy_viewer" not in sys.modules:
-    spec = importlib.util.spec_from_file_location("personal_npy_viewer", PACKAGE / "__init__.py",
+if "personal_matrix_viewer" not in sys.modules:
+    spec = importlib.util.spec_from_file_location("personal_matrix_viewer", PACKAGE / "__init__.py",
                                                 submodule_search_locations=[str(PACKAGE)])
     assert spec is not None and spec.loader is not None
     package = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = package
     spec.loader.exec_module(package)
-model = importlib.import_module("personal_npy_viewer.data_model")
-clipping = importlib.import_module("personal_npy_viewer.clipping")
-markers = importlib.import_module("personal_npy_viewer.value_markers")
+model = importlib.import_module("personal_matrix_viewer.data_model")
+clipping = importlib.import_module("personal_matrix_viewer.clipping")
+markers = importlib.import_module("personal_matrix_viewer.value_markers")
 
 
 class ClippingTests(unittest.TestCase):

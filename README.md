@@ -326,7 +326,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/research/npy-viewer.py` | **GUI viewer for `.npy`/`.npz` matrices:**<br />Views 1D and 2D arrays; 2D matrices support image, 3D surface, and 1D row/column profile views. Also opens images as 2D matrices and accepts multiple files into one workspace from the command line. | **Python pkgs:** `numpy`, `opencv-python`, `Pillow`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk` |
+| `tools/research/matrix-viewer.py` | **Matrix and signal GUI viewer:**<br />A user-friendly matrix viewing and analysis tool for scientific research.<br />Supports 1D and 2D matrices and point clouds (`npy/npz/mat/csv/xls/xlsx` formats), with 2D, 3D, 1D slice, and 1D slice derivative views for 2D matrices; opens images as 2D matrices; crops matrices by coordinate and value ranges and exports matrices or slices; opens multiple matrices for comparison; displays the magnitude and phase of complex matrices; and supports Fourier/Laplace transforms and conversion to decibels. | **Python pkgs:** `numpy`, `opencv-python`, `Pillow`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk`, `scipy`, `h5py`, `openpyxl`, `xlrd` |
 | `tools/research/pattern-generator.py` | **Structured-light projection pattern generator:**<br />Generates sinusoidal stripes with selectable left/top-edge, center, or right/bottom-edge pixel sampling, plus standard Gray-code sequences.<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
 
 ### Test/Helper Scripts

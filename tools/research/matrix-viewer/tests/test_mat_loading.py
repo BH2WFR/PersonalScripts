@@ -1,7 +1,7 @@
 """MAT/NumPy format boundaries, numeric fidelity and shared coordinate modes.
 
 Requirements: viewer data dependencies, scipy and h5py. Usage: unittest discovery.
-Fixtures are written under the Git-ignored tmp/npy-viewer-tests directory.
+Fixtures are written under the Git-ignored tmp/matrix-viewer-tests directory.
 """
 
 from dataclasses import replace
@@ -22,15 +22,15 @@ from fixture_store import fixture_directory
 
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[2]
-if "personal_npy_viewer" not in sys.modules:
-    spec = importlib.util.spec_from_file_location("personal_npy_viewer", PACKAGE / "__init__.py",
+if "personal_matrix_viewer" not in sys.modules:
+    spec = importlib.util.spec_from_file_location("personal_matrix_viewer", PACKAGE / "__init__.py",
                                                 submodule_search_locations=[str(PACKAGE)])
     assert spec is not None and spec.loader is not None
     package = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = package
     spec.loader.exec_module(package)
-model = importlib.import_module("personal_npy_viewer.data_model")
-mat_loader = importlib.import_module("personal_npy_viewer.mat_loader")
+model = importlib.import_module("personal_matrix_viewer.data_model")
+mat_loader = importlib.import_module("personal_matrix_viewer.mat_loader")
 
 
 class MatLoadingTests(unittest.TestCase):

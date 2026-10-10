@@ -8,8 +8,8 @@ document implementation behavior and detailed defaults here instead of
 expanding command-line help.
 
 Store test matrices that need permanent preservation in
-npy-viewer/test-matrixes/ relative to this script (repository-relative:
-tools/research/npy-viewer/test-matrixes/). This directory already contains
+matrix-viewer/test-matrixes/ relative to this script (repository-relative:
+tools/research/matrix-viewer/test-matrixes/). This directory already contains
 many test matrices; reuse them where appropriate. To avoid Git repository
 bloat, each matrix file should preferably be no larger than 20 KB.
 
@@ -301,12 +301,12 @@ overrides select the first imported matrix in each file. Single matrix mode
 displays the last successfully added file's first matrix and retains the others.
 
 Usage:
-    python npy-viewer.py [file ...] [--key NAME] [--max-edge 512]
-    python npy-viewer.py first.npy second.npy --mode matrix
-    python npy-viewer.py data.npy --mode signal --channel-axis 1
-    python npy-viewer.py measurements.csv --mode xy
-    python npy-viewer.py coordinates.npy --mode points
-    python npy-viewer.py measurements.mat --key signal
+    python matrix-viewer.py [file ...] [--key NAME] [--max-edge 512]
+    python matrix-viewer.py first.npy second.npy --mode matrix
+    python matrix-viewer.py data.npy --mode signal --channel-axis 1
+    python matrix-viewer.py measurements.csv --mode xy
+    python matrix-viewer.py coordinates.npy --mode points
+    python matrix-viewer.py measurements.mat --key signal
 """
 
 import argparse
@@ -320,7 +320,7 @@ from typing import Callable, cast
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
 
-PACKAGE_NAME = "personal_npy_viewer"
+PACKAGE_NAME = "personal_matrix_viewer"
 DEPENDENCIES = "numpy opencv-python Pillow matplotlib PySide6 pyqtgraph pyvista pyvistaqt vtk scipy h5py openpyxl xlrd"
 
 
@@ -385,7 +385,7 @@ def main() -> int:
     Console.set_locale_utf8()
     os.environ["QT_API"] = "pyside6"
     os.environ["PYQTGRAPH_QT_LIB"] = "PySide6"
-    package_dir = Path(__file__).with_name("npy-viewer")
+    package_dir = Path(__file__).with_name("matrix-viewer")
     try:
         importlib.import_module("openpyxl")
         spec = importlib.util.spec_from_file_location(

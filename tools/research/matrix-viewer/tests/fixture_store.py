@@ -15,7 +15,7 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-FIXTURE_ROOT = Path(__file__).resolve().parents[4] / "tmp" / "npy-viewer-tests"
+FIXTURE_ROOT = Path(__file__).resolve().parents[4] / "tmp" / "matrix-viewer-tests"
 
 
 class ArrayDocument(Protocol):
@@ -33,7 +33,7 @@ class ArrayDocument(Protocol):
 
 
 def fixture_directory(group: str) -> Path:
-    """Create an automated fixture group below tmp/npy-viewer-tests.
+    """Create an automated fixture group below tmp/matrix-viewer-tests.
 
     Args:
         group: Relative group path, such as gui or unit/test_mat_loading.

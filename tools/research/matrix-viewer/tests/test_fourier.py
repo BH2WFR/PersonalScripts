@@ -14,13 +14,13 @@ from scipy.signal.windows import hann
 
 from test_data_model import model
 
-fourier = importlib.import_module("personal_npy_viewer.fourier")
-special = importlib.import_module("personal_npy_viewer.fourier_values")
-conversion = importlib.import_module("personal_npy_viewer.data_conversion")
-coordinates = importlib.import_module("personal_npy_viewer.coordinates")
-exporting = importlib.import_module("personal_npy_viewer.exporting")
-workspace = importlib.import_module("personal_npy_viewer.workspace")
-derivatives = importlib.import_module("personal_npy_viewer.derivatives")
+fourier = importlib.import_module("personal_matrix_viewer.fourier")
+special = importlib.import_module("personal_matrix_viewer.fourier_values")
+conversion = importlib.import_module("personal_matrix_viewer.data_conversion")
+coordinates = importlib.import_module("personal_matrix_viewer.coordinates")
+exporting = importlib.import_module("personal_matrix_viewer.exporting")
+workspace = importlib.import_module("personal_matrix_viewer.workspace")
+derivatives = importlib.import_module("personal_matrix_viewer.derivatives")
 
 
 class FourierTests(unittest.TestCase):

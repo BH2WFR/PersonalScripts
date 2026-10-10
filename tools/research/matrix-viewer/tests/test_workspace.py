@@ -15,7 +15,7 @@ from scipy.io import savemat
 from fixture_store import fixture_directory
 from test_data_model import model
 
-workspace = importlib.import_module("personal_npy_viewer.workspace")
+workspace = importlib.import_module("personal_matrix_viewer.workspace")
 
 
 class WorkspaceTests(unittest.TestCase):
