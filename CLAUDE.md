@@ -434,6 +434,13 @@ I'll decide whether to modify utils or handle it differently.
 
 ## Code style
 
+### GUI framework and theme
+
+- Use **PySide6** for GUI programs in this project.
+- Use the **Fusion** theme on every platform. After creating or obtaining the
+  `QApplication`, call `application.setStyle("Fusion")` before creating windows
+  or widgets, including when reusing an existing application instance.
+
 ### File header — module docstring on every script
 
 After `#!/usr/bin/env python3`, every `.py` file must have a **module-level

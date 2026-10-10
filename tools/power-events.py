@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""View historical power and session events in a cross-platform Qt GUI.
+"""View historical power and session events in a PySide6 GUI with the Fusion theme.
 
 Choose a relative or custom local-time range, query in a cancellable worker,
 and toggle event checkboxes without rescanning logs. Select a row for its raw
@@ -65,6 +65,7 @@ COMMAND_TIMEOUT = 90.0
 POLL_SECONDS = 0.2
 MAX_EVENTS = 50_000
 DEFAULT_SIZE = (1200, 800)
+GUI_STYLE = "Fusion"
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S %z"
 MONTHS: dict[str, int] = {
     month: index for index, month in enumerate(
@@ -951,6 +952,7 @@ def _launch_gui() -> int:
         application = QtWidgets.QApplication([sys.argv[0]])
     if not isinstance(application, QtWidgets.QApplication):
         raise RuntimeError("A non-GUI Qt application is already running.")
+    application.setStyle(GUI_STYLE)
     window = PowerEventsWindow()
     window.show()
     # Keep a reference when embedded in another Qt session (also used by GUI tests).
@@ -972,7 +974,7 @@ def main() -> int:
   python power-events.py --help
 
 Description:
-  GUI history viewer for startup, shutdown, sleep, wake, lock and unlock.
+  PySide6 / Fusion GUI for startup, shutdown, sleep, wake, lock and unlock.
   Choose a local date/time range; check event types to show or hide loaded rows.
   Supports cancellation, raw evidence and saved display preferences.
   Export CSV / Export JSON saves visible rows in their current display order.
