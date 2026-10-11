@@ -11,7 +11,7 @@
 **Highlights** (see [Script List](#script-list) for the complete list; bold entries are key features):
 
 > - **Research**
->   - `.npy`/`.npz` matrix viewer for 1D and 2D arrays, with 2D images, 3D surfaces, and 1D row/column profiles; also opens images as 2D matrices
+>   - **A powerful matrix viewer** for 1D arrays, 2D matrices (with 2D, 3D, 1D slice, and 1D slice derivative views), and point clouds; supports `.npy`/`.npz`/`.mat`/`.csv`/`.xls`/`.xlsx` formats, opens images as 2D matrices, displays the magnitude and phase of complex matrices, applies Fourier and Laplace transforms, opens multiple matrices for comparison, and exports cropped matrices or matrix slices
 >   - Batch image cropping tool
 > - **Windows**
 >   - **One-click Windows event log clearing tool**
@@ -223,7 +223,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | **PDF compressor** based on Ghostscript:<br />Supports Ebook (standard) and Custom (custom DPI/quality) modes | `ghostscript` |
 | `tools/document-processing/pdf-decrypt.py` | **PDF decryption and editing-restriction removal tool:**<br />Decrypts PDF files that can be opened and read but have protected editing permissions. | **Python pkg:** `pypdf` |
-| `tools/document-processing/pdf-bookmarks-add.py` | **Table-of-contents injector for scanned PDF books:**<br />Send each table-of-contents screenshot separately to a **vision LLM such as Qwen3-VL** to generate JSON containing the page, level, number, and title, then paste each JSON array into the script for immediate validation and ordered merging. Supports 1, 2, or 4 consecutive book pages per PDF page, configurable alignment of book page 1, and automatic root-level `Cover` and `Table of Contents` bookmarks. | **Python pkg:** `pypdf` |
+| `tools/document-processing/pdf-bookmarks-add.py` | **Table-of-contents injector for scanned PDF books:**<br />Send each table-of-contents screenshot separately to a **vision LLM such as Qwen3-VL to generate JSON in the required format** (page, level, number, and title), then paste each JSON array into the script; it merges the entries in input order and writes the bookmarks to the PDF. Supports 1, 2, or 4 consecutive book pages per PDF page. | **Python pkg:** `pypdf` |
 | `tools/document-processing/document-screenshot.py` | **Automated screenshot capture for protected documents:**<br />Automatically turns pages by simulating PgDn and mouse clicks, then captures screenshots. Designed to **automatically capture and save content from DRM-protected PDFs or PDFs stored on encrypted USB media**.<br /><br />For best results, use a high-resolution display in portrait orientation, then adjust the document viewport so it remains within the screen while using as much screen area as possible.<br />On macOS, the appropriate Screen Recording permission is also required. | **Windows/macOS/Linux X11**; Wayland is not supported<br />**Python pkgs:** `mss`, `pynput`, `Pillow` |
 
 ### Video Download

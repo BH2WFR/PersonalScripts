@@ -11,7 +11,7 @@
 **主要特色功能如下**：（完整内容请查看后面的[「脚本列表」](#脚本列表)章节，加粗的为其中的重点功能）
 
 > - **研究相关**
->   - `.npy`/`.npz` 文件（矩阵）查看器，支持查看一维、二维矩阵（支持二维、三维、切片一维视图），支持将图片视作二维矩阵打开
+>   - **一款非常强大的矩阵查看器**，支持查看一维矩阵、二维矩阵（支持二维、三维、切片一维视图、切片一维导数视图）、点云，支持 `.npy`/`.npz`/`.mat`/`.csv`/`.xls/.xlsx`  格式，支持将图片视作二维矩阵打开，支持查看复数矩阵的幅值、相位；支持对矩阵进行傅里叶、拉普拉斯变换；支持同时打开多个矩阵进行比较；支持裁剪后导出矩阵或矩阵切片
 >   - 图片批量裁剪工具
 > - **Windows 相关**
 >   - **Windows 事件日志一键清除工具**
@@ -216,7 +216,7 @@
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式 | `ghostscript` |
 | `tools/document-processing/pdf-decrypt.py` | **PDF 解密/编辑限制解除工具**：<br />可解密能够打开阅读、但编辑权限受保护的 PDF 文件。 | **Python 库**：`pypdf` |
-| `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 书籍目录注入工具**：<br />将目录截图逐页发送给**视觉 LLM（如 Qwen3-VL）生成指定格式的 JSON**（含页码/层级/编号/标题），再逐页粘贴到脚本中；脚本会立即校验每页数据，最后按输入顺序合并并写入 PDF。支持一个 PDF 页面对应 1、2 或 4 个连续书页，并可设置正文第 1 页在首个对应 PDF 页面中的对齐位置；自动添加一级 `Cover` 与 `Table of Contents` 书签。 | **Python 库**：`pypdf` |
+| `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 书籍目录注入工具**：<br />将目录截图逐页发送给**视觉 LLM（如 Qwen3-VL）生成指定格式的 JSON**（含页码/层级/编号/标题），再逐页粘贴到脚本中；脚本会按输入顺序合并后将目录写入 PDF 文件。支持一个 PDF 页面对应 1、2 或 4 个连续书页的情况。 | **Python 库**：`pypdf` |
 | `tools/document-processing/document-screenshot.py` | **针对加密文档的自动截图抓取工具**：<br />基于模拟 PgDn 翻页 + 鼠标点击自动翻页，并通过自动截图来获取内容，适用于**全自动抓取并保存被 DRM 保护或位于加密 USB 存储设备中的 PDF** 文件内容。<br /><br />建议使用高分辨率屏幕，并将屏幕方向改为纵向，然后调整文档页面的显示范围（不超出屏幕范围并能充分利用屏幕空间）后，再用本脚本自动截图抓取。<br />macOS 中还需要额外授予相应的屏幕录制权限。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />**Python 库**：`mss`、`pynput`、`Pillow` |
 ### 视频下载
 

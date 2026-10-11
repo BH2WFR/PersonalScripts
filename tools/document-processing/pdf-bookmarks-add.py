@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
-# 给 PDF 书籍添加目录书签（Bookmark/Outline）
-# 逐页接收大模型生成的目录 JSON，合并后写入 PDF
-#
-#
+"""Write table-of-contents bookmarks to scanned PDF books from per-image JSON.
+
+Merge validated JSON arrays, then choose to replace existing bookmarks or
+append new bookmarks while preserving the original outline hierarchy.
+Blank input, empty JSON strings/arrays, and null return to the action menu
+without discarding earlier entries. Finishing with no entries writes no PDF.
+Both write modes add root-level Cover and Table of Contents bookmarks.
+
+Requirements:
+    - pip: pypdf
+
+Usage:
+    python pdf-bookmarks-add.py input.pdf
+    python pdf-bookmarks-add.py input.pdf -o output.pdf
+"""
 import os
 import sys
 
@@ -169,19 +180,29 @@ class _BookmarkInputAction(enum.StrEnum):
     QUIT = "quit"
 
 
+class _BookmarkWriteMode(enum.StrEnum):
+    REPLACE = "replace"
+    APPEND = "append"
+
+
 def _parse_bookmark_page(
     bookmarks_text: str,
     page_mapping: _PageMapping,
 ) -> Optional[list[dict[str, object]]]:
-    """Parse and validate one TOC image's JSON array."""
+    """Parse one TOC image; return [] for empty input or None for invalid JSON."""
+    if not bookmarks_text.strip():
+        return []
+
     try:
         json_obj = json.loads(bookmarks_text)
     except json.JSONDecodeError as exc:
         print(f"{FLRed}Invalid JSON: {exc}{CRst}\n")
         return None
 
-    if not isinstance(json_obj, list) or not json_obj:
-        print(f"{FLRed}Expected a non-empty JSON array.{CRst}\n")
+    if json_obj is None or (isinstance(json_obj, str) and not json_obj.strip()):
+        return []
+    if not isinstance(json_obj, list):
+        print(f"{FLRed}Expected a JSON array.{CRst}\n")
         return None
 
     bookmarks: list[dict[str, object]] = []
@@ -211,20 +232,20 @@ def _read_bookmark_pages(page_mapping: _PageMapping) -> Optional[list[dict[str, 
             prompt_text=f"Paste JSON for TOC image [{image_number}]",
             split_lines=False,
         )
-        if not bookmarks_text:
-            continue
-
         current_page = _parse_bookmark_page(bookmarks_text, page_mapping)
         if current_page is None:
             continue
 
-        print(f"\n{FLGreen}Accepted:{CRst} {len(current_page)} entries")
-        print(f"{FLCyan}First:{CRst} {FGray}{_bookmark_heading(current_page[0])}{CRst}")
-        print(f"{FLCyan}Last:{CRst}  {FGray}{_bookmark_heading(current_page[-1])}{CRst}\n")
+        if current_page:
+            print(f"\n{FLGreen}Accepted:{CRst} {len(current_page)} entries")
+            print(f"{FLCyan}First:{CRst} {FGray}{_bookmark_heading(current_page[0])}{CRst}")
+            print(f"{FLCyan}Last:{CRst}  {FGray}{_bookmark_heading(current_page[-1])}{CRst}\n")
+        else:
+            print(f"{FGray}No new entries. Previously collected: {len(bookmarks)}.{CRst}\n")
 
         action = Menu.select(
             [
-                MenuOption(["N"], "Next image", _BookmarkInputAction.NEXT),
+                MenuOption(["N"], "Continue input / next image", _BookmarkInputAction.NEXT),
                 MenuOption(["R"], "Re-enter this image", _BookmarkInputAction.REENTER),
                 MenuOption(["F"], "Finish and merge", _BookmarkInputAction.FINISH),
                 MenuOption(["Q"], "Quit", _BookmarkInputAction.QUIT, FLRed),
@@ -241,7 +262,8 @@ def _read_bookmark_pages(page_mapping: _PageMapping) -> Optional[list[dict[str, 
         bookmarks.extend(current_page)
         if action is _BookmarkInputAction.FINISH:
             return bookmarks
-        image_number += 1
+        if current_page:
+            image_number += 1
 
 
 def _select_page_mapping() -> _PageMapping:
@@ -339,14 +361,19 @@ Usage:
 {FLYellow}Arguments:{CRst}
   <input.pdf>          input PDF file path
   -o, --output <path>  output PDF file path
+  -h, --help          show this help
 
 {FLYellow}Description:{CRst}
   Add table-of-contents bookmarks to scanned PDF books.
   Send one TOC screenshot at a time to a vision LLM (e.g. Qwen3-VL), then paste
   each page's JSON array separately. The arrays are validated and merged in
   image order before the bookmarks are written into the PDF.
+  Before writing, choose Replace to rewrite the outline or Append to preserve
+  existing bookmarks and add the new entries after them.
+  Blank input, empty JSON strings/arrays, and null return to the action menu;
+  earlier entries are retained. Finishing with no entries writes no PDF.
   Supports PDF pages containing 1, 2, or 4 consecutive physical book pages.
-  Adds root-level Cover and Table of Contents bookmarks automatically.
+  Both modes add root-level Cover and Table of Contents bookmarks automatically.
   `page` supports negative numbers: -1 = the page before page 1, -2 = two pages before page 1, etc.
 
 {FLYellow}Requirements:{CRst}
@@ -416,6 +443,9 @@ Usage:
     if bookmark_objects is None:
         Console.print_exit_message("Bye.")
         return 0
+    if not bookmark_objects:
+        Console.print_exit_message("No bookmarks collected. No PDF written.")
+        return 0
     print(f"\n{FLGreen}Merged:{CRst} {len(bookmark_objects)} entries")
 
     #============ 代码主体部分 ===========
@@ -446,16 +476,29 @@ Usage:
     pages_cnt = len(reader.pages)
     print(f"{FLGreen}PDF loaded successfully. Total pages: {pages_cnt}{CRst}\n")
 
-    # 逐页拷贝，生成新文档, 为了解决文档已有目录，或文档编辑权限被加密的情况
+    write_mode = Menu.select(
+        [
+            MenuOption(["R"], "Replace existing bookmarks", _BookmarkWriteMode.REPLACE),
+            MenuOption(["A"], "Append to existing bookmarks", _BookmarkWriteMode.APPEND),
+        ],
+        prompt="Bookmark write mode",
+        required=True,
+        separator=False,
+    )
+
+    # 追加时导入原目录；重写时只拷贝页面。
     writer = pypdf.PdfWriter()
     try:
-        for page in reader.pages: # 页面内容
-            writer.add_page(page)
+        if write_mode is _BookmarkWriteMode.APPEND:
+            writer.append(reader, import_outline=True)
+        else:
+            for page in reader.pages: # 页面内容
+                writer.add_page(page)
         if reader.metadata: # 元数据
             writer.add_metadata(reader.metadata)
     except Exception as e:
-        print(f"{FLRed}ERROR while copying pages and metadata: {str(e)}{CRst}\n")
-        pass
+        print(f"{FLRed}ERROR while copying PDF content: {str(e)}{CRst}\n")
+        return 1
 
     # 固定的顶级书签不参与正文目录的父子层级计算
     for title, pdf_page in (
