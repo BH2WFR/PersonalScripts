@@ -139,6 +139,240 @@ class Input:
                 items.append(item)
         return items
 
+    @staticmethod
+    def merge_integer_ranges(values: typing.Iterable[int]) -> tuple[tuple[int, int], ...]:
+        """Merge integers into sorted, inclusive ranges after deduplication.
+
+        Args:
+            values: Any iterable of integers, including negatives and zero.
+                Values may be unsorted or repeated; generators are consumed once.
+
+        Returns:
+            Tuples of (first, last) endpoints in ascending order. A singleton
+            has equal endpoints; empty input returns (). For example,
+            ``[5, 2, 1, 2, 3]`` yields ``((1, 3), (5, 5))``.
+
+        This pure helper does not read input, print, or modify the input
+        collection. Unlike parse_integer_ranges, it normalizes order and removes
+        duplicates; it describes a selection rather than preserving a sequence.
+        """
+        numbers = iter(sorted(set(values)))
+        first = next(numbers, None)
+        if first is None:
+            return ()
+        spans: list[tuple[int, int]] = []
+        start = end = first
+        for number in numbers:
+            if number == end + 1:
+                end = number
+            else:
+                spans.append((start, end))
+                start = end = number
+        spans.append((start, end))
+        return tuple(spans)
+
+    @staticmethod
+    def format_integer_ranges(ranges: typing.Iterable[tuple[int, int]]) -> str:
+        """Format inclusive integer endpoint pairs as a comma-separated expression.
+
+        Args:
+            ranges: Iterable of (first, last) integer pairs. Negative and zero
+                endpoints, descending ranges, and repeated ranges are supported.
+                Generators are consumed once; order and duplicates are preserved.
+
+        Returns:
+            Text accepted by parse_integer_ranges with its default settings.
+            Equal endpoints become one number: ``((1, 3), (5, 5))`` becomes
+            ``"1-3,5"``. Empty input returns an empty string. Ranges are neither
+            expanded nor merged; use merge_integer_ranges first to normalize
+            an integer selection.
+
+        This pure helper does not read input, print, or modify the input collection.
+        """
+        return ",".join(str(first) if first == last else f"{first}-{last}" for first, last in ranges)
+
+    @staticmethod
+    def _parse_integer_spans(text: str) -> tuple[tuple[int, int], ...]:
+        """Parse signed endpoints without expanding ranges or interpreting indexes."""
+        if not text.strip():
+            return ()
+        spans: list[tuple[int, int]] = []
+        for part in text.split(","):
+            match = re.fullmatch(r"\s*([+-]?[0-9]+)\s*(?:-\s*([+-]?[0-9]+)\s*)?", part)
+            if match is None:
+                raise ValueError(f"Invalid selection: {part!r}. Use numbers or ranges such as 1-3,-1.")
+            first = int(match.group(1))
+            last_text = match.group(2)
+            spans.append((first, int(last_text) if last_text is not None else first))
+        return tuple(spans)
+
+    @staticmethod
+    def _input_ranges(
+        prompt: str,
+        *,
+        parser: typing.Callable[[str], tuple[int, ...]],
+        default: str | None,
+        hint: str,
+    ) -> tuple[int, ...] | None:
+        """Validate the default and share prompting, empty input, and retry handling."""
+        default_values = parser(default or "")
+        print(f"{FGray}{hint}{CRst}")
+        while True:
+            text = Input.prompt(f"{FLYellow}{prompt} {FGray}[{(default or '').strip() or 'none'}]{CRst} > ")
+            if not text:
+                return default_values or None
+            try:
+                return parser(text)
+            except ValueError as exc:
+                print(f"{FLRed}{exc}{CRst}")
+
+    @staticmethod
+    def parse_integer_ranges(text: str, *, allow_zero: bool = True) -> tuple[int, ...]:
+        """Expand comma-separated integers and inclusive ranges into a sequence.
+
+        Args:
+            text: Signed integers or ranges such as ``-2-2,5,3-1``. Whitespace
+                around numbers and separators is allowed. Empty text yields ().
+            allow_zero: Whether zero is allowed, including inside a range.
+                Defaults to True. Negative values are literal integers.
+
+        Returns:
+            Integers in input order, retaining duplicates. Ranges include both
+            endpoints and may ascend or descend, e.g. ``2-0`` yields (2, 1, 0).
+
+        Raises:
+            ValueError: Malformed input, or a selection containing zero when
+                allow_zero is False.
+
+        This parser does not read input or print anything.
+        """
+        values: list[int] = []
+        for first, last in Input._parse_integer_spans(text):
+            if not allow_zero and min(first, last) <= 0 <= max(first, last):
+                raise ValueError("The selection contains zero; zero is invalid when allow_zero=False.")
+            step = 1 if first <= last else -1
+            values.extend(range(first, last + step, step))
+        return tuple(values)
+
+    @staticmethod
+    def input_integer_ranges(
+        prompt: str,
+        *,
+        allow_zero: bool = True,
+        default: str | None = None,
+    ) -> tuple[int, ...] | None:
+        """Read an integer sequence, retrying invalid expressions.
+
+        Args:
+            prompt: Label describing the requested sequence.
+            allow_zero: Allow zero, including inside ranges; defaults to True.
+            default: Expression in parse_integer_ranges syntax used on Enter.
+                None (the default), empty, or whitespace-only means no default.
+
+        Returns:
+            Integers in input order, including duplicates; None on blank input
+            without a nonempty default. Literal ``0`` returns (0,) when allowed.
+
+        Raises:
+            ValueError: Invalid default (checked before prompting).
+            EOFError: Standard input closes before an answer is available.
+            KeyboardInterrupt: The user cancels input.
+
+        Prints syntax hints and validation errors; reads stdin through Input.prompt.
+        """
+        def parse(text: str) -> tuple[int, ...]:
+            return Input.parse_integer_ranges(text, allow_zero=allow_zero)
+
+        zero_hint = "Zero is allowed." if allow_zero else "Zero is invalid, including inside ranges."
+        return Input._input_ranges(
+            prompt, parser=parse, default=default,
+            hint=f"Use 1,2 or -3--1,5-3; ranges include both ends. {zero_hint}",
+        )
+
+    @staticmethod
+    def parse_index_ranges(
+        text: str, *, item_count: int, allow_zero: bool = False,
+    ) -> tuple[int, ...]:
+        """Resolve item numbers and inclusive ranges to zero-based indexes.
+
+        Args:
+            text: Comma-separated selections such as ``1,2``, ``1-3,4``,
+                ``-1,-2``, or ``-3--1``. Whitespace is allowed around numbers
+                and separators. Negative numbers count from the end (-1 is
+                the last item). Empty text selects nothing.
+            item_count: Total number of available items, at least zero.
+            allow_zero: False (default) uses one-based numbers 1..item_count.
+                True uses zero-based numbers 0..item_count-1 instead. Negative
+                numbers count from the end in both modes.
+
+        Returns:
+            Sorted, unique zero-based indexes. Both range endpoints are included.
+
+        Raises:
+            ValueError: Negative item_count, malformed input, zero in one-based
+                mode, an out-of-range endpoint, or a range whose resolved start
+                follows its end. Endpoints are resolved before expansion, so
+                ``1--1`` selects all items in one-based mode.
+
+        This parser does not read input or print anything.
+        """
+        if item_count < 0:
+            raise ValueError("item_count must be non-negative")
+        first_number = 0 if allow_zero else 1
+        last_number = item_count - 1 if allow_zero else item_count
+        selected: set[int] = set()
+        for first, last in Input._parse_integer_spans(text):
+            for value in (first, last):
+                if value == 0 and not allow_zero:
+                    raise ValueError("Index 0 is invalid in one-based mode; zero is invalid when allow_zero=False.")
+                if not (first_number <= value <= last_number or -item_count <= value < 0):
+                    raise ValueError(f"Index {value} is outside {first_number}..{last_number} or -{item_count}..-1.")
+            start = first - first_number if first >= 0 else item_count + first
+            end = last - first_number if last >= 0 else item_count + last
+            if start > end:
+                raise ValueError(f"Range {first}-{last} starts after its end.")
+            selected.update(range(start, end + 1))
+        return tuple(sorted(selected))
+
+    @staticmethod
+    def input_index_ranges(
+        prompt: str,
+        *,
+        item_count: int,
+        allow_zero: bool = False,
+        default: str | None = None,
+    ) -> tuple[int, ...] | None:
+        """Prompt for item numbers/ranges, retrying malformed or out-of-range input.
+
+        Args:
+            prompt: Label describing the requested selection.
+            item_count: Non-negative number of available items.
+            allow_zero: False (default) uses one-based item numbers; True uses
+                zero-based numbers. Negative numbers count from the end in both.
+            default: Expression in parse_index_ranges syntax used on Enter.
+                None (the default), empty, or whitespace-only means no default.
+
+        Returns:
+            Sorted, unique zero-based indexes from parse_index_ranges; None on
+            blank input without a nonempty default.
+
+        Raises:
+            ValueError: Invalid item_count or default (checked before prompting).
+            EOFError: Standard input closes before an answer is available.
+            KeyboardInterrupt: The user cancels input.
+
+        Prints syntax hints and validation errors; reads stdin through Input.prompt.
+        """
+        def parse(text: str) -> tuple[int, ...]:
+            return Input.parse_index_ranges(text, item_count=item_count, allow_zero=allow_zero)
+
+        numbering = "zero-based (0 = first)" if allow_zero else "one-based (1 = first)"
+        examples = "0,1 or 0-2,4" if allow_zero else "1,2 or 1-3,4"
+        return Input._input_ranges(
+            prompt, parser=parse, default=default,
+            hint=f"{item_count} items, {numbering}; use {examples}; -1 = last, -2 = second-last.",
+        )
+
     #* ============ 数字输入 ============
     @staticmethod
     def input_number(

@@ -2,7 +2,9 @@
 """Write table-of-contents bookmarks to scanned PDF books from per-image JSON.
 
 Merge validated JSON arrays, then choose to replace existing bookmarks or
-append new bookmarks while preserving the original outline hierarchy.
+append new bookmarks while preserving the original outline hierarchy; Replace
+is the default. Pasting JSON starting with '[' at the action menu continues
+input automatically, retaining that first line. End the paste with EOF as usual.
 Blank input, empty JSON strings/arrays, and null return to the action menu
 without discarding earlier entries. Finishing with no entries writes no PDF.
 Both write modes add root-level Cover and Table of Contents bookmarks.
@@ -225,6 +227,7 @@ def _read_bookmark_pages(page_mapping: _PageMapping) -> Optional[list[dict[str, 
     """Read, validate, and merge one JSON array per TOC image."""
     bookmarks: list[dict[str, object]] = []
     image_number = 1
+    pending_first_line = ""
 
     while True:
         print()
@@ -232,6 +235,9 @@ def _read_bookmark_pages(page_mapping: _PageMapping) -> Optional[list[dict[str, 
             prompt_text=f"Paste JSON for TOC image [{image_number}]",
             split_lines=False,
         )
+        if pending_first_line:
+            bookmarks_text = f"{pending_first_line}\n{bookmarks_text}"
+            pending_first_line = ""
         current_page = _parse_bookmark_page(bookmarks_text, page_mapping)
         if current_page is None:
             continue
@@ -243,17 +249,27 @@ def _read_bookmark_pages(page_mapping: _PageMapping) -> Optional[list[dict[str, 
         else:
             print(f"{FGray}No new entries. Previously collected: {len(bookmarks)}.{CRst}\n")
 
-        action = Menu.select(
-            [
-                MenuOption(["N"], "Continue input / next image", _BookmarkInputAction.NEXT),
-                MenuOption(["R"], "Re-enter this image", _BookmarkInputAction.REENTER),
-                MenuOption(["F"], "Finish and merge", _BookmarkInputAction.FINISH),
-                MenuOption(["Q"], "Quit", _BookmarkInputAction.QUIT, FLRed),
-            ],
-            prompt="Choose",
-            default_key="N",
-            separator=False,
-        )
+        print(f"{FGray}You can also paste the next JSON array starting with '[' here.{CRst}")
+        while True:
+            action = Menu.select(
+                [
+                    MenuOption(["N"], "Continue input / next image", _BookmarkInputAction.NEXT),
+                    MenuOption(["R"], "Re-enter this image", _BookmarkInputAction.REENTER),
+                    MenuOption(["F"], "Finish and merge", _BookmarkInputAction.FINISH),
+                    MenuOption(["Q"], "Quit", _BookmarkInputAction.QUIT, FLRed),
+                ],
+                prompt="Choose",
+                default_key="N",
+                separator=False,
+                accept_custom_string=True,
+            )
+            if isinstance(action, _BookmarkInputAction):
+                break
+            if isinstance(action, str) and action.startswith("["):
+                pending_first_line = action
+                action = _BookmarkInputAction.NEXT
+                break
+            print(f"{FLRed}Choose N, R, F, or Q, or paste a JSON array starting with '['.{CRst}\n")
         if action is _BookmarkInputAction.REENTER:
             continue
         if action is _BookmarkInputAction.QUIT:
@@ -368,7 +384,9 @@ Usage:
   Send one TOC screenshot at a time to a vision LLM (e.g. Qwen3-VL), then paste
   each page's JSON array separately. The arrays are validated and merged in
   image order before the bookmarks are written into the PDF.
-  Before writing, choose Replace to rewrite the outline or Append to preserve
+  At the action menu, pasting JSON starting with '[' automatically continues
+  input and retains the first line. End the paste with EOF as usual.
+  Before writing, choose Replace (default) to rewrite the outline or Append to preserve
   existing bookmarks and add the new entries after them.
   Blank input, empty JSON strings/arrays, and null return to the action menu;
   earlier entries are retained. Finishing with no entries writes no PDF.
@@ -483,6 +501,7 @@ Usage:
         ],
         prompt="Bookmark write mode",
         required=True,
+        default_key="R",
         separator=False,
     )
 

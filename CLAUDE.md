@@ -315,12 +315,24 @@ Canonical implementations live there; do not add implementations to the
 |---|---|
 | General text or separated-list input | `Input.prompt(prompt, default=..., transform=..., separator=",", deduplicate=True)` |
 | Numeric input with validation | `Input.input_number(prompt, default=..., min_value=..., allow_float=...)` |
+| Merge consecutive integers into ranges | `Input.merge_integer_ranges(values: Iterable[int]) -> tuple[tuple[int, int], ...]`; sorts and deduplicates any integer iterable, supports negatives and zero, returns inclusive endpoint pairs; singletons have equal endpoints; empty input returns () |
+| Format integer ranges as text | `Input.format_integer_ranges(ranges: Iterable[tuple[int, int]]) -> str`; `((1, 3), (5, 5))` becomes `"1-3,5"`; preserves order, duplicates, and descending ranges; supports signed endpoints; empty input returns `""`; output uses parse_integer_ranges syntax |
+| Parse arbitrary integer sequences | `Input.parse_integer_ranges(text, allow_zero=True) -> tuple[int, ...]`; signed integers and inclusive ascending/descending ranges; preserves order and duplicates; empty text returns (); False rejects zero even inside a range |
+| Interactive integer sequences | `Input.input_integer_ranges(prompt, allow_zero=True, default=None) -> tuple[int, ...] \| None`; retries invalid input; Enter returns None unless a nonempty expression is supplied as the default; literal zero returns (0,) when allowed |
+| Parse item numbers and inclusive ranges | `Input.parse_index_ranges(text, item_count=..., allow_zero=False) -> tuple[int, ...]`; accepts `1,2`, `1-3,4`, `-1,-2`, and `-3--1`; negatives count from the end; returns sorted, unique zero-based indexes; empty text returns (); False uses one-based input, True switches to zero-based input; reversed resolved ranges and out-of-range values raise ValueError |
+| Interactive item/range selection | `Input.input_index_ranges(prompt, item_count=..., allow_zero=False, default=None) -> tuple[int, ...] \| None`; same index parser and numbering modes; retries invalid input; Enter returns None unless a nonempty expression is supplied as the default |
 | Number + unit (e.g. `90deg`) | `Input.input_number_with_unit(prompt, ..., allowed_units=("deg","rad"))` |
 | Password / masked input | `Input.input_password(prompt)` |
 | Output path (auto collision avoidance) | `Input.resolve_output_path(default_path, prompt=..., path_type="file")` |
 | Input path (existence validation) | `Input.resolve_input_path(default_path, ..., path_type="file")` |
 | Multiple input paths (glob expand) | `Input.resolve_input_paths_multi(..., glob=True)` |
 | Multi-line text from stdin | `Input.read_stdin_multiline(...)` |
+
+The range APIs share `_parse_integer_spans()` for signed endpoint syntax and
+`_input_ranges()` for default validation, blank input, and retries. Integer
+sequences expand literal endpoints; index selections resolve endpoints against
+the collection before expanding. Both parsers are pure; both interactive helpers
+validate defaults before prompting and propagate EOFError / KeyboardInterrupt.
 
 Path resolution shares private implementation helpers inside `Input`:
 `_normalize_path()` normalizes one path, `_prompt_and_normalize_path()` handles
