@@ -7,12 +7,14 @@ Fixtures and settings are isolated inside the repository's tmp directory.
 
 from __future__ import annotations
 
+import base64
 import csv
 import datetime as dt
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import threading
@@ -30,6 +32,11 @@ app = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = app
 SPEC.loader.exec_module(app)
 STAMP = dt.datetime(2026, 10, 10, 12, tzinfo=dt.timezone.utc)
+
+
+def setUpModule() -> None:
+    """Create the gitignored fixture parent required on fresh repository checkouts."""
+    (ROOT / "tmp").mkdir(exist_ok=True)
 
 
 def _windows_xml(provider: str, event_id: int, data: str = "") -> str:
@@ -103,6 +110,96 @@ class ParserTests(unittest.TestCase):
             '<Data Name="TargetUserName">demo</Data><Data Name="SessionId">3</Data>',
         ))[0]
         self.assertEqual(event.session, "demo (session 3)")
+
+    def test_windows_modern_standby_entry_keeps_session_identifiers(self) -> None:
+        """Entry is its own category and does not invent sleep or DRIPS evidence."""
+        event = app._parse_windows_xml(_windows_xml(
+            "Microsoft-Windows-Kernel-Power", 506,
+            '<Data Name="Reason">16777224</Data><Data Name="BootId">7</Data>'
+            '<Data Name="ScenarioInstanceId">13</Data><Data Name="ScenarioInstanceIdV2">11</Data>',
+        ))[0]
+        self.assertEqual(event.kind, app.EventKind.STANDBY_ENTER)
+        self.assertEqual(event.boot_id, "7")
+        self.assertIn("ScenarioInstanceId=13", event.session)
+        self.assertIn("ScenarioInstanceIdV2=11", event.session)
+        self.assertIn("Reason=16777224", event.summary)
+        self.assertNotIn("Sleep duration", event.summary)
+        self.assertNotIn("DRIPS", event.summary)
+
+    def test_windows_modern_standby_exit_preserves_metrics_and_reason(self) -> None:
+        """Keep OS-rendered reasons, explicit zero residency and internal-exit evidence."""
+        message = "The system is exiting Modern Standby\r\n\r\nReason: Power Button."
+        for in_progress in ("true", "false"):
+            with self.subTest(in_progress=in_progress):
+                xml = _windows_xml(
+                    "Microsoft-Windows-Kernel-Power", 507,
+                    '<Data Name="SleepEntered">true</Data><Data Name="Reason">1</Data>'
+                    '<Data Name="SleepDurationInUs">123456789</Data>'
+                    '<Data Name="ScreenOffDurationInUs">1500000</Data>'
+                    '<Data Name="DripsResidencyInUs">0</Data><Data Name="HwDripsResidencyInUs">0</Data>'
+                    f'<Data Name="IsCsSessionInProgressOnExit">{in_progress}</Data>',
+                )
+                event = app._parse_windows_xml(xml, message)[0]
+                self.assertEqual(event.kind, app.EventKind.STANDBY_EXIT)
+                self.assertEqual(event.timestamp, STAMP)
+                for evidence in ("Power Button", "SleepEntered=true", "Sleep duration=123.457 s",
+                                 "Screen-off duration=1.500 s", "Software DRIPS=0.000 s",
+                                 "Hardware DRIPS=0.000 s", f"IsCsSessionInProgressOnExit={in_progress}"):
+                    self.assertIn(evidence, event.summary)
+                self.assertIn(xml, event.raw)
+                self.assertIn(message, event.raw)
+
+    def test_windows_power_session_transition_is_not_a_wake(self) -> None:
+        """A session reason or transition must not become an extra sleep/wake count."""
+        event = app._parse_windows_xml(_windows_xml(
+            "Microsoft-Windows-Kernel-Power", 566,
+            '<Data Name="BootId">7</Data><Data Name="Reason">11</Data>'
+            '<Data Name="PreviousSessionId">12</Data><Data Name="NextSessionId">13</Data>'
+            '<Data Name="PreviousSessionType">2</Data><Data Name="NextSessionType">0</Data>'
+            '<Data Name="PreviousSessionDurationInUs">5000000</Data>',
+        ), "The system session has transitioned. Reason FullWake")[0]
+        self.assertEqual(event.kind, app.EventKind.POWER_SESSION)
+        self.assertEqual(event.session, "12 -> 13")
+        self.assertEqual(event.boot_id, "7")
+        self.assertIn("PreviousSessionType=2", event.summary)
+        self.assertIn("NextSessionType=0", event.summary)
+        self.assertIn("Previous session duration=5.000 s", event.summary)
+
+    def test_windows_modern_standby_tolerates_missing_or_unknown_fields(self) -> None:
+        """Old event versions, unknown reasons and unfamiliar durations remain inspectable."""
+        for event_id in (506, 507, 566):
+            with self.subTest(event_id=event_id):
+                self.assertEqual(app._parse_windows_xml(_windows_xml("Other-Provider", event_id)), [])
+                event = app._parse_windows_xml(_windows_xml("Microsoft-Windows-Kernel-Power", event_id))[0]
+                self.assertNotIn("DRIPS=0", event.summary)
+                self.assertNotIn("SleepEntered", event.summary)
+        event = app._parse_windows_xml(_windows_xml(
+            "Microsoft-Windows-Kernel-Power", 507,
+            '<Data Name="Reason">999999</Data><Data Name="SleepDurationInUs">unknown</Data>',
+        ))[0]
+        self.assertIn("Reason=999999", event.summary)
+        self.assertIn("Sleep duration=unknown us", event.summary)
+
+    def test_windows_collector_requests_and_parses_modern_standby(self) -> None:
+        """Exercise the query boundary so parser support cannot mask missing event IDs."""
+        records = [{"kind": "event", "xml": _windows_xml("Microsoft-Windows-Kernel-Power", event_id),
+                    "message": "OS-rendered description" if event_id == 507 else None}
+                   for event_id in (506, 507, 566)]
+        result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1))
+        with patch.object(app.Environment, "find_pwsh", return_value="pwsh"), patch.object(
+            app, "_run_command", return_value=("\n".join(json.dumps(record) for record in records), ""),
+        ) as command:
+            app._collect_windows(result, threading.Event(), lambda _text: None)
+        script = base64.b64decode(command.call_args.args[0][-1]).decode("utf-16-le")
+        # UTC clock values here caused an eight-hour shift on a UTC+08 Windows host.
+        self.assertIn(f"[DateTimeOffset]::Parse('{result.start.isoformat()}').LocalDateTime", script)
+        self.assertIn(f"[DateTimeOffset]::Parse('{result.end.isoformat()}').LocalDateTime", script)
+        kernel_filter = next(line for line in script.splitlines() if "ProviderName='Microsoft-Windows-Kernel-Power'" in line)
+        self.assertTrue({506, 507, 566}.issubset({int(value) for value in re.findall(r"\b\d+\b", kernel_filter)}))
+        self.assertEqual([event.kind for event in result.events],
+                         [app.EventKind.STANDBY_ENTER, app.EventKind.STANDBY_EXIT, app.EventKind.POWER_SESSION])
+        self.assertIn("OS-rendered description", result.events[1].raw)
+        self.assertNotIn("Rendered message", result.events[0].raw)
 
     def test_linux_only_accepts_relevant_source_transitions(self) -> None:
         """Kernel sleep, desktop chatter and logind lock records remain distinct."""
@@ -222,8 +319,23 @@ class GuiTests(unittest.TestCase):
                     self.assertEqual(window.proxy.rowCount(), 0)
                     self.assertFalse(window.export_button.isEnabled())
                     self.assertFalse(window.export_json_button.isEnabled())
+                    # Legacy filters must not hide newly supported Modern Standby records.
+                    window.settings.setValue("types", [app.EventKind.LOCK.value, app.EventKind.WAKE.value])
+                    window.settings.remove("knownTypes")
+                    window._restore_settings()
+                    modern_events = [app._parse_windows_xml(_windows_xml("Microsoft-Windows-Kernel-Power", event_id))[0]
+                                     for event_id in (506, 507, 566)]
+                    window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), modern_events))
+                    self.assertEqual(window.proxy.rowCount(), 3)
+                    self.assertFalse(window.checkboxes[app.EventKind.STARTUP].isChecked())
+                    window.checkboxes[app.EventKind.POWER_SESSION].setChecked(False)
+                    self.assertEqual(window.proxy.rowCount(), 2)
+                    self.assertEqual(query.call_count, 1)
                     window.close()
                     application.processEvents()
+                    window._restore_settings()
+                    self.assertFalse(window.checkboxes[app.EventKind.POWER_SESSION].isChecked())
+                    self.assertTrue(window.checkboxes[app.EventKind.STANDBY_EXIT].isChecked())
             finally:
                 QtCore.QSettings.setDefaultFormat(original)
 

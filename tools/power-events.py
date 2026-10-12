@@ -13,7 +13,10 @@ Sources:
     macOS: pmset sleep/wake history, explicit loginwindow lock notifications,
         last reboot/shutdown records (minute precision), current kern.boottime.
     Windows 10+: PowerShell Get-WinEvent; provider-qualified System events and
-        Security 4800/4801. Security access and prior auditing are required.
+        Security 4800/4801. Includes Modern Standby entry/exit (506/507) and
+        auxiliary power-session transitions (566), with reported reasons,
+        sleep/DRIPS durations and session identifiers when available.
+        Security access and prior auditing are required for lock/unlock.
     Linux: systemd journal kernel/logind/sleep/shutdown records. Lock history
         is limited to explicit logind session transitions; desktop support and
         journal persistence/permissions vary. Non-systemd Linux is unsupported.
@@ -23,6 +26,9 @@ Limits:
     of absence. Shutdown initiation is not proof of completed power-off; an
     unexpected restart is timestamped when reported, not at the earlier outage.
     Screen blanking, unlock requests and wake scheduling are not state changes.
+    Modern Standby entry/exit is separate from traditional sleep/wake: entry
+    alone does not establish low-power residency, and exit may be internal.
+    These records do not by themselves establish a Wake-on-LAN wake source.
     Source commands time out after 90 seconds. At most 50,000 normalized events
     are displayed; narrow the query when the limit is reached. No usage-duration
     inference or background recording is performed in this version.
@@ -88,6 +94,27 @@ class EventKind(StrEnum):
     DARK_WAKE = "Background wake"
     POWER_REQUEST = "Shutdown/restart request"
     UNEXPECTED_RESTART = "Unexpected restart"
+    STANDBY_ENTER = "Modern standby entry"
+    STANDBY_EXIT = "Modern standby exit"
+    POWER_SESSION = "Power session transition"
+
+
+WINDOWS_MODERN_EVENTS: dict[int, tuple[EventKind, str]] = {
+    506: (EventKind.STANDBY_ENTER, "Entering Modern Standby"),
+    507: (EventKind.STANDBY_EXIT, "Exiting Modern Standby"),
+    566: (EventKind.POWER_SESSION, "Power session state changed"),
+}
+MODERN_EVENT_KINDS: frozenset[EventKind] = frozenset(kind for kind, _ in WINDOWS_MODERN_EVENTS.values())
+WINDOWS_DURATION_FIELDS: tuple[tuple[str, str], ...] = (
+    ("DurationInUs", "Session duration"),
+    ("ScreenOffDurationInUs", "Screen-off duration"),
+    ("SleepDurationInUs", "Sleep duration"),
+    ("DripsResidencyInUs", "Software DRIPS"),
+    ("HwDripsResidencyInUs", "Hardware DRIPS"),
+    ("PreviousSessionDurationInUs", "Previous session duration"),
+)
+MICROSECONDS_PER_SECOND = 1_000_000
+FILTER_COLUMNS = 6
 
 
 class SourceState(StrEnum):
@@ -265,8 +292,22 @@ def _parse_mac_last(text: str) -> list[PowerEvent]:
     return events
 
 
-def _parse_windows_xml(xml: str) -> list[PowerEvent]:
-    """Map provider-qualified Windows XML events, using embedded wake time when available."""
+def _parse_windows_xml(xml: str, message: str = "") -> list[PowerEvent]:
+    """Map Windows records without equating Modern Standby transitions with full wakes.
+
+    Args:
+        xml: Native event XML with provider, timestamp and optional event data.
+        message: Optional OS-rendered description, including localized reasons.
+
+    Returns:
+        One observation for a supported provider/event pair, otherwise no rows.
+        Missing optional metrics stay absent; unknown reason codes stay numeric.
+        Power-Troubleshooter uses its embedded wake time when available.
+
+    Raises:
+        ET.ParseError: If XML is malformed.
+        ValueError: If the event ID or required timestamp is malformed.
+    """
     root = ET.fromstring(xml)
     system = root.find("e:System", XML_NS)
     if system is None:
@@ -292,6 +333,8 @@ def _parse_windows_xml(xml: str) -> list[PowerEvent]:
         ("User32", 1074): (EventKind.POWER_REQUEST, "Shutdown/restart requested (not completion)"),
         ("USER32", 1074): (EventKind.POWER_REQUEST, "Shutdown/restart requested (not completion)"),
     }
+    mapping.update({("Microsoft-Windows-Kernel-Power", event_id): value
+                    for event_id, value in WINDOWS_MODERN_EVENTS.items()})
     matched = mapping.get((source, event_id))
     if matched is None:
         return []
@@ -302,11 +345,30 @@ def _parse_windows_xml(xml: str) -> list[PowerEvent]:
         timestamp = _timestamp(data["WakeTime"])
     user = data.get("TargetUserName", "")
     session = data.get("SessionId", "")
+    session = f"{user} (session {session})" if session else user
+    # ── Modern Standby evidence ────────────────────
+    if kind in MODERN_EVENT_KINDS:
+        details = [" ".join(message.split()) or summary]
+        for key in ("Reason", "MonitorReason", "SleepEntered", "IsCsSessionInProgressOnExit",
+                    "PreviousSessionType", "NextSessionType"):
+            if data.get(key):
+                details.append(f"{key}={data[key]}")
+        for key, label in WINDOWS_DURATION_FIELDS:
+            value = data.get(key, "")
+            if value:
+                # Preserve unfamiliar values rather than discarding the entire event.
+                duration = f"{int(value) / MICROSECONDS_PER_SECOND:,.3f} s" if value.isdecimal() else f"{value} us"
+                details.append(f"{label}={duration}")
+        summary = "; ".join(details)
+        if kind == EventKind.POWER_SESSION:
+            session = f"{data.get('PreviousSessionId', '?')} -> {data.get('NextSessionId', '?')}"
+        else:
+            session = "; ".join(f"{key}={data[key]}" for key in ("ScenarioInstanceId", "ScenarioInstanceIdV2") if data.get(key))
     return [PowerEvent(
         timestamp, kind, summary, f"{source} / {event_id}",
         system.findtext("e:EventRecordID", "", XML_NS),
-        f"{user} (session {session})" if session else user,
-        raw=xml,
+        session, boot_id=data.get("BootId", ""),
+        raw=f"Rendered message:\n{message}\n\nXML:\n{xml}" if message else xml,
     )]
 
 
@@ -415,11 +477,13 @@ def _collect_windows(result: QueryResult, cancelled: threading.Event, progress: 
     progress("Reading Windows System and Security event logs...")
     script = r"""
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$start = [DateTimeOffset]::Parse('__START__').UtcDateTime
-$end = [DateTimeOffset]::Parse('__END__').UtcDateTime
+# Get-WinEvent's hashtable filter interprets clock values as local even with Kind=Utc.
+# Normalize to local wall time here; Python still applies the exact half-open UTC bounds.
+$start = [DateTimeOffset]::Parse('__START__').LocalDateTime
+$end = [DateTimeOffset]::Parse('__END__').LocalDateTime
 $sources = @(
     @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-General'; Id=@(12,13)},
-    @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'; Id=@(41,42,107)},
+    @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'; Id=@(41,42,107,506,507,566)},
     @{LogName='System'; ProviderName='Microsoft-Windows-Power-Troubleshooter'; Id=@(1)},
     @{LogName='System'; ProviderName='User32'; Id=@(1074)},
     @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4800,4801)}
@@ -431,7 +495,10 @@ foreach ($filter in $sources) {
     $count = 0
     try {
         Get-WinEvent -FilterHashtable $filter -MaxEvents 50001 -ErrorAction Stop | ForEach-Object {
-            @{kind='event'; xml=$_.ToXml()} | ConvertTo-Json -Compress
+            $description = ''
+            # Missing provider message resources must not prevent reading the XML evidence.
+            try { $description = $_.FormatDescription() } catch { }
+            @{kind='event'; xml=$_.ToXml(); message=$description} | ConvertTo-Json -Compress
             $count++
         }
         @{kind='status'; source=$label; state='Read'; count=$count; message='Accessible retained records queried.'} | ConvertTo-Json -Compress
@@ -446,7 +513,7 @@ foreach ($filter in $sources) {
         text, _ = _run_command([executable, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cancelled)
         for record in _json_records(text):
             if record.get("kind") == "event":
-                result.events.extend(_parse_windows_xml(str(record["xml"])))
+                result.events.extend(_parse_windows_xml(str(record["xml"]), str(record.get("message") or "")))
             elif record.get("kind") == "status":
                 count = int(str(record.get("count", 0)))
                 result.statuses.append(SourceStatus(str(record["source"]), SourceState(str(record["state"])), str(record["message"]), count))
@@ -456,7 +523,10 @@ foreach ($filter in $sources) {
         result.statuses.append(SourceStatus("Windows Event Log", SourceState.ERROR, str(exc)))
     result.statuses.append(SourceStatus("Coverage", SourceState.LIMITED,
         "Lock/unlock requires prior Other Logon/Logoff auditing and Security log access. "
-        "Modern Standby coverage varies. Unclean shutdown reports are timestamped at the later report."))
+        "Modern Standby 506/507 and auxiliary session transitions 566 are included. "
+        "Entry alone does not prove low-power residency; exit can be internal and is not proof of Wake-on-LAN. "
+        "Reported sleep/DRIPS durations are shown when present; missing metrics are not zero. "
+        "Unclean shutdown reports are timestamped at the later report."))
 
 
 def _collect_linux(result: QueryResult, cancelled: threading.Event, progress: Callable[[str], None]) -> None:
@@ -702,13 +772,13 @@ def _launch_gui() -> int:
                 checkbox.setChecked(kind != EventKind.DARK_WAKE)
                 checkbox.toggled.connect(self._filter)
                 self.checkboxes[kind] = checkbox
-                filters.addWidget(checkbox, index // 6, index % 6)
+                filters.addWidget(checkbox, index // FILTER_COLUMNS, index % FILTER_COLUMNS)
             select_all = QtWidgets.QPushButton("All")
             select_none = QtWidgets.QPushButton("None")
             select_all.clicked.connect(lambda: self._select_types(True))
             select_none.clicked.connect(lambda: self._select_types(False))
-            filters.addWidget(select_all, 1, 4)
-            filters.addWidget(select_none, 1, 5)
+            for index, button in enumerate((select_all, select_none), start=len(EventKind)):
+                filters.addWidget(button, index // FILTER_COLUMNS, index % FILTER_COLUMNS)
             layout.addWidget(group)
 
             # ── event table and evidence tabs ───────────
@@ -767,8 +837,13 @@ def _launch_gui() -> int:
             self.range_box.setCurrentIndex(max(0, index))
             selected = self.settings.value("types")
             if isinstance(selected, list):
+                # Older releases saved only checked types; new categories must remain visible.
+                known = self.settings.value("knownTypes", [kind.value for kind in EventKind if kind not in MODERN_EVENT_KINDS])
                 for kind, checkbox in self.checkboxes.items():
-                    checkbox.setChecked(kind.value in selected)
+                    if isinstance(known, list) and kind.value in known:
+                        checkbox.setChecked(kind.value in selected)
+                    else:
+                        checkbox.setChecked(kind != EventKind.DARK_WAKE)
             if value == TimeRange.CUSTOM.value:
                 for key, editor in (("start", self.start_edit), ("end", self.end_edit)):
                     saved = str(self.settings.value(key, ""))
@@ -942,6 +1017,7 @@ def _launch_gui() -> int:
             self.settings.setValue("columns", self.table.horizontalHeader().saveState())
             self.settings.setValue("range", self.range_box.currentText())
             self.settings.setValue("types", [kind.value for kind, checkbox in self.checkboxes.items() if checkbox.isChecked()])
+            self.settings.setValue("knownTypes", [kind.value for kind in EventKind])
             for key, editor in (("start", self.start_edit), ("end", self.end_edit)):
                 self.settings.setValue(key, editor.dateTime().toString(QtCore.Qt.DateFormat.ISODate))
             super().closeEvent(event)
@@ -981,7 +1057,12 @@ Description:
   CSV uses UTF-8 without BOM and local timestamps with UTC offsets.
   Queries the last 24 hours initially. No monitoring service is installed.
   Availability depends on retained logs and permissions; missing events are not
-  proof of absence. Linux lock history and Windows Modern Standby are limited.
+  proof of absence. Linux lock history is limited.
+  Windows includes Modern Standby entry/exit (506/507) and auxiliary power-session
+  transitions (566), with reported reasons, sleep/DRIPS durations and session IDs.
+  These have separate event filters, enabled on upgrade from older versions.
+  Entry alone does not prove low-power residency; exit may be internal and does
+  not by itself prove Wake-on-LAN. Unavailable metrics remain absent, not zero.
 
 Options:
   --help, -h   Show this help without opening the GUI or reading logs.
