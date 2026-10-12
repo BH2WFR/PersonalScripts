@@ -2,7 +2,6 @@
 
 # Dependencies used only by tools/research/
 matplotlib
-numpy
 scipy
 h5py
 openpyxl

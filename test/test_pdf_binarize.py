@@ -1,6 +1,6 @@
 """Verify real 1-bit conversion, PDF geometry, bookmarks, and protected input.
 
-Requirements: PyMuPDF, Pillow with libtiff, tqdm.
+Requirements: PyMuPDF, Pillow with libtiff, numpy, tqdm.
 Run: conda run -n base python -m unittest discover -s test -p test_pdf_binarize.py
 """
 
@@ -16,6 +16,7 @@ import unittest
 from unittest.mock import patch
 
 from PIL import Image, ImageDraw, features
+import numpy as np
 import pymupdf
 
 
@@ -24,6 +25,7 @@ SCRIPT = ROOT / "tools/document-processing/pdf-binarize.py"
 SPEC = importlib.util.spec_from_file_location("pdf_binarize", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 app = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = app
 SPEC.loader.exec_module(app)
 
 
@@ -174,7 +176,7 @@ class PdfBinarizeTests(unittest.TestCase):
 
     def test_cli_and_interactive_defaults(self) -> None:
         with (
-            patch.object(sys, "argv", [str(SCRIPT), str(self.source), "-o", str(self.output)]),
+            patch.object(sys, "argv", [str(SCRIPT), str(self.source), "-o", str(self.output), "--batch"]),
             patch.object(app.Input, "input_number", side_effect=[300, 180]),
             patch.object(app, "_binarize_pdf") as convert,
             contextlib.redirect_stdout(io.StringIO()),
@@ -182,7 +184,8 @@ class PdfBinarizeTests(unittest.TestCase):
             # The result summary expects the file created by the converter.
             self.output.write_bytes(b"test output")
             self.assertEqual(app.main(), 0)
-            self.assertEqual(convert.call_args.args[2:], (300, 180, app.DEFAULT_WORKERS, None))
+            self.assertEqual(convert.call_args.args[2:], (300, 180, app.DEFAULT_WORKERS, ""))
+            self.assertFalse(convert.call_args.kwargs["processing"].sharpen)
         for flag in ("--dpi", "--threshold", "--workers"):
             with patch.object(sys, "argv", [str(SCRIPT), flag, "0"]):
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exc:
@@ -220,7 +223,8 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(threading.current_thread(), threading.main_thread())
             return Image.new("L", (1, 1), index + 1)
 
-        def encode(image: Image.Image, dpi: int, threshold: int) -> bytes:
+        def encode(image: Image.Image, dpi: int, threshold: int,
+                   processing: app._Processing = app.DEFAULT_PROCESSING) -> bytes:
             number = int(image.tobytes()[0])
             if number == 1:
                 self.assertTrue(second_finished.wait(timeout=2))
@@ -449,7 +453,7 @@ class PdfBinarizeTests(unittest.TestCase):
             with (
                 self.subTest(selection=selection),
                 patch.object(sys, "argv", [str(SCRIPT), str(self.source), "-o", str(self.output),
-                                            "--dpi=72", "--threshold=180", f"--skip-pages={selection}"]),
+                                            "--batch", "--dpi=72", "--threshold=180", f"--skip-pages={selection}"]),
                 patch.object(app, "_binarize_pdf") as convert,
                 contextlib.redirect_stdout(io.StringIO()),
             ):
@@ -504,6 +508,197 @@ class PdfBinarizeTests(unittest.TestCase):
                             for xref in range(1, result.xref_length())
                             if result.xref_get_key(xref, "Subtype") == ("name", "/Image")]
             self.assertEqual(image_depths, ["1", "1", "1"])
+
+    def test_sauvola_matches_local_statistics_across_strip_boundaries(self) -> None:
+        pixels = np.random.default_rng(42).integers(0, 256, (19, 23), dtype=np.uint8)
+        expected = np.empty(pixels.shape, dtype=np.uint8)
+        padded = np.pad(pixels.astype(np.float64), 2, mode="reflect")
+        # Independent direct-neighborhood calculation, including image edges.
+        for row in range(19):
+            for col in range(23):
+                neighborhood = padded[row:row + 5, col:col + 5]
+                cutoff = neighborhood.mean() * (1 + 0.2 * (neighborhood.std() / 128 - 1))
+                expected[row, col] = 255 if pixels[row, col] > cutoff else 0
+        with Image.fromarray(pixels) as gray:
+            for strip_rows in (1, 3, 256):
+                with self.subTest(strip_rows=strip_rows), patch.object(app, "SAUVOLA_STRIP_ROWS", strip_rows):
+                    with app._sauvola(gray, 5, 0.2) as result:
+                        self.assertEqual(result.mode, "1")
+                        self.assertEqual(result.convert("L").tobytes(), expected.tobytes())
+        for color in (0, 255):
+            with Image.new("L", (1, 1), color) as gray, app._sauvola(gray, 31, 0.2) as result:
+                self.assertEqual(result.getpixel((0, 0)), color)
+
+    def test_sharpening_is_off_by_default_and_can_retain_a_faint_stroke(self) -> None:
+        with Image.new("L", (21, 21), 255) as gray:
+            ImageDraw.Draw(gray).line((10, 2, 10, 18), fill=190)
+            with app._threshold_image(gray, 180, app.DEFAULT_PROCESSING) as result:
+                self.assertEqual(set(result.convert("L").tobytes()), {255})
+            with app._threshold_image(gray, 180, app._Processing(sharpen=True)) as result:
+                self.assertEqual(result.getpixel((10, 10)), 0)
+                self.assertEqual(result.getpixel((0, 0)), 255)
+            self.assertEqual(gray.getpixel((10, 10)), 190)
+
+    def test_preview_matches_full_conversion_and_renders_only_one_page(self) -> None:
+        original = self.source.read_bytes()
+        for mode in app._BinarizeMode:
+            for sharpen, upscale in ((False, 1), (True, 1), (False, 2), (True, 2)):
+                processing = app._Processing(mode=mode, sharpen=sharpen, upscale=upscale,
+                                             levels=upscale > 1, black_point=110, white_point=250)
+                full = self.folder / f"full-{mode}-{sharpen}-{upscale}.pdf"
+                with contextlib.redirect_stdout(io.StringIO()):
+                    app._binarize_pdf(self.source, full, 144, 180, 2, processing=processing)
+                for page_number, index in ((2, 1), (-1, 2)):
+                    preview = self.folder / f"preview-{mode}-{sharpen}-{upscale}-{index}.pdf"
+                    with (
+                        self.subTest(mode=mode, sharpen=sharpen, upscale=upscale, page=page_number),
+                        patch.object(app, "_render_page", wraps=app._render_page) as render,
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        app._preview_pdf(self.source, preview, page_number, 144, 180, processing)
+                    self.assertEqual(render.call_count, 1)
+                    self.assertEqual(render.call_args.args[1], index)
+                    with pymupdf.open(preview) as result, pymupdf.open(full) as complete:
+                        self.assertEqual(len(result), 1)
+                        self.assertEqual(result.get_toc(), [])
+                        self.assertEqual(result[0].rect, complete[index].rect)
+                        self.assertEqual(result[0].get_images()[0][4], 1)
+                        self.assertEqual(page_image(result, 0).size, (
+                            int(result[0].rect.width * 2 * upscale), int(result[0].rect.height * 2 * upscale),
+                        ))
+                        self.assertEqual(page_image(result, 0).tobytes(), page_image(complete, index).tobytes())
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assert_no_temporary_files()
+
+    def test_preview_password_failure_and_existing_output_protection(self) -> None:
+        make_source(self.source, password="secret", aes=True)
+        original = self.source.read_bytes()
+        with patch.object(app.Input, "input_password", return_value="secret"), contextlib.redirect_stdout(io.StringIO()):
+            app._preview_pdf(self.source, self.output, -1, 72, 180)
+            for output in (self.source, self.output):
+                with self.assertRaises(FileExistsError):
+                    app._preview_pdf(self.source, output, 1, 72, 180)
+            with patch.object(app, "_render_page") as render:
+                for page in (0, 4, -4):
+                    with self.assertRaises(ValueError):
+                        app._preview_pdf(self.source, self.folder / "invalid.pdf", page, 72, 180)
+                render.assert_not_called()
+            with patch.object(app, "_encode_page", side_effect=RuntimeError("test failure")):
+                with self.assertRaises(RuntimeError):
+                    app._preview_pdf(self.source, self.folder / "failed.pdf", 1, 72, 180)
+        self.assertFalse((self.folder / "invalid.pdf").exists())
+        self.assertFalse((self.folder / "failed.pdf").exists())
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assert_no_temporary_files()
+
+    def test_interactive_preview_reconfigure_preview_then_convert(self) -> None:
+        preview_one = self.folder / "fixed-preview.pdf"
+        preview_two = self.folder / "sauvola-preview.pdf"
+        replies = [
+            "", "", "", "", "", "",  # fixed, 72 DPI, threshold 180, levels off, 1x, sharpening off
+            "p", "2",
+            "s", "s", "", "30", "31", "", "y", "110", "100", "250", "2", "y", "0.7", "50",
+            "p", "2", "f",
+        ]
+        with (
+            patch.object(sys, "argv", [str(SCRIPT), str(self.source), "--dpi=72", "--skip-pages=1,-1"]),
+            patch.object(app.Input, "resolve_output_path", side_effect=[str(preview_one), str(preview_two), str(self.output)]),
+            patch.object(app.System, "open_with_default_app") as viewer,
+            patch("builtins.input", side_effect=replies),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(app.main(), 0)
+            self.assertEqual(viewer.call_count, 2)
+        with pymupdf.open(preview_two) as preview, pymupdf.open(self.output) as complete:
+            self.assertEqual(page_image(preview, 0).tobytes(), page_image(complete, 1).tobytes())
+            self.assertEqual(complete[0].get_images()[0][4], 8)
+            self.assertEqual(complete[2].get_images()[0][4], 8)
+        with pymupdf.open(preview_one) as result:
+            self.assertEqual(len(result), 1)
+
+    def test_direct_preview_ignores_skip_pages_and_can_disable_viewer(self) -> None:
+        with (
+            patch.object(sys, "argv", [str(SCRIPT), str(self.source), "-o", str(self.output),
+                                      "--dpi=72", "--preview-page=-1", "--mode=sauvola", "--sharpen",
+                                      "--levels", "--black-point=110", "--white-point=250", "--upscale=2",
+                                      "--skip-pages=1-3", "--no-open-preview"]),
+            patch.object(app.System, "open_with_default_app") as viewer,
+            patch("builtins.input", side_effect=AssertionError("Unexpected prompt")),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(app.main(), 0)
+            viewer.assert_not_called()
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].get_images()[0][4], 1)
+            self.assertEqual(result[0].rect, pymupdf.Rect(0, 0, 144, 288))
+            self.assertEqual(page_image(result, 0).size, (288, 576))
+
+    def test_new_cli_parameters_are_validated_before_rendering(self) -> None:
+        for option in ("--sauvola-window=30", "--sauvola-window=1", "--sauvola-k=nan",
+                       "--sauvola-k=0", "--sharpen-radius=0", "--sharpen-percent=0", "--preview-page=0",
+                       "--black-point=-1", "--black-point=255", "--white-point=0", "--white-point=256",
+                       "--upscale=0", "--upscale=5", "--upscale=1.5"):
+            with (
+                self.subTest(option=option), patch.object(sys, "argv", [str(SCRIPT), option]),
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error,
+            ):
+                app.main()
+            self.assertEqual(error.exception.code, 2)
+
+    def test_sauvola_serial_parallel_results_match(self) -> None:
+        processing = app._Processing(mode=app._BinarizeMode.SAUVOLA, sharpen=True,
+                                     levels=True, black_point=110, white_point=250, upscale=2)
+        second = self.folder / "parallel.pdf"
+        with contextlib.redirect_stdout(io.StringIO()):
+            app._binarize_pdf(self.source, self.output, 72, 180, 1, processing=processing)
+            app._binarize_pdf(self.source, second, 72, 180, 3, processing=processing)
+        with pymupdf.open(self.output) as serial, pymupdf.open(second) as parallel:
+            for index in range(3):
+                self.assertEqual(page_image(serial, index).tobytes(), page_image(parallel, index).tobytes())
+
+    def test_levels_mapping_identity_disabled_and_source_preservation(self) -> None:
+        with Image.frombytes("L", (256, 1), bytes(range(256))) as gray:
+            original = gray.tobytes()
+            for mode in app._BinarizeMode:
+                with app._threshold_image(gray, 128, app._Processing(mode=mode)) as baseline:
+                    for processing in (
+                        app._Processing(mode=mode, levels=True),
+                        app._Processing(mode=mode, levels=False, black_point=110, white_point=250),
+                    ):
+                        with app._threshold_image(gray, 128, processing) as result:
+                            self.assertEqual(result.tobytes(), baseline.tobytes())
+            # Linear 110..250 levels cross fixed threshold 128 at source value 180.
+            with app._threshold_image(gray, 128, app._Processing(
+                levels=True, black_point=110, white_point=250,
+            )) as result:
+                self.assertEqual(result.convert("L").tobytes(), bytes([0] * 180 + [255] * 76))
+            self.assertEqual(gray.tobytes(), original)
+
+    def test_upscale_keeps_encoded_pdf_size_and_scales_image(self) -> None:
+        for scale in (1, 2, 3, 4):
+            with self.subTest(scale=scale):
+                encoded = app._encode_page(Image.new("L", (144, 72), 255), 72, 180,
+                                           app._Processing(upscale=scale))
+                with pymupdf.open(stream=encoded, filetype="pdf") as result:
+                    self.assertEqual(result[0].rect, pymupdf.Rect(0, 0, 144, 72))
+                    self.assertEqual(page_image(result, 0).size, (144 * scale, 72 * scale))
+
+    def test_configure_retains_new_settings_on_enter(self) -> None:
+        settings = app._Processing(mode=app._BinarizeMode.SAUVOLA, levels=True,
+                                   black_point=110, white_point=250, upscale=2,
+                                   sharpen=True, sharpen_radius=0.7, sharpen_percent=50)
+        with patch("builtins.input", return_value=""), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(app._configure(144, 180, settings), (144, 180, settings))
+
+    def test_equal_or_reversed_levels_fail_before_rendering(self) -> None:
+        with patch.object(app, "_render_page") as render:
+            for black, white in ((110, 110), (250, 110)):
+                with self.subTest(black=black, white=white), self.assertRaises(ValueError):
+                    app._preview_pdf(self.source, self.output, 1, 72, 180,
+                                     app._Processing(levels=True, black_point=black, white_point=white))
+            render.assert_not_called()
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":
