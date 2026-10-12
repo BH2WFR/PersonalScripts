@@ -283,6 +283,10 @@ Canonical implementations live there; do not add implementations to the
 | Open a file in the default app | `System.open_with_default_app(path)` |
 | Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |
 | Resolve `$VAR` / `{{placeholders}}` in paths | `Paths.resolve_vars(path, schema_dir=..., script_dir=...)` |
+| Authenticate an open PDF | `Pdf.unlock(document) -> str`; validates PDF input, silently handles empty-password protection, otherwise prompts privately with retry and cancellation |
+| Save a new decrypted PDF | `Pdf.save_new(document, output_path, compact=True) -> None`; exclusive output creation, removes its partial output on failure, drops unused objects; use `compact=False` for continued editing/repeated saves to preserve live object references; PyMuPDF is imported lazily in `utils/pdf.py` |
+| Read effective PDF page labels | `Pdf.read_page_labels(document) -> list[str]`; preserves blank labels, falls back to physical page numbers when no label rules exist |
+| Set literal PDF page labels | `Pdf.write_page_labels(document, labels: Sequence[str]) -> None`; requires one string per page, empty strings mean blank labels; changes memory only and retains page content/bookmarks |
 | Resolve a path against an explicit base directory | `Paths.resolve_path(path, base_dir, expand_environment=True, resolve_symlinks=False) -> str`; native variable expansion preserves undefined references, False avoids re-expanding literal/template results |
 | Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |
 | DPI awareness (Windows) | `System.enable_dpi_awareness()` |
@@ -429,6 +433,12 @@ New private helpers under `utils` must also receive a short architectural note
 when they coordinate shared behavior or define an important reuse boundary.
 Mark them as internal so scripts do not treat them as public API. Trivial local
 implementation details do not need individual quick-reference rows.
+
+`utils/pdf.py` uses an internal `_OutputStream` adapter without a filename so
+PyMuPDF writes through the exclusively opened handle instead of reopening it.
+Scripts use `Pdf.save_new()` and never construct this adapter themselves.
+Page-label helpers decode the PDF number tree and encode literal prefixes through
+PyMuPDF's PDF-string encoder, preserving Unicode, escapes, and blank labels.
 
 `Environment._conda_environment_name` is the internal metadata classifier shared
 by current-process identity and external Python probes. Scripts use the public
@@ -864,6 +874,7 @@ not in the README.
 │   ├── environment.py      # Runtime environment and executable discovery
 │   ├── system.py           # OS integration, privilege, and macOS permissions
 │   ├── paths.py            # Path placeholder and environment expansion
+│   ├── pdf.py              # Lazy PyMuPDF authentication and safe new-file output
 │   ├── input.py            # Input
 │   ├── cursor.py           # Cursor
 │   ├── menu_option.py      # MenuOption

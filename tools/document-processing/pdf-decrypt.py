@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
-# 对有密码保护的 PDF 进行解密，含能打开但不能编辑/打印的权限保护
+"""Save an unencrypted copy of a PDF, preserving its document structure.
+
+Permission-only protection opens automatically; opening passwords are requested
+privately. Retains pages, bookmarks, named destinations, metadata and attachments.
+Existing output files are never overwritten. Requires PyMuPDF (including AES).
+
+Usage:
+    python pdf-decrypt.py input.pdf -o output.pdf
+"""
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-import pypdf # pip install pypdf
+import pymupdf
+from pymupdf.mupdf import FzErrorBase
 from typing import Optional
 
 
 def main() -> int:
+    """Prompt for paths/password, save a decrypted copy, and return 0 or 1.
+
+    Writes a new PDF and prints progress; returns 1 on input or save failure.
+    """
     Console.print_banner("PDF DECRYPTING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
@@ -27,6 +40,7 @@ Usage:
 {FLYellow}Arguments:{CRst}
   <input.pdf>          input PDF file path
   -o, --output <path>  output PDF file path
+  -h, --help           show this help
 
 {FLYellow}Description:{CRst}
   Decrypt password-protected PDFs (including permission-only protection).
@@ -34,7 +48,7 @@ Usage:
   and outputs a completely decrypted PDF.
 
 {FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install pypdf{CRst}
+  Python: {FGray}pip install PyMuPDF{CRst}
 """)
         return 0
 
@@ -79,47 +93,16 @@ Usage:
         path_type="file",
     )
 
-    print(f"{FLYellow}  -> start parsing...")
-
-    #============ 代码主体部分 ===========
-    reader = pypdf.PdfReader(filepath)
-    # 判断是否加密
-    if reader.is_encrypted:
-        while(1):
-            try:
-                print("trying to decrypt...")
-                _ = reader.pages[0] # 确认能不能读取
-                break
-            except Exception:
-                print(f"{FLYellow}The PDF requires a password to open.{CRst} input password, or press (ctrl+c) to exit: ")
-                password = input() #.strip()
-                if not password:
-                    print(f"{FLRed}No password provided. EXIT...{CRst}\n")
-                    return 1
-                res = reader.decrypt(password) # 解密
-                if res == 0:
-                    print(f"{FLRed}Incorrect password. pls input again.{CRst}")
-                    continue
-                else:
-                    print(f"{FLGreen}PDF decrypted successfully.{CRst}\n")
-                    break
-        # end while
-    else:
-        print(f"{FLYellow}[WARNING]: The PDF is not encrypted. Proceeding to copy as is.{CRst}")
-    # if encrypted
-
-    pages_cnt = len(reader.pages)
-    print(f"{FLGreen}PDF loaded successfully. Total pages: {pages_cnt}{CRst}")
-
-    # 直接克隆整个文档结构（包括页面、书签、命名目标等）
-    writer = pypdf.PdfWriter()
-    print("  -> cloning document (pages + outline + structure)...")
-    writer.clone_reader_document_root(reader)
-
-    # 不调用 writer.encrypt(...)，因此输出是完全解密的
-    print("  -> writing to output file...")
-    with open(output_path, "wb") as out_f:
-        writer.write(out_f)
+    print(f"{FLYellow}  -> start parsing...{CRst}")
+    try:
+        with pymupdf.open(filepath) as document:
+            Pdf.unlock(document)
+            print(f"{FLGreen}PDF loaded successfully. Total pages: {document.page_count}{CRst}")
+            print("  -> writing decrypted document (pages + outline + structure)...")
+            Pdf.save_new(document, output_path)
+    except (OSError, ValueError, RuntimeError, pymupdf.FileDataError, FzErrorBase) as exc:
+        print(f"{FLRed}Decryption failed: {exc}{CRst}")
+        return 1
 
     # 结束
     print(f"{FLGreen}Decrypted PDF saved to: {output_path}{CRst}\n")

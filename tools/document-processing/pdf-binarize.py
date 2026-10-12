@@ -2,7 +2,7 @@
 """Convert scanned PDFs to thresholded, 1-bit black-and-white PDFs.
 
 PyMuPDF renders visible pages in memory; Pillow applies a fixed threshold
-without dithering and writes lossless CCITT Group 4 images. pypdf assembles the
+without dithering and writes lossless CCITT Group 4 images. PyMuPDF assembles the
 pages, retaining displayed page sizes, document metadata, and bookmark titles,
 hierarchy, and target pages. Bookmark coordinates reset to fit the target page.
 Converted pages do not retain searchable text or interactive features. Selected
@@ -11,12 +11,12 @@ or binarization, in its original position. Skip selections use physical PDF page
 numbers, not printed labels: 1-3,4 selects the first four pages; -1,-2 selects the
 last two. Empty input skips nothing. No page images or decrypted PDFs are written
 to disk. Page thresholding and CCITT encoding run in a bounded thread pool;
-PyMuPDF rendering and pypdf assembly stay on the main thread, in page order.
+PyMuPDF rendering and assembly stay on the main thread, in page order.
 --workers controls the maximum number of page encoding tasks (default: up to
 eight CPU cores; 1 disables parallel encoding). Raster memory is bounded by this
 queue; the assembled compressed PDF still grows in memory with the document.
-Final PDF writing reports elapsed time and bytes every few seconds; output
-copying reports byte progress.
+tqdm displays page progress and output-copy byte progress with speed and ETA.
+Final PDF writing shows bytes written and elapsed time without a guessed total.
 
 Permission-only protection is opened automatically. An opening password, when
 needed, is requested without echo and used only in memory. One completed PDF is stored temporarily
@@ -24,8 +24,7 @@ beside the output, then removed on success, failure, or Ctrl+C. Existing files
 are not overwritten. Input is always preserved.
 
 Requirements:
-    - pip: PyMuPDF, Pillow (with libtiff support), pypdf.
-    - pip: cryptography (optional, needed for AES-encrypted input).
+    - pip: PyMuPDF, Pillow (with libtiff support), tqdm.
 
 Usage:
     python pdf-binarize.py
@@ -52,9 +51,8 @@ from utils import *  # noqa: E402
 
 from PIL import Image, features
 import pymupdf
-from pypdf import PdfReader, PdfWriter
-from pypdf.errors import PyPdfError
-from pypdf.generic import Destination, IndirectObject
+from pymupdf.mupdf import FzErrorBase
+from tqdm import tqdm
 
 
 DEFAULT_DPI = 300
@@ -64,79 +62,56 @@ DEFAULT_THRESHOLD = 180
 MIN_THRESHOLD = 1
 MAX_THRESHOLD = 255
 GRAY_LEVELS = 256
-RIGHT_ANGLE = 90
 DEFAULT_WORKERS = min(8, os.cpu_count() or 1)
 MAX_WORKERS = 32
 PROGRESS_INTERVAL_SECONDS = 3.0
 COPY_CHUNK_BYTES = 1024 * 1024
 UNTITLED_BOOKMARK = "Untitled bookmark"
 
-type _Outline = list[Destination | _Outline]
+def _reset_bookmark_positions(document: pymupdf.Document) -> None:
+    """Keep bookmark hierarchy and targets, resetting internal targets to /Fit.
 
-
-def _unlock_pdf(reader: PdfReader) -> str:
-    """Unlock an encrypted reader, prompting privately until the password works.
-
-    Args:
-        reader: Input reader; unencrypted and empty-password inputs need no prompt.
-
-    Returns:
-        Accepted password for the in-memory renderer, or an empty string when
-        no opening password is required. Never logged or persisted.
-
-    Raises:
-        ValueError: If the user submits an empty opening password to cancel.
-        PyPdfError: If the encryption cannot be processed.
+    Missing titles receive a readable fallback. Heading-only and external
+    destinations stay intact. Updates the in-memory outline dictionaries.
     """
-    if not reader.is_encrypted or reader.decrypt(""):
-        return ""
-    while True:
-        password = Input.input_password("PDF opening password (empty to cancel)")
-        if not password:
-            raise ValueError("No password provided. Conversion cancelled.")
-        if reader.decrypt(password):
-            return password
-        print(f"{FLRed}Incorrect password. Please try again.{CRst}")
+    for entry, xref in zip(document.get_toc(), document.get_outline_xrefs()):
+        if document.xref_get_key(xref, "Title")[0] == "null":
+            document.xref_set_key(xref, "Title", pymupdf.get_pdf_str(UNTITLED_BOOKMARK))
+        page_number = entry[2]
+        if 1 <= page_number <= document.page_count:
+            page_xref = document.page_xref(page_number - 1)
+            document.xref_set_key(xref, "A", "null")
+            document.xref_set_key(xref, "Dest", f"[{page_xref} 0 R /Fit]")
 
 
-def _copy_bookmarks(
-    reader: PdfReader,
-    writer: PdfWriter,
-    outline: _Outline,
-    parent: IndirectObject | None = None,
-) -> None:
-    """Copy bookmark titles, nesting, and target pages into a rebuilt document.
+def _replace_page(document: pymupdf.Document, index: int, encoded: bytes) -> None:
+    """Replace one page's contents while retaining its identity and incoming links.
 
-    Args:
-        reader: Original document used to resolve destinations.
-        writer: Output document, with all converted pages already added.
-        outline: Original outline or one nested outline list.
-        parent: Output parent bookmark, or None for root entries.
-
-    Bookmark positions use the default fit-page destination. Heading-only
-    bookmarks remain without a page target.
+    Uses the displayed dimensions (including crop, rotation and UserUnit).
+    Removes this page's interactive objects, then places the encoded PDF without
+    decoding its 1-bit image. Other pages and document metadata are unchanged.
     """
-    last_parent = parent
-    for item in outline:
-        if isinstance(item, list):
-            _copy_bookmarks(reader, writer, item, last_parent)
-        else:
-            title = item.title
-            if title is None:
-                title = UNTITLED_BOOKMARK
-            page_number = reader.get_destination_page_number(item)
-            if page_number is not None and not 0 <= page_number < len(writer.pages):
-                page_number = None
-            last_parent = writer.add_outline_item(
-                title, page_number=page_number, parent=parent,
-            )
+    page = document[index]
+    rect = page.rect
+    for widget in list(page.widgets() or ()):
+        # widgets() yields Widget instances; load_widget's inferred union is broader.
+        page.delete_widget(cast(pymupdf.Widget, widget))
+    parent = document.xref_get_key(page.xref, "Parent")[1]
+    document.update_object(
+        page.xref,
+        f"<< /Type /Page /Parent {parent} "
+        f"/MediaBox [0 0 {rect.width} {rect.height}] /Rotate 0 /UserUnit 1 /Resources <<>> >>",
+    )
+    page = document.reload_page(page)
+    with pymupdf.open(stream=encoded, filetype="pdf") as encoded_document:
+        page.show_pdf_page(page.rect, encoded_document, 0, keep_proportion=False)
 
 
 def _encode_page(rendered: Image.Image, dpi: int, threshold: int) -> bytes:
     """Threshold one rendered page and return an independent CCITT PDF buffer.
 
     Takes ownership of rendered and closes it even on failure. Each worker owns
-    its image and PDF buffer; no PyMuPDF or pypdf objects enter worker threads.
+    its image and PDF buffer; no PyMuPDF objects enter worker threads.
     """
     threshold_lut = [0 if value < threshold else 255 for value in range(GRAY_LEVELS)]
     with rendered, io.BytesIO() as page_pdf:
@@ -212,7 +187,7 @@ def _encoded_pages(
                 rendered.close()
 
 
-def _write_pdf_with_progress(writer: PdfWriter, completed_pdf: Path) -> None:
+def _write_pdf_with_progress(writer: pymupdf.Document, completed_pdf: Path) -> None:
     """Write the assembled PDF, reporting time and actual file size periodically.
 
     Only the calling thread touches writer. The reporting thread reads the
@@ -221,25 +196,28 @@ def _write_pdf_with_progress(writer: PdfWriter, completed_pdf: Path) -> None:
     started = time.monotonic()
     finished = threading.Event()
 
-    def report() -> None:
-        while not finished.wait(PROGRESS_INTERVAL_SECONDS):
-            try:
-                size = completed_pdf.stat().st_size
-            except OSError:
-                size = 0
-            print(
-                f"{FGray}Writing final PDF: {time.monotonic() - started:.1f}s elapsed, "
-                f"{Console.format_size(size)} written...{CRst}", flush=True,
-            )
+    with tqdm(
+        desc="Writing final PDF", unit="B", unit_scale=True, unit_divisor=1024,
+        file=sys.stdout, dynamic_ncols=True,
+        bar_format="{desc}: {n_fmt}{unit} written [{elapsed} elapsed, {rate_fmt}]",
+    ) as progress:
+        def report() -> None:
+            while not finished.wait(PROGRESS_INTERVAL_SECONDS):
+                try:
+                    size = completed_pdf.stat().st_size
+                except OSError:
+                    size = 0
+                progress.update(max(0, size - progress.n))
+                progress.refresh()  # Refresh elapsed time even before the first bytes.
 
-    print(f"{FLCyan}Writing final PDF (all pages are encoded; assembling the file)...{CRst}", flush=True)
-    reporter = threading.Thread(target=report, name="pdf-write-progress", daemon=True)
-    reporter.start()
-    try:
-        writer.write(completed_pdf)
-    finally:
-        finished.set()
-        reporter.join()
+        reporter = threading.Thread(target=report, name="pdf-write-progress", daemon=True)
+        reporter.start()
+        try:
+            Pdf.save_new(writer, completed_pdf)
+        finally:
+            finished.set()
+            reporter.join()
+        progress.update(max(0, completed_pdf.stat().st_size - progress.n))
     print(f"{FLGreen}Final PDF written in {time.monotonic() - started:.1f}s.{CRst}", flush=True)
 
 
@@ -270,7 +248,7 @@ def _binarize_pdf(
         FileExistsError: Output exists or resolves to the source file.
         RuntimeError: Pillow lacks lossless 1-bit PDF support.
         OSError: Reading, rendering, or writing a file fails.
-        PyPdfError: A PDF cannot be read or written.
+        pymupdf.FileDataError: A PDF cannot be read.
 
     Prints page progress. Owns and cleans temporary files beside the output.
     """
@@ -283,12 +261,12 @@ def _binarize_pdf(
         raise ValueError(f"Workers must be between 1 and {MAX_WORKERS}.")
     if input_path.resolve() == output_path.resolve() or output_path.exists():
         raise FileExistsError(f"Output must be a new file: {output_path}")
-    reader = PdfReader(input_path)
+    reader = pymupdf.open(input_path)
     try:
-        password = _unlock_pdf(reader)
-        if not reader.pages:
+        password = Pdf.unlock(reader)
+        if not reader.page_count:
             raise ValueError("The input PDF has no pages.")
-        page_count = len(reader.pages)
+        page_count = reader.page_count
         selection = (
             Input.input_index_ranges("PDF pages to skip binarizing (Enter = none)", item_count=page_count)
             if skip_pages is None else Input.parse_index_ranges(skip_pages, item_count=page_count)
@@ -311,56 +289,38 @@ def _binarize_pdf(
                 )
             else:
                 print(f"{FLCyan}All pages skipped; rendering and binarization are unnecessary.{CRst}", flush=True)
-            encoding_started = time.monotonic()
             encoded_pages = _encoded_pages(input_path, render_pages, dpi, threshold, workers, password)
-            with PdfWriter() as writer, closing(encoded_pages):
-                for number, source_page in enumerate(reader.pages, start=1):
-                    if number - 1 in skipped:
-                        writer.add_page(source_page)
-                        print(f"{FLCyan}Copied original page {number}/{page_count} (binarization skipped).{CRst}", flush=True)
-                        continue
-                    encoded = next(encoded_pages)
-                    with io.BytesIO(encoded) as page_pdf, PdfReader(page_pdf) as page_reader:
-                        page = writer.add_page(page_reader.pages[0])
-                        width = float(source_page.cropbox.width) * source_page.user_unit
-                        height = float(source_page.cropbox.height) * source_page.user_unit
-                        if (source_page.rotation // RIGHT_ANGLE) % 2:
-                            width, height = height, width
-                        page.scale_to(width, height)
-                        writer.reset_translation(page_reader)
-                    print(
-                        f"{FLCyan}Encoded and merged page {number}/{len(reader.pages)} "
-                        f"({time.monotonic() - encoding_started:.1f}s elapsed).{CRst}", flush=True,
-                    )
+            with closing(encoded_pages), tqdm(
+                total=page_count, desc="Processing pages", unit="page",
+                file=sys.stdout, dynamic_ncols=True, miniters=1,
+                postfix={"skipped": len(skipped)},
+            ) as progress:
+                for number in range(1, page_count + 1):
+                    if number - 1 not in skipped:
+                        encoded = next(encoded_pages)
+                        _replace_page(reader, number - 1, encoded)
+                    progress.update(1)
 
-                print(f"{FLCyan}Copying document metadata and bookmarks...{CRst}", flush=True)
-                bookmarks_started = time.monotonic()
-                if reader.metadata:
-                    writer.add_metadata(reader.metadata)
-                _copy_bookmarks(reader, writer, cast(_Outline, reader.outline))
-                print(f"{FLGreen}Metadata and bookmarks copied in {time.monotonic() - bookmarks_started:.1f}s.{CRst}", flush=True)
-                completed_pdf = work_dir / "completed.pdf"
-                _write_pdf_with_progress(writer, completed_pdf)
+            print(f"{FLCyan}Copying document metadata and bookmarks...{CRst}", flush=True)
+            bookmarks_started = time.monotonic()
+            # Editing the original document in memory retains custom metadata,
+            # page identities and cross-page links on all skipped pages.
+            _reset_bookmark_positions(reader)
+            print(f"{FLGreen}Metadata and bookmarks copied in {time.monotonic() - bookmarks_started:.1f}s.{CRst}", flush=True)
+            completed_pdf = work_dir / "completed.pdf"
+            _write_pdf_with_progress(reader, completed_pdf)
 
             # ── publish only after conversion succeeds ──────
             total_bytes = completed_pdf.stat().st_size
-            copied_bytes = 0
-            last_report = time.monotonic()
-            print(f"{FLCyan}Copying {Console.format_size(total_bytes)} to the output path...{CRst}", flush=True)
             with output_path.open("xb") as destination:
                 try:
-                    with completed_pdf.open("rb") as source:
+                    with completed_pdf.open("rb") as source, tqdm(
+                        total=total_bytes, desc="Copying output", unit="B",
+                        unit_scale=True, unit_divisor=1024, file=sys.stdout, dynamic_ncols=True,
+                    ) as progress:
                         while chunk := source.read(COPY_CHUNK_BYTES):
                             destination.write(chunk)
-                            copied_bytes += len(chunk)
-                            now = time.monotonic()
-                            if now - last_report >= PROGRESS_INTERVAL_SECONDS or copied_bytes == total_bytes:
-                                print(
-                                    f"{FGray}Output copy: {Console.format_size(copied_bytes)} / "
-                                    f"{Console.format_size(total_bytes)} "
-                                    f"({copied_bytes / total_bytes:.0%}).{CRst}", flush=True,
-                                )
-                                last_report = now
+                            progress.update(len(chunk))
                     destination.flush()
                 except BaseException:
                     # Only remove the new file opened by this call, never user data.
@@ -391,13 +351,13 @@ def main() -> int:
         "Skipped pages are copied with their original contents and page order.\n"
         "Protected PDFs prompt for an opening password when needed.\n"
         "Pages are rendered in memory; no temporary page images or decrypted PDFs are written.",
-        epilog=f"{FGray}Requirements: PyMuPDF, Pillow with libtiff, pypdf.\n"
-        f"AES-encrypted input also needs cryptography (optional).\n"
+        epilog=f"{FGray}Requirements: PyMuPDF, Pillow with libtiff, tqdm.\n"
         f"Omitted paths/settings are prompted interactively; defaults: {DEFAULT_DPI} DPI, "
         f"threshold {DEFAULT_THRESHOLD}.\n"
         f"Parallel page encoding defaults to {DEFAULT_WORKERS} workers; --workers 1 is serial.\n"
         "Rendering stays on the main thread; a bounded queue feeds parallel Pillow encoders.\n"
         "The assembled PDF grows in memory; one temporary completed PDF is used for safe output.\n"
+        "tqdm shows page/copy progress with speed and ETA; saving shows bytes and elapsed time.\n"
         "Higher thresholds make more pixels black; no dithering is used.\n"
         "Skip PDF pages with 1,2 or 1-3,4; -1,-2 means the last two pages; Enter skips none.\n"
         "Use --skip-pages=-1,-2 for negative CLI selections; --skip-pages= disables the prompt.\n"
@@ -437,7 +397,7 @@ def main() -> int:
         ))
         print(f"{FLYellow}Converted pages become images: searchable text and interactive features are lost.{CRst}")
         _binarize_pdf(input_path, output_path, dpi, threshold, args.workers, args.skip_pages)
-    except (OSError, ValueError, RuntimeError, PyPdfError, pymupdf.FileDataError) as exc:
+    except (OSError, ValueError, RuntimeError, pymupdf.FileDataError, FzErrorBase) as exc:
         print(f"{FLRed}Binarization failed: {exc}{CRst}")
         return 1
 

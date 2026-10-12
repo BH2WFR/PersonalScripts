@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write table-of-contents bookmarks to scanned PDF books from per-image JSON.
+"""Write PDF bookmarks from per-image JSON, optionally generating page labels.
 
 Merge validated JSON arrays, then choose to replace existing bookmarks or
 append new bookmarks while preserving the original outline hierarchy; Replace
@@ -8,9 +8,19 @@ input automatically, retaining that first line. End the paste with EOF as usual.
 Blank input, empty JSON strings/arrays, and null return to the action menu
 without discarding earlier entries. Finishing with no entries writes no PDF.
 Both write modes add root-level Cover and Table of Contents bookmarks.
+Before saving, choose whether to reset page labels from the book-page mapping
+(Y by default); N preserves the existing labels.
+Reset labels use C1, C2, ... for the chosen TOC PDF-page range. Body pages use
+book numbers (or ranges for 2/4-up layouts). Other front-matter labels remain
+unchanged. Without existing label rules, they retain physical page numbering.
+The first body page shows only its positive book pages. TOC labels take priority
+if the TOC and body begin on the same PDF page. Printed page content is unchanged.
+For standalone label editing or clearing, use pdf-page-tag.py.
+PyMuPDF edits the document in memory and saves an unencrypted new file, retaining
+document metadata and attachments. Passwords are prompted without echo.
 
 Requirements:
-    - pip: pypdf
+    - pip: PyMuPDF
 
 Usage:
     python pdf-bookmarks-add.py input.pdf
@@ -22,7 +32,8 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-import pypdf # pip install pypdf
+import pymupdf
+from pymupdf.mupdf import FzErrorBase
 from typing import Optional
 
 
@@ -125,6 +136,20 @@ class _PageMapping:
             - 1
             + (sequence_index + leading_positions) // int(self.pages_per_pdf)
         )
+
+    def book_pages(self, pdf_index: int) -> tuple[int, ...]:
+        """Return the logical book-page positions contained in a PDF page.
+
+        Args:
+            pdf_index: Zero-based PDF page index.
+
+        Returns:
+            One, two, or four logical page numbers; skips zero between the
+            negative front-matter positions and positive body pages.
+        """
+        count = int(self.pages_per_pdf)
+        first = (pdf_index - self.page_offset + 1) * count - (count - int(self.first_pdf_page_count))
+        return tuple(position + 1 if position >= 0 else position for position in range(first, first + count))
 
 
 def parse_bookmark_line(
@@ -360,6 +385,127 @@ def _select_toc_pdf_page(page_mapping: _PageMapping) -> int:
     )
 
 
+def _add_bookmark(
+    document: pymupdf.Document, title: str, page_index: int, parent: int | None = None,
+) -> int:
+    """Append a fit-page bookmark without rebuilding any existing outline items.
+
+    Args:
+        document: Open, authenticated PDF to modify in memory.
+        title: Bookmark label, including Unicode characters.
+        page_index: Valid zero-based target page index.
+        parent: Parent outline xref, or None for a root-level bookmark.
+
+    Returns:
+        New outline xref, usable as a parent for subsequent entries.
+
+    Existing destinations, actions, styles and expansion states are retained.
+    """
+    if parent is None:
+        kind, reference = document.xref_get_key(document.pdf_catalog(), "Outlines")
+        if kind == "xref":
+            parent = int(reference.split()[0])
+        else:
+            parent = document.get_new_xref()
+            document.update_object(parent, "<< /Type /Outlines /Count 0 >>")
+            document.xref_set_key(document.pdf_catalog(), "Outlines", f"{parent} 0 R")
+
+    kind, reference = document.xref_get_key(parent, "Last")
+    previous = int(reference.split()[0]) if kind == "xref" else None
+    xref = document.get_new_xref()
+    page_xref = document.page_xref(page_index)
+    document.update_object(
+        xref, f"<< /Title {pymupdf.get_pdf_str(title)} /Parent {parent} 0 R "
+        f"/Dest [{page_xref} 0 R /Fit] >>",
+    )
+    if previous is None:
+        document.xref_set_key(parent, "First", f"{xref} 0 R")
+    else:
+        document.xref_set_key(previous, "Next", f"{xref} 0 R")
+        document.xref_set_key(xref, "Prev", f"{previous} 0 R")
+    document.xref_set_key(parent, "Last", f"{xref} 0 R")
+
+    # A collapsed ancestor gains a hidden child but exposes no additional item
+    # to its own parent. Open ancestors propagate the visible count upwards.
+    ancestor = parent
+    while ancestor:
+        kind, value = document.xref_get_key(ancestor, "Count")
+        count = int(value) if kind == "int" else 0
+        document.xref_set_key(ancestor, "Count", str(count - 1 if count < 0 else count + 1))
+        if count < 0:
+            break
+        kind, reference = document.xref_get_key(ancestor, "Parent")
+        ancestor = int(reference.split()[0]) if kind == "xref" else 0
+    return xref
+
+
+def _write_bookmarks(
+    document: pymupdf.Document,
+    bookmark_objects: list[dict[str, object]],
+    page_mapping: _PageMapping,
+    toc_pdf_page: int,
+    write_mode: _BookmarkWriteMode,
+) -> None:
+    """Add validated entries and the fixed cover/TOC entries to an open PDF.
+
+    Replace detaches the old outline; append preserves its original dictionaries.
+    Missing parent levels become roots, matching the original input behavior.
+    Invalid target pages are reported and skipped. Changes stay in memory.
+    """
+    if write_mode is _BookmarkWriteMode.REPLACE:
+        document.xref_set_key(document.pdf_catalog(), "Outlines", "null")
+    for title, pdf_page in (
+        (COVER_BOOKMARK_TITLE, DEFAULT_COVER_PDF_PAGE),
+        (TOC_BOOKMARK_TITLE, toc_pdf_page),
+    ):
+        if 1 <= pdf_page <= document.page_count:
+            _add_bookmark(document, title, pdf_page - 1)
+        else:
+            print(f"{FLYellow}Page {pdf_page} is out of range, skipping: {title}{CRst}")
+
+    last_at_level: dict[int, int] = {}
+    for bookmark in bookmark_objects:
+        parsed = parse_bookmark_line(bookmark, page_mapping)
+        if parsed is None:
+            continue
+        page_index, level, title = parsed
+        if not 0 <= page_index < document.page_count:
+            print(f"{FLYellow}Page {page_index + 1} is out of range, skipping: {title}{CRst}")
+            continue
+        last_at_level[level] = _add_bookmark(
+            document, title, page_index, last_at_level.get(level - 1),
+        )
+        print(f"-> Page: {FLYellow}{page_index + 1}{CRst}, Level: {FLCyan}{level}{CRst}, Title: `{FLGreen}{title}{CRst}`")
+
+
+def _reset_page_labels(
+    document: pymupdf.Document,
+    page_mapping: _PageMapping,
+    toc_first_page: int,
+    toc_last_page: int,
+) -> None:
+    """Generate TOC and body labels, preserving other labels and all page content.
+
+    TOC bounds are inclusive, one-based physical PDF pages. TOC pages receive
+    C1, C2, ...; body pages receive positive logical numbers/ranges. Remaining
+    front matter keeps its original labels or physical numbering if unlabelled.
+
+    Raises:
+        ValueError: TOC bounds or the body anchor are outside the document.
+    """
+    if not 1 <= toc_first_page <= toc_last_page <= page_mapping.page_offset <= document.page_count:
+        raise ValueError("TOC pages and book page 1 must be ordered and inside the PDF.")
+    labels = Pdf.read_page_labels(document)
+    for index in range(document.page_count):
+        physical_page = index + 1
+        if toc_first_page <= physical_page <= toc_last_page:
+            labels[index] = f"C{physical_page - toc_first_page + 1}"
+        elif physical_page >= page_mapping.page_offset:
+            pages = tuple(page for page in page_mapping.book_pages(index) if page > 0)
+            labels[index] = Input.format_integer_ranges(Input.merge_integer_ranges(pages))
+    Pdf.write_page_labels(document, labels)
+
+
 def main() -> int:
     Console.print_banner("PDF BOOKMARK INSERTING TOOL")
 
@@ -380,7 +526,7 @@ Usage:
   -h, --help          show this help
 
 {FLYellow}Description:{CRst}
-  Add table-of-contents bookmarks to scanned PDF books.
+  Add table-of-contents bookmarks to scanned PDF books:
   Send one TOC screenshot at a time to a vision LLM (e.g. Qwen3-VL), then paste
   each page's JSON array separately. The arrays are validated and merged in
   image order before the bookmarks are written into the PDF.
@@ -391,11 +537,21 @@ Usage:
   Blank input, empty JSON strings/arrays, and null return to the action menu;
   earlier entries are retained. Finishing with no entries writes no PDF.
   Supports PDF pages containing 1, 2, or 4 consecutive physical book pages.
-  Both modes add root-level Cover and Table of Contents bookmarks automatically.
+  Both bookmark write modes add root-level Cover and Table of Contents bookmarks.
+  Reset page labels? defaults to Y, generating labels from the book-page mapping.
+  Choose N to preserve existing labels. This does not change printed page content.
+  For Y, confirm the last TOC PDF page (default: the page before book page 1).
+  TOC labels use C1, C2, ...; other front-matter labels remain unchanged.
+  With no existing labels, front matter keeps physical PDF page numbers.
+  Body pages use book numbers or ranges for 2/4-up layouts.
+  TOC labels take priority if the TOC and body start on the same PDF page.
+  Use pdf-page-tag.py for standalone label editing and clearing.
+  Saves an unencrypted new file, preserving document metadata and attachments.
+  Opening passwords are requested without echo; existing files are not overwritten.
   `page` supports negative numbers: -1 = the page before page 1, -2 = two pages before page 1, etc.
 
 {FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install pypdf{CRst}
+  Python: {FGray}pip install PyMuPDF{CRst}
 """)
         return 0
 
@@ -434,7 +590,6 @@ Usage:
         print(f"{FLRed}Invalid input file path. EXIT...{CRst}\n")
         return 1
 
-    # 默认输出路径：输入文件名 + _bookmarked 后缀
     _stem, _ext = os.path.splitext(os.path.basename(filepath))
     _default_output = os.path.join(os.path.dirname(filepath) or ".", f"{_stem}_bookmarked{_ext or '.pdf'}")
 
@@ -466,101 +621,52 @@ Usage:
         return 0
     print(f"\n{FLGreen}Merged:{CRst} {len(bookmark_objects)} entries")
 
-    #============ 代码主体部分 ===========
-    reader = pypdf.PdfReader(filepath)
-    # 判断是否加密
-    if reader.is_encrypted:
-        while(1):
-            try:
-                print("trying to decrypt...")
-                _ = reader.pages[0] # 确认能不能读取
-                break
-            except Exception:
-                print(f"{FLYellow}The PDF requires a password to open.{CRst} input password, or press (ctrl+c) to exit: ")
-                password = input() #.strip()
-                if not password:
-                    print(f"{FLRed}No password provided. EXIT...{CRst}\n")
-                    return 1
-                res = reader.decrypt(password) # 解密
-                if res == 0:
-                    print(f"{FLRed}Incorrect password. pls input again.{CRst}")
-                    continue
-                else:
-                    print(f"{FLGreen}PDF decrypted successfully.{CRst}\n")
-                    break
-        # end while
-    # encrypted
-
-    pages_cnt = len(reader.pages)
-    print(f"{FLGreen}PDF loaded successfully. Total pages: {pages_cnt}{CRst}\n")
-
-    write_mode = Menu.select(
-        [
-            MenuOption(["R"], "Replace existing bookmarks", _BookmarkWriteMode.REPLACE),
-            MenuOption(["A"], "Append to existing bookmarks", _BookmarkWriteMode.APPEND),
-        ],
-        prompt="Bookmark write mode",
-        required=True,
-        default_key="R",
-        separator=False,
-    )
-
-    # 追加时导入原目录；重写时只拷贝页面。
-    writer = pypdf.PdfWriter()
+    # ── authenticate and update the original document in memory ──
     try:
-        if write_mode is _BookmarkWriteMode.APPEND:
-            writer.append(reader, import_outline=True)
-        else:
-            for page in reader.pages: # 页面内容
-                writer.add_page(page)
-        if reader.metadata: # 元数据
-            writer.add_metadata(reader.metadata)
-    except Exception as e:
-        print(f"{FLRed}ERROR while copying PDF content: {str(e)}{CRst}\n")
+        with pymupdf.open(filepath) as document:
+            Pdf.unlock(document)
+            print(f"{FLGreen}PDF loaded successfully. Total pages: {document.page_count}{CRst}\n")
+            write_mode = typing.cast(
+                _BookmarkWriteMode,
+                Menu.select(
+                    [
+                        MenuOption(["R"], "Replace existing bookmarks", _BookmarkWriteMode.REPLACE),
+                        MenuOption(["A"], "Append to existing bookmarks", _BookmarkWriteMode.APPEND),
+                    ],
+                    prompt="Bookmark write mode", required=True, default_key="R", separator=False,
+                ),
+            )
+            reset_labels = Menu.select(
+                [
+                    MenuOption(["Y", "YES"], "Generate body and TOC labels", True),
+                    MenuOption(["N", "NO"], "Keep existing page labels", False),
+                ],
+                prompt="Reset page labels?", required=True, default_key="Y",
+                inline=True, separator=False,
+            )
+            _write_bookmarks(document, bookmark_objects, page_mapping, toc_pdf_page, write_mode)
+            if reset_labels:
+                if not 1 <= toc_pdf_page <= page_mapping.page_offset <= document.page_count:
+                    raise ValueError("The TOC and book page 1 must be inside the PDF to reset labels.")
+                toc_last_page = max(toc_pdf_page, page_mapping.page_offset - 1)
+                if toc_pdf_page < page_mapping.page_offset:
+                    toc_last_page = typing.cast(
+                        int,
+                        Input.input_number(
+                            "Enter the last table-of-contents PDF page",
+                            default=page_mapping.page_offset - 1,
+                            min_value=toc_pdf_page, max_value=page_mapping.page_offset - 1,
+                            allow_float=False,
+                        ),
+                    )
+                _reset_page_labels(document, page_mapping, toc_pdf_page, toc_last_page)
+                print(f"{FLGreen}Page labels reset.{CRst}")
+            Pdf.save_new(document, output_path)
+    except (OSError, ValueError, RuntimeError, pymupdf.FileDataError, FzErrorBase) as exc:
+        print(f"{FLRed}PDF update failed: {exc}{CRst}\n")
         return 1
 
-    # 固定的顶级书签不参与正文目录的父子层级计算
-    for title, pdf_page in (
-        (COVER_BOOKMARK_TITLE, DEFAULT_COVER_PDF_PAGE),
-        (TOC_BOOKMARK_TITLE, toc_pdf_page),
-    ):
-        page_index = pdf_page - 1
-        if page_index >= len(writer.pages):
-            print(f"{FLRed}[WARNING]: Page {pdf_page}, level 1 is out of range, skip: `{title}`{CRst}")
-            continue
-        writer.add_outline_item(title, page_number=page_index)
-        print(f"-> Page: {FLYellow}{pdf_page}{CRst}, Level: {FLCyan}1{CRst}, Title: `{FLGreen}{title}{CRst}`")
-
-    # 动态数组，当前每一级最后一个书签对象，用于作为子书签的 parent
-    last_at_level = {}
-
-    # 一项一项写入合并后的书签
-    for bookmarkObj in bookmark_objects:
-        #* 解析书签对象
-        parsed = parse_bookmark_line(bookmarkObj, page_mapping)
-        if not parsed:
-            print(f"{FLRed}[WARNING]: bookmark json object parsing error, skipping: {bookmarkObj}{CRst}")
-            continue
-        page_index, level, title = parsed
-
-        # 获取父书签（上一级）
-        parent = last_at_level.get(level - 1)
-
-        # 创建书签
-        # 注意 page_index 要在范围内
-        if (page_index >= len(writer.pages) or page_index < 0):
-            print(f"{FLRed}[WARNING]: Page {page_index+1}, level {level} is out of range, skip: `{title}`{CRst}")
-        else:
-            bm = writer.add_outline_item(title, page_number=page_index, parent=parent)
-            print(f"-> Page: {FLYellow}{page_index+1}{CRst}, Level: {FLCyan}{level}{CRst}, Title: `{FLGreen}{title}{CRst}`")
-            last_at_level[level] = bm # 记录该层级最近的书签
-        # endif
-    # end for lines
-
-    with open(output_path, "wb") as out_f:
-        writer.write(out_f)
-
-    print(f"{FLGreen}Bookmarked PDF saved to:{CRst} {FLBlue}{output_path}{CRst}\n")
+    print(f"{FLGreen}Updated PDF saved to:{CRst} {FLBlue}{output_path}{CRst}\n")
     return 0
 
 

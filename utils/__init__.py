@@ -28,6 +28,7 @@ from .input import Input
 from .cursor import Cursor
 from .menu_option import MenuOption
 from .menu import Menu
+from .pdf import Pdf
 
 # Export only public helpers, not package submodules such as ``utils.input``
 # that would shadow Python built-ins during ``from utils import *``.
@@ -46,5 +47,5 @@ __all__ = [
     "CEraseDisplay", "CEraseDisplayToEnd", "CEraseDisplayToStart",
     "CEraseDisplayAllScroll", "CEraseLine", "CEraseLineToEnd",
     "CEraseLineToStart", "CmdCheck", "Console", "Environment", "LinuxGui",
-    "System", "Paths", "Input", "Cursor", "MenuOption", "Menu", "RuntimeKind", "PythonEnvironment",
+    "System", "Paths", "Input", "Cursor", "MenuOption", "Menu", "RuntimeKind", "PythonEnvironment", "Pdf",
 ]

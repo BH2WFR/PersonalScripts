@@ -36,6 +36,8 @@
 >   - PDF decryption and editing-restriction removal
 >   - **PDF table-of-contents (bookmark) injector** that uses a vision LLM to read a book's table of contents and adds the resulting entries to the PDF
 >   - PDF compression using Ghostscript
+>   - **Scanned PDF binarization tool** (can further reduce file size)
+>   - **PDF page-label editor**
 >   - **Automated document screenshot tool** that extracts documents unavailable for download or stored on encrypted media by automatically turning pages and taking screenshots
 > - **Network tools**
 >   - **Interactive manual rclone synchronization tool** with reusable profile support
@@ -69,7 +71,7 @@ Most scripts support both interactive mode and command-line arguments. Run `pyth
 
     - Notable libraries used by some scripts (see [Script List](#script-list) for actual requirements; the following are examples only):
 
-      `mss` (screenshots), `Pillow`/`matplotlib`/`numpy`/`opencv-python` (image processing), `PySide6` (GUI), `pyqtgraph`/`pyvista` (data visualization), `PyMuPDF`/`pypdf` (PDF processing), `boto3` (S3 access and uploads), and `pynput` (keyboard input monitoring)
+      `mss` (screenshots), `Pillow`/`matplotlib`/`numpy`/`opencv-python` (image processing), `PySide6` (GUI), `pyqtgraph`/`pyvista` (data visualization), `PyMuPDF` (PDF processing), `boto3` (S3 access and uploads), and `pynput` (keyboard input monitoring)
 
   - **Install Python dependencies:**
 
@@ -222,9 +224,10 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 | Script | Description | Requirements |
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | **PDF compressor** based on Ghostscript:<br />Supports Ebook (standard) and Custom (custom DPI/quality) modes | `ghostscript` |
-| `tools/document-processing/pdf-binarize.py` | **Black-and-white conversion for scanned PDFs:**<br />Uses an adjustable threshold and DPI to produce losslessly compressed 1-bit PDFs, rendering pages in memory without Ghostscript or temporary page images; selected pages can remain unconverted. Can retain page sizes and bookmarks; converted pages are rasterized, without preserving searchable text or interactive features. | **Python pkgs:** `PyMuPDF`, `Pillow` (with libtiff), `pypdf`; `cryptography` for AES-encrypted input |
-| `tools/document-processing/pdf-decrypt.py` | **PDF decryption and editing-restriction removal tool:**<br />Decrypts PDF files that can be opened and read but have protected editing permissions. | **Python pkg:** `pypdf` |
-| `tools/document-processing/pdf-bookmarks-add.py` | **Table-of-contents injector for scanned PDF books:**<br />Send each table-of-contents screenshot separately to a **vision LLM such as Qwen3-VL to generate JSON in the required format** (page, level, number, and title), then paste the JSON arrays directly into the script one after another; it merges the entries in input order and writes the bookmarks to the PDF. Supports 1, 2, or 4 consecutive book pages per PDF page. | **Python pkg:** `pypdf` |
+| `tools/document-processing/pdf-binarize.py` | **Black-and-white conversion for scanned PDFs:**<br />Uses an adjustable threshold and DPI to produce losslessly compressed 1-bit PDFs, rendering pages in memory with progress bars and no temporary page images; selected pages can remain unconverted. Can retain page sizes and bookmarks; converted pages are rasterized, without preserving searchable text or interactive features. | **Python pkgs:** `PyMuPDF`, `Pillow` (with libtiff), `tqdm` |
+| `tools/document-processing/pdf-decrypt.py` | **PDF decryption and editing-restriction removal tool:**<br />Saves an unencrypted copy of a PDF while retaining its document structure, including bookmarks and attachments. Supports permission-only protection and opening passwords, including AES encryption. | **Python pkg:** `PyMuPDF` |
+| `tools/document-processing/pdf-bookmarks-add.py` | **Table-of-contents injector for scanned PDF books:**<br />Send each table-of-contents screenshot separately to a **vision LLM such as Qwen3-VL to generate JSON in the required format** (page, level, number, and title), then paste the JSON arrays directly into the script one after another; it merges the entries in input order and writes the bookmarks to the PDF. Supports 1, 2, or 4 book pages per PDF page and optional generation of body and TOC page labels after inserting bookmarks. | **Python pkg:** `PyMuPDF` |
+| `tools/document-processing/pdf-page-tag.py` | **Interactive PDF page-label editor:** Add numbered labels with custom prefixes, or clear all labels or selected page ranges while preserving bookmarks and page content. Edit repeatedly in memory, save new copies when ready, and continue editing or exit. | **Python pkg:** `PyMuPDF` |
 | `tools/document-processing/document-screenshot.py` | **Automated screenshot capture for protected documents:**<br />Automatically turns pages by simulating PgDn and mouse clicks, then captures screenshots. Designed to **automatically capture and save content from DRM-protected PDFs or PDFs stored on encrypted USB media**.<br /><br />For best results, use a high-resolution display in portrait orientation, then adjust the document viewport so it remains within the screen while using as much screen area as possible.<br />On macOS, the appropriate Screen Recording permission is also required. | **Windows/macOS/Linux X11**; Wayland is not supported<br />**Python pkgs:** `mss`, `pynput`, `Pillow` |
 
 ### Video Download

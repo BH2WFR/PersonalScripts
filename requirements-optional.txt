@@ -1,2 +1,2 @@
-# AES-encrypted PDF input (pdf-binarize.py and pypdf-based PDF tools)
-cryptography
+# No optional dependencies are currently required.
+# PDF tools use PyMuPDF's built-in encryption support, including AES.

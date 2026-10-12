@@ -1,6 +1,6 @@
 """Verify real 1-bit conversion, PDF geometry, bookmarks, and protected input.
 
-Requirements: PyMuPDF, Pillow with libtiff, pypdf; cryptography for AES tests.
+Requirements: PyMuPDF, Pillow with libtiff, tqdm.
 Run: conda run -n base python -m unittest discover -s test -p test_pdf_binarize.py
 """
 
@@ -17,8 +17,6 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw, features
 import pymupdf
-from pypdf import PdfReader, PdfWriter
-from pypdf.generic import Destination, Fit, FloatObject, NameObject, NumberObject, RectangleObject
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +29,7 @@ SPEC.loader.exec_module(app)
 
 def make_source(path: Path, *, password: str | None = None, aes: bool = False) -> None:
     """Create mixed-size scanned pages, a cropped rotated page, and bookmarks."""
-    with PdfWriter() as writer:
+    with pymupdf.open() as writer:
         for size in ((144, 72), (144, 96), (72, 144)):
             with Image.new("RGB", size, "white") as image, io.BytesIO() as buffer:
                 draw = ImageDraw.Draw(image)
@@ -40,19 +38,25 @@ def make_source(path: Path, *, password: str | None = None, aes: bool = False) -
                 draw.rectangle((72, 0, 107, 30), fill=(210, 210, 210))
                 draw.text((8, 45), "Scan test 123", fill="black")
                 image.save(buffer, format="PDF", resolution=72)
-                buffer.seek(0)
-                reader = PdfReader(buffer)
-                writer.add_page(reader.pages[0])
-        writer.pages[1].cropbox = RectangleObject((10, 5, 134, 91))
-        writer.pages[1].rotate(90)
-        writer.pages[2][NameObject("/UserUnit")] = FloatObject(2)
-        writer.add_metadata({"/Title": "Binarization test", "/Author": "Test suite"})
-        parent = writer.add_outline_item("Chapter", 0)
-        writer.add_outline_item("Nested", 1, parent=parent)
-        writer.add_outline_item("Final", 2)
-        if password is not None:
-            writer.encrypt(password, owner_password="test-owner", algorithm="AES-256" if aes else "RC4-128")
-        writer.write(path)
+                with pymupdf.open(stream=buffer.getvalue(), filetype="pdf") as reader:
+                    writer.insert_pdf(reader)
+        writer[1].set_cropbox(pymupdf.Rect(10, 5, 134, 91))
+        writer[1].set_rotation(90)
+        writer.xref_set_key(writer.page_xref(2), "UserUnit", "2")
+        writer.set_metadata({"title": "Binarization test", "author": "Test suite"})
+        writer.set_toc([[1, "Chapter", 1], [2, "Nested", 2], [1, "Final", 3]])
+        encryption = pymupdf.PDF_ENCRYPT_NONE if password is None else (
+            pymupdf.PDF_ENCRYPT_AES_256 if aes else pymupdf.PDF_ENCRYPT_RC4_128
+        )
+        writer.save(path, encryption=encryption, user_pw=password or "", owner_pw="test-owner")
+
+
+def page_image(document: pymupdf.Document, index: int) -> Image.Image:
+    """Decode the page's first embedded image independently through Pillow."""
+    xref = document[index].get_images()[0][0]
+    with io.BytesIO(document.extract_image(xref)["image"]) as buffer:
+        with Image.open(buffer) as image:
+            return image.copy()
 
 
 @unittest.skipUnless(features.check("libtiff"), "Pillow libtiff required")
@@ -81,35 +85,33 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_real_conversion_bit_depth_pixels_geometry_bookmarks_metadata(self) -> None:
         original = self.source.read_bytes()
         self.convert(dpi=144)
-        with PdfReader(self.output) as result:
+        with pymupdf.open(self.output) as result:
             self.assertFalse(result.is_encrypted)
-            self.assertEqual(len(result.pages), 3)
-            self.assertEqual(result.metadata.title, "Binarization test")
+            self.assertEqual(len(result), 3)
+            self.assertEqual(result.metadata["title"], "Binarization test")
             expected_sizes = ((144, 72), (86, 124), (144, 288))
-            for page, size in zip(result.pages, expected_sizes):
+            for page, size in zip(result, expected_sizes):
                 self.assertAlmostEqual(float(page.mediabox.width), size[0])
                 self.assertAlmostEqual(float(page.mediabox.height), size[1])
-                self.assertEqual(len(page.images), 1)
-                image_obj = next(iter(page["/Resources"]["/XObject"].values())).get_object()
-                self.assertEqual(image_obj["/BitsPerComponent"], 1)
-                self.assertEqual(image_obj["/ColorSpace"], "/DeviceGray")
-                self.assertIn("/CCITTFaxDecode", image_obj["/Filter"])
-                self.assertEqual(set(page.images[0].image.convert("L").getdata()), {0, 255})
-            pixels = result.pages[0].images[0].image.convert("L")
+                self.assertEqual(len(page.get_images()), 1)
+                image_xref = page.get_images()[0][0]
+                self.assertEqual(result.xref_get_key(image_xref, "BitsPerComponent"), ("int", "1"))
+                self.assertEqual(result.xref_get_key(image_xref, "ColorSpace"), ("name", "/DeviceGray"))
+                self.assertIn("/CCITTFaxDecode", result.xref_get_key(image_xref, "Filter")[1])
+                self.assertEqual(set(page_image(result, page.number).convert("L").tobytes()), {0, 255})
+            pixels = page_image(result, 0).convert("L")
             self.assertEqual(pixels.size, (288, 144))
             self.assertEqual([pixels.getpixel((x, 20)) for x in (20, 100, 180, 260)], [0, 0, 255, 255])
-            outline = result.outline
-            self.assertEqual(outline[0].title, "Chapter")
-            self.assertEqual(outline[1][0].title, "Nested")
-            self.assertEqual(result.get_destination_page_number(outline[1][0]), 1)
-            self.assertEqual(result.get_destination_page_number(outline[2]), 2)
+            self.assertEqual(result.get_toc(), [[1, "Chapter", 1], [2, "Nested", 2], [1, "Final", 3]])
+            for xref in result.get_outline_xrefs():
+                self.assertIn("/Fit", result.xref_get_key(xref, "Dest")[1])
         self.assertEqual(self.source.read_bytes(), original)
         self.assert_no_temporary_files()
 
     def test_threshold_changes_gray_region_without_dithering(self) -> None:
         self.convert(threshold=128)
-        with PdfReader(self.output) as result:
-            image = result.pages[0].images[0].image.convert("L")
+        with pymupdf.open(self.output) as result:
+            image = page_image(result, 0).convert("L")
             self.assertEqual(image.getpixel((50, 10)), 255)
 
     def test_permission_only_encryption_needs_no_password(self) -> None:
@@ -117,15 +119,13 @@ class PdfBinarizeTests(unittest.TestCase):
         with patch.object(app.Input, "input_password") as prompt:
             self.convert()
             prompt.assert_not_called()
-        with PdfReader(self.output) as result:
+        with pymupdf.open(self.output) as result:
             self.assertFalse(result.is_encrypted)
-            self.assertEqual(len(result.pages), 3)
-            self.assertEqual(result.outline[0].title, "Chapter")
+            self.assertEqual(len(result), 3)
+            self.assertEqual(result.get_toc()[0][1], "Chapter")
         self.assert_no_temporary_files()
 
     def test_password_retry_and_aes(self) -> None:
-        if importlib.util.find_spec("cryptography") is None:
-            self.skipTest("cryptography required for AES")
         make_source(self.source, password="test-open", aes=True)
         with patch.object(app.Input, "input_password", side_effect=["wrong", "test-open"]) as prompt:
             self.convert()
@@ -190,29 +190,26 @@ class PdfBinarizeTests(unittest.TestCase):
                 self.assertEqual(exc.exception.code, 2)
 
     def test_missing_bookmark_title_retains_hierarchy(self) -> None:
-        heading = Destination("removed", NumberObject(0), Fit.fit())
-        heading.pop(NameObject("/Title"))
-        child = Destination("Child", NumberObject(1), Fit.fit())
-        with PdfReader(self.source) as reader, PdfWriter() as writer:
-            writer.append(reader, import_outline=False)
-            app._copy_bookmarks(reader, writer, [heading, [child]])
-            writer.write(self.output)
-        with PdfReader(self.output) as result:
-            self.assertEqual(result.outline[0].title, app.UNTITLED_BOOKMARK)
-            self.assertEqual(result.outline[1][0].title, "Child")
+        with pymupdf.open(self.source) as document:
+            document.xref_set_key(document.get_outline_xrefs()[0], "Title", "null")
+            app._reset_bookmark_positions(document)
+            document.save(self.output)
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(result.get_toc()[0][1], app.UNTITLED_BOOKMARK)
+            self.assertEqual(result.get_toc()[1], [2, "Nested", 2])
 
     def test_parallel_and_serial_outputs_match(self) -> None:
         self.convert(workers=1)
         serial_path = self.output
         self.output = self.folder / "parallel.pdf"
         self.convert(workers=3)
-        with PdfReader(serial_path) as serial, PdfReader(self.output) as parallel:
-            self.assertEqual(len(serial.pages), len(parallel.pages))
-            for before, after in zip(serial.pages, parallel.pages):
+        with pymupdf.open(serial_path) as serial, pymupdf.open(self.output) as parallel:
+            self.assertEqual(len(serial), len(parallel))
+            for index, (before, after) in enumerate(zip(serial, parallel)):
                 self.assertEqual(before.mediabox, after.mediabox)
-                self.assertEqual(before.images[0].image.tobytes(), after.images[0].image.tobytes())
-            self.assertEqual(parallel.outline[0].title, "Chapter")
-            self.assertEqual(parallel.get_destination_page_number(parallel.outline[1][0]), 1)
+                self.assertEqual(page_image(serial, index).tobytes(), page_image(parallel, index).tobytes())
+            self.assertEqual(parallel.get_toc()[0][1], "Chapter")
+            self.assertEqual(parallel.get_toc()[1], [2, "Nested", 2])
 
     def test_parallel_completion_order_does_not_change_page_order(self) -> None:
         second_finished = threading.Event()
@@ -283,7 +280,7 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(list(folders[0].iterdir()), [])
             return real_render(document, index, dpi)
 
-        def write(writer: PdfWriter, destination: Path) -> None:
+        def write(writer: pymupdf.Document, destination: Path) -> None:
             self.assertEqual(list(destination.parent.iterdir()), [])
             real_write(writer, destination)
             self.assertEqual(list(destination.parent.iterdir()), [destination])
@@ -304,21 +301,22 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_write_progress_reports_activity_and_stops_on_failure(self) -> None:
         output = io.StringIO()
 
-        def slow_write(path: Path) -> None:
+        def slow_write(document: pymupdf.Document, path: Path) -> None:
             path.write_bytes(b"partially written PDF")
             time.sleep(0.06)
             raise OSError("write failed")
 
-        with PdfWriter() as writer:
+        with pymupdf.open() as writer:
             with (
-                patch.object(writer, "write", side_effect=slow_write),
+                patch.object(app.Pdf, "save_new", side_effect=slow_write),
                 patch.object(app, "PROGRESS_INTERVAL_SECONDS", 0.01),
                 contextlib.redirect_stdout(output),
                 self.assertRaisesRegex(OSError, "write failed"),
             ):
                 app._write_pdf_with_progress(writer, self.folder / "incomplete.pdf")
         self.assertIn("elapsed", output.getvalue())
-        self.assertIn("written...", output.getvalue())
+        self.assertIn("written", output.getvalue())
+        self.assertNotIn("100%", output.getvalue())
         self.assertNotIn("Final PDF written in", output.getvalue())
         self.assertFalse(any(thread.name == "pdf-write-progress" for thread in threading.enumerate()))
 
@@ -326,50 +324,50 @@ class PdfBinarizeTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             app._binarize_pdf(self.source, self.output, 72, 180, 2)
-        for message in ("Copying document metadata and bookmarks", "Writing final PDF",
-                        "Output copy:", "100%", "Cleaning up temporary files"):
+        for message in ("Processing pages", "Copying document metadata and bookmarks", "Writing final PDF",
+                        "Copying output:", "100%", "Cleaning up temporary files"):
             self.assertIn(message, output.getvalue())
 
     def test_skipped_pages_keep_original_content_and_order(self) -> None:
         self.convert(skip_pages="1,-1")
-        with PdfReader(self.source) as source, PdfReader(self.output) as result:
-            self.assertEqual(len(result.pages), 3)
+        with pymupdf.open(self.source) as source, pymupdf.open(self.output) as result:
+            self.assertEqual(len(result), 3)
             for index in (0, 2):
-                self.assertEqual(result.pages[index].images[0].image.tobytes(), source.pages[index].images[0].image.tobytes())
-                self.assertEqual(result.pages[index].get_contents().get_data(), source.pages[index].get_contents().get_data())
-                self.assertEqual(result.pages[index].cropbox, source.pages[index].cropbox)
-                self.assertEqual(result.pages[index].rotation, source.pages[index].rotation)
-                self.assertEqual(result.pages[index].user_unit, source.pages[index].user_unit)
-            self.assertEqual(result.pages[1].images[0].image.mode, "1")
-            self.assertAlmostEqual(float(result.pages[1].mediabox.width), 86)
-            self.assertAlmostEqual(float(result.pages[1].mediabox.height), 124)
-            self.assertEqual(result.get_destination_page_number(result.outline[1][0]), 1)
+                self.assertEqual(page_image(result, index).tobytes(), page_image(source, index).tobytes())
+                self.assertEqual(result[index].read_contents(), source[index].read_contents())
+                self.assertEqual(result[index].cropbox, source[index].cropbox)
+                self.assertEqual(result[index].rotation, source[index].rotation)
+                self.assertEqual(result[index].rect, source[index].rect)
+            self.assertEqual(result[1].get_images()[0][4], 1)
+            self.assertAlmostEqual(result[1].mediabox.width, 86)
+            self.assertAlmostEqual(result[1].mediabox.height, 124)
+            self.assertEqual(result.get_toc()[1], [2, "Nested", 2])
 
     def test_noncontiguous_rendered_pages_map_back_correctly(self) -> None:
         self.convert(skip_pages="2")
-        with PdfReader(self.source) as source, PdfReader(self.output) as result:
-            self.assertEqual(result.pages[0].images[0].image.mode, "1")
-            self.assertEqual(result.pages[2].images[0].image.mode, "1")
-            self.assertEqual(result.pages[1].images[0].image.tobytes(), source.pages[1].images[0].image.tobytes())
-            self.assertEqual(result.pages[1].rotation, 90)
-            self.assertEqual(result.pages[1].cropbox, source.pages[1].cropbox)
-            self.assertAlmostEqual(float(result.pages[2].mediabox.width), 144)
-            self.assertAlmostEqual(float(result.pages[2].mediabox.height), 288)
+        with pymupdf.open(self.source) as source, pymupdf.open(self.output) as result:
+            self.assertEqual(result[0].get_images()[0][4], 1)
+            self.assertEqual(result[2].get_images()[0][4], 1)
+            self.assertEqual(page_image(result, 1).tobytes(), page_image(source, 1).tobytes())
+            self.assertEqual(result[1].rotation, 90)
+            self.assertEqual(result[1].cropbox, source[1].cropbox)
+            self.assertAlmostEqual(result[2].mediabox.width, 144)
+            self.assertAlmostEqual(result[2].mediabox.height, 288)
 
     def test_real_thousand_page_document_skipping_first_two_pages(self) -> None:
-        with PdfWriter() as writer:
+        with pymupdf.open() as writer:
             for _ in range(1045):
-                writer.add_blank_page(width=8, height=8)
-            writer.write(self.source)
+                writer.new_page(width=8, height=8)
+            writer.save(self.source)
         with patch.object(app, "_render_page", wraps=app._render_page) as render:
             self.convert(dpi=36, skip_pages="1,2")
         self.assertEqual(render.call_count, 1043)
         self.assertEqual([call.args[1] for call in render.call_args_list], list(range(2, 1045)))
-        with PdfReader(self.output) as result:
-            self.assertEqual(len(result.pages), 1045)
-            self.assertEqual(len(result.pages[0].images), 0)
-            self.assertEqual(len(result.pages[1].images), 0)
-            self.assertTrue(all(page.images[0].image.mode == "1" for page in result.pages[2:]))
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(len(result), 1045)
+            self.assertEqual(len(result[0].get_images()), 0)
+            self.assertEqual(len(result[1].get_images()), 0)
+            self.assertTrue(all(result[index].get_images()[0][4] == 1 for index in range(2, len(result))))
         self.assert_no_temporary_files()
 
     def test_only_selected_pages_are_rendered_in_order(self) -> None:
@@ -377,12 +375,12 @@ class PdfBinarizeTests(unittest.TestCase):
             self.convert(skip_pages="2")
         self.assertEqual(render.call_count, 2)
         self.assertEqual([call.args[1] for call in render.call_args_list], [0, 2])
-        with PdfReader(self.source) as source, PdfReader(self.output) as result:
-            self.assertEqual(len(result.pages), 3)
-            self.assertEqual(result.pages[0].images[0].image.size, (144, 72))
-            self.assertEqual(result.pages[2].images[0].image.size, (144, 288))
-            self.assertEqual(result.pages[1].images[0].data, source.pages[1].images[0].data)
-            self.assertEqual(result.get_destination_page_number(result.outline[1][0]), 1)
+        with pymupdf.open(self.source) as source, pymupdf.open(self.output) as result:
+            self.assertEqual(len(result), 3)
+            self.assertEqual(page_image(result, 0).size, (144, 72))
+            self.assertEqual(page_image(result, 2).size, (144, 288))
+            self.assertEqual(page_image(result, 1).tobytes(), page_image(source, 1).tobytes())
+            self.assertEqual(result.get_toc()[1], [2, "Nested", 2])
         self.assert_no_temporary_files()
 
     def test_later_render_failure_closes_earlier_images(self) -> None:
@@ -416,17 +414,17 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_all_skipped_does_not_render_or_encode(self) -> None:
         make_source(self.source, password="")
         with (
-            patch.object(app.pymupdf, "open") as render,
+            patch.object(app, "_render_page") as render,
             patch.object(app, "_encode_page") as encode,
             patch.object(app.features, "check", return_value=False),
         ):
             self.convert(skip_pages="1-3")
         render.assert_not_called()
         encode.assert_not_called()
-        with PdfReader(self.output) as result:
+        with pymupdf.open(self.output) as result:
             self.assertFalse(result.is_encrypted)
-            self.assertEqual(len(result.pages), 3)
-            self.assertEqual(result.pages[0].images[0].image.mode, "RGB")
+            self.assertEqual(len(result), 3)
+            self.assertEqual(page_image(result, 0).mode, "RGB")
         self.assert_no_temporary_files()
 
     def test_bad_skip_selection_fails_before_rendering(self) -> None:
@@ -442,8 +440,8 @@ class PdfBinarizeTests(unittest.TestCase):
         with patch("builtins.input", side_effect=["4", ""]) as prompt:
             self.convert(skip_pages=None)
         self.assertEqual(prompt.call_count, 2)
-        with PdfReader(self.output) as result:
-            self.assertTrue(all(page.images[0].image.mode == "1" for page in result.pages))
+        with pymupdf.open(self.output) as result:
+            self.assertTrue(all(page.get_images()[0][4] == 1 for page in result))
 
     def test_cli_skip_selection_is_passed_to_converter(self) -> None:
         self.output.write_bytes(b"test output")
@@ -457,6 +455,55 @@ class PdfBinarizeTests(unittest.TestCase):
             ):
                 self.assertEqual(app.main(), 0)
                 self.assertEqual(convert.call_args.args[-1], selection)
+
+    def test_skipped_links_forms_custom_metadata_and_rendered_pixels(self) -> None:
+        enriched = self.folder / "enriched.pdf"
+        with pymupdf.open(self.source) as document:
+            for index, target in ((0, 2), (2, 0)):
+                document[index].insert_link({"kind": pymupdf.LINK_GOTO, "from": pymupdf.Rect(0, 0, 20, 20),
+                                             "page": target, "to": pymupdf.Point(0, 0)})
+            for index in (0, 1):
+                widget = pymupdf.Widget()
+                widget.field_name = f"field-{index}"
+                widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
+                widget.field_value = "value"
+                widget.rect = pymupdf.Rect(10, 10, 40, 20)
+                document[index].add_widget(widget)
+            info = int(document.xref_get_key(-1, "Info")[1].split()[0])
+            document.xref_set_key(info, "CustomField", "(retained)")
+            document.set_xml_metadata("<metadata>retained</metadata>")
+            document.save(enriched)
+        self.source = enriched
+        self.convert(skip_pages="1,3", dpi=144)
+        with pymupdf.open(self.source) as original, pymupdf.open(self.output) as result:
+            self.assertEqual(result[0].get_links()[0]["page"], 2)
+            self.assertEqual(result[2].get_links()[0]["page"], 0)
+            self.assertEqual(next(result[0].widgets()).field_value, "value")
+            self.assertEqual(list(result[1].widgets()), [])
+            self.assertEqual(result.is_form_pdf, 1)
+            info = int(result.xref_get_key(-1, "Info")[1].split()[0])
+            self.assertEqual(result.xref_get_key(info, "CustomField"), ("string", "retained"))
+            self.assertEqual(result.get_xml_metadata(), "<metadata>retained</metadata>")
+            before = original[1].get_pixmap(dpi=144, colorspace=pymupdf.csGRAY, alpha=False)
+            after = result[1].get_pixmap(dpi=144, colorspace=pymupdf.csGRAY, alpha=False)
+            self.assertEqual((after.width, after.height), (before.width, before.height))
+            self.assertEqual(after.samples, bytes(0 if value < 180 else 255 for value in before.samples))
+
+    def test_converted_pages_remove_original_text_and_image_resources(self) -> None:
+        with pymupdf.open(self.source) as document:
+            document[0].insert_text((10, 65), "Searchable source text")
+            self.source = self.folder / "searchable.pdf"
+            document.save(self.source)
+        with pymupdf.open(self.source) as document:
+            self.assertIn("Searchable source text", document[0].get_text())
+        self.convert()
+        with pymupdf.open(self.output) as result:
+            for page in result:
+                self.assertEqual(page.get_text(), "")
+            image_depths = [result.xref_get_key(xref, "BitsPerComponent")[1]
+                            for xref in range(1, result.xref_length())
+                            if result.xref_get_key(xref, "Subtype") == ("name", "/Image")]
+            self.assertEqual(image_depths, ["1", "1", "1"])
 
 
 if __name__ == "__main__":

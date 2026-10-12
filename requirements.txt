@@ -8,5 +8,5 @@ mss
 Pillow
 PyMuPDF
 pynput
-pypdf
 PySide6
+tqdm
