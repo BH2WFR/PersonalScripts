@@ -1,13 +1,58 @@
-"""Shared PDF authentication and output helpers; PyMuPDF is imported lazily."""
+"""Shared PDF authentication and ordinary-PDF output; PyMuPDF is imported lazily."""
 
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, Sequence
+from xml.dom import minidom
+from xml.parsers.expat import ExpatError
 
 from .ansi import FLRed, CRst
 from .input import Input
 
 if TYPE_CHECKING:
     import pymupdf
+
+
+_PDFA_NAMESPACES: tuple[str, ...] = (
+    "http://www.aiim.org/pdfa/ns/id/",
+    "http://www.aiim.org/pdfa/ns/id",  # Original PDF/A-1 specification typo.
+)
+
+
+def _remove_pdfa_identification(document: "pymupdf.Document") -> None:
+    """Remove PDF/A XMP properties in memory, preserving unrelated metadata.
+
+    Args:
+        document: Open, authenticated PDF to update before saving.
+
+    Raises:
+        ValueError: XMP mentioning PDF/A cannot be parsed safely.
+
+    Handles element and attribute properties regardless of namespace prefix.
+    Does not alter pages, other XMP schemas, or files on disk.
+    """
+    xml = document.get_xml_metadata()
+    if not any(namespace in xml for namespace in _PDFA_NAMESPACES):
+        return
+    try:
+        metadata = minidom.parseString(xml)
+    except ExpatError as exc:
+        raise ValueError("Cannot remove PDF/A identification: malformed XMP metadata.") from exc
+
+    with metadata:
+        changed = False
+        for element in list(metadata.getElementsByTagName("*")):
+            if element.namespaceURI in _PDFA_NAMESPACES:
+                if element.parentNode is not None:
+                    element.parentNode.removeChild(element)
+                    changed = True
+                continue
+            for attribute in list(element.attributes.values()):
+                if attribute.namespaceURI in _PDFA_NAMESPACES:
+                    element.removeAttributeNode(attribute)
+                    changed = True
+        if changed:
+            # DOM keeps existing prefixes, including those used in QName values.
+            document.set_xml_metadata(metadata.toxml())
 
 
 class _OutputStream:
@@ -134,7 +179,7 @@ class Pdf:
 
     @staticmethod
     def save_new(document: "pymupdf.Document", output_path: str | Path, *, compact: bool = True) -> None:
-        """Save an unencrypted PDF without overwriting an existing file.
+        """Save an unencrypted, non-PDF/A copy without overwriting existing files.
 
         Args:
             document: Open, authenticated PDF to save.
@@ -146,16 +191,19 @@ class Pdf:
         Raises:
             FileExistsError: The destination exists, including the input file.
             OSError: Opening or writing the destination fails.
-            ValueError: PyMuPDF cannot save the document.
+            ValueError: PyMuPDF cannot save the document, or PDF/A XMP is malformed.
 
         Writes the PDF and removes only this call's new output on failure or
         interruption. Discards unreferenced objects, including replaced images.
+        Removes PDF/A identification from the in-memory XMP before saving;
+        retains other metadata and does not modify the source file.
         """
         from pymupdf.mupdf import PDF_ENCRYPT_NONE
 
         path = Path(output_path)
         with path.open("xb") as destination:
             try:
+                _remove_pdfa_identification(document)
                 document.save(_OutputStream(destination), garbage=3 if compact else 1, deflate=True,
                               encryption=PDF_ENCRYPT_NONE)
             except BaseException:

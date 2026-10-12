@@ -12,6 +12,7 @@ Clearing means blank navigation labels, not deleting printed page content.
 Edits stay in memory until Save or Save and exit. Every save prompts for a new
 output path (default: <input>_tagged.pdf), avoids overwriting existing files,
 and writes an unencrypted copy retaining bookmarks, page content and metadata.
+PDF/A identification is automatically removed while other metadata is retained.
 Save returns to the menu. Exit without saving discards edits since the last
 save; previously saved copies remain. No temporary PDF or page files are used.
 
@@ -154,6 +155,7 @@ def main() -> int:
   Clear selected accepts 1,2-3,-1; empty input cancels. Clearing makes labels blank.
   Content and bookmarks are retained. Each save writes an unencrypted new copy
   with collision avoidance; default filename is <input>_tagged.pdf.
+  Automatically removes PDF/A identification while retaining other metadata.
   Save returns to the menu. Exit without saving discards only pending edits.
   Existing copies remain; no temporary PDF or page files are created.
 

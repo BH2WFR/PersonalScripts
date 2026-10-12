@@ -13,11 +13,13 @@ import tempfile
 from types import ModuleType
 import unittest
 from unittest.mock import patch
+from xml.dom import minidom
 
 import pymupdf
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_XML = '<metadata>retained XML</metadata>'
 sys.path.insert(0, str(ROOT))
 from utils import *  # noqa: E402
 
@@ -48,7 +50,7 @@ class PdfToolsTests(unittest.TestCase):
         self.output = self.folder / "output.pdf"
         self.make_source()
 
-    def make_source(self, password: str | None = None) -> None:
+    def make_source(self, password: str | None = None, xml_metadata: str = DEFAULT_XML) -> None:
         """Create a document with outlines, links, fields, metadata and an attachment."""
         with pymupdf.open() as document:
             for _ in range(4):
@@ -66,7 +68,7 @@ class PdfToolsTests(unittest.TestCase):
             document.set_page_labels([{"startpage": 0, "prefix": "Old-", "style": "D", "firstpagenum": 5}])
             info = int(document.xref_get_key(-1, "Info")[1].split()[0])
             document.xref_set_key(info, "CustomField", pymupdf.get_pdf_str("custom value"))
-            document.set_xml_metadata('<metadata>retained XML</metadata>')
+            document.set_xml_metadata(xml_metadata)
             document.embfile_add("sample.txt", b"attachment content")
             document.set_toc([[1, "Original", 1], [2, "Nested", 2], [1, "Website", -1]])
             xrefs = document.get_outline_xrefs()
@@ -81,14 +83,14 @@ class PdfToolsTests(unittest.TestCase):
             encryption = pymupdf.PDF_ENCRYPT_NONE if password is None else pymupdf.PDF_ENCRYPT_AES_256
             document.save(self.source, encryption=encryption, owner_pw="owner", user_pw=password or "")
 
-    def assert_structure(self, result: pymupdf.Document) -> None:
+    def assert_structure(self, result: pymupdf.Document, xml_metadata: str = DEFAULT_XML) -> None:
         """Check document objects that a page-only reconstruction would discard."""
         self.assertEqual(result.page_count, 4)
         self.assertIn("Retained text", result[0].get_text())
         self.assertEqual(result.metadata["title"], "Original title")
         info = int(result.xref_get_key(-1, "Info")[1].split()[0])
         self.assertEqual(result.xref_get_key(info, "CustomField"), ("string", "custom value"))
-        self.assertEqual(result.get_xml_metadata(), '<metadata>retained XML</metadata>')
+        self.assertEqual(result.get_xml_metadata(), xml_metadata)
         self.assertEqual(result.embfile_get("sample.txt"), b"attachment content")
         self.assertEqual(result[0].get_links()[0]["page"], 3)
         self.assertEqual(next(result[0].widgets()).field_value, "retained value")
@@ -128,6 +130,74 @@ class PdfToolsTests(unittest.TestCase):
         self.make_source("secret")
         self.assertEqual(self.run_decrypt([""]), 1)
         self.assertFalse(self.output.exists())
+
+    def test_decrypt_removes_pdfa_without_changing_content_or_other_metadata(self) -> None:
+        namespace = "http://www.aiim.org/pdfa/ns/id/"
+        cases = (
+            (namespace, '', '<a:part>1</a:part><a:conformance>B</a:conformance>', None),
+            (namespace, 'a:part="2" a:conformance="U"', '', "secret"),
+            (namespace, 'a:part="3"', '<a:conformance>A</a:conformance>', ""),
+            (namespace, '', f'<part xmlns="{namespace}">4</part><a:rev>2020</a:rev>', None),
+            (namespace.rstrip("/"), 'a:part="1" a:conformance="B"', '', None),
+        )
+        for index, (uri, attributes, elements, password) in enumerate(cases):
+            with self.subTest(index=index):
+                xml = f'''<?xpacket begin="" id="sample"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:a="{uri}"
+        xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:custom="urn:custom"
+        custom:kind="custom:Book" {attributes}>
+      {elements}
+      <dc:title><rdf:Alt><rdf:li xml:lang="x-default">标题 &amp; title</rdf:li></rdf:Alt></dc:title>
+      <custom:note>Keep PDF/A in ordinary text.</custom:note>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta><?xpacket end="w"?>'''
+                self.make_source(password, xml)
+                original = self.source.read_bytes()
+                self.output = self.folder / f"ordinary-{index}.pdf"
+                with pymupdf.open(self.source) as source:
+                    if password:
+                        source.authenticate(password)
+                    pixels = [page.get_pixmap().samples for page in source]
+                    labels = Pdf.read_page_labels(source)
+                    toc = source.get_toc()
+                self.assertEqual(self.run_decrypt([password] if password else []), 0)
+                with pymupdf.open(self.output) as result:
+                    self.assertFalse(result.is_encrypted)
+                    cleaned = result.get_xml_metadata()
+                    self.assert_structure(result, cleaned)
+                    self.assertEqual(result.get_toc(), toc)
+                    self.assertEqual(Pdf.read_page_labels(result), labels)
+                    self.assertEqual([page.get_pixmap().samples for page in result], pixels)
+                    with minidom.parseString(cleaned) as metadata:
+                        self.assertFalse(metadata.getElementsByTagNameNS(uri, "*"))
+                        for element in metadata.getElementsByTagName("*"):
+                            self.assertFalse(any(attr.namespaceURI == uri for attr in element.attributes.values()))
+                        item = metadata.getElementsByTagName("rdf:li")[0]
+                        self.assertEqual(item.getAttribute("xml:lang"), "x-default")
+                        assert item.firstChild is not None
+                        self.assertEqual(item.firstChild.nodeValue, "标题 & title")
+                        description = metadata.getElementsByTagName("rdf:Description")[0]
+                        self.assertEqual(description.getAttribute("custom:kind"), "custom:Book")
+                        self.assertEqual(description.getAttribute("xmlns:custom"), "urn:custom")
+                        self.assertIn("Keep PDF/A in ordinary text.", cleaned)
+                self.assertEqual(self.source.read_bytes(), original)
+
+    def test_save_without_xmp_does_not_add_metadata(self) -> None:
+        with pymupdf.open() as document:
+            document.new_page()
+            Pdf.save_new(document, self.output)
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(result.get_xml_metadata(), "")
+
+    def test_malformed_pdfa_xmp_fails_without_partial_output(self) -> None:
+        self.make_source(xml_metadata='<broken xmlns:a="http://www.aiim.org/pdfa/ns/id/">')
+        original = self.source.read_bytes()
+        self.assertEqual(self.run_decrypt([]), 1)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(self.source.read_bytes(), original)
 
     def test_existing_output_and_input_are_protected(self) -> None:
         self.output.write_bytes(b"existing content")
@@ -395,6 +465,50 @@ class PdfToolsTests(unittest.TestCase):
             self.assertEqual(mapping.pdf_index(-1), 1 if count == 1 else 2)
             for value in ("", "null", "[]", '""'):
                 self.assertEqual(bookmarks._parse_bookmark_page(value, mapping), [])
+
+    def test_first_book_page_prompt_default_and_validation(self) -> None:
+        for replies, expected in ((["1", "17", "20"], 20), (["1", "17", ""], 1),
+                                  (["1", "17", "0", "20"], 20)):
+            output = io.StringIO()
+            with self.subTest(replies=replies), patch("builtins.input", side_effect=replies) as prompt:
+                with contextlib.redirect_stdout(output):
+                    mapping = bookmarks._select_page_mapping()
+            self.assertEqual(mapping.page_offset, 17)
+            self.assertEqual(mapping.first_book_page, expected)
+            self.assertEqual(mapping.pdf_index(expected), 16)
+            self.assertIn(f"{expected}", output.getvalue())
+            self.assertIn("PDF page containing the first book page", prompt.call_args_list[1].args[0])
+            self.assertIn("page number of the first book page", prompt.call_args_list[2].args[0])
+
+    def test_pdf_page_17_matches_book_page_20_in_bookmarks_and_labels(self) -> None:
+        mapping = bookmarks._PageMapping(17, bookmarks._BookPagesPerPdf.SINGLE,
+                                         bookmarks._FirstPdfPageCount.ONE, first_book_page=20)
+        with pymupdf.open() as document, contextlib.redirect_stdout(io.StringIO()):
+            for _ in range(22):
+                document.new_page()
+            entries = [{"page": page, "level": 1, "title": f"Book {page}"} for page in (19, 20, 21)]
+            bookmarks._write_bookmarks(document, entries, mapping, 1, bookmarks._BookmarkWriteMode.REPLACE)
+            bookmarks._reset_page_labels(document, mapping, 1, 16)
+            Pdf.save_new(document, self.output)
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(result.get_toc()[-3:], [[1, "Book 19", 16], [1, "Book 20", 17], [1, "Book 21", 18]])
+            self.assertEqual(Pdf.read_page_labels(result)[15:], ["C16", "20", "21", "22", "23", "24", "25"])
+
+    def test_custom_first_book_page_multi_up_labels_and_inverse_mapping(self) -> None:
+        for count, first_count, expected in (
+            (2, 1, ["20", "21-22"]), (2, 2, ["20-21", "22-23"]),
+            (4, 1, ["20", "21-24"]), (4, 2, ["20-21", "22-25"]),
+            (4, 3, ["20-22", "23-26"]), (4, 4, ["20-23", "24-27"]),
+        ):
+            mapping = bookmarks._PageMapping(3, bookmarks._BookPagesPerPdf(count),
+                                             bookmarks._FirstPdfPageCount(first_count), first_book_page=20)
+            with self.subTest(count=count, first_count=first_count), pymupdf.open(self.source) as document:
+                bookmarks._reset_page_labels(document, mapping, 2, 2)
+                self.assertEqual(Pdf.read_page_labels(document), ["Old-5", "C1", *expected])
+                for index in range(-20, 10):
+                    for book_page in mapping.book_pages(index):
+                        self.assertNotEqual(book_page, 0)
+                        self.assertEqual(mapping.pdf_index(book_page), index)
 
 
 if __name__ == "__main__":

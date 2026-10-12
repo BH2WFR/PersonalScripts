@@ -24,6 +24,7 @@ PyMuPDF renders visible pages in memory; Pillow/NumPy apply the selected method
 without dithering and write lossless CCITT Group 4 images. PyMuPDF assembles the
 pages, retaining displayed page sizes, document metadata, and bookmark titles,
 hierarchy, and target pages. Bookmark coordinates reset to fit the target page.
+PDF/A identification is automatically removed from the output metadata.
 Converted pages do not retain searchable text or interactive features. Selected
 pages can be skipped: their original page content is copied without rendering
 or binarization, in its original position. Skip selections use physical PDF page
@@ -620,6 +621,7 @@ def main() -> int:
         "Levels/sharpening default to off; upscaling defaults to 1x.\n"
         "Menu: export/open a single-page preview, change settings, convert all, or quit.\n"
         "Retains displayed page sizes, metadata, and bookmark titles/hierarchy/page targets.\n"
+        "Automatically removes PDF/A identification while retaining other metadata.\n"
         "Bookmark positions reset to fit-page. Converted pages lose searchable text and interactivity.\n"
         "Skipped pages are copied with their original contents and page order.\n"
         "Protected PDFs prompt for an opening password when needed.\n"

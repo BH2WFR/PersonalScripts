@@ -3,6 +3,7 @@
 
 Permission-only protection opens automatically; opening passwords are requested
 privately. Retains pages, bookmarks, named destinations, metadata and attachments.
+Automatically removes PDF/A identification while retaining other metadata.
 Existing output files are never overwritten. Requires PyMuPDF (including AES).
 
 Usage:
@@ -45,7 +46,8 @@ Usage:
 {FLYellow}Description:{CRst}
   Decrypt password-protected PDFs (including permission-only protection).
   Clones the full document structure (pages, bookmarks, named destinations)
-  and outputs a completely decrypted PDF.
+  and outputs a completely decrypted PDF. Automatically removes PDF/A
+  identification while preserving other metadata; no extra prompt is required.
 
 {FLYellow}Requirements:{CRst}
   Python: {FGray}pip install PyMuPDF{CRst}

@@ -8,16 +8,19 @@ input automatically, retaining that first line. End the paste with EOF as usual.
 Blank input, empty JSON strings/arrays, and null return to the action menu
 without discarding earlier entries. Finishing with no entries writes no PDF.
 Both write modes add root-level Cover and Table of Contents bookmarks.
+Set the PDF page containing the first book page, then its printed page number
+(default 1). For example, PDF page 17 can correspond to book page 20.
 Before saving, choose whether to reset page labels from the book-page mapping
 (Y by default); N preserves the existing labels.
 Reset labels use C1, C2, ... for the chosen TOC PDF-page range. Body pages use
 book numbers (or ranges for 2/4-up layouts). Other front-matter labels remain
 unchanged. Without existing label rules, they retain physical page numbering.
-The first body page shows only its positive book pages. TOC labels take priority
+The first body page shows only book pages at or after the chosen starting number. TOC labels take priority
 if the TOC and body begin on the same PDF page. Printed page content is unchanged.
 For standalone label editing or clearing, use pdf-page-tag.py.
 PyMuPDF edits the document in memory and saves an unencrypted new file, retaining
 document metadata and attachments. Passwords are prompted without echo.
+PDF/A identification is automatically removed from the output metadata.
 
 Requirements:
     - pip: PyMuPDF
@@ -87,6 +90,7 @@ WARNING: Vision models can omit entries, attach the wrong page number, or mix co
 
 #* 全局变量
 DEFAULT_PAGE_OFFSET = 10
+DEFAULT_FIRST_BOOK_PAGE = 1
 DEFAULT_COVER_PDF_PAGE = 1
 COVER_BOOKMARK_TITLE = "Cover"
 TOC_BOOKMARK_TITLE = "Table of Contents"
@@ -109,27 +113,32 @@ class _PageMapping:
     """Map logical book pages to zero-based PDF page indexes.
 
     Attributes:
-        page_offset: One-based PDF page containing logical book page 1.
+        page_offset: One-based PDF page containing the first book page.
         pages_per_pdf: Fixed number of physical book-page positions per PDF page.
-        first_pdf_page_count: Positive book pages beginning at page 1 that share
+        first_pdf_page_count: Book pages beginning at first_book_page that share
             the anchor PDF page.
+        first_book_page: Positive printed number of the first book page; defaults
+            to 1. Earlier positive book numbers still map backwards from it.
     """
 
     page_offset: int
     pages_per_pdf: _BookPagesPerPdf
     first_pdf_page_count: _FirstPdfPageCount
+    first_book_page: int = DEFAULT_FIRST_BOOK_PAGE
 
     def pdf_index(self, logical_page: int) -> int:
         """Return the zero-based PDF index containing a logical book page.
 
         Args:
             logical_page: Non-zero printed or inferred book page number. Negative
-                values count physical positions immediately preceding page 1.
+                values count physical positions immediately preceding book page 1,
+                independent of the selected first_book_page anchor.
 
         Returns:
             Zero-based index of the PDF page containing ``logical_page``.
         """
         sequence_index = logical_page - 1 if logical_page > 0 else logical_page
+        sequence_index -= self.first_book_page - 1
         leading_positions = int(self.pages_per_pdf) - int(self.first_pdf_page_count)
         return (
             self.page_offset
@@ -148,7 +157,11 @@ class _PageMapping:
             negative front-matter positions and positive body pages.
         """
         count = int(self.pages_per_pdf)
-        first = (pdf_index - self.page_offset + 1) * count - (count - int(self.first_pdf_page_count))
+        first = (
+            (pdf_index - self.page_offset + 1) * count
+            - (count - int(self.first_pdf_page_count))
+            + self.first_book_page - 1
+        )
         return tuple(position + 1 if position >= 0 else position for position in range(first, first + count))
 
 
@@ -330,9 +343,9 @@ def _select_page_mapping() -> _PageMapping:
             if count.value > pages_per_pdf.value:
                 break
             description = (
-                "Book page 1 only; remaining positions are blank or precede page 1"
+                "First book page only; remaining positions are blank or precede it"
                 if count is _FirstPdfPageCount.ONE
-                else f"Book pages 1-{count.value}"
+                else f"First {count.value} book pages"
             )
             count_options.append(MenuOption([str(count.value)], description, count))
 
@@ -340,7 +353,7 @@ def _select_page_mapping() -> _PageMapping:
             _FirstPdfPageCount,
             Menu.select(
                 count_options,
-                prompt="Book pages starting at 1 in its first PDF page",
+                prompt="Book pages starting with the first book page in its PDF page",
                 default_key="1",
                 separator=False,
             ),
@@ -349,8 +362,17 @@ def _select_page_mapping() -> _PageMapping:
     page_offset = typing.cast(
         int,
         Input.input_number(
-            "Enter the PDF page containing book page 1",
+            "Enter the PDF page containing the first book page",
             default=DEFAULT_PAGE_OFFSET,
+            min_value=1,
+            allow_float=False,
+        ),
+    )
+    first_book_page = typing.cast(
+        int,
+        Input.input_number(
+            "Enter the page number of the first book page",
+            default=DEFAULT_FIRST_BOOK_PAGE,
             min_value=1,
             allow_float=False,
         ),
@@ -359,10 +381,11 @@ def _select_page_mapping() -> _PageMapping:
         page_offset=page_offset,
         pages_per_pdf=pages_per_pdf,
         first_pdf_page_count=first_pdf_page_count,
+        first_book_page=first_book_page,
     )
 
     print(f"\n{FLCyan}Page mapping preview:{CRst}")
-    for logical_page in range(1, int(pages_per_pdf) + 2):
+    for logical_page in range(first_book_page, first_book_page + int(pages_per_pdf) + 1):
         pdf_page = page_mapping.pdf_index(logical_page) + 1
         print(
             f"  Book page {FLYellow}{logical_page}{CRst}"
@@ -494,14 +517,14 @@ def _reset_page_labels(
         ValueError: TOC bounds or the body anchor are outside the document.
     """
     if not 1 <= toc_first_page <= toc_last_page <= page_mapping.page_offset <= document.page_count:
-        raise ValueError("TOC pages and book page 1 must be ordered and inside the PDF.")
+        raise ValueError("TOC pages and the first book page must be ordered and inside the PDF.")
     labels = Pdf.read_page_labels(document)
     for index in range(document.page_count):
         physical_page = index + 1
         if toc_first_page <= physical_page <= toc_last_page:
             labels[index] = f"C{physical_page - toc_first_page + 1}"
         elif physical_page >= page_mapping.page_offset:
-            pages = tuple(page for page in page_mapping.book_pages(index) if page > 0)
+            pages = tuple(page for page in page_mapping.book_pages(index) if page >= page_mapping.first_book_page)
             labels[index] = Input.format_integer_ranges(Input.merge_integer_ranges(pages))
     Pdf.write_page_labels(document, labels)
 
@@ -537,16 +560,20 @@ Usage:
   Blank input, empty JSON strings/arrays, and null return to the action menu;
   earlier entries are retained. Finishing with no entries writes no PDF.
   Supports PDF pages containing 1, 2, or 4 consecutive physical book pages.
+  Enter the PDF page containing the first book page, then its printed page number
+  (default 1). Example: PDF page 17 corresponds to book page 20.
   Both bookmark write modes add root-level Cover and Table of Contents bookmarks.
   Reset page labels? defaults to Y, generating labels from the book-page mapping.
   Choose N to preserve existing labels. This does not change printed page content.
-  For Y, confirm the last TOC PDF page (default: the page before book page 1).
+  For Y, confirm the last TOC PDF page (default: the page before the first book page).
   TOC labels use C1, C2, ...; other front-matter labels remain unchanged.
   With no existing labels, front matter keeps physical PDF page numbers.
   Body pages use book numbers or ranges for 2/4-up layouts.
+  The first body label starts at the chosen first book-page number.
   TOC labels take priority if the TOC and body start on the same PDF page.
   Use pdf-page-tag.py for standalone label editing and clearing.
   Saves an unencrypted new file, preserving document metadata and attachments.
+  Automatically removes PDF/A identification while retaining other metadata.
   Opening passwords are requested without echo; existing files are not overwritten.
   `page` supports negative numbers: -1 = the page before page 1, -2 = two pages before page 1, etc.
 
@@ -647,7 +674,7 @@ Usage:
             _write_bookmarks(document, bookmark_objects, page_mapping, toc_pdf_page, write_mode)
             if reset_labels:
                 if not 1 <= toc_pdf_page <= page_mapping.page_offset <= document.page_count:
-                    raise ValueError("The TOC and book page 1 must be inside the PDF to reset labels.")
+                    raise ValueError("The TOC and first book page must be inside the PDF to reset labels.")
                 toc_last_page = max(toc_pdf_page, page_mapping.page_offset - 1)
                 if toc_pdf_page < page_mapping.page_offset:
                     toc_last_page = typing.cast(
