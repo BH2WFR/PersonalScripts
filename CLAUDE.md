@@ -269,8 +269,8 @@ Canonical implementations live there; do not add implementations to the
 | Need | Use |
 |---|---|
 | Admin / root detection | `System.is_elevated() -> bool` |
-| Re-execute as admin (force) | `System.restart_elevated()` — never returns on success; reports why elevation could not start |
-| Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` |
+| Re-execute as admin (force) | `System.restart_elevated()` — supports source/bundled apps and paths containing spaces; gsudo uses a Windows PowerShell bootstrap |
+| Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` — never re-runs after a helper starts |
 | Check if a CLI tool is in PATH | `Environment.check_commands(*CmdCheck)` or `Environment.which(name)` |
 | OS name / arch / hostname / Linux GUI | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()`, `System.get_linux_gui() -> LinuxGui \| None` |
 | Print a box-drawing banner | `Console.print_banner("TITLE")` |
@@ -627,7 +627,7 @@ first thing** in `main()`, right after the banner. There are two patterns:
 **Force-elevate (the script cannot work without it):**
 
 ```python
-System.restart_elevated()  # never returns if already elevated or on success
+System.restart_elevated()  # returns if already elevated; exits after re-launch
 ```
 
 **Soft-try (the script can partially work without it):**

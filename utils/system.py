@@ -1,7 +1,9 @@
 """Operating-system integration, privilege, and permission helpers."""
 
+import base64
 import ctypes
 import importlib
+import json
 import os
 import platform
 import shutil
@@ -128,7 +130,8 @@ class System:
     def is_elevated() -> bool:
         """Check if the current process has administrator/root privileges.
 
-        Returns True on Windows (admin), macOS/Linux (root), or if detection fails.
+        Returns True on Windows (admin) or macOS/Linux (root). Detection
+        failures are treated as non-elevated.
         """
         if sys.platform == "win32":
             try:
@@ -140,6 +143,75 @@ class System:
                 return os.geteuid() == 0
             except AttributeError:
                 return False
+
+    @staticmethod
+    def _restart_command() -> list[str]:
+        """Return the command that re-launches the current program."""
+        executable = os.path.abspath(sys.executable)
+        args = sys.argv[1:]
+        if getattr(sys, "frozen", False) or "__compiled__" in globals():
+            return [executable, *args]
+        return [executable, os.path.abspath(sys.argv[0]), *args]
+
+    @staticmethod
+    def _elevation_command(
+        helper_name: str,
+        helper_executable: str,
+        restart_command: list[str],
+    ) -> list[str]:
+        """Wrap a restart command for the selected elevation helper."""
+        if sys.platform == "win32" and helper_name == "gsudo":
+            return System._windows_gsudo_command(
+                helper_executable,
+                restart_command,
+            )
+        return [helper_executable, *restart_command]
+
+    @staticmethod
+    def _windows_gsudo_command(
+        helper_executable: str,
+        restart_command: list[str],
+    ) -> list[str]:
+        """Build a gsudo command that preserves arbitrary Windows arguments."""
+        command_data = {
+            "program": restart_command[0],
+            "argument_line": subprocess.list2cmdline(restart_command[1:]),
+        }
+        command_json = json.dumps(command_data, ensure_ascii=False)
+        command_payload = base64.b64encode(
+            command_json.encode("utf-8"),
+        ).decode("ascii")
+        bootstrap = (
+            "$ProgressPreference = 'SilentlyContinue'\n"
+            "$commandJson = [Text.Encoding]::UTF8.GetString("
+            "[Convert]::FromBase64String('"
+            f"{command_payload}'))\n"
+            "$command = ConvertFrom-Json -InputObject $commandJson\n"
+            "$startInfo = New-Object System.Diagnostics.ProcessStartInfo\n"
+            "$startInfo.FileName = [string]$command.program\n"
+            "$startInfo.Arguments = [string]$command.argument_line\n"
+            "$startInfo.UseShellExecute = $false\n"
+            "$process = [Diagnostics.Process]::Start($startInfo)\n"
+            "$process.WaitForExit()\n"
+            "exit $process.ExitCode\n"
+        )
+        encoded_bootstrap = base64.b64encode(
+            bootstrap.encode("utf-16le"),
+        ).decode("ascii")
+        return [
+            helper_executable,
+            "--direct",
+            r"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-OutputFormat",
+            "Text",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            encoded_bootstrap,
+        ]
 
     @staticmethod
     def restart_elevated() -> None:
@@ -167,8 +239,7 @@ class System:
         if System.is_elevated():
             return
 
-        script = os.path.abspath(sys.argv[0])
-        args = sys.argv[1:]
+        restart_command = System._restart_command()
 
         if sys.platform == "win32":
             # 1) gsudo — in-place elevation, preserves ANSI escapes.
@@ -184,7 +255,11 @@ class System:
                     continue
                 try:
                     result = subprocess.run(
-                        [executable, sys.executable, script, *args],
+                        System._elevation_command(
+                            name,
+                            executable,
+                            restart_command,
+                        ),
                         check=False,
                     )
                 except OSError as exc:
@@ -196,10 +271,10 @@ class System:
             #    ANSI escape sequences are not carried over.
             sys.stdout.flush()
             print()
-            params = subprocess.list2cmdline([script] + args)
+            params = subprocess.list2cmdline(restart_command[1:])
             try:
                 ret = ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", sys.executable, params, None, 1,
+                    None, "runas", restart_command[0], params, None, 1,
                 )
             except OSError as exc:
                 failures.append(f"Windows UAC: failed to start ({exc})")
@@ -215,8 +290,12 @@ class System:
             )
             sys.exit(1)
         else:
-            if shutil.which("sudo"):
-                os.execv("/usr/bin/sudo", ["sudo", sys.executable, script] + args)
+            sudo = shutil.which("sudo")
+            if sudo:
+                os.execv(
+                    sudo,
+                    System._elevation_command("sudo", sudo, restart_command),
+                )
             print(f"{FLRed}Cannot elevate: sudo not found in PATH.{CRst}")
             sys.exit(1)
 
@@ -229,9 +308,10 @@ class System:
         terminal state and are more forgiving than the Win32 API fallback.
 
         Unlike :meth:`restart_elevated`, this does **not** fall back to
-        ``ShellExecuteW`` spawning a new window and only returns when every
-        helper is unavailable or fails with a non-zero exit code — the caller
-        can then continue without privileges.
+        ``ShellExecuteW`` spawning a new window. Missing helpers and launch
+        errors fall through to the next helper. Once a helper starts, a
+        non-zero child status returns ``False`` without running the program a
+        second time through another helper.
 
         If already elevated, returns ``True`` immediately so the caller can
         simply proceed.
@@ -241,8 +321,9 @@ class System:
             **Windows** — ``gsudo`` → ``sudo`` (both in-place).
 
         Raises ``SystemExit(0)`` when the child exits successfully.
-        Returns ``False`` if no helper was found or every helper exited with a
-        non-zero code — the caller should continue with reduced privileges.
+        Returns ``False`` if no helper could be started or the launched child
+        exited with a non-zero code. The caller should continue with reduced
+        privileges.
         """
         if System.is_elevated():
             return True
@@ -250,23 +331,26 @@ class System:
         helpers: list[str] = (
             ["gsudo", "sudo"] if sys.platform == "win32" else ["sudo"]
         )
-        script = os.path.abspath(sys.argv[0])
-        args = sys.argv[1:]
+        restart_command = System._restart_command()
 
         for name in helpers:
-            exe = shutil.which(name)
-            if exe is None:
+            executable = shutil.which(name)
+            if executable is None:
                 continue
             try:
                 result = subprocess.run(
-                    [exe, sys.executable, script] + args,
+                    System._elevation_command(
+                        name,
+                        executable,
+                        restart_command,
+                    ),
                     check=False,
                 )
-            except Exception:
+            except OSError:
                 continue
             if result.returncode == 0:
                 raise SystemExit(0)
-            # Non-zero exit — try next helper.
+            return False
         return False
 
     @staticmethod
