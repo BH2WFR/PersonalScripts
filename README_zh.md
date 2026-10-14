@@ -221,6 +221,7 @@
 | `tools/document-processing/pdf-decrypt.py` | **PDF 解密/编辑限制解除工具**：<br />另存未加密的 PDF 副本，保留书签、附件等文档结构。支持仅权限保护及打开密码，包括 AES 加密。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 书籍目录注入工具**：<br />将目录截图逐页发送给**视觉 LLM（如 Qwen3-VL）生成指定格式的 JSON**（含页码/层级/编号/标题），再直接逐页连续粘贴到脚本中；脚本会按输入顺序合并后将目录写入 PDF 文件。支持自定义起始书页页码，一个 PDF 页面可对应 1、2 或 4 个连续书页，并可选择生成正文和目录的页码标签。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-page-tag.py` | **交互式 PDF 页码标签编辑器**：按页码范围添加带前缀的连续编号，或清空全部、部分标签，保留书签和页面内容。可在内存中反复编辑，按需另存副本，然后继续编辑或退出。 | **Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-split-pages.py` | **扫描版 PDF 页面切分工具**：支持左右或上下切分、两种输出顺序、自定义切分位置及忽略页码范围，保留扫描图像清晰度，无需临时图片。重新映射书签和普通链接，移除包括忽略页在内的全部页码标签，并警告无法确定所属半页的书签跳转。 | **Python 库**：`PyMuPDF`、`tqdm` |
 | `tools/document-processing/document-screenshot.py` | **针对加密文档的自动截图抓取工具**：<br />基于模拟 PgDn 翻页 + 鼠标点击自动翻页，并通过自动截图来获取内容，适用于**全自动抓取并保存被 DRM 保护或位于加密 USB 存储设备中的 PDF** 文件内容。<br /><br />建议使用高分辨率屏幕，并将屏幕方向改为纵向，然后调整文档页面的显示范围（不超出屏幕范围并能充分利用屏幕空间）后，再用本脚本自动截图抓取。<br />macOS 中还需要额外授予相应的屏幕录制权限。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />**Python 库**：`mss`、`pynput`、`Pillow` |
 ### 视频下载
 
