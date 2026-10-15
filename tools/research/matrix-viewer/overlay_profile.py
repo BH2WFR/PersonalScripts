@@ -3,6 +3,7 @@
 Requirements: numpy, PySide6 and pyqtgraph. Usage: embedded in the workspace;
 uses the ordinary profile's controls, zoom behavior and compact numeric axes.
 Each layer keeps independent nonfinite colors and clipping emphasis.
+Sample diameters belong to each layer and also style its cached derivative.
 Hover readouts reserve two lines for the matrix name and source coordinates;
 full readings remain in the tooltip without resizing the plot during hovering.
 """
@@ -16,9 +17,10 @@ import pyqtgraph as pg
 from .clipping import clip_curve
 from .data_model import FloatArray, RealArray
 from .derivatives import DerivativeResult, differentiate
-from .profile_view import CurvePane, CurveStyle, ProfileView, _compact_sample
+from .profile_view import CurvePane, ProfileView, _compact_sample
 from .workspace import ProfileSeries
 from .value_markers import curve_markers
+from .render_style import DEFAULT_POINT_SIZE, CurveStyle
 
 
 class OverlayProfile(ProfileView):
@@ -33,11 +35,13 @@ class OverlayProfile(ProfileView):
         self._items: list[list[pg.PlotDataItem]] = [[], []]
         super().__init__()
         self.readout.setFixedHeight(2 * self.readout.fontMetrics().lineSpacing())
-        self.color_button.hide()
+        self.appearance_form.setRowVisible(self.color_button, False)
         self.title.setText("Overlay")
         self.derivative_note.setText("Derivatives use original X coordinates; red dots mark undefined samples.")
         self.jump_mode.setToolTip("Derivative settings for the selected matrix only.")
         self.jump_threshold.setToolTip("Jump threshold for the selected matrix only.")
+        self.point_size.setToolTip("Signal/slice and derivative point size for the selected matrix/channel.")
+        self.point_size.valueChanged.connect(lambda _size: self.settings_changed.emit())
 
     def set_series(self, series: tuple[ProfileSeries, ...], reset: bool = False) -> None:
         """Update visible series without calculating derivatives on hidden pages.
@@ -69,7 +73,8 @@ class OverlayProfile(ProfileView):
 
     def _signature(self) -> tuple[object, ...]:
         return (self.style_selector.currentIndex(), *(
-            (series.key, series.mapping, series.layer.color, series.layer.clip_color, series.layer.markers, series.label)
+            (series.key, series.mapping, series.layer.color, series.layer.clip_color, series.layer.markers,
+             series.layer.profile_point_size, series.label)
             for series in self._series))
 
     def _clear_pane(self, pane: CurvePane, index: int) -> None:
@@ -79,12 +84,13 @@ class OverlayProfile(ProfileView):
         pane.curve.hide()
 
     def _curve(self, pane: CurvePane, index: int, x: FloatArray, y: RealArray,
-               color: str, name: str | None = None, *, cap: bool = False) -> None:
+               color: str, name: str | None = None, *, cap: bool = False,
+               point_size: float = DEFAULT_POINT_SIZE) -> None:
         mode = CurveStyle(self.style_selector.currentIndex())
         points = mode != CurveStyle.LINE or len(x) == 1
         curve = pg.PlotDataItem(x=x, y=y, name=name, connect="finite",
             pen=pg.mkPen(color, width=3 if cap else 1) if cap or mode != CurveStyle.POINTS else None,
-            symbol="o" if points else None, symbolSize=6 if cap else 5,
+            symbol="o" if points else None, symbolSize=point_size,
             symbolBrush=color, symbolPen=None)
         pane.plot_item.addItem(curve)
         self._items[index].append(curve)
@@ -104,18 +110,19 @@ class OverlayProfile(ProfileView):
                 indices = np.arange(len(series.values), dtype=np.float64)
                 x = series.mapping.array(np.interp(capped.x, indices, series.source_x))
                 y = capped.y
-                self._curve(pane, 0, x, y, series.layer.color, series.label)
+                self._curve(pane, 0, x, y, series.layer.color, series.label, point_size=series.layer.profile_point_size)
                 cap_x = series.mapping.array(np.interp(capped.cap_x, indices, series.source_x))
                 if series.layer.markers.highlight_clipped:
-                    self._curve(pane, 0, cap_x, capped.cap_y, series.layer.clip_color, cap=True)
+                    self._curve(pane, 0, cap_x, capped.cap_y, series.layer.clip_color, cap=True,
+                                point_size=series.layer.profile_point_size)
                     marked = series.clipped & np.isfinite(series.source_x)
                     dots = pg.PlotDataItem(series.mapping.array(series.source_x[marked]), series.shown[marked],
-                                          pen=None, symbol="o", symbolSize=6, symbolPen=None,
+                                          pen=None, symbol="o", symbolSize=series.layer.profile_point_size, symbolPen=None,
                                           symbolBrush=series.layer.clip_color)
                     pane.plot_item.addItem(dots)
                     self._items[0].append(dots)
             else:
-                self._curve(pane, 0, x, y, series.layer.color, series.label)
+                self._curve(pane, 0, x, y, series.layer.color, series.label, point_size=series.layer.profile_point_size)
             for group in curve_markers(series.values, series.shown, series.valid, series.layer.markers):
                 coordinates = series.mapping.array(series.source_x[group.indices])
                 finite_x = np.isfinite(coordinates)
@@ -177,7 +184,8 @@ class OverlayProfile(ProfileView):
             order = np.argsort(series.source_x, kind="stable")
             x = series.mapping.array(series.source_x)
             y = np.where(result.valid, result.values, np.nan)
-            self._curve(pane, 1, x[order], y[order], series.layer.color, series.label)
+            self._curve(pane, 1, x[order], y[order], series.layer.color, series.label,
+                        point_size=series.layer.profile_point_size)
             markers.append(x[result.undefined_indices])
         points = np.concatenate(markers) if markers else np.empty(0)
         self.undefined_markers.setData(points, np.zeros(len(points)))

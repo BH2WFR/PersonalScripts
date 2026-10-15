@@ -25,6 +25,12 @@ Complex Phase disables Z/value-bound controls; X/Y cropping remains available.
 Fusion keeps native widget painting with 2 px layout padding/vertical gaps and
 4 px horizontal gaps; the main content margins are 6 px except 2 px at the top.
 Splitter handles are blue, turning amber on hover and orange while dragging.
+2D/3D matrices offer discrete points with independent pixel diameters. Their
+sampling shares Maximum grid edge; image pixels and signal data stay full size.
+All spin boxes ignore wheel events, including focused controls and dialogs.
+The sidebar contains interpretation, cropping and sampling controls. Appearance
+panels are hosted by the workspace's View settings dialog; slice navigation
+and Fit commands remain beside the plots.
 
 Requirements: numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
 pyvista, pyvistaqt, vtk, scipy and h5py. Usage: run the matrix-viewer.py launcher.
@@ -52,8 +58,9 @@ from .exporting import (ExportFormat, ExportLayout, ExportOptions, ExportTarget,
 from .image_view import ImageView
 from .profile_view import ProfileView
 from .raw_view import RawDataView
-from .qt_widgets import NoWheelComboBox
-from .surface_view import (DEFAULT_POINT_SIZE, DEFAULT_PROFILE_COLOR, DEFAULT_PROFILE_LIFT,
+from .qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
+from .render_style import DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle, MIN_POINT_SIZE, MAX_POINT_SIZE
+from .surface_view import (DEFAULT_PROFILE_COLOR, DEFAULT_PROFILE_LIFT,
                            DEFAULT_SECTION_OPACITY, ProfileStyle, SurfaceView)
 from .value_markers import DEFAULT_MARKER_SIZE, MAX_MARKER_SIZE, MIN_MARKER_SIZE, MarkerStyle, NonfiniteKind
 
@@ -258,6 +265,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         scroll = QtWidgets.QScrollArea()
         self.control_scroll = scroll
         self.main_split = split
+        self.appearance_storage = QtWidgets.QWidget(self)
+        self.appearance_storage.hide()
         scroll.setWidgetResizable(True)
         scroll.setMinimumWidth(360)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -365,7 +374,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         form.addRow("Channel axis", self.channel_axis)
         for combo in (self.x_axis, self.y_axis, self.channel_axis):
             combo.currentIndexChanged.connect(self._axes_changed)
-        self.channel = QtWidgets.QSpinBox()
+        self.channel = NoWheelSpinBox()
         self.channel.setKeyboardTracking(False)
         self.channel.valueChanged.connect(self._schedule_frame)
         form.addRow("Channel index", self.channel)
@@ -394,7 +403,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.coordinate_box)
         layout.addWidget(self._crop_controls())
 
-        # ── shared filter and color controls ───────────────
+        # ── data bounds and separate marker appearance ─────
         filter_box = QtWidgets.QGroupBox("Crop by value bounds")
         filter_box.setToolTip("Minimum and maximum are inclusive. Empty fields leave the corresponding bound open.")
         filters = QtWidgets.QFormLayout(filter_box)
@@ -412,6 +421,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.filter_mode.addItems([mode.value for mode in FilterMode])
         self.filter_mode.currentIndexChanged.connect(self._schedule_frame)
         filters.addRow("Outside bounds", self.filter_mode)
+        self.marker_controls = QtWidgets.QGroupBox("Value markers", self.appearance_storage)
+        markers = QtWidgets.QFormLayout(self.marker_controls)
         self.clip_color_button = QtWidgets.QPushButton("Clipping color")
         self._set_color_icon(self.clip_color_button, self._clip_color)
         self.clip_color_button.clicked.connect(self._choose_clip_color)
@@ -422,14 +433,14 @@ class ViewerWindow(QtWidgets.QMainWindow):
         highlight_row = QtWidgets.QHBoxLayout()
         highlight_row.addWidget(self.highlight_clipped)
         highlight_row.addWidget(self.clip_color_button)
-        filters.addRow(highlight_row)
+        markers.addRow(highlight_row)
         self.show_nonfinite = QtWidgets.QCheckBox("Show Inf / -Inf / NaN markers (1D / 2D)")
         self.show_nonfinite.setToolTip(
             "1D: Inf at the visible finite maximum, -Inf at the minimum, NaN at zero. "
             "No finite samples: use zero. 2D: color the original pixel. Source values and derivatives are unchanged."
         )
         self.show_nonfinite.toggled.connect(self._markers_changed)
-        filters.addRow(self.show_nonfinite)
+        markers.addRow(self.show_nonfinite)
         self.nonfinite_color_row = QtWidgets.QWidget()
         nonfinite_colors = QtWidgets.QHBoxLayout(self.nonfinite_color_row)
         nonfinite_colors.setContentsMargins(0, 0, 0, 0)
@@ -441,8 +452,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
             nonfinite_colors.addWidget(button)
             self.nonfinite_color_buttons[kind] = button
         self.nonfinite_color_row.setEnabled(False)
-        filters.addRow(self.nonfinite_color_row)
-        self.nonfinite_size = QtWidgets.QDoubleSpinBox()
+        markers.addRow(self.nonfinite_color_row)
+        self.nonfinite_size = NoWheelDoubleSpinBox()
         self.nonfinite_size.setRange(MIN_MARKER_SIZE, MAX_MARKER_SIZE)
         self.nonfinite_size.setDecimals(1)
         self.nonfinite_size.setSingleStep(0.5)
@@ -452,7 +463,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.nonfinite_size.setEnabled(False)
         self.nonfinite_size.setToolTip("Inf / -Inf / NaN dot diameter in 1D plots, including slices. 2D retains whole-pixel coloring.")
         self.nonfinite_size.valueChanged.connect(self._markers_changed)
-        filters.addRow("1D nonfinite marker size", self.nonfinite_size)
+        markers.addRow("1D nonfinite marker size", self.nonfinite_size)
+        marker_hint = QtWidgets.QLabel("1D: Inf at the finite maximum, -Inf at the minimum, NaN at zero. 2D: color the original pixel. Derivatives exclude these samples.")
+        marker_hint.setWordWrap(True)
+        markers.addRow(marker_hint)
         filter_hint = QtWidgets.QLabel("Clamp retains boundary values. Highlighting is optional; nonfinite and clipped samples stay excluded from derivatives.")
         self.filter_hint = filter_hint
         filter_hint.setWordWrap(True)
@@ -472,18 +486,35 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout.addWidget(filter_box)
         self._export_controls()
 
-        display_box = QtWidgets.QGroupBox("Color and appearance")
+        self.magnitude_controls = QtWidgets.QGroupBox("Magnitude (dB)")
+        magnitude = QtWidgets.QFormLayout(self.magnitude_controls)
+        layout.addWidget(self.magnitude_controls)
+        self.magnitude_controls.hide()
+        display_box = QtWidgets.QGroupBox("Scalar colors (2D / 3D)", self.appearance_storage)
         display = QtWidgets.QFormLayout(display_box)
         self.display_box, self.display_form = display_box, display
-        self.db_floor = QtWidgets.QDoubleSpinBox()
+        self.db_floor = NoWheelDoubleSpinBox()
         self.db_floor.setRange(-600, -1)
         self.db_floor.setValue(-120)
         self.db_floor.setSuffix(" dB")
         self.db_floor.setKeyboardTracking(False)
         self.db_floor.setToolTip("Magnitude relative to the selected region's peak (0 dB). Source complex values are unchanged.")
         self.db_floor.valueChanged.connect(self._schedule_frame)
-        display.addRow("Magnitude floor", self.db_floor)
-        display.setRowVisible(self.db_floor, False)
+        magnitude.addRow("Magnitude floor", self.db_floor)
+        self.image_controls = QtWidgets.QGroupBox("2D rendering", self.appearance_storage)
+        self.image_form = QtWidgets.QFormLayout(self.image_controls)
+        self.image_style = NoWheelComboBox()
+        self.image_style.addItems([style.value for style in ImageStyle])
+        self.image_style.currentIndexChanged.connect(self._presentation_changed)
+        self.image_form.addRow("Style", self.image_style)
+        self.image_point_size = NoWheelDoubleSpinBox()
+        self.image_point_size.setRange(MIN_POINT_SIZE, MAX_POINT_SIZE)
+        self.image_point_size.setSingleStep(0.5)
+        self.image_point_size.setValue(DEFAULT_POINT_SIZE)
+        self.image_point_size.setSuffix(" px")
+        self.image_point_size.setKeyboardTracking(False)
+        self.image_point_size.valueChanged.connect(self._presentation_changed)
+        self.image_form.addRow("Point size", self.image_point_size)
         self.colormap = NoWheelComboBox()
         self.colormap.addItems(COLORMAPS)
         self.colormap.currentIndexChanged.connect(self._presentation_changed)
@@ -499,40 +530,53 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.theme.addItems(["Dark", "Light"])
         self.theme.setCurrentIndex(1)
         self.theme.currentIndexChanged.connect(self._theme_changed)
-        display.addRow("Plot background", self.theme)
-        reset_limits = QtWidgets.QPushButton("Reset filter / color limits")
+        self.background_controls = QtWidgets.QWidget(self.appearance_storage)
+        background = QtWidgets.QHBoxLayout(self.background_controls)
+        background.addWidget(QtWidgets.QLabel("Background (all views)"))
+        background.addWidget(self.theme)
+        background.addStretch()
+        reset_limits = QtWidgets.QPushButton("Reset color limits")
         self.reset_limits_button = reset_limits
-        reset_limits.clicked.connect(self._reset_limits)
+        reset_limits.clicked.connect(self._reset_color_limits)
         display.addRow(reset_limits)
-        layout.addWidget(display_box)
 
-        surface_box = QtWidgets.QGroupBox("3D rendering")
+        surface_box = QtWidgets.QGroupBox("3D rendering", self.appearance_storage)
         surface = QtWidgets.QFormLayout(surface_box)
-        self.max_edge = QtWidgets.QSpinBox()
+        self.surface_style = NoWheelComboBox()
+        self.surface_style.addItems([style.value for style in SurfaceStyle])
+        self.surface_style.currentIndexChanged.connect(self._presentation_changed)
+        surface.addRow("Style", self.surface_style)
+        self.sampling_controls = QtWidgets.QGroupBox("Display sampling")
+        sampling = QtWidgets.QFormLayout(self.sampling_controls)
+        self.sampling_form = sampling
+        self.max_edge = NoWheelSpinBox()
         self.max_edge.setRange(0, MAX_QT_INDEX)
         self.max_edge.setSingleStep(128)
         self.max_edge.setSpecialValueText("Full resolution")
         self.max_edge.setValue(max_edge)
         self.max_edge.setKeyboardTracking(False)
         self.max_edge.valueChanged.connect(self._schedule_frame)
-        surface.addRow("Maximum grid edge", self.max_edge)
-        self.max_points = QtWidgets.QSpinBox()
+        sampling.addRow("Maximum grid edge", self.max_edge)
+        self.max_points = NoWheelSpinBox()
         self.max_points.setRange(0, MAX_QT_INDEX)
         self.max_points.setSpecialValueText("All points")
         self.max_points.setValue(DEFAULT_MAX_POINTS)
         self.max_points.setKeyboardTracking(False)
         self.max_points.valueChanged.connect(self._schedule_frame)
-        surface.addRow("Maximum cloud points", self.max_points)
-        self.point_size = QtWidgets.QDoubleSpinBox()
-        self.point_size.setRange(1, 32)
+        sampling.addRow("Maximum cloud points", self.max_points)
+        self.point_size = NoWheelDoubleSpinBox()
+        self.point_size.setRange(MIN_POINT_SIZE, MAX_POINT_SIZE)
+        self.point_size.setSingleStep(0.5)
+        self.point_size.setSuffix(" px")
+        self.point_size.setKeyboardTracking(False)
         self.point_size.setValue(DEFAULT_POINT_SIZE)
         self.point_size.valueChanged.connect(self._presentation_changed)
-        surface.addRow("Point size (pixels)", self.point_size)
+        surface.addRow("Point size", self.point_size)
         self.auto_height = QtWidgets.QCheckBox("Auto height scale")
         self.auto_height.setChecked(True)
         self.auto_height.toggled.connect(self._auto_height_changed)
         surface.addRow(self.auto_height)
-        self.height_scale = QtWidgets.QDoubleSpinBox()
+        self.height_scale = NoWheelDoubleSpinBox()
         self.height_scale.setDecimals(9)
         self.height_scale.setRange(10.0 ** HEIGHT_MIN_EXPONENT, 10.0 ** HEIGHT_MAX_EXPONENT)
         self.height_scale.setValue(1)
@@ -551,10 +595,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.parallel = QtWidgets.QCheckBox("Orthographic projection")
         self.parallel.toggled.connect(self._projection_changed)
         surface.addRow(self.parallel)
-        hint = QtWidgets.QLabel("Grid size affects 3D rendering only. Profiles and pixel readouts use original data.")
+        hint = QtWidgets.QLabel("Grid size limits 2D points and 3D sampling. Set 0 for all samples. Image pixels, profiles and numeric exports retain full resolution.")
+        self.sampling_hint = hint
         hint.setWordWrap(True)
-        surface.addRow(hint)
-        layout.addWidget(surface_box)
+        sampling.addRow(hint)
+        layout.addWidget(self.sampling_controls)
         self.surface_controls = surface_box
         layout.addStretch()
         return widget
@@ -609,8 +654,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         box = QtWidgets.QGroupBox("Crop by source index (inclusive)")
         form = QtWidgets.QFormLayout(box)
         self.crop_form = form
-        self.crop_x_start, self.crop_x_end = QtWidgets.QSpinBox(), QtWidgets.QSpinBox()
-        self.crop_y_start, self.crop_y_end = QtWidgets.QSpinBox(), QtWidgets.QSpinBox()
+        self.crop_x_start, self.crop_x_end = NoWheelSpinBox(), NoWheelSpinBox()
+        self.crop_y_start, self.crop_y_end = NoWheelSpinBox(), NoWheelSpinBox()
         for spin in (self.crop_x_start, self.crop_x_end, self.crop_y_start, self.crop_y_end):
             spin.setRange(0, MAX_QT_INDEX)
             spin.setKeyboardTracking(False)
@@ -814,7 +859,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_direction = NoWheelComboBox()
         self.profile_direction.addItems(["Row", "Column"])
         self.profile_direction.currentIndexChanged.connect(self._profile_direction_changed)
-        self.profile_index = QtWidgets.QSpinBox()
+        self.profile_index = NoWheelSpinBox()
         self.profile_index.setKeyboardTracking(False)
         self.profile_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.profile_index.valueChanged.connect(self.profile_slider.setValue)
@@ -830,20 +875,21 @@ class ViewerWindow(QtWidgets.QMainWindow):
         layout.addLayout(selector)
 
         # ── independent image/3D marker appearance ──────────
-        appearance = QtWidgets.QHBoxLayout()
+        self.slice_appearance = QtWidgets.QGroupBox("Slice marker (all matrices)", self.appearance_storage)
+        appearance = QtWidgets.QFormLayout(self.slice_appearance)
         self.profile_color_2d_button = QtWidgets.QPushButton("2D color")
         self.profile_color_3d_button = QtWidgets.QPushButton("3D color")
         self._set_color_icon(self.profile_color_2d_button, self._profile_color_2d)
         self._set_color_icon(self.profile_color_3d_button, self._profile_color_3d)
         self.profile_color_2d_button.clicked.connect(self._choose_profile_color_2d)
         self.profile_color_3d_button.clicked.connect(self._choose_profile_color_3d)
-        appearance.addWidget(self.profile_color_2d_button)
-        appearance.addWidget(self.profile_color_3d_button)
+        self.image_form.addRow("Slice marker (all matrices)", self.profile_color_2d_button)
+        appearance.addRow("Color", self.profile_color_3d_button)
         self.profile_style = NoWheelComboBox()
         self.profile_style.addItems([style.value for style in ProfileStyle])
         self.profile_style.currentIndexChanged.connect(self._profile_appearance_changed)
-        appearance.addWidget(self.profile_style)
-        self.profile_lift = QtWidgets.QDoubleSpinBox()
+        appearance.addRow("Style", self.profile_style)
+        self.profile_lift = NoWheelDoubleSpinBox()
         self.profile_lift.setRange(0, 1000)
         self.profile_lift.setDecimals(2)
         self.profile_lift.setValue(DEFAULT_PROFILE_LIFT * 100)
@@ -852,7 +898,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_lift.setKeyboardTracking(False)
         self.profile_lift.setToolTip("Raise the 3D curve by this percentage of the visible height range. Source values stay unchanged.")
         self.profile_lift.valueChanged.connect(self._profile_appearance_changed)
-        self.profile_opacity = QtWidgets.QSpinBox()
+        self.profile_opacity = NoWheelSpinBox()
         self.profile_opacity.setRange(1, 100)
         self.profile_opacity.setValue(round(DEFAULT_SECTION_OPACITY * 100))
         self.profile_opacity.setPrefix("Opacity: ")
@@ -862,9 +908,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_style_options.addWidget(self.profile_lift)
         self.profile_style_options.addWidget(self.profile_opacity)
         self.profile_style_options.setMaximumWidth(165)
-        appearance.addWidget(self.profile_style_options)
-        appearance.addStretch()
-        layout.addLayout(appearance)
+        self.profile_style_options.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        appearance.addRow(self.profile_style_options)
         return widget
 
     @staticmethod
@@ -1403,7 +1448,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         for axis, size in enumerate(shape):
             if axis in used:
                 continue
-            spin = QtWidgets.QSpinBox()
+            spin = NoWheelSpinBox()
             spin.setRange(0, min(size - 1, MAX_QT_INDEX))
             spin.setValue(previous.get(axis, 0))
             spin.setKeyboardTracking(False)
@@ -1435,11 +1480,18 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.axes_box.setVisible(any(visible for _, visible in rows))
         for field in (self.colormap, self.color_low, self.color_high):
             self.display_form.setRowVisible(field, not signal)
-        self.display_box.setTitle("Plot appearance" if signal else "Color and appearance")
-        self.display_form.setRowVisible(self.db_floor, np.iscomplexobj(document.array)
-                                        and self.display_channel.currentData() == Component.MAGNITUDE_DB)
-        self.reset_limits_button.setText("Reset value bounds" if signal else "Reset filter / color limits")
+        self.image_controls.setVisible(mode == ViewMode.MATRIX)
+        self.display_box.setVisible(not signal)
+        self.magnitude_controls.setVisible(np.iscomplexobj(document.array)
+                                          and self.display_channel.currentData() == Component.MAGNITUDE_DB)
         self.surface_controls.setVisible(not signal)
+        self.sampling_controls.setVisible(not signal)
+        self.sampling_form.setRowVisible(self.max_edge, mode == ViewMode.MATRIX)
+        self.sampling_form.setRowVisible(self.max_points, mode == ViewMode.POINTS)
+        self.sampling_hint.setText(
+            "Grid size limits 2D points and 3D sampling. Set 0 for all samples. Image pixels, profiles and numeric exports retain full resolution."
+            if mode == ViewMode.MATRIX else "Limit rendered cloud points; 0 draws all points. Raw data and numeric exports retain full resolution.")
+        self.slice_appearance.setVisible(mode == ViewMode.MATRIX)
         self._sync_marker_controls()
 
     def _selection(self) -> Selection:
@@ -1566,7 +1618,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.surface_controls.setEnabled(matrix or cloud)
         self.max_edge.setEnabled(matrix)
         self.max_points.setEnabled(cloud)
-        self.point_size.setEnabled(cloud)
+        self.surface_style.setEnabled(matrix)
+        self.point_size.setEnabled(matrix or cloud)
         crop_text = f"X: {frame.x_start}..{frame.x_start + frame.scalar.shape[-1] - 1}"
         if matrix:
             crop_text = f"{crop_text}; Y: {frame.y_start}..{frame.y_start + frame.scalar.shape[0] - 1}"
@@ -1667,16 +1720,15 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Invalid setting: {exc}")
             return
         matrix = self.frame.scalar.ndim == 2
+        self.image_point_size.setEnabled(self.image_style.currentText() == ImageStyle.POINTS)
         self._update_height_controls()
         if matrix:
-            self.image_view.set_frame(self.frame, self.colormap.currentText(), levels, reset)
-            self._surface_dirty = True
-            self._surface_reset |= reset
-            self._refresh_surface()
-        elif self.frame.point_coordinates is not None:
-            self._surface_dirty = True
-            self._surface_reset |= reset
-            self._refresh_surface()
+            self.image_view.set_frame(self.frame, self.colormap.currentText(), levels, reset,
+                                      style=ImageStyle(self.image_style.currentText()),
+                                      point_size=self.image_point_size.value())
+        self._surface_dirty = True
+        self._surface_reset |= reset
+        self._refresh_surface()
 
     def _update_height_controls(self) -> None:
         automatic = self.auto_height.isChecked()
@@ -1723,7 +1775,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 self.surface_view.set_frame(self.frame, self.colormap.currentText(),
                                             self._color_levels(self.frame.limits), self.height_scale.value(),
                                             self._surface_reset, self.point_size.value(),
-                                            highlight_clipped=self.highlight_clipped.isChecked())
+                                            highlight_clipped=self.highlight_clipped.isChecked(),
+                                            style=SurfaceStyle(self.surface_style.currentText()))
             except (ValueError, RuntimeError) as exc:
                 self.statusBar().showMessage(f"3D rendering error: {exc}")
                 return
@@ -1827,6 +1880,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
         for entry in (self.filter_low, self.filter_high):
             entry.clear()
         self._schedule_frame()
+
+    def _reset_color_limits(self) -> None:
+        """Restore automatic color scaling without changing data bounds."""
+        self.color_low.clear()
+        self.color_high.clear()
+        self._presentation_changed()
 
     def _reset_limits(self) -> None:
         for entry in (self.color_low, self.color_high):

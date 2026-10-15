@@ -16,6 +16,7 @@ from .data_model import (BoolArray, Component, Crop, Document, FloatArray, Frame
 from .coordinates import AxisMap
 from .import_catalog import ImportChoice
 from .value_markers import MarkerStyle
+from .render_style import DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
 
 COLORS: tuple[str, ...] = ("#e53935", "#1976d2", "#279638", "#ab47bc", "#ef8c00", "#00a6a6", "#bc557f")
 AUTO_HEIGHT_FRACTION = 0.3
@@ -315,6 +316,10 @@ class RenderLayer:
     data_key: tuple[object, ...] = ()
     z: AxisMap = AxisMap()
     markers: MarkerStyle = MarkerStyle()
+    image_style: ImageStyle = ImageStyle.IMAGE
+    image_point_size: float = DEFAULT_POINT_SIZE
+    surface_style: SurfaceStyle = SurfaceStyle.SURFACE
+    profile_point_size: float = DEFAULT_POINT_SIZE
 
     @property
     def z_mapping(self) -> AxisMap:
@@ -329,7 +334,8 @@ class RenderLayer:
     def signature(self) -> tuple[object, ...]:
         """Small identity key for avoiding unchanged image/mesh rebuilds."""
         return (self.uid, self.label, id(self.frame), self.color, self.opacity, self.x, self.y,
-                self.height, self.point_size, self.clip_color, self.z, self.markers)
+                self.height, self.point_size, self.clip_color, self.z, self.markers,
+                self.image_style, self.image_point_size, self.surface_style, self.profile_point_size)
 
 
 @dataclass(frozen=True, eq=False)

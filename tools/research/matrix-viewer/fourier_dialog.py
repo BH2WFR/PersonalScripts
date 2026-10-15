@@ -19,7 +19,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .coordinates import AxisCoordinates
-from .qt_widgets import NoWheelComboBox
+from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 from .data_model import Crop, Document, ImageMember, Limits, Selection, ViewMode, is_phase_view
 from .fourier import (TransformDirection, TransformNorm, TransformOptions,
                       TransformRange, TransformWindow)
@@ -116,7 +116,7 @@ class FourierDialog(QtWidgets.QDialog):
             spacing.setToolTip("Distance/time between samples. Scientific notation is accepted.")
             unit = QtWidgets.QLineEdit("sample")
             unit.setMaximumWidth(90)
-            size = QtWidgets.QSpinBox()
+            size = NoWheelSpinBox()
             size.setRange(1, 2_147_483_647)
             size.setKeyboardTracking(False)
             line.addWidget(QtWidgets.QLabel("Δ"))

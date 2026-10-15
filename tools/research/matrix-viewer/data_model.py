@@ -6,6 +6,8 @@ Usage: imported by the viewer; CPU preparation can run in a worker thread.
 Complex phase views ignore Z/value bounds while retaining spatial crops.
 Nonfinite complex source samples produce phase gaps, even when atan2 would
 otherwise return a finite angle; zero complex samples retain NumPy's zero angle.
+Sampled grids retain every valid vertex, even isolated vertices that cannot form
+a surface cell. 2D and 3D point renderers share these original sample positions.
 """
 
 from dataclasses import dataclass, replace
@@ -533,7 +535,7 @@ def default_selection(document: Document, mode: ViewMode | None = None,
     """
     shape = document.array.shape
     rank = len(shape)
-    if mode in (ViewMode.XY, ViewMode.POINTS):
+    if mode is not None and mode in (ViewMode.XY, ViewMode.POINTS):
         count = 2 if mode == ViewMode.XY else 3
         if rank != 2 or count not in shape or np.iscomplexobj(document.array):
             raise ValueError(f"{mode.value} mode requires a real 2D array with exactly {count} rows or columns.")
@@ -667,14 +669,14 @@ def _surface(data: RealArray, valid: BoolArray, max_edge: int,
         faces = quads.ravel()
     else:
         faces = np.empty(0, dtype=np.int64)
+    # Retain isolated valid samples as well as face vertices: point rendering
+    # must not lose a sample just because a neighbouring cell contains a gap.
+    used = np.flatnonzero(mask.ravel())
     if faces.size:
         cells = faces.reshape(-1, 5)
-        used = np.unique(cells[:, 1:])
         remap = np.full(len(points), -1, dtype=np.int64)
         remap[used] = np.arange(len(used))
         cells[:, 1:] = remap[cells[:, 1:]]
-    else:
-        used = np.flatnonzero(mask.ravel())
     return SurfaceData(points[used], faces, yy.ravel()[used] + y_start, xx.ravel()[used] + x_start,
                        mask.ravel()[used], (ny, nx))
 

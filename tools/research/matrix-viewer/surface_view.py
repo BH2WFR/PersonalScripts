@@ -4,6 +4,8 @@ Requirements: PySide6, numpy, pyvista, pyvistaqt and vtk.
 Usage: SurfaceView is the matrix viewer's 3D tab.
 Single and overlaid slice markers use the shared 3D selection color.
 Clipping caps retain their geometry when optional highlight coloring is off.
+Point rendering uses sampled source vertices without interpolated mesh edges;
+its pixel size applies to matrices and XYZ clouds, including overlay layers.
 """
 
 import math
@@ -17,6 +19,7 @@ from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker
 
 from .data_model import DEFAULT_CLIP_COLOR, ColorArray, FilterMode, FloatArray, Frame, format_sample
 from .workspace import RenderLayer, profile_series
+from .render_style import DEFAULT_POINT_SIZE, SurfaceStyle
 
 HOVER_INTERVAL_MS = 35
 ROTATION_DEGREES_PER_PIXEL = 0.45
@@ -24,7 +27,6 @@ ZOOM_FACTOR = 1.15
 DEFAULT_PROFILE_COLOR = "#ff1111"
 DEFAULT_PROFILE_LIFT = 0.01
 DEFAULT_SECTION_OPACITY = 0.65
-DEFAULT_POINT_SIZE = 2.0
 SECTION_HEIGHT_PADDING = 0.05
 SOURCE_COLOR_FIELD = "SourceColor"
 SOURCE_INDEX_FIELD = "SourceIndex"
@@ -304,7 +306,7 @@ class SurfaceView(QtWidgets.QWidget):
 
     def set_frame(self, frame: Frame, cmap: str, levels: tuple[float, float],
                   z_scale: float, reset: bool, point_size: float = DEFAULT_POINT_SIZE, *,
-                  highlight_clipped: bool = True) -> None:
+                  highlight_clipped: bool = True, style: SurfaceStyle = SurfaceStyle.SURFACE) -> None:
         """Replace surface geometry while optionally retaining the camera.
 
         Args:
@@ -313,7 +315,8 @@ class SurfaceView(QtWidgets.QWidget):
             levels: Scalar color limits, independent of the visibility mask.
             z_scale: Positive visual height multiplier; readouts stay unscaled.
             reset: Fit a new isometric view when True.
-            point_size: Pixel diameter for point-cloud samples.
+            point_size: Pixel diameter for matrix/cloud samples.
+            style: Connected surface or unconnected sampled points.
             highlight_clipped: Paint caps in the clipping color; False keeps
                 normal scalar/image colors without removing clamping.
         """
@@ -336,7 +339,8 @@ class SurfaceView(QtWidgets.QWidget):
         self.highlight_clipped = highlight_clipped
         self.readout.setText("Move over the surface to inspect a source sample")
         if len(surface.points):
-            mesh = pv.PolyData(surface.points, surface.faces) if surface.faces.size else pv.PolyData(surface.points)
+            points = style == SurfaceStyle.POINTS or not surface.faces.size
+            mesh = pv.PolyData(surface.points) if points else pv.PolyData(surface.points, surface.faces)
             mesh.point_data["Value"] = surface.points[:, 2]
             if frame.point_coordinates is not None:
                 mesh.point_data[SOURCE_INDEX_FIELD] = surface.rows - frame.x_start
@@ -347,7 +351,7 @@ class SurfaceView(QtWidgets.QWidget):
                 actor = self.canvas.add_mesh(
                     remaining, scalars=SOURCE_COLOR_FIELD if surface.colors is not None else "Value",
                     rgb=surface.colors is not None, cmap=cmap, clim=levels,
-                    style="surface" if surface.faces.size else "points", point_size=point_size,
+                    style="points" if points else "surface", point_size=point_size,
                     lighting=False, show_scalar_bar=surface.colors is None, reset_camera=False, render=False,
                     scalar_bar_args={"title": "Luminance" if frame.composite else "Value",
                                      "color": "#dce5f2" if self.dark else "#263247",
@@ -367,7 +371,7 @@ class SurfaceView(QtWidgets.QWidget):
                 actor = self.canvas.add_mesh(cap, color=self.clip_color if highlight_clipped and not colored else None,
                                              scalars=SOURCE_COLOR_FIELD if colored else None if highlight_clipped else "Value",
                                              rgb=colored, cmap=cmap, clim=levels, lighting=False,
-                                             point_size=max(6, point_size) if highlight_clipped else point_size, show_scalar_bar=False,
+                                             style="points" if points else "surface", point_size=point_size, show_scalar_bar=False,
                                              reset_camera=False, render=False)
                 actor.SetScale(1, 1, z_scale)
                 self._clip_actors.append(actor)
@@ -421,7 +425,8 @@ class SurfaceView(QtWidgets.QWidget):
             frame, surface = layer.frame, layer.frame.surface
             if surface is None or not len(surface.points):
                 continue
-            mesh = pv.PolyData(surface.points, surface.faces) if surface.faces.size else pv.PolyData(surface.points)
+            points = layer.surface_style == SurfaceStyle.POINTS or not surface.faces.size
+            mesh = pv.PolyData(surface.points) if points else pv.PolyData(surface.points, surface.faces)
             mesh.point_data["Value"] = surface.points[:, 2]
             if frame.point_coordinates is not None:
                 mesh.point_data[SOURCE_INDEX_FIELD] = surface.rows - frame.x_start
@@ -432,7 +437,7 @@ class SurfaceView(QtWidgets.QWidget):
                     continue
                 actor = self.canvas.add_mesh(part, color=color, scalars=None, lighting=False,
                     opacity=layer.opacity, show_scalar_bar=False, reset_camera=False, render=False,
-                    style="surface" if surface.faces.size else "points", point_size=layer.point_size)
+                    style="points" if points else "surface", point_size=layer.point_size)
                 actor.SetScale(layer.x.scale, layer.y.scale, layer.z_mapping.scale)
                 actor.SetPosition(layer.x.offset, layer.y.offset, layer.z_mapping.offset)
                 self.canvas.layers.append((actor, layer))

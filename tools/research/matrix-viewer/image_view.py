@@ -6,9 +6,13 @@ Laplace sigma/omega planes fit their axes independently for readable contours.
 An explicit X:Y aspect choice overrides that default across matrix switches.
 Optional opaque pixel annotations distinguish Inf, -Inf and NaN; clipping
 outlines can be hidden independently of actual value clamping.
+Discrete points reuse the sampled grid used by 3D, with screen-pixel diameters
+and original scalar/image colors. Overlay layers keep their own style/size.
+Nonfinite annotations remain filled pixels; clipped points use the clip color.
 """
 
 import math
+from dataclasses import replace
 import numpy as np
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -20,6 +24,8 @@ from .data_model import DEFAULT_CLIP_COLOR, ColorArray, Frame, format_sample
 from .plot_support import compact_axis, graphics_scene, pyside_graphics_view
 from .workspace import RenderLayer
 from .value_markers import MarkerStyle, nonfinite_mask
+from .coordinates import AxisMap
+from .render_style import DEFAULT_POINT_SIZE, ImageStyle
 
 PLOT_CONTENT_MARGIN = 2
 
@@ -39,7 +45,13 @@ class ImageView(QtWidgets.QWidget):
         self._layers: tuple[RenderLayer, ...] = ()
         self._layer_items: dict[int, pg.ImageItem] = {}
         self._layer_annotations: dict[int, pg.ImageItem] = {}
+        self._layer_points: dict[int, pg.ScatterPlotItem] = {}
         self._layer_keys: dict[int, tuple[object, ...]] = {}
+        self._point_key: tuple[object, ...] = ()
+        self._style = ImageStyle.IMAGE
+        self._point_size = DEFAULT_POINT_SIZE
+        self._cmap = "viridis"
+        self._levels = (0.0, 1.0)
         self.clip_color = QtGui.QColor(DEFAULT_CLIP_COLOR)
         self.marker_style = MarkerStyle()
         layout = QtWidgets.QVBoxLayout(self)
@@ -70,6 +82,8 @@ class ImageView(QtWidgets.QWidget):
         self.item = pg.ImageItem(axisOrder="row-major")
         self.item.setOpts(autoDownsample=True)
         self.plot.addItem(self.item)
+        self.points = pg.ScatterPlotItem()
+        self.plot.addItem(self.points)
         self.clip_overlay = pg.ImageItem(axisOrder="row-major")
         self.clip_overlay.setOpts(autoDownsample=False)
         self.plot.addItem(self.clip_overlay)
@@ -83,7 +97,8 @@ class ImageView(QtWidgets.QWidget):
         self.marker.hide()
         graphics_scene(native_view).sigMouseMoved.connect(self._hover)
 
-    def set_frame(self, frame: Frame, cmap: str, levels: tuple[float, float], reset: bool) -> None:
+    def set_frame(self, frame: Frame, cmap: str, levels: tuple[float, float], reset: bool, *,
+                  style: ImageStyle = ImageStyle.IMAGE, point_size: float = DEFAULT_POINT_SIZE) -> None:
         """Display a prepared matrix and optionally fit its complete bounds.
 
         Args:
@@ -91,12 +106,16 @@ class ImageView(QtWidgets.QWidget):
             cmap: Matplotlib colormap name.
             levels: Color mapping minimum and maximum.
             reset: Fit the image if True; otherwise preserve zoom and pan.
+            style: Filled image pixels or sampled points.
+            point_size: Diameter of points in screen pixels.
 
         Side effects:
             Updates the image, colorbar and cursor label.
         """
         self._clear_layers()
-        self.item.show()
+        self._style, self._point_size, self._cmap, self._levels = style, point_size, cmap, levels
+        self.item.setVisible(style == ImageStyle.IMAGE)
+        self.points.setVisible(style == ImageStyle.POINTS)
         self.frame = frame
         self._axis_labels(frame)
         self.readout.setText("Move over the image to inspect a pixel")
@@ -115,14 +134,16 @@ class ImageView(QtWidgets.QWidget):
         else:
             self.bar.setColorMap(pg.colormap.get(cmap, source="matplotlib"))
             self.bar.setLevels(levels)
+        self._update_points()
         if reset:
             self.reset_view()
 
     def _clear_layers(self) -> None:
-        for item in (*self._layer_items.values(), *self._layer_annotations.values()):
+        for item in (*self._layer_items.values(), *self._layer_annotations.values(), *self._layer_points.values()):
             self.plot.removeItem(item)
         self._layer_items.clear()
         self._layer_annotations.clear()
+        self._layer_points.clear()
         self._layer_keys.clear()
         self._layers = ()
 
@@ -164,6 +185,9 @@ class ImageView(QtWidgets.QWidget):
         if layers:
             self._axis_labels(layers[0].frame)
         self.item.hide()
+        self.points.hide()
+        self.points.clear()
+        self._point_key = ()
         self.clip_overlay.hide()
         self.bar.hide()
         wanted = {layer.uid for layer in layers}
@@ -171,6 +195,7 @@ class ImageView(QtWidgets.QWidget):
             if uid not in wanted:
                 self.plot.removeItem(self._layer_items.pop(uid))
                 self.plot.removeItem(self._layer_annotations.pop(uid))
+                self.plot.removeItem(self._layer_points.pop(uid))
                 self._layer_keys.pop(uid, None)
         for order, layer in enumerate(layers):
             frame = layer.frame
@@ -184,8 +209,16 @@ class ImageView(QtWidgets.QWidget):
                 annotations.setOpts(autoDownsample=False)
                 self.plot.addItem(annotations)
                 self._layer_annotations[layer.uid] = annotations
+                dots = pg.ScatterPlotItem()
+                self.plot.addItem(dots)
+                self._layer_points[layer.uid] = dots
             annotations = self._layer_annotations[layer.uid]
-            image_key = (layer.data_key or id(frame), layer.color, layer.clip_color, layer.markers)
+            dots = self._layer_points[layer.uid]
+            point_mode = layer.image_style == ImageStyle.POINTS
+            item.setVisible(not point_mode)
+            dots.setVisible(point_mode)
+            image_key = (id(frame), layer.color, layer.clip_color, layer.markers,
+                         layer.image_style, layer.image_point_size, layer.x, layer.y)
             if self._layer_keys.get(layer.uid) != image_key:
                 low, high = frame.limits
                 intensity = np.nan_to_num(np.clip((frame.display_scalar.astype(np.float64) - low) / (high - low), 0, 1))
@@ -196,7 +229,16 @@ class ImageView(QtWidgets.QWidget):
                 # autoDownsample averages uint8 RGBA into floats. Explicit byte
                 # levels remain valid both before and after that conversion.
                 item.setImage(rgba, autoLevels=False, levels=(0, 255))
-                marks = self._annotation_image(frame, layer.markers, QtGui.QColor(layer.clip_color))
+                if point_mode and frame.surface is not None:
+                    rows = frame.surface.rows - frame.y_start
+                    columns = frame.surface.columns - frame.x_start
+                    colors = rgba[rows, columns].copy()
+                    self._point_clip_colors(colors, frame, layer.markers, QtGui.QColor(layer.clip_color))
+                    self._set_points(dots, frame, colors, layer.image_point_size, layer.x, layer.y)
+                else:
+                    dots.clear()
+                marks = self._annotation_image(frame, replace(layer.markers, highlight_clipped=False)
+                                               if point_mode else layer.markers, QtGui.QColor(layer.clip_color))
                 if marks is None:
                     annotations.clear()
                     annotations.hide()
@@ -210,6 +252,8 @@ class ImageView(QtWidgets.QWidget):
                          width * xm.scale, height * ym.scale)
             item.setOpacity(layer.opacity)
             item.setZValue(order)
+            dots.setOpacity(layer.opacity)
+            dots.setZValue(order)
             annotations.setRect(xm.forward(frame.x_start - 0.5), ym.forward(frame.y_start - 0.5),
                                 width * xm.scale, height * ym.scale)
             annotations.setZValue(len(layers) + order)
@@ -254,7 +298,9 @@ class ImageView(QtWidgets.QWidget):
 
     def _update_clip_overlay(self) -> None:
         frame = self.frame
-        rgba = self._annotation_image(frame, self.marker_style, self.clip_color) if frame is not None else None
+        style = replace(self.marker_style, highlight_clipped=False) if self._style == ImageStyle.POINTS else self.marker_style
+        rgba = self._annotation_image(frame, style, self.clip_color) if frame is not None else None
+        self._update_points()
         if frame is None or rgba is None:
             self.clip_overlay.clear()
             self.clip_overlay.hide()
@@ -264,6 +310,50 @@ class ImageView(QtWidgets.QWidget):
         self.clip_overlay.setRect(frame.x_mapping.forward(frame.x_start - 0.5), frame.y_mapping.forward(frame.y_start - 0.5),
                                   w * frame.x_mapping.scale, h * frame.y_mapping.scale)
         self.clip_overlay.show()
+
+    def _update_points(self) -> None:
+        """Recolor sampled points only when their data or appearance changes."""
+        frame = self.frame
+        if self._style != ImageStyle.POINTS or frame is None or frame.surface is None:
+            self.points.clear()
+            self._point_key = ()
+            return
+        key = (id(frame), self._cmap, self._levels, self._point_size, self.clip_color.name(), self.marker_style)
+        if key == self._point_key:
+            return
+        rows, columns = frame.surface.rows - frame.y_start, frame.surface.columns - frame.x_start
+        if frame.composite and frame.image is not None:
+            colors = np.asarray(frame.image[rows, columns], dtype=np.uint8).copy()
+        else:
+            low, high = self._levels
+            values = np.clip((frame.display_scalar[rows, columns].astype(np.float64) - low) / (high - low), 0, 1)
+            palette = pg.colormap.get(self._cmap, source="matplotlib").getLookupTable(0, 1, 256, alpha=True)
+            colors = np.asarray(palette[np.asarray(values * 255, dtype=np.uint8)], dtype=np.uint8)
+        self._point_clip_colors(colors, frame, self.marker_style, self.clip_color)
+        self._set_points(self.points, frame, colors, self._point_size)
+        self._point_key = key
+
+    @staticmethod
+    def _point_clip_colors(colors: ColorArray, frame: Frame, style: MarkerStyle, color: QtGui.QColor) -> None:
+        """Color clamped sampled vertices without changing their coordinates."""
+        if style.highlight_clipped and frame.surface is not None:
+            clipped = frame.clip_kind[frame.surface.rows - frame.y_start, frame.surface.columns - frame.x_start] != 0
+            colors[clipped, :3] = (color.red(), color.green(), color.blue())
+
+    @staticmethod
+    def _set_points(item: pg.ScatterPlotItem, frame: Frame, colors: ColorArray, size: float,
+                    x: AxisMap = AxisMap(), y: AxisMap = AxisMap()) -> None:
+        """Draw sampled centers with shared brushes; avoid huge RGB texture atlases."""
+        surface = frame.surface
+        if surface is None or not len(surface.points):
+            item.clear()
+            return
+        unique, indices = np.unique(colors, axis=0, return_inverse=True)
+        brushes = [QtGui.QBrush(QtGui.QColor(int(rgba[0]), int(rgba[1]), int(rgba[2]), int(rgba[3])))
+                   for rgba in unique]
+        item.setData(x=x.array(surface.points[:, 0]), y=y.array(surface.points[:, 1]),
+                     size=size, symbol="o", pen=None, brush=[brushes[index] for index in indices],
+                     pxMode=True, useCache=not frame.composite)
 
     @staticmethod
     def _annotation_image(frame: Frame, style: MarkerStyle, clip_color: QtGui.QColor) -> ColorArray | None:

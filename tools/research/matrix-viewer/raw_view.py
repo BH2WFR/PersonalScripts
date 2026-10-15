@@ -10,7 +10,7 @@ from typing import cast
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import Array, Frame, ImageMember, ImageSource
-from .qt_widgets import NoWheelComboBox
+from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 
 MAX_COPY_CELLS = 1_000_000
 DEFAULT_COLUMN_WIDTH = 48
@@ -190,8 +190,8 @@ class RawDataView(QtWidgets.QWidget):
         self.table.setWordWrap(False)
         layout.addWidget(self.table)
         bar = QtWidgets.QHBoxLayout()
-        self.row = QtWidgets.QSpinBox()
-        self.column = QtWidgets.QSpinBox()
+        self.row = NoWheelSpinBox()
+        self.column = NoWheelSpinBox()
         for label, widget in (("Row", self.row), ("Column", self.column)):
             bar.addWidget(QtWidgets.QLabel(label))
             bar.addWidget(widget)
@@ -206,7 +206,7 @@ class RawDataView(QtWidgets.QWidget):
         separator.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         bar.addWidget(separator)
         bar.addWidget(QtWidgets.QLabel("Column width"))
-        self.column_width = QtWidgets.QSpinBox()
+        self.column_width = NoWheelSpinBox()
         self.column_width.setRange(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
         self.column_width.setValue(DEFAULT_COLUMN_WIDTH)
         self.column_width.setSuffix(" px")

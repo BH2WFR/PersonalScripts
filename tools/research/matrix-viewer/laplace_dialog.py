@@ -13,7 +13,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import Crop, Document, Selection, ViewMode, is_phase_view
 from .fourier import TransformRange
-from .qt_widgets import NoWheelComboBox
+from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 from .laplace import (DEFAULT_SIGMA_COUNT, MAX_OUTPUT_BYTES, LaplaceDirection,
                       LaplaceOptions, default_sigma_range, sigma_values)
 
@@ -67,10 +67,10 @@ class LaplaceDialog(QtWidgets.QDialog):
         self.auto_sigma.setChecked(True)
         self.sigma_min = QtWidgets.QLineEdit()
         self.sigma_max = QtWidgets.QLineEdit()
-        self.sigma_count = QtWidgets.QSpinBox()
+        self.sigma_count = NoWheelSpinBox()
         self.sigma_count.setRange(2, 65536)
         self.sigma_count.setValue(DEFAULT_SIGMA_COUNT)
-        self.fft_size = QtWidgets.QSpinBox()
+        self.fft_size = NoWheelSpinBox()
         self.fft_size.setRange(0, 2_147_483_647)
         self.fft_size.setSpecialValueText("Same as input")
         self.component = QtWidgets.QCheckBox(f"Transform current display component ({selection.component.value})")
@@ -78,7 +78,7 @@ class LaplaceDialog(QtWidgets.QDialog):
         self.bounds = QtWidgets.QCheckBox("Apply current value bounds before transforming")
         self.fill_zero = QtWidgets.QCheckBox("Replace NaN / Inf / filtered samples with zero")
         self.single = QtWidgets.QCheckBox("Single precision (complex64)")
-        self.row = QtWidgets.QSpinBox()
+        self.row = NoWheelSpinBox()
         row_count = record.sigma_count if self.paired and record is not None else document.array.shape[selection.y_axis or 0]
         self.row.setRange(-1 if self.paired else 0, max(0, row_count - 1))
         if self.paired:
@@ -86,7 +86,7 @@ class LaplaceDialog(QtWidgets.QDialog):
             self.row.setValue(-1)
         self.inverse_sigma = QtWidgets.QLineEdit("0")
         self.omega_spacing = QtWidgets.QLineEdit("1")
-        self.output_count = QtWidgets.QSpinBox()
+        self.output_count = NoWheelSpinBox()
         frequency_count = record.fft_size if self.paired and record is not None else document.array.shape[selection.x_axis]
         self.output_count.setRange(1, frequency_count)
         self.output_count.setValue(document.array.shape[selection.x_axis])
