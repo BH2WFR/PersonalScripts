@@ -219,7 +219,7 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-font-replace.py` | **保持文字位置的交互式 PDF 字体替换工具**：按字体和字号筛选、忽略指定页，保留常规、粗体和斜体样式及其他文档内容。支持按名称或本地化别名搜索系统字体、指定字体文件，以及子集或完整字体嵌入。 | **Python 库**：`PyMuPDF`、`fonttools` |
+| `tools/document-processing/pdf-font-replace.py` | **保持文字位置的交互式 PDF 字体替换工具**：同一 PDF 可添加多条字体替换规则，独立筛选字号和页面，保留常规、粗体和斜体样式及其他文档内容。支持按名称或本地化别名搜索系统字体、指定字体文件、子集或完整字体嵌入，以及按规则清理不再使用的原字体嵌入。 | **Python 库**：`PyMuPDF`、`fonttools`、`tqdm` |
 | `tools/document-processing/pdf-binarize.py` | **扫描版 PDF 黑白二值化工具**：<br />支持固定阈值或 Sauvola 自适应二值化、可选对比度调整、放大和锐化，可先导出单页 PDF 预览效果，再转换整本，生成无损压缩的 1-bit 黑白 PDF。支持可调 DPI、跳过指定页面和进度条，无需逐页临时图片，保留页面尺寸及书签；转换页面不保留可搜索文字和交互功能。 | **Python 库**：`PyMuPDF`、`Pillow`（含 libtiff）、`numpy`、`tqdm` |
 | `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据，也可处理仅有 PDF/A 标识的无保护文件。若没有需要移除的内容，则警告并提供重新打开或退出选项。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 书籍目录注入工具**：<br />将目录截图逐页发送给**视觉 LLM（如 Qwen3-VL）生成指定格式的 JSON**（含页码/层级/编号/标题），再直接逐页连续粘贴到脚本中；脚本会按输入顺序合并后将目录写入 PDF 文件。支持自定义起始书页页码，一个 PDF 页面可对应 1、2 或 4 个连续书页，并可选择生成正文和目录的页码标签。 | **Python 库**：`PyMuPDF` |

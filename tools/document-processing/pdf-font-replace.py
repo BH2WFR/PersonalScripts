@@ -7,6 +7,13 @@ Filter by effective font size and ignore physical page ranges. Target fonts can
 be searched by installed names/localized aliases or selected as TTF/OTF/TTC files.
 Regular, bold, italic and bold-italic use matching faces, retaining existing text
 matrices and synthetic styling. Missing faces/glyphs fail instead of falling back.
+Add multiple replacement rules for the same PDF before starting. Rules match
+original text, never another rule's output; the first matching rule wins.
+Each rule keeps its own font, size, ignored-page and embedding choices.
+Each rule can retain original font embeddings (default) or remove them when no
+remaining content uses them. Shared fonts requested by a retaining rule stay
+embedded. Target fonts always remain embedded; unused original font names and
+width dictionaries may remain as resources after their font data is removed.
 
 The embedding menu offers a subset by default or the full face.
 This tool changes glyph shapes, not text layout: original font advance widths,
@@ -17,11 +24,12 @@ fonts, and inline-image content streams are rejected when encountered during
 replacement. No reflow, redaction, rasterization, or silent font fallback is used.
 
 After conversion, the PDF is saved directly without reopening or output validation.
+Font scanning and conversion use tqdm progress bars in interactive terminals.
 The shared PDF save policy removes encryption and PDF/A identification; other
 metadata is retained. Sources are preserved and existing files are not overwritten.
 
 Requirements:
-    - pip: PyMuPDF>=1.28, fonttools (MuPDF font APIs verified with PyMuPDF 1.28).
+    - pip: PyMuPDF>=1.28, fonttools, tqdm (MuPDF font APIs verified with PyMuPDF 1.28).
 
 Usage:
     python pdf-font-replace.py
@@ -50,6 +58,7 @@ from utils import *  # noqa: E402
 
 if TYPE_CHECKING:
     import pymupdf
+    from pymupdf.mupdf import PdfFontDesc
 
 MAX_FORM_DEPTH = 32
 SIZE_TOLERANCE = 0.0001
@@ -70,20 +79,12 @@ def _font_name(name: str) -> str:
 
 
 def _select_face(faces: Sequence[FontFace], prompt: str) -> FontFace | None:
-    """Display names/aliases and accept one face index, or blank to go back."""
-    for index, face in enumerate(faces, 1):
-        print(f"{index:>3}. {face.label()}")
-    while True:
-        answer = Input.prompt(f"{prompt} (number, Enter to go back): ")
-        if not answer:
-            return None
-        try:
-            selection = Input.parse_index_ranges(answer, item_count=len(faces))
-            if len(selection) != 1:
-                raise ValueError("Choose exactly one font.")
-            return faces[selection[0]]
-        except ValueError as exc:
-            print(f"{FLRed}{exc}{CRst}")
+    """Select one face through the shared menu; R or Enter goes back."""
+    options = [MenuOption([str(index)], face.label(), face, desc_color=CRst)
+               for index, face in enumerate(faces, 1)]
+    options.append(MenuOption(["R"], "Go back", False, desc_color=FGray))
+    choice = Menu.select(options, prompt=prompt, default_key="R", key_color=FGray, separator=False)
+    return choice if isinstance(choice, FontFace) else None
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,25 @@ class _SourceFont:
         return [int.from_bytes(value[index:index + 2], "big") for index in range(0, len(value), 2)]
 
 
+def _load_pdf_font(document: "pymupdf.Document", xref: int) -> "PdfFontDesc":
+    """Load a PDF font descriptor for both resource and extracted-text naming."""
+    import pymupdf.mupdf as mupdf
+
+    native = mupdf.pdf_document_from_fz_document(document.this)
+    obj = mupdf.pdf_new_indirect(native, xref, 0)
+    return mupdf.PdfFontDesc(mupdf.ll_pdf_load_font(native.m_internal, None, obj.m_internal))
+
+
+def _source_names(document: "pymupdf.Document", xref: int) -> set[str]:
+    """Recognize both BaseFont and MuPDF's extracted-text name for one font."""
+    import pymupdf.mupdf as mupdf
+
+    base = _font_name(document.xref_get_key(xref, "BaseFont")[1].lstrip("/"))
+    loaded = _load_pdf_font(document, xref)
+    extracted = _font_name(mupdf.ll_fz_font_name(loaded.m_internal.font))
+    return {base, extracted}
+
+
 def _source_font(document: "pymupdf.Document", xref: int) -> _SourceFont:
     """Read source character mapping, style and original advances without its system font."""
     import pymupdf.mupdf as mupdf
@@ -326,9 +346,7 @@ def _source_font(document: "pymupdf.Document", xref: int) -> _SourceFont:
     if composite and document.xref_get_key(xref, "Encoding")[1] != "/Identity-H":
         raise ValueError(f"Source font {name} requires horizontal Identity-H encoding.")
     mapping = _unicode_map(document, xref, composite)
-    native = mupdf.pdf_document_from_fz_document(document.this)
-    obj = mupdf.pdf_new_indirect(native, xref, 0)
-    loaded = mupdf.PdfFontDesc(mupdf.ll_pdf_load_font(native.m_internal, None, obj.m_internal))
+    loaded = _load_pdf_font(document, xref)
     raw = loaded.m_internal
     flags = raw.flags
     bold = bool(flags & (1 << 18)) or bool(re.search(r"bold|black|heavy|semibold|demi", name, re.I))
@@ -372,6 +390,7 @@ class _Replacement:
     source: _SourceFont
     face: FontFace
     xref: int
+    embedding: _Embedding
     codes: set[int] = field(default_factory=set)
 
 
@@ -512,36 +531,61 @@ class _State:
         return abs(self.size * self.horizontal_scale) * math.hypot(a, b)
 
 
+@dataclass(frozen=True)
+class _Rule:
+    """One replacement's original-text filters, target faces and embedding choice."""
+
+    names: set[str] | None
+    sizes: tuple[tuple[float, float], ...]
+    ignored: tuple[int, ...]
+    faces: dict[FontStyle, FontFace]
+    embedding: _Embedding
+    remove_original: bool = False
+
+
 @dataclass
 class _Engine:
     document: "pymupdf.Document"
-    names: set[str] | None
-    sizes: tuple[tuple[float, float], ...]
-    faces: dict[FontStyle, FontFace]
-    embedding: _Embedding
+    rules: Sequence[_Rule]
     source_fonts: dict[int, _SourceFont] = field(default_factory=dict)
-    replacements: dict[int, _Replacement] = field(default_factory=dict)
+    source_names: dict[int, set[str]] = field(default_factory=dict)
+    replacements: dict[tuple[int, int], _Replacement] = field(default_factory=dict)
     selected_characters: int = 0
+    current_page: int = -1
+    retained_fonts: set[int] = field(default_factory=set)
+    processed_forms: set[int] = field(default_factory=set)
 
-    def selected(self, state: _State) -> bool:
-        """Match original PDF font names and effective sizes before reading mappings."""
+    def selected(self, state: _State) -> int | None:
+        """Return the first rule matching the original font, size and current page."""
         if not state.font:
-            return False
-        name = _font_name(self.document.xref_get_key(state.font, "BaseFont")[1].lstrip("/"))
-        if self.names is not None and name.casefold() not in self.names:
-            return False
+            return None
+        if state.font not in self.source_names:
+            self.source_names[state.font] = {name.casefold() for name in _source_names(self.document, state.font)}
+        names = self.source_names[state.font]
         size = state.effective_size()
-        return not self.sizes or any(low - SIZE_TOLERANCE <= size <= high + SIZE_TOLERANCE
-                                     for low, high in self.sizes)
+        for index, rule in enumerate(self.rules):
+            if self.current_page in rule.ignored:
+                continue
+            if rule.names is not None and not any(candidate.casefold() in names for candidate in rule.names):
+                continue
+            if not rule.sizes or any(low - SIZE_TOLERANCE <= size <= high + SIZE_TOLERANCE
+                                     for low, high in rule.sizes):
+                return index
+        return None
 
-    def replacement(self, state: _State) -> _Replacement:
+    def replacement(self, state: _State, rule_index: int) -> _Replacement:
         """Resolve a face of exactly the original style and reserve its font object."""
-        if state.font not in self.replacements:
-            source = self.source_fonts.setdefault(state.font, _source_font(self.document, state.font))
-            if source.style not in self.faces:
+        key = (rule_index, state.font)
+        if key not in self.replacements:
+            if state.font not in self.source_fonts:
+                self.source_fonts[state.font] = _source_font(self.document, state.font)
+            source = self.source_fonts[state.font]
+            rule = self.rules[rule_index]
+            if source.style not in rule.faces:
                 raise ValueError(f"Missing target {source.style.name} face for {source.name}. Specify the matching style file.")
-            self.replacements[state.font] = _Replacement(source, self.faces[source.style], _object(self.document, "<< >>"))
-        return self.replacements[state.font]
+            self.replacements[key] = _Replacement(source, rule.faces[source.style],
+                                                  _object(self.document, "<< >>"), rule.embedding)
+        return self.replacements[key]
 
     def rewrite(
         self, data: bytes, resources: str, initial: _State, ancestors: tuple[int, ...] = (),
@@ -608,6 +652,7 @@ class _Engine:
             elif op == b"Do":
                 form = _reference(document, resource, f"XObject/{_name(operands[0].raw)}")
                 if document.xref_get_key(form, "Subtype")[1] == "/Form":
+                    self.processed_forms.add(form)
                     if form in ancestors:
                         raise ValueError("Cyclic Form XObject reference.")
                     kind, raw_matrix = document.xref_get_key(form, "Matrix")
@@ -624,17 +669,18 @@ class _Engine:
                     )
                     if changed:
                         clone = _object(document, document.xref_object(form), rewritten)
+                        self.processed_forms.add(clone)
                         document.xref_set_key(clone, "Resources", f"{new_resources} 0 R")
                         alias = f"FRForm{clone}"
                         while document.xref_get_key(resource, f"XObject/{alias}")[0] != "null":
                             alias += "x"
                         document.xref_set_key(resource, f"XObject/{alias}", f"{clone} 0 R")
                         patches.append((operands[0].start, token.end, f"/{alias} Do".encode("ascii")))
-            elif op in (b"Tj", b"TJ", b"'", b'"') and self.selected(state):
+            elif op in (b"Tj", b"TJ", b"'", b'"') and (rule_index := self.selected(state)) is not None:
                 strings = operands[-1].children if op == b"TJ" else operands[-1:]
                 values = [_string_bytes(item.raw) for item in strings if item.kind == "string"]
                 if any(values):
-                    replacement = self.replacement(state)
+                    replacement = self.replacement(state, rule_index)
                     codes = [code for value in values for code in replacement.source.codes(value)]
                     replacement.codes.update(codes)
                     self.selected_characters += len(codes)
@@ -644,6 +690,9 @@ class _Engine:
                     changed_show = (f"/{target_alias} {size} Tf\n".encode("ascii") + data[start:token.end]
                                     + f"\n/{original_alias} {size} Tf".encode("ascii"))
                     patches.append((start, token.end, changed_show))
+            elif op in (b"Tj", b"TJ", b"'", b'"') and state.font:
+                # Even hidden/clipping text must retain its original font data.
+                self.retained_fonts.add(state.font)
             operands = []
         if operands:
             raise ValueError("PDF content ends with operands without an operator.")
@@ -660,9 +709,21 @@ class _Engine:
 
     def run(self, pages: Sequence[int]) -> int:
         """Replace selected text on allowed pages, then embed every used target face."""
-        for index in pages:
+        from tqdm import tqdm
+
+        cleaning = any(rule.remove_original for rule in self.rules)
+        if cleaning:
+            selected_pages = set(pages)
+            for index in range(self.document.page_count):
+                if index not in selected_pages:
+                    self.retained_fonts.update(row[0] for row in self.document[index].get_fonts(full=True))
+        for index in tqdm(pages, desc="Replacing fonts", unit="page", disable=None, dynamic_ncols=True):
+            self.current_page = index
             page = self.document[index]
-            if not _matching_font_names(page, self.names, self.sizes):
+            if not any(index not in rule.ignored and _matching_font_names(page, rule.names, rule.sizes)
+                       for rule in self.rules):
+                if cleaning:
+                    self.retained_fonts.update(row[0] for row in page.get_fonts(full=True))
                 continue
             owner = page.xref
             seen: set[int] = set()
@@ -679,16 +740,102 @@ class _Engine:
                 stream = _object(self.document, "<< >>", rewritten)
                 self.document.xref_set_key(page.xref, "Contents", f"{stream} 0 R")
                 self.document.xref_set_key(page.xref, "Resources", f"{new_resources} 0 R")
-            print(f"{FGray}Checked page {index + 1}.{CRst}", flush=True)
-        for replacement in self.replacements.values():
-            _embed(self.document, replacement, self.embedding)
+        for replacement in tqdm(self.replacements.values(), desc="Embedding fonts", unit="font",
+                                disable=None, dynamic_ncols=True):
+            _embed(self.document, replacement, replacement.embedding)
         return self.selected_characters
+
+    def remove_original_embeddings(self) -> None:
+        """Remove only requested, unused originals; retaining rules take priority."""
+        candidates: set[int] = set()
+        retained = set(self.retained_fonts)
+        for (rule_index, font_xref), _ in self.replacements.items():
+            if self.rules[rule_index].remove_original:
+                candidates.add(font_xref)
+            else:
+                retained.add(font_xref)
+        if not candidates:
+            return
+        retained.update(_protected_font_resources(self.document, self.processed_forms))
+        removed = sum(_remove_font_embedding(self.document, xref) for xref in sorted(candidates - retained))
+        print(f"{FGray}Original font cleanup: {removed} embedding(s) removed; "
+              f"{len(candidates & retained)} retained for other content or rules.{CRst}")
+
+
+def _referenced_fonts(document: "pymupdf.Document", value: str) -> set[int]:
+    """Conservatively collect fonts reachable from a PDF resource/appearance value."""
+    def references(tokens: Sequence[_Token]) -> Iterator[int]:
+        for index, token in enumerate(tokens):
+            if (token.kind == "number" and index + 2 < len(tokens)
+                    and tokens[index + 1].kind == "number" and tokens[index + 2].raw == b"R"):
+                yield int(token.raw)
+            if token.children:
+                yield from references(token.children)
+
+    pending = list(references(tuple(_tokens(value.encode("utf-8")))))
+    visited: set[int] = set()
+    fonts: set[int] = set()
+    while pending:
+        xref = pending.pop()
+        if xref in visited:
+            continue
+        visited.add(xref)
+        if (document.xref_get_key(xref, "Type")[1] == "/Font"
+                or document.xref_get_key(xref, "Subtype")[1] in
+                {"/Type0", "/Type1", "/TrueType", "/Type3", "/MMType1", "/CIDFontType0", "/CIDFontType2"}):
+            fonts.add(xref)
+        else:
+            pending.extend(references(tuple(_tokens(document.xref_object(xref).encode("utf-8")))))
+    return fonts
+
+
+def _protected_font_resources(document: "pymupdf.Document", processed_forms: set[int]) -> set[int]:
+    """Retain fonts in appearances, form defaults, patterns and unprocessed forms.
+
+    These resources are outside the rewritten page text. Traversing their font
+    references is deliberately conservative, including unused resources.
+    """
+    from tqdm import tqdm
+
+    fonts = _referenced_fonts(document, document.xref_get_key(document.pdf_catalog(), "AcroForm")[1])
+    for page in document:
+        for xref, _, _ in page.annot_xrefs():
+            fonts.update(_referenced_fonts(document, document.xref_get_key(xref, "AP")[1]))
+    for xref in tqdm(range(1, document.xref_length()), desc="Checking font resources", unit="object",
+                     disable=None, dynamic_ncols=True):
+        subtype = document.xref_get_key(xref, "Subtype")[1]
+        if (subtype == "/Type3" or document.xref_get_key(xref, "PatternType")[0] != "null"
+                or (subtype == "/Form" and xref not in processed_forms)):
+            fonts.update(_referenced_fonts(document, document.xref_get_key(xref, "Resources")[1]))
+    return fonts
+
+
+def _remove_font_embedding(document: "pymupdf.Document", xref: int) -> bool:
+    """Detach an unused font's program with copied descriptors to protect sharers.
+
+    Keeps font names, encodings and widths. The shared save function garbage
+    collects program streams only when no other PDF object references them.
+    """
+    composite = document.xref_get_key(xref, "Subtype")[1] == "/Type0"
+    owner = _reference(document, xref, "DescendantFonts") if composite else xref
+    descriptor = _dictionary(document, owner, "FontDescriptor")
+    if descriptor == "<< >>":
+        return False
+    font_files = ("FontFile", "FontFile2", "FontFile3")
+    if not any(document.xref_get_key(owner, f"FontDescriptor/{key}")[0] != "null" for key in font_files):
+        return False
+    copied_descriptor = _object(document, descriptor)
+    for key in font_files:
+        document.xref_set_key(copied_descriptor, key, "null")
+    if composite:
+        owner = _object(document, document.xref_object(owner))
+        document.xref_set_key(xref, "DescendantFonts", f"[{owner} 0 R]")
+    document.xref_set_key(owner, "FontDescriptor", f"{copied_descriptor} 0 R")
+    return True
 
 
 def _convert(
-    document: "pymupdf.Document", output: Path, names: set[str] | None,
-    sizes: tuple[tuple[float, float], ...], ignored: Sequence[int], faces: dict[FontStyle, FontFace],
-    embedding: _Embedding,
+    document: "pymupdf.Document", output: Path, rules: Sequence[_Rule],
 ) -> int:
     """Convert and directly save a new unprotected PDF without output verification.
 
@@ -697,13 +844,13 @@ def _convert(
     """
     if output.exists() or (document.name and Path(document.name).resolve() == output.resolve()):
         raise FileExistsError(f"Output must be a new file: {output}")
-    ignored_set = set(ignored)
-    pages = [index for index in range(document.page_count) if index not in ignored_set]
-    engine = _Engine(document, {name.casefold() for name in names} if names is not None else None, sizes, faces, embedding)
+    pages = [index for index in range(document.page_count) if any(index not in rule.ignored for rule in rules)]
+    engine = _Engine(document, rules)
     count = engine.run(pages)
     if not count:
         print(f"{FLYellow}No text matched the selected fonts, sizes and pages. No PDF written.{CRst}")
         return 0
+    engine.remove_original_embeddings()
     Pdf.save_new(document, output, compact=False)
     print(f"{FLGreen}Replaced {count} characters.{CRst}")
     print(f"{FLGreen}Saved:{CRst} {output}")
@@ -777,16 +924,19 @@ def _select_source_fonts(document: "pymupdf.Document") -> set[str] | None:
             MenuOption(["E"], "Exit", "E", desc_color=FGray),
         ])
         while True:
-            answer = cast(str, Menu.select(
+            answers = cast(list[str], Menu.select(
                 options, prompt="Font numbers/ranges", required=True,
-                accept_custom_string=True, key_color=FGray, separator=False,
+                allow_multiple=True, accept_custom_string=True, key_color=FGray, separator=False,
             ))
-            if answer.casefold() == "e":
-                raise KeyboardInterrupt
-            if answer.casefold() == "r":
-                break
             try:
-                indexes = Input.parse_index_ranges(answer, item_count=len(names))
+                actions = {answer.casefold() for answer in answers} & {"r", "e"}
+                if actions:
+                    if len(answers) != 1:
+                        raise ValueError("Use R or E alone, without font numbers.")
+                    if "e" in actions:
+                        raise KeyboardInterrupt
+                    break
+                indexes = Input.parse_index_ranges(",".join(answers), item_count=len(names))
                 if not indexes:
                     raise ValueError("Choose at least one font, R, or E.")
                 return {names[index] for index in indexes}
@@ -812,15 +962,14 @@ def _pick_target(catalog: list[FontFace]) -> FontFace:
                 # A manually supplied family may keep its other styles nearby.
                 neighbors = [path for path in face.path.parent.iterdir()
                              if path.suffix.casefold() in Font.FILE_SUFFIXES and path.is_file()]
-                catalog.extend(Font.read_catalog(neighbors))
+                catalog.extend(Font.read_catalog(neighbors, show_progress=True))
                 return face
             continue
         query = Input.prompt("Font name or localized alias (Enter to go back): ")
         if not query:
             continue
         if not catalog:
-            print(f"{FGray}Reading installed font names and localized aliases...{CRst}", flush=True)
-            catalog.extend(Font.read_catalog(Font.system_font_paths()))
+            catalog.extend(Font.read_catalog(Font.system_font_paths(), show_progress=True))
         found = Font.search_faces(catalog, query)
         if not found:
             print(f"{FLYellow}No matching installed font. Try another name or choose a file.{CRst}")
@@ -836,12 +985,20 @@ def _required_styles(
 ) -> set[FontStyle]:
     """Determine required styles from text on pages eligible for replacement."""
     refs: set[int] = set()
+    source_names: dict[int, set[str]] = {}
     for index in range(document.page_count):
         if index in ignored:
             continue
         page = document[index]
         used = _matching_font_names(page, names, sizes)
-        refs.update(row[0] for row in page.get_fonts(full=True) if _font_name(row[3]) in used)
+        if not used:
+            continue
+        for row in page.get_fonts(full=True):
+            xref = row[0]
+            if xref not in source_names:
+                source_names[xref] = _source_names(document, xref)
+            if source_names[xref] & used:
+                refs.add(xref)
     return {_source_font(document, xref).style for xref in refs}
 
 
@@ -869,6 +1026,57 @@ def _complete_styles(faces: dict[FontStyle, FontFace], required: set[FontStyle])
                 break
 
 
+def _collect_rules(document: "pymupdf.Document") -> tuple[_Rule, ...]:
+    """Collect replacements against the unchanged input until the user starts."""
+    rules: list[_Rule] = []
+    print(f"{FGray}Rules match original text. If rules overlap, the first matching rule wins.{CRst}")
+    while True:
+        print(f"{FLCyan}Replacement rule {len(rules) + 1}{CRst}")
+        # ── original text filters ──────────────────────────────
+        names = _select_source_fonts(document)
+        sizes = Input.input_real_ranges("Font sizes (Enter = all)") or ()
+        if any(low <= 0 for low, _ in sizes):
+            raise ValueError("Font sizes must be greater than zero.")
+
+        # ── target face and style matching ─────────────────────
+        catalog: list[FontFace] = []
+        base = _pick_target(catalog)
+        faces = Font.family_faces(base, catalog)
+        ignored = Input.input_index_ranges("Pages to ignore for this rule (Enter = none)",
+                                           item_count=document.page_count) or ()
+        _complete_styles(faces, _required_styles(document, names, sizes, ignored))
+        for style, face in faces.items():
+            print(f"{style.name}: {face.label()}")
+        embedding = cast(_Embedding, Menu.select(
+            [MenuOption(["S"], "Embed used characters only", _Embedding.SUBSET),
+             MenuOption(["F"], "Embed entire font face", _Embedding.FULL)],
+            prompt="Font embedding", required=True, default_key="S", separator=False,
+        ))
+        print(f"{FGray}Original fonts still needed by other text, pages, appearances or retaining rules are kept.{CRst}")
+        remove_original = cast(bool, Menu.select(
+            [MenuOption(["K"], "Keep original embedded fonts", False),
+             MenuOption(["D"], "Delete original embeddings when no longer used", True)],
+            prompt="Original fonts for this rule", required=True, default_key="D", separator=False,
+        ))
+        rules.append(_Rule(names, sizes, ignored, faces, embedding, remove_original))
+
+        # ── add another rule or process the document ───────────
+        sources = ", ".join(sorted(names)) if names is not None else "All fonts"
+        print(f"{FLGreen}Rule {len(rules)} added:{CRst} {sources} -> {base.name}")
+        start = Menu.select(
+            [MenuOption(["S"], f"Start replacement ({len(rules)} rule(s))", True),
+             MenuOption(["A"], "Add another replacement to this PDF", False)],
+            prompt="Next action", default_key="S", separator=False,
+        )
+        if start is None:
+            raise KeyboardInterrupt
+        if start:
+            return tuple(rules)
+        print()
+        Console.print_separator()
+        print()
+
+
 def _parser() -> argparse.ArgumentParser:
     """Accept only paths and help; explain the interactive choices and dependencies."""
     parser = argparse.ArgumentParser(
@@ -876,8 +1084,13 @@ def _parser() -> argparse.ArgumentParser:
                     "  Replace selected fonts while preserving text positions and advances.\n"
                     "  Interactive selection supports PDF fonts, sizes, page exclusions, localized\n"
                     "  installed font names, and font files. Original bold/italic styles are retained.\n"
+                    "  Add multiple replacement rules, then start once for the same PDF.\n"
                     "  Only paths are command-line arguments; all other choices are interactive.",
-        epilog=f"{FGray}Requirements: PyMuPDF>=1.28, fonttools. Windows / Linux / macOS.\n"
+        epilog=f"{FGray}Requirements: PyMuPDF>=1.28, fonttools, tqdm. Windows / Linux / macOS.\n"
+               "Font scanning and conversion show progress bars in interactive terminals.\n"
+               "Rules match original text; the first matching rule wins when rules overlap.\n"
+               "Each rule can keep original embeddings (default) or delete them if unused;\n"
+               "fonts needed by other content or a retaining rule remain embedded.\n"
                "Only embedded output is offered: subset (default) or full face. Source fonts\n"
                "need not be installed. Unsupported source encodings, missing glyphs/styles,\n"
                "vertical/Type3 fonts, variable targets, and inline-image streams fail clearly.\n"
@@ -909,8 +1122,9 @@ def main() -> int:
         import pymupdf
         from pymupdf.mupdf import FzErrorBase
         from fontTools.ttLib import TTLibError
+        from tqdm import tqdm
     except ImportError as exc:
-        print(f"{FLRed}Missing dependency: {exc.name}. Install PyMuPDF and fonttools.{CRst}")
+        print(f"{FLRed}Missing dependency: {exc.name}. Install PyMuPDF, fonttools and tqdm.{CRst}")
         return 1
     try:
         # ── open and select original text ──────────────────────
@@ -918,28 +1132,11 @@ def main() -> int:
         with Pdf.open_document(source) as (document, _):
             if not document.page_count:
                 raise ValueError("The PDF has no pages.")
-            names = _select_source_fonts(document)
-            sizes = Input.input_real_ranges("Font sizes (Enter = all)") or ()
-            if any(low <= 0 for low, _ in sizes):
-                raise ValueError("Font sizes must be greater than zero.")
-
-            # ── target face and style matching ─────────────────────
-            catalog: list[FontFace] = []
-            base = _pick_target(catalog)
-            faces = Font.family_faces(base, catalog)
-            ignored = Input.input_index_ranges("Pages to ignore (Enter = none)", item_count=document.page_count) or ()
-            _complete_styles(faces, _required_styles(document, names, sizes, ignored))
-            for style, face in faces.items():
-                print(f"{style.name}: {face.label()}")
-            embedding = cast(_Embedding, Menu.select(
-                [MenuOption(["S"], "Embed used characters only", _Embedding.SUBSET),
-                 MenuOption(["F"], "Embed entire font face", _Embedding.FULL)],
-                prompt="Font embedding", required=True, default_key="S", separator=False,
-            ))
+            rules = _collect_rules(document)
             # ── convert and save ─────────────────────────────────
             default_output = source.with_name(f"{source.stem}_fonts.pdf")
             output = args.output or Path(Input.resolve_output_path(str(default_output), prompt="Output PDF", path_type="file"))
-            _convert(document, output, names, sizes, ignored, faces, embedding)
+            _convert(document, output, rules)
         return 0
     except (OSError, ValueError, KeyError, RuntimeError, TTLibError, FzErrorBase) as exc:
         print(f"{FLRed}Font replacement failed: {exc}{CRst}")

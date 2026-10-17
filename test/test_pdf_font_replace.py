@@ -28,7 +28,8 @@ sys.modules[spec.name] = app
 spec.loader.exec_module(app)
 
 
-def make_font(path: Path, *, bold: bool = False, italic: bool = False, cff: bool = False) -> None:
+def make_font(path: Path, *, bold: bool = False, italic: bool = False, cff: bool = False,
+              family: str = "Fixture") -> None:
     """Build a static font with ASCII/CJK glyphs, deliberately different advances."""
     characters = list(range(32, 127)) + [ord(char) for char in "中文字体测试"]
     cmap = {code: f"uni{code:04X}" for code in characters}
@@ -48,13 +49,13 @@ def make_font(path: Path, *, bold: bool = False, italic: bool = False, cff: bool
         glyphs[name] = pen.getCharString() if cff else pen.glyph()
     style = "BoldItalic" if bold and italic else "Bold" if bold else "Italic" if italic else "Regular"
     if cff:
-        builder.setupCFF(f"Fixture-{style}", {"FullName": f"Fixture {style}", "FamilyName": "Fixture", "Weight": style}, glyphs, {})
+        builder.setupCFF(f"{family}-{style}", {"FullName": f"{family} {style}", "FamilyName": family, "Weight": style}, glyphs, {})
     else:
         builder.setupGlyf(glyphs)
     builder.setupHorizontalMetrics({name: (900, 0) for name in glyph_order})
     builder.setupHorizontalHeader(ascent=800, descent=-200)
-    builder.setupNameTable({"familyName": "Fixture", "styleName": style, "uniqueFontIdentifier": f"Fixture-{style}",
-                            "fullName": f"Fixture {style}", "psName": f"Fixture-{style}"})
+    builder.setupNameTable({"familyName": family, "styleName": style, "uniqueFontIdentifier": f"{family}-{style}",
+                            "fullName": f"{family} {style}", "psName": f"{family}-{style}"})
     builder.setupOS2(sTypoAscender=800, sTypoDescender=-200, usWinAscent=800, usWinDescent=200,
                     usWeightClass=700 if bold else 400, fsSelection=(32 if bold else 0) | (1 if italic else 0) | (64 if not bold and not italic else 0))
     builder.setupPost(italicAngle=-12 if italic else 0)
@@ -101,7 +102,7 @@ class FontReplaceTests(unittest.TestCase):
         with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
             original = [[(char[0], char[2], span["size"], span["dir"], span["color"], span["opacity"], span["type"])
                          for span in page.get_texttrace() for char in span["chars"]] for page in document]
-            count = app._convert(document, self.output, names, sizes, ignored, self.faces, embedding)
+            count = app._convert(document, self.output, (app._Rule(names, sizes, tuple(ignored), self.faces, embedding),))
         if count:
             with pymupdf.open(self.output) as result:
                 for page, before in zip(result, original):
@@ -141,6 +142,172 @@ class FontReplaceTests(unittest.TestCase):
             self.assertIn(("Fixture-Regular", 12), fonts)
             self.assertIn(("Helvetica", 18), fonts)
             self.assertIn(("Times-Roman", 12), fonts)
+
+    def test_multiple_source_fonts_can_share_or_use_different_targets(self) -> None:
+        path = self.folder / "alternate.ttf"
+        make_font(path, family="Alternate")
+        alternate = {FontStyle.REGULAR: Font.read_faces(path)[0]}
+        for second_faces in (self.faces, alternate):
+            with self.subTest(target=second_faces[FontStyle.REGULAR].name):
+                output = self.folder / f"multiple-{second_faces[FontStyle.REGULAR].name}.pdf"
+                rules = [app._Rule({"Helvetica"}, (), (), self.faces, app._Embedding.SUBSET),
+                         app._Rule({"Times-Roman"}, (), (), second_faces, app._Embedding.SUBSET)]
+                with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(app._convert(document, output, rules), 54)
+                with pymupdf.open(output) as result:
+                    spans = result[0].get_texttrace()
+                    self.assertEqual(spans[0]["font"], "Fixture-Regular")
+                    self.assertEqual(spans[2]["font"], second_faces[FontStyle.REGULAR].name)
+
+    def test_rules_match_original_fonts_without_cascading(self) -> None:
+        path = self.folder / "alternate.ttf"
+        make_font(path, family="Alternate")
+        alternate = {FontStyle.REGULAR: Font.read_faces(path)[0]}
+        with pymupdf.open(self.source) as document:
+            page = document[0]
+            page.insert_font(fontname="OriginalFixture", fontfile=self.faces[FontStyle.REGULAR].path)
+            page.insert_text((30, 180), "Original", fontname="OriginalFixture", fontsize=12)
+            document.save(self.folder / "with-fixture.pdf")
+        rules = [app._Rule({"Helvetica"}, (), (), self.faces, app._Embedding.SUBSET),
+                 app._Rule({"Fixture-Regular"}, (), (), alternate, app._Embedding.FULL)]
+        with Pdf.open_document(self.folder / "with-fixture.pdf") as (document, _), \
+                contextlib.redirect_stdout(io.StringIO()):
+            app._convert(document, self.output, rules)
+        with pymupdf.open(self.output) as result:
+            spans = result[0].get_texttrace()
+            self.assertEqual(spans[0]["font"], "Fixture-Regular")
+            self.assertEqual(spans[1]["font"], "Fixture-Regular")
+            self.assertEqual(spans[-1]["font"], "Alternate-Regular")
+
+    def test_rule_sizes_pages_and_first_match_priority(self) -> None:
+        path = self.folder / "alternate.ttf"
+        make_font(path, family="Alternate")
+        alternate = {FontStyle.REGULAR: Font.read_faces(path)[0]}
+        rules = [app._Rule({"Helvetica"}, ((12, 12),), (1,), self.faces, app._Embedding.SUBSET),
+                 app._Rule({"Helvetica"}, (), (), alternate, app._Embedding.FULL)]
+        with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
+            app._convert(document, self.output, rules)
+        with pymupdf.open(self.output) as result:
+            first = result[0].get_texttrace()
+            second = result[1].get_texttrace()
+            self.assertEqual([span["font"] for span in first],
+                             ["Fixture-Regular", "Alternate-Regular", "Times-Roman"])
+            self.assertEqual([span["font"] for span in second],
+                             ["Alternate-Regular", "Alternate-Regular", "Times-Roman"])
+            with pymupdf.open(self.source) as original:
+                for before_page, after_page in zip(original, result):
+                    before = [(char[0], char[2]) for span in before_page.get_texttrace() for char in span["chars"]]
+                    after = [(char[0], char[2]) for span in after_page.get_texttrace() for char in span["chars"]]
+                    self.assertEqual(before, after)
+
+    def test_interactive_add_rule_then_start_saves_once(self) -> None:
+        with patch.object(sys, "argv", [str(app.__file__), str(self.source), "-o", str(self.output)]), \
+                patch.object(Menu, "select", side_effect=["P", ["1"], "F", app._Embedding.SUBSET, False, False,
+                                                        "P", ["2"], "F", app._Embedding.FULL, True, True]), \
+                patch.object(Input, "input_real_ranges", return_value=None), \
+                patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (), (0, 1), ()]), \
+                patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.REGULAR].path)), \
+                patch.object(Pdf, "save_new", wraps=Pdf.save_new) as save, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(app.main(), 0)
+        self.assertEqual(save.call_count, 1)
+        with pymupdf.open(self.output) as result:
+            self.assertEqual({span["font"] for page in result for span in page.get_texttrace()}, {"Fixture-Regular"})
+
+    def embedded_source(self) -> tuple[int, int]:
+        """Build two pages sharing an embedded font; return font and program xrefs."""
+        self.source = self.folder / "embedded-source.pdf"
+        with pymupdf.open() as document:
+            font_xref = 0
+            for _ in range(2):
+                page = document.new_page()
+                font_xref = page.insert_font(fontname="Original", fontfile=self.faces[FontStyle.REGULAR].path)
+                page.insert_text((30, 50), "ABC", fontname="Original", fontsize=12)
+                page.insert_text((30, 80), "XYZ", fontname="Original", fontsize=18)
+            child = app._reference(document, font_xref, "DescendantFonts")
+            descriptor = app._reference(document, child, "FontDescriptor")
+            program = app._reference(document, descriptor, "FontFile2")
+            document.save(self.source)
+        return font_xref, program
+
+    def test_per_rule_original_embedding_keep_and_delete(self) -> None:
+        font_xref, program = self.embedded_source()
+        source_bytes = self.source.read_bytes()
+        for remove in (False, True):
+            with self.subTest(remove=remove):
+                output = self.folder / f"cleanup-{remove}.pdf"
+                rule = app._Rule({"Fixture-Regular"}, (), (), self.faces, app._Embedding.SUBSET, remove)
+                with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
+                    app._convert(document, output, (rule,))
+                with pymupdf.open(output) as result:
+                    self.assertEqual(bool(result.extract_font(font_xref)[3]), not remove)
+                    self.assertEqual(result.xref_stream(program) is None, remove)
+                    self.assertIn("ABC", result[0].get_text())
+                    targets = [row[0] for row in result[0].get_fonts() if row[0] != font_xref]
+                    self.assertTrue(any(result.extract_font(xref)[3] for xref in targets))
+        self.assertEqual(self.source.read_bytes(), source_bytes)
+
+    def test_cleanup_retains_partial_ignored_and_explicitly_kept_fonts(self) -> None:
+        font_xref, _ = self.embedded_source()
+        names = {"Fixture-Regular"}
+        scenarios = [
+            [app._Rule(names, ((12, 12),), (), self.faces, app._Embedding.SUBSET, True)],
+            [app._Rule(names, (), (1,), self.faces, app._Embedding.SUBSET, True)],
+            [app._Rule(names, ((12, 12),), (), self.faces, app._Embedding.SUBSET, True),
+             app._Rule(names, ((18, 18),), (), self.faces, app._Embedding.SUBSET, False)],
+        ]
+        for index, rules in enumerate(scenarios):
+            with self.subTest(scenario=index):
+                output = self.folder / f"retained-{index}.pdf"
+                with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
+                    app._convert(document, output, rules)
+                with pymupdf.open(output) as result:
+                    self.assertTrue(result.extract_font(font_xref)[3])
+
+    def test_cleanup_protects_annotation_appearance_fonts(self) -> None:
+        font_xref, _ = self.embedded_source()
+        with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
+            annotation = document[0].add_freetext_annot(pymupdf.Rect(20, 100, 200, 140), "Annotation")
+            appearance = app._reference(document, annotation.xref, "AP/N")
+            document.xref_set_key(appearance, "Resources", f"<< /Font << /Original {font_xref} 0 R >> >>")
+            document.update_stream(appearance, b"BT /Original 12 Tf 1 0 0 1 10 10 Tm <0024> Tj ET")
+            rule = app._Rule({"Fixture-Regular"}, (), (), self.faces, app._Embedding.SUBSET, True)
+            app._convert(document, self.output, (rule,))
+        with pymupdf.open(self.output) as result:
+            self.assertTrue(result.extract_font(font_xref)[3])
+            self.assertIn(b"/Original 12 Tf", result.xref_stream(appearance))
+
+    def test_cleanup_copies_descriptors_shared_with_another_font(self) -> None:
+        font_xref, program = self.embedded_source()
+        with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
+            other = app._object(document, document.xref_object(font_xref))
+            resources = app._reference(document, document[0].xref, "Resources")
+            document.xref_set_key(resources, "Font/Other", f"{other} 0 R")
+            rule = app._Rule({"Fixture-Regular"}, (), (), self.faces, app._Embedding.SUBSET, True)
+            app._convert(document, self.output, (rule,))
+        with pymupdf.open(self.output) as result:
+            self.assertFalse(result.extract_font(font_xref)[3])
+            self.assertTrue(result.extract_font(other)[3])
+            self.assertIsNotNone(result.xref_stream(program))
+
+    def test_cleanup_handles_shared_forms_and_ignored_form_pages(self) -> None:
+        self.embedded_source()
+        forms = self.folder / "embedded-forms.pdf"
+        with pymupdf.open(self.source) as original, pymupdf.open() as document:
+            for _ in range(2):
+                page = document.new_page()
+                page.show_pdf_page(page.rect, original, 0)
+            font_xref = document[0].get_fonts(full=True)[0][0]
+            document.save(forms)
+        for ignored in ((), (1,)):
+            with self.subTest(ignored=ignored):
+                output = self.folder / f"clean-forms-{len(ignored)}.pdf"
+                rule = app._Rule({"Fixture-Regular"}, (), ignored, self.faces, app._Embedding.SUBSET, True)
+                with Pdf.open_document(forms) as (document, _), contextlib.redirect_stdout(io.StringIO()):
+                    app._convert(document, output, (rule,))
+                with pymupdf.open(output) as result:
+                    self.assertEqual(bool(result.extract_font(font_xref)[3]), bool(ignored))
+                    self.assertTrue(all("ABC" in page.get_text() for page in result))
 
     def test_full_embedding(self) -> None:
         self.assertGreater(self.convert({"Helvetica"}, embedding=app._Embedding.FULL), 0)
@@ -251,8 +418,8 @@ class FontReplaceTests(unittest.TestCase):
                 patch.object(Pdf, "open_document", side_effect=AssertionError("Output must not be reopened")), \
                 patch.object(pymupdf, "open", side_effect=AssertionError("Output must not be reopened")), \
                 contextlib.redirect_stdout(io.StringIO()):
-            self.assertGreater(app._convert(document, self.output, {"Helvetica"}, (), (), self.faces,
-                                           app._Embedding.SUBSET), 0)
+            rule = app._Rule({"Helvetica"}, (), (), self.faces, app._Embedding.SUBSET)
+            self.assertGreater(app._convert(document, self.output, (rule,)), 0)
             save.assert_called_once_with(document, self.output, compact=False)
         self.assertTrue(self.output.exists())
         self.assertFalse(list(self.folder.glob(".pdf-font-replace-*")))
@@ -263,6 +430,19 @@ class FontReplaceTests(unittest.TestCase):
             self.convert()
         self.assertEqual(self.output.read_bytes(), b"existing")
 
+    def test_terminal_progress_bars_replace_per_page_messages(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()) as progress, \
+                patch.object(progress, "isatty", return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
+                Pdf.open_document(self.source) as (document, _):
+            Font.read_catalog([self.faces[FontStyle.REGULAR].path], show_progress=True)
+            rule = app._Rule({"Helvetica"}, (), (), self.faces, app._Embedding.SUBSET)
+            app._convert(document, self.output, (rule,))
+        self.assertIn("Reading font metadata", progress.getvalue())
+        self.assertIn("Replacing fonts", progress.getvalue())
+        self.assertIn("Embedding fonts", progress.getvalue())
+        self.assertNotIn("Checked page", output.getvalue())
+
     def test_localized_alias_and_canonical_name_find_same_face(self) -> None:
         faces = list(self.faces.values())
         self.assertEqual(Font.search_faces(faces, "测试字体"), Font.search_faces(faces, "Fixture"))
@@ -271,8 +451,38 @@ class FontReplaceTests(unittest.TestCase):
         self.assertEqual(Font.search_faces(faces, "  "), faces)
         label = self.faces[FontStyle.REGULAR].label()
         self.assertIn(f"{FLCyan}Fixture-Regular{CRst}", label)
+        self.assertIn(f"{CRst}Fixture Regular{CRst}", label)
+        self.assertIn(f"{FGray}Fixture{CRst}", label)
         self.assertIn("测试字体", label)
-        self.assertIn(FLYellow, label)
+        self.assertIn(f"{FLGreen}测试字体{CRst}", label)
+        self.assertIn(f"{CRst} / {FLGreen}", label)
+
+    def test_font_scan_quiets_only_legacy_timestamp_warnings(self) -> None:
+        import logging
+        from fontTools.ttLib import TTFont
+        from fontTools.ttLib.tables._n_a_m_e import table__n_a_m_e
+
+        path = self.folder / "legacy.ttf"
+        with TTFont(self.faces[FontStyle.REGULAR].path, recalcTimestamp=False) as font:
+            font["head"].created = 1
+            font["head"].modified = 1
+            font.save(path)
+        logger = logging.getLogger("fontTools.ttLib.tables._h_e_a_d")
+        original_filters = logger.filters[:]
+
+        def family_with_warning() -> str:
+            logger.warning("An unrelated font warning")
+            return "Fixture"
+
+        with self.assertLogs(logger, level="WARNING") as logs, \
+                patch.object(table__n_a_m_e, "getBestFamilyName", side_effect=family_with_warning):
+            self.assertTrue(Font.read_faces(path))
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("An unrelated font warning", logs.output[0])
+        self.assertEqual(logger.filters, original_filters)
+        with self.assertLogs(logger, level="WARNING") as logs, TTFont(path) as font:
+            font["head"]
+        self.assertTrue(any("timestamp seems very low" in message for message in logs.output))
 
     def test_font_collection_and_catalog_skip_unreadable_files(self) -> None:
         from fontTools.ttLib import TTCollection, TTFont
@@ -307,7 +517,7 @@ class FontReplaceTests(unittest.TestCase):
         with pymupdf.open(self.source) as document:
             document.new_page()
             for retry in (True, False):
-                menus = ["P", retry, "1"] if retry else ["P", retry]
+                menus = ["P", retry, ["1"]] if retry else ["P", retry]
                 with patch.object(Menu, "select", side_effect=menus), \
                         patch.object(Input, "input_index_ranges", side_effect=[(2,), (0,)]), \
                         patch.object(Input, "prompt", return_value="1"), \
@@ -325,6 +535,8 @@ class FontReplaceTests(unittest.TestCase):
 
     def test_source_font_menu_ranges_retry_exit_and_gray_actions(self) -> None:
         cases = [(["P", "1-2"], {"Helvetica", "Times-Roman"}, 1),
+                 (["P", "1,2"], {"Helvetica", "Times-Roman"}, 1),
+                 (["P", "1,r", "1"], {"Helvetica"}, 1),
                  (["P", "r", "2"], {"Times-Roman"}, 2),
                  (["P", "99", "1"], {"Helvetica"}, 1),
                  (["P", "e"], None, 1)]
@@ -358,7 +570,7 @@ class FontReplaceTests(unittest.TestCase):
                 if supplied_paths:
                     arguments.extend([str(self.source), "-o", str(output)])
                 with patch.object(sys, "argv", arguments), \
-                        patch.object(Menu, "select", side_effect=["P", "1", "F", app._Embedding.SUBSET]), \
+                        patch.object(Menu, "select", side_effect=["P", ["1"], "F", app._Embedding.SUBSET, False, True]), \
                         patch.object(Input, "prompt", return_value="1"), \
                         patch.object(Input, "input_real_ranges", return_value=((12, 12),)), \
                         patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (1,)]), \

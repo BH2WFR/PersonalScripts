@@ -289,11 +289,11 @@ Canonical implementations live there; do not add implementations to the
 | Save a new ordinary PDF | `Pdf.save_new(document, output_path, compact=True) -> None`; always removes encryption and PDF/A identification from XMP, including for unencrypted input, while retaining other metadata; exclusive output creation, removes its partial output on failure, drops unused objects; use `compact=False` for continued editing/repeated saves to preserve live object references; PyMuPDF is imported lazily in `utils/pdf.py` |
 | Read effective PDF page labels | `Pdf.read_page_labels(document) -> list[str]`; preserves blank labels, falls back to physical page numbers when no label rules exist |
 | Discover installed font files | `Font.system_font_paths() -> list[Path]`; sorted unique absolute TTF/OTF/TTC/OTC paths from Windows registry/directories, macOS directories, or Linux fontconfig/directories; `Font.FILE_SUFFIXES` contains supported suffixes |
-| Read font names and styles | `Font.read_faces(path: Path) -> list[FontFace]`; collection order, canonical name, family, all readable localized aliases, and `FontStyle` regular/bold/italic/bold-italic; imports fonttools lazily |
-| Build a font catalog | `Font.read_catalog(paths: Sequence[Path]) -> list[FontFace]`; sorts by family/style/name, skips unreadable files with an aggregate warning |
+| Read font names and styles | `Font.read_faces(path: Path) -> list[FontFace]`; collection order, canonical name, family, all readable aliases, full_names/family_names classified by name-table role and language, and `FontStyle` regular/bold/italic/bold-italic; imports fonttools lazily |
+| Build a font catalog | `Font.read_catalog(paths: Sequence[Path], show_progress=False) -> list[FontFace]`; sorts by family/style/name, skips unreadable files with an aggregate warning; True shows a tqdm bar on interactive stderr; fonttools and tqdm are imported lazily |
 | Search font names and aliases | `Font.search_faces(faces, query) -> list[FontFace]`; case-insensitive substrings across canonical/family/localized names, all whitespace-separated terms must match, blank query returns all faces in input order |
 | Match a font family's styles | `Font.family_faces(base, catalog) -> dict[FontStyle, FontFace]`; selected face wins its own style, other styles prefer nearby files, unavailable styles are omitted |
-| Format a font face label | `FontFace.label() -> str`; canonical name and aliases use different ANSI colors, with the style in gray; returns text without printing |
+| Format a font face label | `FontFace.label() -> str`; canonical name uses FLCyan, full names use the terminal default color, family names use FGray, localized aliases use FLGreen, slash separators are uncolored, and style uses FGray; returns text without printing |
 | Set literal PDF page labels | `Pdf.write_page_labels(document, labels: Sequence[str]) -> None`; requires one string per page, empty strings mean blank labels; changes memory only and retains page content/bookmarks |
 | Resolve a path against an explicit base directory | `Paths.resolve_path(path, base_dir, expand_environment=True, resolve_symlinks=False) -> str`; native variable expansion preserves undefined references, False avoids re-expanding literal/template results |
 | Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |
@@ -369,7 +369,30 @@ choice = Menu.select(
     prompt="Choice", required=True, default_key="1",
 )
 # Menu.from_enum(MyEnum) — builds MenuOption list from an enum.
+
+choices = Menu.select(
+    [MenuOption(["1", "A"], "First", first_value),
+     MenuOption(["2", "B"], "Second", second_value)],
+    allow_multiple=True, required=True,
+)
+# Input "1,2" returns [first_value, second_value].
 ```
+
+`Menu.select(..., allow_multiple=False)` preserves the single-value API.
+Option descriptions default to FLCyan (`default_desc_color`); prompts remain
+FLYellow. An option's explicit `desc_color` overrides the fallback.
+With `allow_multiple=True`, comma-separated keys return a list even for one
+selection. Keys are case-insensitive; aliases of the same option are deduplicated
+in input order. Blank input returns [] unless required=True or a default exists.
+`default_key="1,2"` supplies a multi-selection default, validated before prompting.
+An invalid item or empty comma-separated item retries the whole entry.
+`accept_custom_string=True` accepts unmatched tokens as raw strings in the list,
+deduplicating exact repeats. Exact keys take precedence over comma splitting.
+Numeric ranges remain the caller's responsibility: use `Input.parse_index_ranges()`
+when the returned strings represent item numbers/ranges. Action keys such as R/E
+are ordinary options; callers decide whether mixing them with selections is valid.
+The internal `multiple_values()` resolver inside `Menu.select()` shares parsing
+and deduplication between defaults and entered multi-selections.
 
 #### `Cursor` class — ANSI cursor escapes (returns strings, does not print)
 
@@ -469,6 +492,11 @@ PyMuPDF's PDF-string encoder, preserving Unicode, escapes, and blank labels.
 by current-process identity and external Python probes. Scripts use the public
 environment methods rather than duplicating this classification.
 
+`utils/font.py` scopes its internal `_quiet_font_timestamps()` logging filter to
+font metadata reads. It suppresses only fontTools' automatically corrected legacy
+created/modified timestamp warning, leaves other diagnostics visible, and always
+removes the filter afterward. Font files are never rewritten to silence warnings.
+
 ### When a `utils` function is almost right but not quite
 
 **Stop and ask me.** Do not fork the utility into a script-local copy. Either:
@@ -480,6 +508,32 @@ environment methods rather than duplicating this classification.
 I'll decide whether to modify utils or handle it differently.
 
 ## Code style
+
+### PDF processing — required for every PDF tool
+
+- Open existing inputs through `Pdf.open_document()` as a context manager.
+  Do not duplicate open/password prompts in individual scripts. New empty
+  documents and in-memory generated page buffers may use PyMuPDF directly.
+- Use the shared authentication flow: empty-password protection is handled
+  automatically; otherwise try the supplied password, then privately prompt
+  with retry/cancellation. Use `Pdf.unlock()` for an already open document.
+  Reuse the returned password with `interactive=False` for secondary readers;
+  never place passwords on external command lines.
+- Save final output through `Pdf.save_new()`. Output must be decrypted and
+  editable without password or permission restrictions. Remove PDF/A
+  identification even when input is not encrypted, retaining unrelated metadata.
+  Never reapply the source encryption, restrictions, or PDF/A identification.
+- Preserve the source and never overwrite an existing output. Use the shared
+  save function's exclusive creation and partial-output cleanup.
+
+### Progress output — all scripts
+
+- Prefer `tqdm` for progress through pages, files, or other repeated work.
+  Do not print a new status line per item unless it conveys necessary information.
+- Use meaningful stage labels, totals, and units where available. Avoid terminal
+  redraw sequences in redirected output; disable bars outside interactive terminals.
+- Keep prompts, actionable warnings/errors, and the final result visible. When
+  a message must appear during an active bar, use `tqdm.write()` to avoid breaking it.
 
 ### GUI framework and theme
 

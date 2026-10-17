@@ -2,21 +2,47 @@
 
 Windows uses font registry entries and system/user directories, macOS uses
 standard font directories, and Linux also consults fontconfig when available.
-Reading font metadata requires fonttools; discovery and name search do not.
+Reading font metadata requires fonttools; catalogs also use tqdm for progress.
+Discovery and name search do not require either dependency.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 import locale
+import logging
 import os
 from pathlib import Path
 import subprocess
 import sys
 from typing import cast
 
-from .ansi import CRst, FGray, FLCyan, FLYellow
+from .ansi import CRst, FGray, FLCyan, FLGreen, FLYellow
 from .environment import Environment
+
+
+@contextmanager
+def _quiet_font_timestamps() -> Iterator[None]:
+    """Suppress only fontTools' automatically corrected legacy timestamp warning.
+
+    The filter is scoped to metadata reads and removed even on failure. Other
+    font warnings and errors continue through the caller's logging configuration.
+    """
+    logger = logging.getLogger("fontTools.ttLib.tables._h_e_a_d")
+
+    def keep(record: logging.LogRecord) -> bool:
+        return not (
+            record.levelno == logging.WARNING
+            and record.msg == "'%s' timestamp seems very low; regarding as unix timestamp"
+            and record.args in (("created",), ("modified",))
+        )
+
+    logger.addFilter(keep)
+    try:
+        yield
+    finally:
+        logger.removeFilter(keep)
 
 
 class FontStyle(Enum):
@@ -39,6 +65,8 @@ class FontFace:
         family: Preferred family name used to match style variants.
         aliases: Available canonical and localized names from the name table.
         style: Regular, bold, italic, or bold-italic classification.
+        full_names: Non-localized full/PostScript names for display classification.
+        family_names: Non-localized legacy/typographic/WWS family names.
     """
 
     path: Path
@@ -47,16 +75,29 @@ class FontFace:
     family: str
     aliases: tuple[str, ...]
     style: FontStyle
+    full_names: tuple[str, ...] = ()
+    family_names: tuple[str, ...] = ()
 
     def label(self) -> str:
         """Return an ANSI-colored name, distinct aliases, and style.
 
         Returns:
-            Canonical name in cyan, aliases in yellow, and style in gray.
+            Canonical name in light cyan, full names in the terminal's default
+            color, family names in gray, localized
+            aliases in light green, uncolored slash separators, and gray style.
             Does not print or change the face metadata.
         """
-        aliases = " / ".join(alias for alias in self.aliases if alias.casefold() != self.name.casefold())
-        return f"{FLCyan}{self.name}{CRst}  {FLYellow}{aliases}{CRst}  {FGray}[{self.style.name}]{CRst}"
+        full_names = {name.casefold() for name in self.full_names}
+        family_names = {name.casefold() for name in self.family_names}
+        labels: list[str] = []
+        for alias in self.aliases:
+            folded = alias.casefold()
+            if folded == self.name.casefold():
+                continue
+            color = CRst if folded in full_names else FGray if folded in family_names else FLGreen
+            labels.append(f"{color}{alias}{CRst}")
+        aliases = " / ".join(labels)
+        return f"{FLCyan}{self.name}{CRst}  {aliases}  {FGray}[{self.style.name}]{CRst}"
 
 
 class Font:
@@ -79,6 +120,8 @@ class Font:
             Metadata in collection order. Chinese aliases are ordered first
             under a Chinese locale; otherwise English aliases are preferred.
             All readable aliases remain searchable regardless of locale.
+            Suppresses only fontTools' legacy timestamp correction warning;
+            other diagnostics remain visible. No font files are changed.
 
         Raises:
             ImportError: fonttools is not installed.
@@ -102,12 +145,14 @@ class Font:
 
         # ── names and style metadata ───────────────────────────
         for index in range(count):
-            with TTFont(path, fontNumber=index, lazy=True) as font:
+            with _quiet_font_timestamps(), TTFont(path, fontNumber=index, lazy=True) as font:
                 names = cast(table__n_a_m_e, font["name"])
                 family = names.getBestFamilyName() or path.stem
                 canonical = names.getDebugName(6) or names.getBestFullName() or family
                 records = sorted(names.names, key=lambda record: (record.langID != preferred, record.nameID != 4))
                 aliases: list[str] = []
+                full_names: list[str] = []
+                family_names: list[str] = []
                 for record in records:
                     if record.nameID not in (1, 4, 6, 16, 21):
                         continue
@@ -117,6 +162,17 @@ class Font:
                         continue
                     if value and value not in aliases:
                         aliases.append(value)
+                    # Preserve name-table roles and language, rather than guessing
+                    # from spelling or whether a name contains non-ASCII characters.
+                    neutral_or_english = (
+                        (record.platformID == 3 and record.langID & 0x3FF == 9)
+                        or (record.platformID == 1 and record.langID == 0)
+                        or (record.platformID == 0 and record.langID in (0, 0xFFFF))
+                    )
+                    if value and neutral_or_english:
+                        category = full_names if record.nameID in (4, 6) else family_names
+                        if value not in category:
+                            category.append(value)
                 os2 = font.get("OS/2")
                 # fontTools creates these scalar fields dynamically when decoding tables.
                 flags = int(getattr(os2, "fsSelection")) if os2 is not None else 0
@@ -124,7 +180,8 @@ class Font:
                 mac_style = int(getattr(font["head"], "macStyle"))
                 bold = weight >= 600 or bool(mac_style & 1)
                 italic = bool(flags & 1 or mac_style & 2)
-                faces.append(FontFace(path.resolve(), index, canonical, family, tuple(aliases), FontStyle((bold, italic))))
+                faces.append(FontFace(path.resolve(), index, canonical, family, tuple(aliases),
+                                      FontStyle((bold, italic)), tuple(full_names), tuple(family_names)))
         return faces
 
     @staticmethod
@@ -183,28 +240,33 @@ class Font:
         return sorted({path.resolve() for path in paths if path.suffix.casefold() in Font.FILE_SUFFIXES})
 
     @staticmethod
-    def read_catalog(paths: Sequence[Path]) -> list[FontFace]:
+    def read_catalog(paths: Sequence[Path], *, show_progress: bool = False) -> list[FontFace]:
         """Read a searchable font catalog, skipping unreadable files.
 
         Args:
             paths: Font file paths, typically from system_font_paths().
+            show_progress: Show a tqdm progress bar on interactive stderr when
+                True. Defaults to False; redirected output never gets a bar.
 
         Returns:
             Faces sorted by family, style, then canonical name. Prints one
             aggregate warning when files cannot be read.
 
         Raises:
-            ImportError: fonttools is not installed.
+            ImportError: fonttools or tqdm is not installed.
         """
         from fontTools.ttLib import TTLibError
+        from tqdm import tqdm
 
         faces: list[FontFace] = []
         failures = 0
-        for path in paths:
-            try:
-                faces.extend(Font.read_faces(path))
-            except (OSError, ValueError, KeyError, TTLibError):
-                failures += 1
+        with tqdm(paths, desc="Reading font metadata", unit="file",
+                  disable=not show_progress or not sys.stderr.isatty(), dynamic_ncols=True) as progress:
+            for path in progress:
+                try:
+                    faces.extend(Font.read_faces(path))
+                except (OSError, ValueError, KeyError, TTLibError):
+                    failures += 1
         if failures:
             print(f"{FLYellow}Warning: could not read {failures} font file(s). You can specify a file directly.{CRst}")
         return sorted(faces, key=lambda face: (face.family.casefold(), face.style.name, face.name.casefold()))
