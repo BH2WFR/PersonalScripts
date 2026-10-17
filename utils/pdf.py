@@ -1,7 +1,8 @@
 """Shared PDF authentication and ordinary-PDF output; PyMuPDF is imported lazily."""
 
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Sequence
+from typing import TYPE_CHECKING, BinaryIO, Iterator, Sequence
 from xml.dom import minidom
 from xml.parsers.expat import ExpatError
 
@@ -18,11 +19,16 @@ _PDFA_NAMESPACES: tuple[str, ...] = (
 )
 
 
-def _remove_pdfa_identification(document: "pymupdf.Document") -> None:
-    """Remove PDF/A XMP properties in memory, preserving unrelated metadata.
+def _process_pdfa_identification(document: "pymupdf.Document", *, remove: bool) -> bool:
+    """Detect or remove PDF/A XMP properties using the same namespace rules.
 
     Args:
-        document: Open, authenticated PDF to update before saving.
+        document: Open, authenticated PDF to inspect or update before saving.
+        remove: Remove matching properties in memory when True; otherwise read only.
+
+    Returns:
+        Whether any PDF/A identification property was found. A namespace
+        declaration alone does not count as an identification property.
 
     Raises:
         ValueError: XMP mentioning PDF/A cannot be parsed safely.
@@ -32,27 +38,29 @@ def _remove_pdfa_identification(document: "pymupdf.Document") -> None:
     """
     xml = document.get_xml_metadata()
     if not any(namespace in xml for namespace in _PDFA_NAMESPACES):
-        return
+        return False
     try:
         metadata = minidom.parseString(xml)
     except ExpatError as exc:
-        raise ValueError("Cannot remove PDF/A identification: malformed XMP metadata.") from exc
+        raise ValueError("Cannot process PDF/A identification: malformed XMP metadata.") from exc
 
     with metadata:
-        changed = False
+        found = False
         for element in list(metadata.getElementsByTagName("*")):
             if element.namespaceURI in _PDFA_NAMESPACES:
-                if element.parentNode is not None:
+                found = True
+                if remove and element.parentNode is not None:
                     element.parentNode.removeChild(element)
-                    changed = True
                 continue
             for attribute in list(element.attributes.values()):
                 if attribute.namespaceURI in _PDFA_NAMESPACES:
-                    element.removeAttributeNode(attribute)
-                    changed = True
-        if changed:
+                    found = True
+                    if remove:
+                        element.removeAttributeNode(attribute)
+        if found and remove:
             # DOM keeps existing prefixes, including those used in QName values.
             document.set_xml_metadata(metadata.toxml())
+        return found
 
 
 class _OutputStream:
@@ -67,6 +75,60 @@ class _OutputStream:
 
 class Pdf:
     """Common PDF operations used by the document-processing scripts."""
+
+    @staticmethod
+    def has_pdfa_identification(document: "pymupdf.Document") -> bool:
+        """Check for PDF/A identification independently of encryption or permissions.
+
+        Args:
+            document: Open, authenticated PDF to inspect.
+
+        Returns:
+            True when XMP contains PDF/A identification elements or attributes,
+            regardless of namespace prefix or PDF/A version. A bare namespace
+            declaration or ordinary text mentioning PDF/A returns False.
+
+        Raises:
+            ValueError: XMP mentioning a PDF/A namespace cannot be parsed safely.
+
+        Does not modify metadata, save files, or read user input. This checks
+        identification properties, not conformance to the PDF/A specification.
+        """
+        return _process_pdfa_identification(document, remove=False)
+
+    @staticmethod
+    @contextmanager
+    def open_document(
+        path: str | Path, *, password: str | None = None, interactive: bool = True,
+    ) -> Iterator[tuple["pymupdf.Document", str]]:
+        """Open and authenticate a PDF, closing it on success, failure, or cancellation.
+
+        Args:
+            path: Existing input PDF path.
+            password: Known password to try before prompting. Keep the returned
+                password in memory when another reader must open the same file.
+            interactive: Allow private password prompts and retries. Set False
+                for background readers; missing or rejected passwords then fail.
+
+        Yields:
+            The authenticated document and its accepted password (empty for
+            input that needs none). Use this helper in a ``with`` statement.
+
+        Raises:
+            OSError: The file cannot be read.
+            ValueError: The input is invalid, is not PDF, or authentication fails
+                without interaction or is cancelled by empty password input.
+            EOFError: Password input closes unexpectedly.
+            KeyboardInterrupt: The user cancels the operation.
+
+        Delegates all password interaction to unlock. Does not modify the source,
+        write a decrypted temporary file, or persist passwords.
+        """
+        import pymupdf
+
+        with pymupdf.open(path) as document:
+            accepted_password = Pdf.unlock(document, password=password, interactive=interactive)
+            yield document, accepted_password
 
     @staticmethod
     def read_page_labels(document: "pymupdf.Document") -> list[str]:
@@ -151,24 +213,39 @@ class Pdf:
         document.xref_set_key(document.pdf_catalog(), "PageLabels", f"<< /Nums [{rules}] >>")
 
     @staticmethod
-    def unlock(document: "pymupdf.Document") -> str:
+    def unlock(
+        document: "pymupdf.Document", *, password: str | None = None, interactive: bool = True,
+    ) -> str:
         """Authenticate a PDF, prompting privately only when necessary.
 
         Args:
             document: Open PDF; empty-password protection is handled silently.
+            password: Known password to try before asking the user.
+            interactive: Whether missing or incorrect passwords may prompt.
 
         Returns:
             Accepted password, or an empty string if no password was needed.
+            For an already authenticated document, returns the supplied password
+            or an empty string; it cannot recover a previous reader's password.
 
         Raises:
-            ValueError: Input is not PDF, or empty password input cancels.
+            ValueError: Input is not PDF, empty password input cancels, or a
+                password is required but interactive is False.
 
         Prompts and prints retry messages; does not persist the password.
         """
         if not document.is_pdf:
             raise ValueError("The input must be a PDF document.")
-        if not document.needs_pass or document.authenticate(""):
+        if not document.is_encrypted:
+            return (password or "") if document.needs_pass else ""
+        if document.authenticate(""):
             return ""
+        if password is not None and document.authenticate(password):
+            return password
+        if not interactive:
+            raise ValueError("The PDF requires a valid opening password.")
+        if password is not None:
+            print(f"{FLRed}Incorrect password. Please try again.{CRst}")
         while True:
             password = Input.input_password("PDF opening password (empty to cancel)")
             if not password:
@@ -196,14 +273,15 @@ class Pdf:
         Writes the PDF and removes only this call's new output on failure or
         interruption. Discards unreferenced objects, including replaced images.
         Removes PDF/A identification from the in-memory XMP before saving;
-        retains other metadata and does not modify the source file.
+        does so even for unencrypted, unrestricted input. Retains other metadata
+        and does not modify the source file.
         """
         from pymupdf.mupdf import PDF_ENCRYPT_NONE
 
         path = Path(output_path)
         with path.open("xb") as destination:
             try:
-                _remove_pdfa_identification(document)
+                _process_pdfa_identification(document, remove=True)
                 document.save(_OutputStream(destination), garbage=3 if compact else 1, deflate=True,
                               encryption=PDF_ENCRYPT_NONE)
             except BaseException:

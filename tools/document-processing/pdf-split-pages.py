@@ -261,8 +261,7 @@ def main() -> int:
         os.path.expanduser("~/input.pdf"), prompt="Enter input PDF file path", path_type="file",
     )
     try:
-        with pymupdf.open(filepath) as source:
-            Pdf.unlock(source)
+        with Pdf.open_document(filepath) as (source, _):
             if not source.page_count:
                 raise ValueError("The PDF contains no pages.")
             print(f"{FLGreen}PDF loaded. Total pages: {source.page_count}{CRst}")

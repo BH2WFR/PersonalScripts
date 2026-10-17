@@ -1,6 +1,7 @@
 """Interactive terminal input helpers."""
 
 import glob as glob_module
+import math
 import os
 import re
 import sys
@@ -192,28 +193,34 @@ class Input:
         return ",".join(str(first) if first == last else f"{first}-{last}" for first, last in ranges)
 
     @staticmethod
-    def _parse_integer_spans(text: str) -> tuple[tuple[int, int], ...]:
-        """Parse signed endpoints without expanding ranges or interpreting indexes."""
+    def _parse_range_tokens(text: str, number_pattern: str) -> tuple[tuple[str, str], ...]:
+        """Split signed endpoint tokens using the caller's numeric grammar."""
         if not text.strip():
             return ()
-        spans: list[tuple[int, int]] = []
+        spans: list[tuple[str, str]] = []
         for part in text.split(","):
-            match = re.fullmatch(r"\s*([+-]?[0-9]+)\s*(?:-\s*([+-]?[0-9]+)\s*)?", part)
+            match = re.fullmatch(
+                rf"\s*({number_pattern})\s*(?:-\s*({number_pattern})\s*)?", part, re.IGNORECASE,
+            )
             if match is None:
                 raise ValueError(f"Invalid selection: {part!r}. Use numbers or ranges such as 1-3,-1.")
-            first = int(match.group(1))
-            last_text = match.group(2)
-            spans.append((first, int(last_text) if last_text is not None else first))
+            first = match.group(1)
+            spans.append((first, match.group(2) or first))
         return tuple(spans)
 
     @staticmethod
-    def _input_ranges(
+    def _parse_integer_spans(text: str) -> tuple[tuple[int, int], ...]:
+        """Parse signed endpoints without expanding ranges or interpreting indexes."""
+        return tuple((int(first), int(last)) for first, last in Input._parse_range_tokens(text, r"[+-]?[0-9]+"))
+
+    @staticmethod
+    def _input_ranges[T](
         prompt: str,
         *,
-        parser: typing.Callable[[str], tuple[int, ...]],
+        parser: typing.Callable[[str], tuple[T, ...]],
         default: str | None,
         hint: str,
-    ) -> tuple[int, ...] | None:
+    ) -> tuple[T, ...] | None:
         """Validate the default and share prompting, empty input, and retry handling."""
         default_values = parser(default or "")
         print(f"{FGray}{hint}{CRst}")
@@ -287,6 +294,91 @@ class Input:
         return Input._input_ranges(
             prompt, parser=parse, default=default,
             hint=f"Use 1,2 or -3--1,5-3; ranges include both ends. {zero_hint}",
+        )
+
+    @staticmethod
+    def parse_real_ranges(
+        text: str, *, allow_zero: bool = True, allow_infinity: bool = True,
+    ) -> tuple[tuple[float, float], ...]:
+        """Parse closed real intervals without enumerating their contents.
+
+        Args:
+            text: Comma-separated numbers or ranges, e.g. ``13.5,14.5-15``,
+                ``-2.5--1,0-3`` or ``-inf-inf``. Signed decimals and scientific
+                notation are accepted; whitespace may surround separators.
+            allow_zero: Whether intervals may contain zero, including their
+                interior. Defaults to True; this never changes the number base.
+            allow_infinity: Allow case-insensitive inf and infinity as unbounded
+                endpoints (default True). Infinity alone is not a real interval.
+
+        Returns:
+            Inclusive (lower, upper) endpoint pairs as floats. Reversed endpoints
+            are normalized, so ``1--1`` yields ((-1.0, 1.0),). A single finite
+            number has equal endpoints. Keeps interval order and duplicates;
+            does not merge overlaps. Empty text returns (). Use comparisons such
+            as ``any(lower <= value <= upper for lower, upper in ranges)`` to
+            test finite real values.
+
+        Raises:
+            ValueError: Invalid syntax, NaN, numeric overflow, disallowed zero or
+                infinity, or an interval consisting only of an infinite endpoint.
+
+        This pure parser does not read input or print anything. Values use Python
+        float precision; unlike integer sequences, continuous ranges have no step.
+        """
+        pattern = r"[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|inf(?:inity)?)"
+        spans: list[tuple[float, float]] = []
+        for first_text, last_text in Input._parse_range_tokens(text, pattern):
+            endpoints: list[float] = []
+            for token in (first_text, last_text):
+                value = float(token)
+                if math.isinf(value):
+                    if "inf" not in token.casefold():
+                        raise ValueError(f"Number exceeds floating-point range: {token!r}.")
+                    if not allow_infinity:
+                        raise ValueError("Infinite endpoints are invalid when allow_infinity=False.")
+                endpoints.append(value)
+            lower, upper = sorted(endpoints)
+            if lower == upper and math.isinf(lower):
+                raise ValueError("Infinity must bound a nonempty real interval, not stand alone.")
+            if not allow_zero and lower <= 0 <= upper:
+                raise ValueError("The selection contains zero; zero is invalid when allow_zero=False.")
+            spans.append((lower, upper))
+        return tuple(spans)
+
+    @staticmethod
+    def input_real_ranges(
+        prompt: str, *, allow_zero: bool = True, allow_infinity: bool = True,
+        default: str | None = None,
+    ) -> tuple[tuple[float, float], ...] | None:
+        """Read continuous real intervals, retrying invalid input.
+
+        Args:
+            prompt: Label describing the requested ranges.
+            allow_zero: Allow zero anywhere in an interval (default True).
+            allow_infinity: Allow inf / -inf as unbounded endpoints (default True).
+            default: Expression in parse_real_ranges syntax used on Enter.
+                None, empty, or whitespace-only means no default.
+
+        Returns:
+            Normalized float endpoint pairs, or None on blank input without a
+            nonempty default. Literal ``0`` returns ((0.0, 0.0),) when allowed.
+
+        Raises:
+            ValueError: Invalid default (checked before prompting).
+            EOFError: Standard input closes before an answer is available.
+            KeyboardInterrupt: The user cancels input.
+
+        Prints syntax hints and validation errors; reads stdin through Input.prompt.
+        """
+        def parse(text: str) -> tuple[tuple[float, float], ...]:
+            return Input.parse_real_ranges(text, allow_zero=allow_zero, allow_infinity=allow_infinity)
+
+        zero_hint = "Zero is allowed." if allow_zero else "Ranges must not contain zero."
+        infinity_hint = "Use -inf or inf for unbounded ends." if allow_infinity else "Only finite endpoints are allowed."
+        return Input._input_ranges(
+            prompt, parser=parse, default=default,
+            hint=f"Use 13.5,14.5-15 or -2.5--1; endpoints are inclusive and sorted. {zero_hint} {infinity_hint}",
         )
 
     @staticmethod

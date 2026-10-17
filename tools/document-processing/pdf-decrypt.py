@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Save an unencrypted copy of a PDF, preserving its document structure.
+"""Remove PDF encryption, permission restrictions, and PDF/A identification.
 
 Permission-only protection opens automatically; opening passwords are requested
 privately. Retains pages, bookmarks, named destinations, metadata and attachments.
-Automatically removes PDF/A identification while retaining other metadata.
+Unencrypted, unrestricted PDFs with PDF/A identification are also supported;
+the script explains that only this identification will be removed. Other metadata
+is retained. If none of these features is present, choose another input or exit
+without requesting an output path or writing a copy.
 Existing output files are never overwritten. Requires PyMuPDF (including AES).
 
 Usage:
@@ -21,17 +24,18 @@ from typing import Optional
 
 
 def main() -> int:
-    """Prompt for paths/password, save a decrypted copy, and return 0 or 1.
+    """Remove protection and/or PDF/A identification; return 0 on success or exit.
 
-    Writes a new PDF and prints progress; returns 1 on input or save failure.
+    Prompts for paths/password and writes a new ordinary PDF when needed.
+    An unrestricted input without PDF/A offers reopen/exit instead of saving.
+    Returns 1 on input, metadata, authentication, or save failure.
     """
-    Console.print_banner("PDF DECRYPTING TOOL")
+    Console.print_banner("PDF DECRYPT / PDF/A REMOVAL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
         print(f"""
-PDF DECRYPTING TOOL
-===================
+PDF DECRYPT / PDF/A REMOVAL
 
 Usage:
   python {script_name} <input.pdf>                     specify input PDF, output interactive
@@ -45,9 +49,12 @@ Usage:
 
 {FLYellow}Description:{CRst}
   Decrypt password-protected PDFs (including permission-only protection).
-  Clones the full document structure (pages, bookmarks, named destinations)
-  and outputs a completely decrypted PDF. Automatically removes PDF/A
-  identification while preserving other metadata; no extra prompt is required.
+  Also removes PDF/A identification from PDFs with no encryption or restrictions.
+  When only PDF/A identification is present, prints an informational message.
+  When none of these features is present, warns and offers another input or exit;
+  no output is requested or written for that file.
+  Preserves document structure (pages, bookmarks, named destinations, attachments)
+  and other metadata. Saves a new PDF without encryption or PDF/A identification.
 
 {FLYellow}Requirements:{CRst}
   Python: {FGray}pip install PyMuPDF{CRst}
@@ -75,44 +82,56 @@ Usage:
         DEFAULT_INPUT = os.path.expanduser("~/input.pdf")
 
     #============ 用户交互 ===========
-    filepath = _arg_path if _arg_path else Input.resolve_input_path(
-        DEFAULT_INPUT,
-        prompt="Enter input PDF file path",
-        path_type="file",
-    )
+    while True:
+        filepath = _arg_path or Input.resolve_input_path(
+            DEFAULT_INPUT, prompt="Enter input PDF file path", path_type="file",
+        )
+        _arg_path = None  # A retry must request a new path, even with a CLI input.
+        if not filepath or not os.path.exists(filepath):
+            print(f"{FLRed}Invalid input file path. EXIT...{CRst}\n")
+            return 1
 
-    if not filepath or not os.path.exists(filepath):
-        print(f"{FLRed}Invalid input file path. EXIT...{CRst}\n")
-        return 1
+        try:
+            with Pdf.open_document(filepath) as (document, _):
+                print(f"{FLGreen}PDF loaded successfully. Total pages: {document.page_count}{CRst}")
+                # is_encrypted becomes False after authentication; the trailer
+                # still identifies encryption, including owner-only protection.
+                protected = document.xref_get_key(-1, "Encrypt")[0] != "null"
+                has_pdfa = Pdf.has_pdfa_identification(document)
+                if not protected and not has_pdfa:
+                    print(f"{FLYellow}WARNING: No encryption, permission restrictions, or PDF/A identification found."
+                          f" No processing is needed.{CRst}")
+                    reopen = Menu.select(
+                        [MenuOption(["R"], "Open another PDF", True),
+                         MenuOption(["X"], "Exit", False)],
+                        prompt="Next action", required=True, default_key="X", separator=False,
+                    )
+                    if reopen:
+                        continue
+                    Console.print_exit_message("No PDF written.")
+                    return 0
+                if has_pdfa and not protected:
+                    print("No encryption or permission restrictions found; only PDF/A identification will be removed.")
+                elif has_pdfa:
+                    print("PDF/A identification will also be removed.")
 
-    # 默认输出路径：输入文件名 + _decrypted 后缀
-    _stem, _ext = os.path.splitext(os.path.basename(filepath))
-    _default_output = os.path.join(os.path.dirname(filepath) or ".", f"{_stem}_decrypted{_ext or '.pdf'}")
+                _stem, _ext = os.path.splitext(os.path.basename(filepath))
+                default_output = os.path.join(os.path.dirname(filepath) or ".", f"{_stem}_decrypted{_ext or '.pdf'}")
+                output_path = Input.resolve_output_path(
+                    _arg_output or default_output, prompt="Enter output PDF file path", path_type="file",
+                )
+                print("  -> writing an unprotected PDF without PDF/A identification...")
+                Pdf.save_new(document, output_path)
+        except (OSError, ValueError, RuntimeError, pymupdf.FileDataError, FzErrorBase) as exc:
+            print(f"{FLRed}PDF processing failed: {exc}{CRst}")
+            return 1
 
-    output_path = Input.resolve_output_path(
-        _arg_output if _arg_output else _default_output,
-        prompt="Enter output PDF file path",
-        path_type="file",
-    )
-
-    print(f"{FLYellow}  -> start parsing...{CRst}")
-    try:
-        with pymupdf.open(filepath) as document:
-            Pdf.unlock(document)
-            print(f"{FLGreen}PDF loaded successfully. Total pages: {document.page_count}{CRst}")
-            print("  -> writing decrypted document (pages + outline + structure)...")
-            Pdf.save_new(document, output_path)
-    except (OSError, ValueError, RuntimeError, pymupdf.FileDataError, FzErrorBase) as exc:
-        print(f"{FLRed}Decryption failed: {exc}{CRst}")
-        return 1
-
-    # 结束
-    print(f"{FLGreen}Decrypted PDF saved to: {output_path}{CRst}\n")
-    return 0
+        print(f"{FLGreen}Processed PDF saved to: {output_path}{CRst}\n")
+        return 0
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         Console.print_keyboard_interrupt_message_and_exit()

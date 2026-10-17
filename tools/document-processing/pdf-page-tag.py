@@ -180,8 +180,7 @@ def main() -> int:
     source = Path(filepath)
     default_output = args.output or str(source.with_name(f"{source.stem}_tagged.pdf"))
     try:
-        with pymupdf.open(source) as document:
-            Pdf.unlock(document)
+        with Pdf.open_document(source) as (document, _):
             if not document.page_count:
                 raise ValueError("The PDF contains no pages.")
             print(f"{FLGreen}PDF loaded. Total pages: {document.page_count}{CRst}")

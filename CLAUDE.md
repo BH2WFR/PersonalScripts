@@ -283,9 +283,17 @@ Canonical implementations live there; do not add implementations to the
 | Open a file in the default app | `System.open_with_default_app(path)` |
 | Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |
 | Resolve `$VAR` / `{{placeholders}}` in paths | `Paths.resolve_vars(path, schema_dir=..., script_dir=...)` |
-| Authenticate an open PDF | `Pdf.unlock(document) -> str`; validates PDF input, silently handles empty-password protection, otherwise prompts privately with retry and cancellation |
-| Save a new decrypted PDF | `Pdf.save_new(document, output_path, compact=True) -> None`; automatically removes PDF/A identification from XMP while retaining other metadata; exclusive output creation, removes its partial output on failure, drops unused objects; use `compact=False` for continued editing/repeated saves to preserve live object references; PyMuPDF is imported lazily in `utils/pdf.py` |
+| Open a PDF for processing | `with Pdf.open_document(path, password=None, interactive=True) as (document, password): ...`; all PDF tools use this authenticated context manager for input files; closes on success, failure, or cancellation; reuse the returned password with `interactive=False` for secondary/background readers |
+| Authenticate an already open PDF | `Pdf.unlock(document, password=None, interactive=True) -> str`; validates PDF input, silently handles empty-password protection, tries a supplied password, otherwise prompts privately with retry and cancellation; False raises instead of prompting; does not recover a password from an already authenticated document |
+| Detect PDF/A identification | `Pdf.has_pdfa_identification(document) -> bool`; read-only check for XMP identification elements/attributes, independent of encryption; namespace declarations alone do not count; malformed PDF/A XMP raises ValueError; does not validate PDF/A conformance |
+| Save a new ordinary PDF | `Pdf.save_new(document, output_path, compact=True) -> None`; always removes encryption and PDF/A identification from XMP, including for unencrypted input, while retaining other metadata; exclusive output creation, removes its partial output on failure, drops unused objects; use `compact=False` for continued editing/repeated saves to preserve live object references; PyMuPDF is imported lazily in `utils/pdf.py` |
 | Read effective PDF page labels | `Pdf.read_page_labels(document) -> list[str]`; preserves blank labels, falls back to physical page numbers when no label rules exist |
+| Discover installed font files | `Font.system_font_paths() -> list[Path]`; sorted unique absolute TTF/OTF/TTC/OTC paths from Windows registry/directories, macOS directories, or Linux fontconfig/directories; `Font.FILE_SUFFIXES` contains supported suffixes |
+| Read font names and styles | `Font.read_faces(path: Path) -> list[FontFace]`; collection order, canonical name, family, all readable localized aliases, and `FontStyle` regular/bold/italic/bold-italic; imports fonttools lazily |
+| Build a font catalog | `Font.read_catalog(paths: Sequence[Path]) -> list[FontFace]`; sorts by family/style/name, skips unreadable files with an aggregate warning |
+| Search font names and aliases | `Font.search_faces(faces, query) -> list[FontFace]`; case-insensitive substrings across canonical/family/localized names, all whitespace-separated terms must match, blank query returns all faces in input order |
+| Match a font family's styles | `Font.family_faces(base, catalog) -> dict[FontStyle, FontFace]`; selected face wins its own style, other styles prefer nearby files, unavailable styles are omitted |
+| Format a font face label | `FontFace.label() -> str`; canonical name and aliases use different ANSI colors, with the style in gray; returns text without printing |
 | Set literal PDF page labels | `Pdf.write_page_labels(document, labels: Sequence[str]) -> None`; requires one string per page, empty strings mean blank labels; changes memory only and retains page content/bookmarks |
 | Resolve a path against an explicit base directory | `Paths.resolve_path(path, base_dir, expand_environment=True, resolve_symlinks=False) -> str`; native variable expansion preserves undefined references, False avoids re-expanding literal/template results |
 | Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |
@@ -323,6 +331,8 @@ Canonical implementations live there; do not add implementations to the
 | Format integer ranges as text | `Input.format_integer_ranges(ranges: Iterable[tuple[int, int]]) -> str`; `((1, 3), (5, 5))` becomes `"1-3,5"`; preserves order, duplicates, and descending ranges; supports signed endpoints; empty input returns `""`; output uses parse_integer_ranges syntax |
 | Parse arbitrary integer sequences | `Input.parse_integer_ranges(text, allow_zero=True) -> tuple[int, ...]`; signed integers and inclusive ascending/descending ranges; preserves order and duplicates; empty text returns (); False rejects zero even inside a range |
 | Interactive integer sequences | `Input.input_integer_ranges(prompt, allow_zero=True, default=None) -> tuple[int, ...] \| None`; retries invalid input; Enter returns None unless a nonempty expression is supplied as the default; literal zero returns (0,) when allowed |
+| Parse continuous real ranges | `Input.parse_real_ranges(text, allow_zero=True, allow_infinity=True) -> tuple[tuple[float, float], ...]`; accepts `13.5,14.5-15`, `-2.5--1`, `0-3`, scientific notation, and `-inf-inf`; returns inclusive lower/upper pairs without enumeration; reversals such as `1--1` normalize to (-1.0, 1.0); keeps interval order/duplicates, empty text returns (); zero policy includes interval interiors; infinity may bound intervals but cannot stand alone |
+| Interactive real ranges | `Input.input_real_ranges(prompt, allow_zero=True, allow_infinity=True, default=None) -> tuple[tuple[float, float], ...] \| None`; same continuous-interval semantics; validates defaults before prompting, retries invalid input, Enter returns None without a nonempty default |
 | Parse item numbers and inclusive ranges | `Input.parse_index_ranges(text, item_count=..., allow_zero=False) -> tuple[int, ...]`; accepts `1,2`, `1-3,4`, `-1,-2`, and `-3--1`; negatives count from the end; returns sorted, unique zero-based indexes; empty text returns (); False uses one-based input, True switches to zero-based input; reversed resolved ranges and out-of-range values raise ValueError |
 | Interactive item/range selection | `Input.input_index_ranges(prompt, item_count=..., allow_zero=False, default=None) -> tuple[int, ...] \| None`; same index parser and numbering modes; retries invalid input; Enter returns None unless a nonempty expression is supplied as the default |
 | Number + unit (e.g. `90deg`) | `Input.input_number_with_unit(prompt, ..., allowed_units=("deg","rad"))` |
@@ -332,11 +342,15 @@ Canonical implementations live there; do not add implementations to the
 | Multiple input paths (glob expand) | `Input.resolve_input_paths_multi(..., glob=True)` |
 | Multi-line text from stdin | `Input.read_stdin_multiline(...)` |
 
-The range APIs share `_parse_integer_spans()` for signed endpoint syntax and
-`_input_ranges()` for default validation, blank input, and retries. Integer
-sequences expand literal endpoints; index selections resolve endpoints against
-the collection before expanding. Both parsers are pure; both interactive helpers
-validate defaults before prompting and propagate EOFError / KeyboardInterrupt.
+The range APIs share internal `_parse_range_tokens()` for signed endpoint syntax
+and generic `_input_ranges()` for default validation, blank input, and retries.
+`_parse_integer_spans()` converts integer tokens for the integer/index parsers.
+Integer sequences expand literal endpoints; index selections resolve endpoints
+against the collection before expanding. Indexes never accept floating-point
+values; `allow_zero=True` selects zero-based numbering (0 = first).
+Real ranges return continuous float endpoint pairs, including optional infinite
+bounds, without expanding or merging intervals. All parsers are pure; interactive
+helpers validate defaults before prompting and propagate EOFError / KeyboardInterrupt.
 
 Path resolution shares private implementation helpers inside `Input`:
 `_normalize_path()` normalizes one path, `_prompt_and_normalize_path()` handles
@@ -437,6 +451,17 @@ implementation details do not need individual quick-reference rows.
 `utils/pdf.py` uses an internal `_OutputStream` adapter without a filename so
 PyMuPDF writes through the exclusively opened handle instead of reopening it.
 Scripts use `Pdf.save_new()` and never construct this adapter themselves.
+All tools that open an existing PDF use `Pdf.open_document()`; generated in-memory
+page buffers and new empty documents may use PyMuPDF directly. Passwords stay in
+memory and are never passed to external command lines. Ghostscript compression
+stages an unprotected input in its temporary directory and publishes the validated
+result through `Pdf.save_new()`. All saved PDFs omit encryption, permission
+restrictions, and PDF/A identification; existing files are never overwritten.
+Internal `_process_pdfa_identification()` shares namespace-aware detection/removal
+between `has_pdfa_identification()` and `save_new()`, retaining unrelated XMP.
+`pdf-decrypt.py` also accepts PDF/A-only input with an ordinary informational
+message. If neither encryption/protection nor PDF/A identification is present,
+it warns and offers another input or exit before requesting an output path.
 Page-label helpers decode the PDF number tree and encode literal prefixes through
 PyMuPDF's PDF-string encoder, preserving Unicode, escapes, and blank labels.
 
@@ -875,6 +900,7 @@ not in the README.
 │   ├── system.py           # OS integration, privilege, and macOS permissions
 │   ├── paths.py            # Path placeholder and environment expansion
 │   ├── pdf.py              # Lazy PyMuPDF authentication and safe new-file output
+│   ├── font.py             # Installed font discovery, localized names, and style matching
 │   ├── input.py            # Input
 │   ├── cursor.py           # Cursor
 │   ├── menu_option.py      # MenuOption

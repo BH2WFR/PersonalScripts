@@ -650,8 +650,7 @@ Usage:
 
     # ── authenticate and update the original document in memory ──
     try:
-        with pymupdf.open(filepath) as document:
-            Pdf.unlock(document)
+        with Pdf.open_document(filepath) as (document, _):
             print(f"{FLGreen}PDF loaded successfully. Total pages: {document.page_count}{CRst}\n")
             write_mode = typing.cast(
                 _BookmarkWriteMode,

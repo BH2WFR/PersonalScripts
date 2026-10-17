@@ -9,6 +9,7 @@ import importlib.util
 import io
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 from types import ModuleType
 import unittest
@@ -37,6 +38,7 @@ def load_script(name: str) -> ModuleType:
 bookmarks = load_script("pdf-bookmarks-add")
 decrypt = load_script("pdf-decrypt")
 tags = load_script("pdf-page-tag")
+compress = load_script("pdf-compress")
 
 
 class PdfToolsTests(unittest.TestCase):
@@ -81,10 +83,16 @@ class PdfToolsTests(unittest.TestCase):
             document.xref_set_key(document.pdf_catalog(), "Dests",
                                   f"<< /chapter [{document.page_xref(3)} 0 R /Fit] >>")
             encryption = pymupdf.PDF_ENCRYPT_NONE if password is None else pymupdf.PDF_ENCRYPT_AES_256
-            document.save(self.source, encryption=encryption, owner_pw="owner", user_pw=password or "")
+            document.save(self.source, encryption=encryption, owner_pw="owner", user_pw=password or "",
+                          permissions=pymupdf.PDF_PERM_PRINT)
 
     def assert_structure(self, result: pymupdf.Document, xml_metadata: str = DEFAULT_XML) -> None:
         """Check document objects that a page-only reconstruction would discard."""
+        self.assertFalse(result.needs_pass)
+        self.assertEqual(result.xref_get_key(-1, "Encrypt"), ("null", "null"))
+        for permission in (pymupdf.PDF_PERM_MODIFY, pymupdf.PDF_PERM_COPY, pymupdf.PDF_PERM_ANNOTATE,
+                           pymupdf.PDF_PERM_FORM, pymupdf.PDF_PERM_ASSEMBLE):
+            self.assertTrue(result.permissions & permission)
         self.assertEqual(result.page_count, 4)
         self.assertIn("Retained text", result[0].get_text())
         self.assertEqual(result.metadata["title"], "Original title")
@@ -116,20 +124,190 @@ class PdfToolsTests(unittest.TestCase):
             self.assertEqual(result.get_toc()[0], [1, "Original", 1])
         self.assertEqual(self.source.read_bytes(), original)
 
-    def test_decrypt_permission_only_and_plain_need_no_prompt(self) -> None:
-        for password in (None, ""):
-            with self.subTest(password=password):
-                self.make_source(password)
-                self.output = self.folder / f"copy-{password is None}.pdf"
-                self.assertEqual(self.run_decrypt([]), 0)
-                with pymupdf.open(self.output) as result:
-                    self.assertFalse(result.is_encrypted)
-                    self.assert_structure(result)
+    def test_decrypt_permission_only_needs_no_password_prompt(self) -> None:
+        self.make_source("")
+        self.assertEqual(self.run_decrypt([]), 0)
+        with pymupdf.open(self.output) as result:
+            self.assert_structure(result)
+
+    def test_decrypt_plain_pdf_warns_and_exits_without_output_prompt(self) -> None:
+        original = self.source.read_bytes()
+        for answer in ("x", ""):
+            messages = io.StringIO()
+            with (
+                self.subTest(answer=answer),
+                patch.object(sys, "argv", [str(decrypt.__file__), str(self.source), "-o", str(self.output)]),
+                patch.object(Input, "resolve_output_path") as output,
+                patch.object(Input, "input_password") as password,
+                patch("builtins.input", return_value=answer),
+                contextlib.redirect_stdout(messages),
+            ):
+                self.assertEqual(decrypt.main(), 0)
+            output.assert_not_called()
+            password.assert_not_called()
+            self.assertIn(f"{FLYellow}WARNING: No encryption, permission restrictions, or PDF/A identification", messages.getvalue())
+            self.assertIn("Open another PDF", messages.getvalue())
+            self.assertIn("Exit", messages.getvalue())
+            self.assertFalse(self.output.exists())
+        self.assertEqual(self.source.read_bytes(), original)
+
+    def test_decrypt_plain_pdf_can_reopen_protected_input(self) -> None:
+        first = self.source
+        first_bytes = first.read_bytes()
+        self.source = self.folder / "protected.pdf"
+        self.make_source("secret")
+        protected_bytes = self.source.read_bytes()
+        with (
+            patch.object(sys, "argv", [str(decrypt.__file__), str(first)]),
+            patch.object(Input, "resolve_input_path", return_value=str(self.source)) as input_path,
+            patch.object(Input, "resolve_output_path", return_value=str(self.output)) as output,
+            patch.object(Input, "input_password", return_value="secret") as password,
+            patch("builtins.input", return_value="r"),
+            patch.object(Pdf, "open_document", wraps=Pdf.open_document) as open_document,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(decrypt.main(), 0)
+        input_path.assert_called_once()
+        password.assert_called_once()
+        output.assert_called_once()
+        self.assertEqual(Path(output.call_args.args[0]), self.source.with_name("protected_decrypted.pdf"))
+        self.assertEqual([call.args[0] for call in open_document.call_args_list], [str(first), str(self.source)])
+        with pymupdf.open(self.output) as result:
+            self.assert_structure(result)
+        self.assertEqual(first.read_bytes(), first_bytes)
+        self.assertEqual(self.source.read_bytes(), protected_bytes)
+
+    def test_decrypt_pdfa_only_reports_plain_info_and_writes_ordinary_pdf(self) -> None:
+        self.make_source(xml_metadata='<metadata xmlns:a="http://www.aiim.org/pdfa/ns/id/" a:part="2" a:conformance="B"/>')
+        original = self.source.read_bytes()
+        messages = io.StringIO()
+        with (
+            patch.object(sys, "argv", [str(decrypt.__file__), str(self.source)]),
+            patch.object(Input, "resolve_output_path", return_value=str(self.output)) as output,
+            patch.object(Input, "input_password") as password,
+            patch.object(Menu, "select") as menu,
+            contextlib.redirect_stdout(messages),
+        ):
+            self.assertEqual(decrypt.main(), 0)
+        password.assert_not_called()
+        menu.assert_not_called()
+        output.assert_called_once()
+        notice = next(line for line in messages.getvalue().splitlines() if "only PDF/A" in line)
+        self.assertNotIn("\x1b[", notice)
+        self.assertNotIn("WARNING", messages.getvalue())
+        with pymupdf.open(self.output) as result:
+            self.assertFalse(Pdf.has_pdfa_identification(result))
+            self.assert_structure(result, result.get_xml_metadata())
+        self.assertEqual(self.source.read_bytes(), original)
+
+    def test_pdfa_detection_ignores_namespace_declarations_and_ordinary_text(self) -> None:
+        xml = '<metadata xmlns:a="http://www.aiim.org/pdfa/ns/id/">Keep PDF/A text.</metadata>'
+        self.make_source(xml_metadata=xml)
+        with Pdf.open_document(self.source) as (document, _):
+            self.assertFalse(Pdf.has_pdfa_identification(document))
+            self.assertEqual(document.get_xml_metadata(), xml)
 
     def test_cancel_password_writes_nothing(self) -> None:
         self.make_source("secret")
         self.assertEqual(self.run_decrypt([""]), 1)
         self.assertFalse(self.output.exists())
+
+    def test_shared_open_retries_reuses_password_and_closes_readers(self) -> None:
+        self.make_source("secret")
+        original = self.source.read_bytes()
+        with patch.object(Input, "input_password", side_effect=["wrong", "secret"]) as prompt, \
+                contextlib.redirect_stdout(io.StringIO()):
+            with Pdf.open_document(self.source) as (document, password):
+                self.assertEqual(password, "secret")
+                self.assertEqual(document.page_count, 4)
+                self.assertEqual(Pdf.unlock(document), "")
+                with Pdf.open_document(self.source, password=password, interactive=False) as (reader, accepted):
+                    self.assertEqual(accepted, password)
+                    self.assertEqual(reader.page_count, 4)
+                self.assertTrue(reader.is_closed)
+            self.assertEqual(prompt.call_count, 2)
+        self.assertTrue(document.is_closed)
+        self.assertEqual(self.source.read_bytes(), original)
+
+    def test_shared_open_closes_after_password_cancellation_or_failure(self) -> None:
+        self.make_source("secret")
+        for interactive, password, error in ((True, None, ValueError), (False, "wrong", ValueError),
+                                             (False, None, ValueError), (True, None, KeyboardInterrupt)):
+            document = pymupdf.open(self.source)
+            with (
+                self.subTest(interactive=interactive, password=password, error=error),
+                patch.object(pymupdf, "open", return_value=document),
+                patch.object(Input, "input_password", side_effect=KeyboardInterrupt if error is KeyboardInterrupt else None,
+                             return_value="") as prompt,
+                self.assertRaises(error),
+            ):
+                with Pdf.open_document(self.source, password=password, interactive=interactive):
+                    self.fail("Authentication must fail before the document is yielded.")
+            self.assertTrue(document.is_closed)
+            if not interactive:
+                prompt.assert_not_called()
+
+    def test_shared_open_closes_after_processing_error(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "processing failed"):
+            with Pdf.open_document(self.source) as (document, _):
+                raise RuntimeError("processing failed")
+        self.assertTrue(document.is_closed)
+
+    def test_compress_stages_decrypted_input_and_unprotected_output(self) -> None:
+        self.make_source("secret")
+        original = self.source.read_bytes()
+
+        def fake_ghostscript(cmd: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+            self.assertTrue(check)
+            self.assertFalse(any("secret" in argument or "Password" in argument for argument in cmd))
+            output = next(argument.removeprefix("-sOutputFile=") for argument in cmd if argument.startswith("-sOutputFile="))
+            with pymupdf.open(cmd[-1]) as prepared:
+                self.assert_structure(prepared)
+                # Even if an external writer adds owner restrictions, final save removes them.
+                prepared.save(output, encryption=pymupdf.PDF_ENCRYPT_AES_256, owner_pw="owner",
+                              user_pw="", permissions=pymupdf.PDF_PERM_PRINT)
+            return subprocess.CompletedProcess(cmd, 0)
+
+        with Pdf.open_document(self.source, password="secret", interactive=False) as (document, _), \
+                patch.object(compress.subprocess, "run", side_effect=fake_ghostscript), \
+                contextlib.redirect_stdout(io.StringIO()):
+            compress._compress_document(document, self.source, self.output, "gs", compress._build_ebook_cmd)
+        with pymupdf.open(self.output) as result:
+            self.assert_structure(result)
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ["output.pdf", "source.pdf"])
+
+    def test_compress_failure_and_interruption_remove_staged_files(self) -> None:
+        for error in (subprocess.CalledProcessError(1, ["gs"]), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__), Pdf.open_document(self.source) as (document, _), \
+                    patch.object(compress.subprocess, "run", side_effect=error), \
+                    contextlib.redirect_stdout(io.StringIO()), self.assertRaises(type(error)):
+                compress._compress_document(document, self.source, self.output, "gs", compress._build_ebook_cmd)
+            self.assertEqual(list(self.folder.iterdir()), [self.source])
+
+    def test_compress_rejects_existing_output_before_starting_process(self) -> None:
+        self.output.write_bytes(b"existing")
+        with Pdf.open_document(self.source) as (document, _), patch.object(compress.subprocess, "run") as run:
+            for output in (self.source, self.output):
+                with self.subTest(output=output), self.assertRaises(FileExistsError):
+                    compress._compress_document(document, self.source, output, "gs", compress._build_ebook_cmd)
+        run.assert_not_called()
+        self.assertEqual(self.output.read_bytes(), b"existing")
+
+    def test_compress_password_cancel_does_not_request_output_or_run_ghostscript(self) -> None:
+        self.make_source("secret")
+        with patch.object(sys, "argv", [str(compress.__file__)]), \
+                patch.object(Input, "resolve_input_path", return_value=str(self.source)), \
+                patch.object(Input, "resolve_output_path") as output, \
+                patch.object(Input, "input_password", return_value=""), \
+                patch.object(compress.subprocess, "run") as run, \
+                patch.object(Environment, "check_commands", return_value=True), \
+                patch.object(compress, "CmdCheck", return_value=CmdCheck("gs")) as check, \
+                contextlib.redirect_stdout(io.StringIO()):
+            check.return_value.path = "gs"
+            self.assertEqual(compress.main(), 1)
+        output.assert_not_called()
+        run.assert_not_called()
 
     def test_decrypt_removes_pdfa_without_changing_content_or_other_metadata(self) -> None:
         namespace = "http://www.aiim.org/pdfa/ns/id/"
@@ -160,6 +338,8 @@ class PdfToolsTests(unittest.TestCase):
                 with pymupdf.open(self.source) as source:
                     if password:
                         source.authenticate(password)
+                    self.assertTrue(Pdf.has_pdfa_identification(source))
+                    self.assertEqual(source.get_xml_metadata(), xml)
                     pixels = [page.get_pixmap().samples for page in source]
                     labels = Pdf.read_page_labels(source)
                     toc = source.get_toc()
@@ -167,6 +347,7 @@ class PdfToolsTests(unittest.TestCase):
                 with pymupdf.open(self.output) as result:
                     self.assertFalse(result.is_encrypted)
                     cleaned = result.get_xml_metadata()
+                    self.assertFalse(Pdf.has_pdfa_identification(result))
                     self.assert_structure(result, cleaned)
                     self.assertEqual(result.get_toc(), toc)
                     self.assertEqual(Pdf.read_page_labels(result), labels)
@@ -200,6 +381,7 @@ class PdfToolsTests(unittest.TestCase):
         self.assertEqual(self.source.read_bytes(), original)
 
     def test_existing_output_and_input_are_protected(self) -> None:
+        self.make_source("")
         self.output.write_bytes(b"existing content")
         self.assertEqual(self.run_decrypt([]), 1)
         self.assertEqual(self.output.read_bytes(), b"existing content")

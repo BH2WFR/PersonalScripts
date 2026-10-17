@@ -315,9 +315,7 @@ def _encoded_pages(
     """
     if not page_indexes:
         return
-    with pymupdf.open(input_path) as document:
-        if document.needs_pass and not document.authenticate(password):
-            raise ValueError("The rendering engine could not unlock the PDF with the supplied password.")
+    with Pdf.open_document(input_path, password=password, interactive=False) as (document, _):
         if workers == 1:
             for index in page_indexes:
                 yield _encode_page(_render_page(document, index, dpi), dpi, threshold, processing)
@@ -426,9 +424,7 @@ def _binarize_pdf(
     _validate_settings(dpi, threshold, workers, processing)
     if input_path.resolve() == output_path.resolve() or output_path.exists():
         raise FileExistsError(f"Output must be a new file: {output_path}")
-    reader = pymupdf.open(input_path)
-    try:
-        password = Pdf.unlock(reader)
+    with Pdf.open_document(input_path) as (reader, password):
         if not reader.page_count:
             raise ValueError("The input PDF has no pages.")
         page_count = reader.page_count
@@ -493,8 +489,6 @@ def _binarize_pdf(
                     output_path.unlink(missing_ok=True)
                     raise
             print(f"{FLCyan}Cleaning up temporary files...{CRst}", flush=True)
-    finally:
-        reader.close()
 
 
 def _preview_pdf(
@@ -514,8 +508,7 @@ def _preview_pdf(
         raise FileExistsError(f"Output must be a new file: {output_path}")
     if not features.check("libtiff"):
         raise RuntimeError("This mode requires Pillow built with libtiff (CCITT Group 4) support.")
-    with pymupdf.open(input_path) as source:
-        Pdf.unlock(source)
+    with Pdf.open_document(input_path) as (source, _):
         if not source.page_count:
             raise ValueError("The input PDF has no pages.")
         index = Input.parse_index_ranges(str(page_number), item_count=source.page_count)[0]

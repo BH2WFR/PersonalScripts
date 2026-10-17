@@ -214,11 +214,14 @@
 
 ### PDF 工具
 
+这些工具共用打开密码的询问流程，输出均移除密码、编辑权限限制和 PDF/A 标识，另存新 PDF 并保留源文件。
+
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式 | `ghostscript` |
+| `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-font-replace.py` | **保持文字位置的交互式 PDF 字体替换工具**：按字体和字号筛选、忽略指定页，保留常规、粗体和斜体样式及其他文档内容。支持按名称或本地化别名搜索系统字体、指定字体文件，以及子集或完整字体嵌入。 | **Python 库**：`PyMuPDF`、`fonttools` |
 | `tools/document-processing/pdf-binarize.py` | **扫描版 PDF 黑白二值化工具**：<br />支持固定阈值或 Sauvola 自适应二值化、可选对比度调整、放大和锐化，可先导出单页 PDF 预览效果，再转换整本，生成无损压缩的 1-bit 黑白 PDF。支持可调 DPI、跳过指定页面和进度条，无需逐页临时图片，保留页面尺寸及书签；转换页面不保留可搜索文字和交互功能。 | **Python 库**：`PyMuPDF`、`Pillow`（含 libtiff）、`numpy`、`tqdm` |
-| `tools/document-processing/pdf-decrypt.py` | **PDF 解密/编辑限制解除工具**：<br />另存未加密的 PDF 副本，保留书签、附件等文档结构。支持仅权限保护及打开密码，包括 AES 加密。 | **Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据，也可处理仅有 PDF/A 标识的无保护文件。若没有需要移除的内容，则警告并提供重新打开或退出选项。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 书籍目录注入工具**：<br />将目录截图逐页发送给**视觉 LLM（如 Qwen3-VL）生成指定格式的 JSON**（含页码/层级/编号/标题），再直接逐页连续粘贴到脚本中；脚本会按输入顺序合并后将目录写入 PDF 文件。支持自定义起始书页页码，一个 PDF 页面可对应 1、2 或 4 个连续书页，并可选择生成正文和目录的页码标签。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-page-tag.py` | **交互式 PDF 页码标签编辑器**：按页码范围添加带前缀的连续编号，或清空全部、部分标签，保留书签和页面内容。可在内存中反复编辑，按需另存副本，然后继续编辑或退出。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-split-pages.py` | **扫描版 PDF 页面切分工具**：支持左右或上下切分、两种输出顺序、自定义切分位置及忽略页码范围，保留扫描图像清晰度，无需临时图片。重新映射书签和普通链接，移除包括忽略页在内的全部页码标签，并警告无法确定所属半页的书签跳转。 | **Python 库**：`PyMuPDF`、`tqdm` |
