@@ -7,7 +7,7 @@ the dialog performs no disk I/O and never materializes source arrays.
 from PySide6 import QtCore, QtWidgets
 
 from .import_catalog import ImportCatalog, ImportChoice
-from .qt_widgets import NoWheelComboBox
+from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 from .table_data import HeaderMode, TableRange
 
 
@@ -69,8 +69,8 @@ class ImportDialog(QtWidgets.QDialog):
         layout.addWidget(self.members, 1)
         self.range_box = QtWidgets.QGroupBox("Input range for the highlighted table (1-based, inclusive)")
         self.form = QtWidgets.QFormLayout(self.range_box)
-        self.start_row, self.start_column = QtWidgets.QSpinBox(), QtWidgets.QSpinBox()
-        self.end_row, self.end_column = QtWidgets.QSpinBox(), QtWidgets.QSpinBox()
+        self.start_row, self.start_column = NoWheelSpinBox(), NoWheelSpinBox()
+        self.end_row, self.end_column = NoWheelSpinBox(), NoWheelSpinBox()
         for field in (self.start_row, self.start_column, self.end_row, self.end_column):
             field.setMaximum(2_147_483_647)
             field.setKeyboardTracking(False)

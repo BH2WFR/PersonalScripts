@@ -7,6 +7,13 @@ The 3D menu offers equal XYZ data-unit scaling for all visible layers.
 Image, signal and derivative menus independently toggle equal X:Y unit scaling.
 The matrix's signal menu can add visible slices as independent in-memory matrices.
 The tree menu also packages every source matrix, checked or hidden, in one archive.
+2D/3D Appearance menus reuse active-channel rendering, diameter, colormap,
+overlay color/opacity and clipping-color controls. Hidden editing targets are
+disabled here to avoid changing an unseen matrix from a displayed plot. Plot
+background remains global. Numeric menu editors ignore the wheel and synchronize
+with their original controls; signal/derivative menus share the 1D point size.
+Every canvas also opens the centralized View settings dialog on its own page.
+Quick style/color actions consistently live in Appearance submenus.
 """
 
 from collections.abc import Callable
@@ -20,6 +27,7 @@ from .bundle_export import BUNDLE_FORMATS
 from .exporting import ExportTarget
 from .figure_export import FigureView
 from .plot_support import pyside_graphics_view
+from .qt_widgets import NoWheelDoubleSpinBox
 from .workspace import MatrixEntry
 
 if TYPE_CHECKING:
@@ -232,11 +240,59 @@ class WorkspaceMenus(QtCore.QObject):
             action = self._add(submenu, combo.itemText(index), partial(combo.setCurrentIndex, index), checked=index == combo.currentIndex())
             group.addAction(action)
 
+    @staticmethod
+    def _number_menu(menu: QtWidgets.QMenu, title: str, field: QtWidgets.QDoubleSpinBox,
+                     enabled: bool = True) -> None:
+        """Expose an existing numeric setting without moving its original widget.
+
+        The menu editor shares the field's range, units, step and value. Bound
+        Qt connections are released when the menu/editor is deleted; wheel
+        input never changes either control. All validation and drawing remain
+        in the original field's existing signal handlers.
+        """
+        submenu = menu.addMenu(title)
+        submenu.setEnabled(enabled and field.isEnabled())
+        action = QtWidgets.QWidgetAction(submenu)
+        editor = NoWheelDoubleSpinBox()
+        editor.setDecimals(field.decimals())
+        editor.setRange(field.minimum(), field.maximum())
+        editor.setSingleStep(field.singleStep())
+        editor.setPrefix(field.prefix())
+        editor.setSuffix(field.suffix())
+        editor.setValue(field.value())
+        editor.setKeyboardTracking(False)
+        editor.setToolTip(field.toolTip() or title)
+        editor.valueChanged.connect(field.setValue)
+        field.valueChanged.connect(editor.setValue)
+        action.setDefaultWidget(editor)
+        submenu.addAction(action)
+
+    def _matrix_appearance(self, menu: QtWidgets.QMenu, view: FigureView, ready: bool) -> None:
+        """Offer applicable 2D/3D appearance settings for the visible active entry."""
+        window = self.window
+        active = window._entry()
+        editable = (ready and active is not None and active.visible and active.frame is not None
+                    and window.controls.isEnabled())
+        appearance = menu.addMenu("Appearance (active matrix)")
+        appearance.setEnabled(editable)
+        appearance.setToolTipsVisible(True)
+        appearance.menuAction().setToolTip("Select a visible matrix/channel to edit its appearance. Background applies to all plots.")
+        is_image = view == FigureView.IMAGE
+        self._combo_menu(appearance, "Rendering style", window.image_style if is_image else window.surface_style)
+        self._number_menu(appearance, "Point size", window.image_point_size if is_image else window.point_size)
+        overlay = window._overlay()
+        scalar = active is not None and active.frame is not None and not active.frame.composite
+        self._combo_menu(appearance, "Color map", window.colormap, not overlay and scalar)
+        color = self._add(appearance, "Solid color…", window._choose_layer_color, enabled=overlay)
+        color.setToolTip("Per-channel solid color used for overlaid matrices.")
+        self._number_menu(appearance, "Opacity", window.layer_opacity, overlay)
+        self._add(appearance, "Clipping color…", window.clip_color_button.click,
+                  enabled=window.clip_color_button.isEnabled())
+        appearance.addSeparator()
+        self._combo_menu(appearance, "Plot background (all views)", window.theme)
+
     def _projection(self) -> None:
-        canvas = self.window.surface_view.canvas
-        canvas.camera.SetParallelProjection(not canvas.camera.GetParallelProjection())
-        canvas.reset_camera_clipping_range()
-        canvas.render()
+        self.window.parallel.toggle()
 
     def _equal_xy(self, view: FigureView, enabled: bool) -> None:
         """Apply the viewport's aspect choice in single and overlay modes."""
@@ -269,6 +325,10 @@ class WorkspaceMenus(QtCore.QObject):
         self._add(menu, "Fit this view", reset, enabled=ready)
         self._add(menu, "Fit all views", window._fit_views, enabled=ready)
         self._add(menu, "Export this view as image…", partial(window._export_figure, preferred=view), enabled=ready)
+        active = window._entry()
+        appearance_ready = (ready and active is not None and active.visible and active.frame is not None
+                            and window.controls.isEnabled())
+        self._add(menu, "View settings…", partial(window.view_settings.show_for, view), enabled=appearance_ready)
         menu.addSeparator()
         if view != FigureView.SURFACE:
             box = (window.image_view.view_box if view == FigureView.IMAGE else
@@ -292,14 +352,20 @@ class WorkspaceMenus(QtCore.QObject):
                 self._add(camera, text, callback)
             self._add(camera, "Parallel projection", self._projection, checked=bool(canvas.camera.GetParallelProjection()))
         if view in (FigureView.IMAGE, FigureView.SURFACE):
-            self._combo_menu(menu, "Color map (active matrix)", window.colormap,
-                             ready and not window._overlay() and window.frame is not None and not window.frame.composite)
+            self._matrix_appearance(menu, view, ready)
         else:
-            self._combo_menu(menu, "Curve style", profile.style_selector, ready)
-            self._add(menu, "Line color…", profile.color_button.click, enabled=ready and not window._profile_uses_overlay)
+            appearance = menu.addMenu("Appearance (active matrix)")
+            appearance.setEnabled(appearance_ready)
+            self._combo_menu(appearance, "Rendering style", profile.style_selector)
+            self._number_menu(appearance, "Point size", profile.point_size)
+            if window._profile_uses_overlay:
+                self._add(appearance, "Solid color…", window._choose_layer_color)
+            else:
+                self._add(appearance, "Line color…", profile.color_button.click, enabled=profile.color_button.isEnabled())
             pane = profile.derivative_pane if view == FigureView.DERIVATIVE else profile.signal_pane
             grid = bool(pane.plot_item.getAxis("bottom").grid)
-            self._add(menu, "Grid", lambda: pane.plot_item.showGrid(x=not grid, y=not grid, alpha=.2), enabled=ready, checked=grid)
+            self._add(appearance, "Grid", lambda: pane.plot_item.showGrid(x=not grid, y=not grid, alpha=.2), checked=grid)
+            self._combo_menu(appearance, "Plot background (all views)", window.theme)
         if matrix:
             if view == FigureView.SIGNAL:
                 freeze = self._add(menu, "Add visible slices to matrices", window._add_slice_matrices,

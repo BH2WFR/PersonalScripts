@@ -31,6 +31,37 @@ surface = importlib.import_module("personal_matrix_viewer.surface_view")
 class SurfaceClippingTests(unittest.TestCase):
     """Threshold caps preserve footprint and strictly bound displayed heights."""
 
+    def test_isolated_samples_survive_grid_mesh_preparation(self) -> None:
+        """A valid point beside gaps must survive even when other cells form faces."""
+        source = np.full((5, 6), np.nan)
+        source[:2, :2] = ((1, 2), (3, 4))
+        source[4, 5] = 99
+        document = model.Document(Path("isolated.npy"), source)
+        frame = model.prepare_frame(document, model.default_selection(document), model.Limits(), 0)
+        grid = frame.surface
+        assert grid is not None
+        self.assertEqual(len(grid.points), 5)
+        self.assertEqual(grid.faces.size, 5)
+        np.testing.assert_array_equal(grid.points[-1], (5, 4, 99))
+        np.testing.assert_array_equal(grid.points[:, 2], source[grid.rows, grid.columns])
+
+    def test_discrete_clipping_retains_only_source_positions(self) -> None:
+        """Clamped points stay at source XY coordinates with no edge interpolation."""
+        source = np.arange(-6, 6, dtype=np.float64).reshape(3, 4)
+        document = model.Document(Path("point-caps.npy"), source)
+        frame = model.prepare_frame(document, model.default_selection(document),
+                                    model.Limits(-2, 2, model.FilterMode.CLAMP), 0)
+        grid = frame.surface
+        assert grid is not None
+        mesh = pv.PolyData(grid.points)
+        mesh.point_data["Value"] = grid.points[:, 2]
+        remaining, caps = surface.SurfaceView._partition_surface(mesh, frame)
+        points = np.vstack([part.points for part in (remaining, *caps)])
+        order = np.lexsort((points[:, 0], points[:, 1]))
+        np.testing.assert_array_equal(points[order, :2], grid.points[:, :2])
+        np.testing.assert_array_equal(points[order, 2], np.clip(source.ravel(), -2, 2))
+        np.testing.assert_array_equal(frame.scalar, source)
+
     def test_caps_cover_exact_threshold_regions(self) -> None:
         """A ramp crossing both limits splits at the interpolated X positions."""
         source = np.array([[-4.0, 4.0], [-4.0, 4.0]])

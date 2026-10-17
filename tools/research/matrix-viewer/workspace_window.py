@@ -15,6 +15,9 @@ The 3D context menu can restore XYZ 1:1:1 data-unit scaling for visible layers,
 disabling automatic height scaling and removing stretched axis alignment.
 Nonfinite annotations and optional clipping emphasis retain per-channel settings;
 they do not change numeric exports or invalidate cached derivatives.
+2D image/points, 3D surface/points and 1D/2D/3D point diameters are retained per
+channel, including mixed point/surface overlays. Grid sampling is shared by
+2D points and 3D; full-resolution images, signals and numeric exports are unchanged.
 Multichannel matrices are noncheckable expandable groups; single-channel matrices
 are checkable leaves without a child row. In multiple mode, row clicks only edit.
 Removal only releases session entries.
@@ -53,6 +56,11 @@ one real 2D matrix to 8-bit grayscale, independently of plot image exports.
 Native context menus reuse processing/export controls. Tree right-click chooses
 an editing target without altering visibility; canvas clicks open menus while
 right drags retain the existing 3D camera gesture.
+View settings beside each plot opens one shared appearance dialog with 1D, 2D,
+3D, Colors and Markers pages. The sidebar retains interpretation, data crops,
+display sampling and overlay alignment; it has no standalone style buttons.
+Slice navigation stays beside the profile; its colors/lift/opacity live with
+the relevant 2D/3D settings. Context menus keep consistent Appearance shortcuts.
 """
 
 from collections import deque
@@ -71,6 +79,7 @@ from .coordinates import AxisMap
 from .channel_tree import ChannelTree
 from .bundle_export import BUNDLE_FORMATS, prepare_bundle, serialize_bundle
 from .context_menus import WorkspaceMenus
+from .view_settings import ViewSettingsDialog
 from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits, RealArray,
                          Selection, ViewMode, default_selection, prepare_frame, select_image_member)
 from .overlay_profile import OverlayProfile
@@ -91,8 +100,9 @@ from .excel_io import serialize_excel
 from .figure_dialog import FigureExportDialog
 from .figure_export import FigureSource, FigureView, figure_stem, plot_source, surface_source
 from .plot_support import pyside_graphics_view
-from .qt_widgets import NoWheelComboBox
+from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox
 from .profile_view import CHANNEL_COLORS, JumpMode
+from .render_style import DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
 from .surface_view import ProfileStyle
 from .slice_snapshot import freeze_slice
 from .value_markers import DEFAULT_MARKER_SIZE, MarkerStyle
@@ -105,10 +115,11 @@ from .workspace_export import (ExportScope, default_stem, mat_variable_names,
 SETTINGS: tuple[str, ...] = (
     "filter_low", "filter_high", "filter_mode", "color_low", "color_high", "colormap",
     "max_edge", "max_points", "point_size", "auto_height", "height_scale", "db_floor",
+    "image_style", "image_point_size", "surface_style",
     "crop_x_start", "crop_x_end", "crop_y_start", "crop_y_end",
     "show_nonfinite", "highlight_clipped", "nonfinite_size",
 )
-PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color")
+PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size")
 
 
 @dataclass(frozen=True)
@@ -180,6 +191,14 @@ class WorkspaceWindow(ViewerWindow):
         self.export_form.addRow(self.figure_export_button)
         self._workspace_ready = True
         self.context_menus = WorkspaceMenus(self)
+        self.view_settings = ViewSettingsDialog(self)
+        self.view_settings_button = QtWidgets.QPushButton("View settings…")
+        self.view_settings_button.clicked.connect(self.view_settings.show_current)
+        self.tabs.setCornerWidget(self.view_settings_button, QtCore.Qt.Corner.TopRightCorner)
+        self.tabs.currentChanged.connect(self.view_settings.refresh)
+        for profile in (self.profile_view, self.overlay_profile):
+            profile.settings_button.clicked.connect(self.view_settings.show_profile)
+        self.view_settings.refresh()
         self._theme_changed()
 
     def _build_workspace(self) -> None:
@@ -294,7 +313,7 @@ class WorkspaceWindow(ViewerWindow):
         self.display_label.hide()
         self.display_channel.hide()
 
-        self.alignment_box = QtWidgets.QGroupBox("Selected channel — overlay appearance")
+        self.alignment_box = QtWidgets.QGroupBox("Overlay alignment (active channel)")
         form = QtWidgets.QFormLayout(self.alignment_box)
         self.reference = NoWheelComboBox()
         self.reference.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -316,16 +335,21 @@ class WorkspaceWindow(ViewerWindow):
         form.addRow("X alignment", self.alignment_x)
         form.addRow("Y alignment", self.alignment_y)
         form.addRow("Z alignment (3D)", self.alignment_z)
+        self.overlay_appearance = QtWidgets.QGroupBox("Overlay colors (active channel)", self.appearance_storage)
+        colors = QtWidgets.QFormLayout(self.overlay_appearance)
         self.layer_color = QtWidgets.QPushButton("Solid color…")
         self.layer_color.clicked.connect(self._choose_layer_color)
-        form.addRow(self.layer_color)
-        self.layer_opacity = QtWidgets.QDoubleSpinBox()
+        colors.addRow("Color", self.layer_color)
+        self.layer_opacity = NoWheelDoubleSpinBox()
         self.layer_opacity.setRange(0.05, 1)
         self.layer_opacity.setSingleStep(0.05)
         self.layer_opacity.setDecimals(2)
         self.layer_opacity.setValue(0.65)
         self.layer_opacity.valueChanged.connect(self._alignment_changed)
-        form.addRow("2D / 3D opacity", self.layer_opacity)
+        colors.addRow("2D / 3D opacity", self.layer_opacity)
+        color_note = QtWidgets.QLabel("Overlays use one solid color per channel. In 2D, values also control opacity.")
+        color_note.setWordWrap(True)
+        colors.addRow(color_note)
         note = QtWidgets.QLabel("X/Y alignment is included in visible-matrix exports. Z alignment and height scaling affect only 3D geometry. Data and derivatives retain source values. 2D values control opacity.")
         note.setWordWrap(True)
         form.addRow(note)
@@ -443,6 +467,7 @@ class WorkspaceWindow(ViewerWindow):
         return {"jump_mode": profile.jump_mode.currentIndex(),
                 "jump_threshold": profile.jump_threshold.value(),
                 "curve_style": profile.style_selector.currentIndex(),
+                "profile_point_size": profile.point_size.value(),
                 "curve_color": self.profile_view.color.name()}
 
     def _store_visible_profile_settings(self) -> None:
@@ -547,10 +572,12 @@ class WorkspaceWindow(ViewerWindow):
                     widget.setValue(float(value))
         for profile in (self.profile_view, self.overlay_profile) if restore_views else ():
             previous_jump = (profile.jump_mode.currentIndex(), profile.jump_threshold.value())
-            with QtCore.QSignalBlocker(profile.jump_mode), QtCore.QSignalBlocker(profile.jump_threshold), QtCore.QSignalBlocker(profile.style_selector):
+            with (QtCore.QSignalBlocker(profile.jump_mode), QtCore.QSignalBlocker(profile.jump_threshold),
+                  QtCore.QSignalBlocker(profile.style_selector), QtCore.QSignalBlocker(profile.point_size)):
                 profile.jump_mode.setCurrentIndex(int(entry.settings.get("jump_mode", JumpMode.GAPS_ONLY)))
                 profile.jump_threshold.setValue(float(entry.settings.get("jump_threshold", 1.0)))
                 profile.style_selector.setCurrentIndex(int(entry.settings.get("curve_style", 0)))
+                profile.point_size.setValue(float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE)))
                 profile.jump_threshold.setEnabled(profile.jump_mode.currentIndex() == JumpMode.CUSTOM)
             if profile is self.profile_view and previous_jump != (profile.jump_mode.currentIndex(), profile.jump_threshold.value()):
                 profile._invalidate_derivative()
@@ -774,6 +801,8 @@ class WorkspaceWindow(ViewerWindow):
         super()._refresh_control_visibility()
         if self._workspace_ready:
             self.axes_form.setRowVisible(self.channel, False)
+        if hasattr(self, "view_settings"):
+            self.view_settings.refresh()
 
     def _sync_alignment(self) -> None:
         entry = self._entry()
@@ -1641,7 +1670,11 @@ class WorkspaceWindow(ViewerWindow):
                             str(entry.settings.get("nonfinite_positive_color", "#0000ff")),
                             str(entry.settings.get("nonfinite_negative_color", "#00ff00")),
                             str(entry.settings.get("nonfinite_nan_color", "#ff00ff")),
-                            float(entry.settings.get("nonfinite_size", DEFAULT_MARKER_SIZE)))))
+                            float(entry.settings.get("nonfinite_size", DEFAULT_MARKER_SIZE))),
+                image_style=ImageStyle(str(entry.settings.get("image_style", ImageStyle.IMAGE))),
+                image_point_size=float(entry.settings.get("image_point_size", DEFAULT_POINT_SIZE)),
+                surface_style=SurfaceStyle(str(entry.settings.get("surface_style", SurfaceStyle.SURFACE))),
+                profile_point_size=float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE))))
         return tuple(layers)
 
     def _render_workspace(self, reset: bool = False) -> None:
@@ -1717,6 +1750,8 @@ class WorkspaceWindow(ViewerWindow):
             self._sync_export_controls()
         finally:
             self._rendering = False
+            if hasattr(self, "view_settings"):
+                self.view_settings.refresh()
 
     def _configure_profile_range(self) -> None:
         if not self._overlay():
@@ -2287,6 +2322,7 @@ class WorkspaceWindow(ViewerWindow):
                     super()._refresh_surface()
 
     def _presentation_changed(self, *, reset: bool = False) -> None:
+        self.image_point_size.setEnabled(self.image_style.currentText() == ImageStyle.POINTS)
         if self._overlay():
             if not self._restoring and not self._painting_active:
                 self._store_entry()

@@ -146,6 +146,30 @@ when needed. Overlay derivatives are lazy and cached for each source slice.
 
 Includes inclusive X/Y source-index cropping, lazy gap-aware derivatives,
 X-only or XY curve zoom, and adjustable 3D sampling and height.
+2D matrices offer Image/Points rendering; 3D height fields offer Surface/Points.
+render_style is the canonical definition of 1D CurveStyle (Line/Points/Both),
+2D ImageStyle and 3D SurfaceStyle; 1D control/settings integer IDs remain stable.
+2D/3D canvas menus expose Appearance for the visible active channel: rendering
+style, point size, colormap, overlay solid color/opacity and clipping color.
+The background choice affects all plots. Menu numeric fields mirror existing
+controls and also ignore wheel input. Signal/derivative menus include point size.
+View settings buttons beside the plot tabs/profile open one live appearance
+dialog with 1D, 2D, 3D, Colors and Markers pages. Opening settings never changes
+the visible plot tab or computes derivatives. Color-range reset leaves data
+bounds intact. The sidebar retains interpretation, index/value crops, sampling
+and overlay alignment; slice navigation keeps only its selection controls.
+Colors, slice lift/opacity, rendering styles and point sizes live in the dialog;
+consistent Appearance submenus retain common shortcuts in every canvas menu.
+Discrete points preserve sample positions and scalar/image colors. Each channel
+retains separate 1D, 2D and 3D point diameters (0.5–64 screen pixels, default 2).
+Signal and derivative samples share the 1D size; nonfinite annotations retain
+their independent controls. Overlays can mix image/points or surface/points.
+Maximum grid edge limits both 2D points and 3D vertices; zero keeps all samples.
+Only valid sampled vertices are drawn, including isolated points beside gaps;
+point-mode clipping colors clamped samples without introducing new vertices.
+Nonfinite annotations in 2D remain filled pixels. Image pixels, 1D curves,
+hover readouts and numeric exports retain full source resolution. Figure exports
+retain the active rendering style and sampled point count.
 Value bounds can be reverted independently of X/Y cropping and color limits.
 XY derivatives use sorted actual X coordinates and treat repeated X as gaps.
 The derivative tab computes on demand and reuses unchanged data and plots.
@@ -153,8 +177,9 @@ Actual derivative calculations print source row/column indices and timing.
 Uses native Qt Fusion painting with compact layouts: main content margins are
 2 px at the top and 6 px elsewhere; panel padding and vertical gaps are 2 px.
 The three resize dividers are blue, amber on hover and orange while dragging.
-All viewer combo boxes ignore wheel changes, including while focused; mouse
-clicks and keyboard selection still work. Open dropdown lists remain scrollable.
+All viewer combo boxes and integer/decimal spin boxes ignore wheel changes,
+including while focused. Typing, arrow keys and buttons remain available;
+wheel events can scroll the containing panel. Open dropdown lists stay scrollable.
 Images expose source channels, stored bit depth, RGB grayscale and
 alpha-weighted RGBA grayscale as selectable matrices, plus RGB/RGBA/monochrome color
 rendering in both 2D and 3D. Image loading prints decoder diagnostics.
@@ -339,8 +364,8 @@ def main() -> int:
             "Failed or canceled imports are skipped. Single matrix mode displays the last added file and retains the others. "
             "Ctrl+O replaces the session; Ctrl+Shift+O or dropping"
             " another file adds it. Single matrix mode shows one channel; Multiple matrices mode overlays compatible data with"
-            " separate colors, settings and a selectable alignment reference. Right-click matrices or plots for processing, "
-            "fitting and export actions. "
+            " separate colors, settings and a selectable alignment reference. Right-click matrices or plots for appearance, processing, "
+            "fitting and export actions. View settings beside each plot groups styles, colors and markers. "
             "Numeric files support dense 1D/2D boolean, integer, real and complex arrays. MAT supports legacy and v7.3 files. "
             "NPZ/MAT/Excel files offer member/sheet selection; Excel and CSV/TXT imports allow ranges and header handling. "
             "Two-row/column arrays can open as XY signals, and three-row/column arrays as XYZ point clouds. Ambiguous shapes "
@@ -348,7 +373,7 @@ def main() -> int:
             "Images expose bit depth, individual channels, grayscale combinations and RGB/RGBA/monochrome color views. "
             "Complex data offer Real, Imaginary, Magnitude, Phase (rad) and Magnitude (dB). Raw data can copy selections; "
             "8-bit image values also support hexadecimal display. "
-            "Crop by source indices or value bounds, select a row/column slice, and adjust 3D sampling and height. "
+            "Crop by source indices or value bounds, select a slice, and adjust sampling, height, point rendering and 1D/2D/3D point sizes. "
             "Plot menus offer X:Y=1:1 or XYZ=1:1:1 data scales. Slice plots auto-fit Y by default; disable Auto Y to retain it. "
             "Optional Inf/-Inf/NaN markers have configurable colors and 1D size. Clipped-value highlighting is enabled by "
             "default and can be disabled. Derivatives compute only when requested and reuse unchanged results. "

@@ -14,6 +14,11 @@ Clipping emphasis can be hidden while retaining the clamped curve geometry.
 Hover readouts stay on one line, with complete readings in the tooltip. Inf/NaN
 are shown directly as sample values without extra marker annotations.
 Current full-resolution traces are exposed read-only for independent slice copies.
+The point-diameter control styles signal and cached derivative samples together;
+nonfinite and undefined-derivative annotations keep their separate marker sizes.
+Style definitions and labels come from render_style, shared with 2D/3D views.
+The compact toolbar keeps View settings and Fit curve. Its original appearance
+controls are hosted in the workspace dialog, shared with canvas menu actions.
 
 Requirements: PySide6, pyqtgraph and numpy.
 Usage: embedded below matrix views or used alone for signal data.
@@ -37,14 +42,14 @@ from .clipping import ClippedCurve, clip_curve
 from .derivatives import DerivativeResult, differentiate
 from .plot_support import compact_axis, graphics_scene, pyside_graphics_view
 from .profile_legend import ProfileLegend
-from .qt_widgets import NoWheelComboBox
+from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox
 from .value_markers import MarkerStyle, curve_markers
+from .render_style import DEFAULT_POINT_SIZE, MIN_POINT_SIZE, MAX_POINT_SIZE, CurveStyle
 
 WHEEL_ZOOM_FACTOR = 1.15
 DERIVATIVE_DELAY_MS = 70
 UNDEFINED_COLOR = "#e53935"
 CLIP_LINE_WIDTH = 4
-CLIP_POINT_SIZE = 6
 TICK_SIGNIFICANT_DIGITS = 10
 HOVER_SIGNIFICANT_DIGITS = 8
 FLOAT_NOISE_RELATIVE_TOLERANCE = 64 * float(np.finfo(np.float64).eps)
@@ -94,14 +99,6 @@ class ProfileTrace:
     def label(self) -> str:
         """Return the short legend/debug label, using M for monochrome."""
         return _channel_label(self.channel, self.alpha_weighted)
-
-
-class CurveStyle(IntEnum):
-    """Available line and sample-marker combinations."""
-
-    LINE = 0
-    POINTS = 1
-    BOTH = 2
 
 
 class JumpMode(IntEnum):
@@ -222,7 +219,8 @@ class CurvePane(QtWidgets.QWidget):
 
     def set_samples(self, values: RealArray, valid: BoolArray,
                     color: QtGui.QColor, mode: CurveStyle, x_start: int = 0,
-                    x_values: RealArray | None = None, *, channel: ImageMember | None = None) -> None:
+                    x_values: RealArray | None = None, *, channel: ImageMember | None = None,
+                    point_size: float = DEFAULT_POINT_SIZE) -> None:
         """Render samples with gaps, optional markers and a common curve style.
 
         Args:
@@ -233,6 +231,7 @@ class CurvePane(QtWidgets.QWidget):
             x_start: Source index of the first sample; defaults to zero.
             x_values: Optional coordinates including interpolated clip crossings.
             channel: Named image curve, or None for the ordinary single curve.
+            point_size: Sample diameter in screen pixels.
         """
         y = np.where(valid, values, np.nan)
         ordered = x_values is None or bool(np.all(np.isfinite(x_values)) and np.all(x_values[1:] >= x_values[:-1]))
@@ -242,7 +241,7 @@ class CurvePane(QtWidgets.QWidget):
             np.arange(x_start, x_start + len(y)) if x_values is None else x_values, y, connect="finite",
             pen=pg.mkPen(color, width=1) if mode != CurveStyle.POINTS else None,
             symbol="o" if mode != CurveStyle.LINE or len(y) == 1 else None,
-            symbolSize=5, symbolBrush=color, symbolPen=MONO_OUTLINE_COLOR if outlined else None,
+            symbolSize=point_size, symbolBrush=color, symbolPen=MONO_OUTLINE_COLOR if outlined else None,
             shadowPen=pg.mkPen(MONO_OUTLINE_COLOR, width=MONO_OUTLINE_WIDTH)
             if outlined and mode != CurveStyle.POINTS else None,
             autoDownsample=ordered and bool(np.all(valid)), downsampleMethod="peak", clipToView=ordered,
@@ -340,13 +339,30 @@ class ProfileView(QtWidgets.QWidget):
         self.legend_bar = ProfileLegend()
         bar.addWidget(self.legend_bar, 1)
         self.style_selector = NoWheelComboBox()
-        self.style_selector.addItems(["Line", "Points", "Line + points"])
+        self.style_selector.addItems([style.label for style in CurveStyle])
         self.style_selector.currentIndexChanged.connect(self._redraw)
-        bar.addWidget(self.style_selector)
+        self.appearance_controls = QtWidgets.QWidget(self)
+        self.appearance_form = QtWidgets.QFormLayout(self.appearance_controls)
+        self.appearance_form.addRow("Style", self.style_selector)
+        self.appearance_controls.hide()
+        self.point_size = NoWheelDoubleSpinBox()
+        self.point_size.setRange(MIN_POINT_SIZE, MAX_POINT_SIZE)
+        self.point_size.setSingleStep(0.5)
+        self.point_size.setValue(DEFAULT_POINT_SIZE)
+        self.point_size.setSuffix(" px")
+        self.point_size.setKeyboardTracking(False)
+        self.point_size.setToolTip("Sample diameter for this signal/slice and its derivative. Select Points or Line + points to see samples.")
+        self.point_size.valueChanged.connect(self._redraw)
+        self.appearance_form.addRow("Point size", self.point_size)
         self.color_button = QtWidgets.QPushButton("Line color")
         self.color_button.clicked.connect(self._choose_color)
-        bar.addWidget(self.color_button)
+        self.appearance_form.addRow("Color", self.color_button)
+        self.settings_button = QtWidgets.QPushButton("View settings…")
+        self.settings_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.settings_button.setToolTip("Signal / derivative style, colors and value markers.")
+        bar.addWidget(self.settings_button)
         fit = QtWidgets.QPushButton("Fit curve")
+        fit.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         fit.clicked.connect(self.reset_view)
         bar.addWidget(fit)
         self.readout = QtWidgets.QLabel("Move over the curve to inspect a sample")
@@ -385,7 +401,7 @@ class ProfileView(QtWidgets.QWidget):
         self.jump_mode.setCurrentIndex(JumpMode.GAPS_ONLY)
         settings.addWidget(self.jump_mode)
         settings.addWidget(QtWidgets.QLabel("Jump |Δy| >"))
-        self.jump_threshold = QtWidgets.QDoubleSpinBox()
+        self.jump_threshold = NoWheelDoubleSpinBox()
         self.jump_threshold.setDecimals(9)
         self.jump_threshold.setRange(1e-9, 1e100)
         self.jump_threshold.setValue(1.0)
@@ -668,10 +684,10 @@ class ProfileView(QtWidgets.QWidget):
             curve = trace.curve
             if curve is not None and mode != CurveStyle.POINTS:
                 self.signal_pane.set_samples(curve.y, np.isfinite(curve.y), color, mode,
-                                              self.x_start, curve.x, channel=trace.channel)
+                                              self.x_start, curve.x, channel=trace.channel, point_size=self.point_size.value())
             else:
                 self.signal_pane.set_samples(trace.shown, trace.valid, color, mode,
-                                              self.x_start, self.x_values, channel=trace.channel)
+                                              self.x_start, self.x_values, channel=trace.channel, point_size=self.point_size.value())
             if self.marker_style.highlight_clipped and curve is not None and trace.clipped is not None:
                 caps_x.append(curve.cap_x)
                 caps_y.append(curve.cap_y)
@@ -689,7 +705,7 @@ class ProfileView(QtWidgets.QWidget):
             self.clip_curve_item.setData(np.concatenate(caps_x), np.concatenate(caps_y), connect="finite",
                                          pen=pg.mkPen(self.clip_color, width=CLIP_LINE_WIDTH), autoDownsample=False)
             self.clip_points_item.setData(np.concatenate(points_x), np.concatenate(points_y), pen=None, symbol="o",
-                                          symbolSize=CLIP_POINT_SIZE, symbolPen=None, symbolBrush=self.clip_color)
+                                          symbolSize=self.point_size.value(), symbolPen=None, symbolBrush=self.clip_color)
         else:
             self.clip_curve_item.clear()
             self.clip_points_item.clear()
@@ -730,13 +746,15 @@ class ProfileView(QtWidgets.QWidget):
         for channel, result in self.derivative_results.items():
             color = QtGui.QColor(CHANNEL_COLORS[channel]) if channel else self.color
             if self.x_values is None:
-                self.derivative_pane.set_samples(result.values, result.valid, color, mode, self.x_start, channel=channel)
+                self.derivative_pane.set_samples(result.values, result.valid, color, mode, self.x_start,
+                                                 channel=channel, point_size=self.point_size.value())
                 markers.append(result.undefined_indices + self.x_start)
             else:
                 # Keep the signal/table in source order; only dy/dx is drawn by X.
                 order = self._x_order
                 self.derivative_pane.set_samples(result.values[order], result.valid[order], color,
-                                                 mode, x_values=self.x_values[order], channel=channel)
+                                                 mode, x_values=self.x_values[order], channel=channel,
+                                                 point_size=self.point_size.value())
                 markers.append(self.x_values[result.undefined_indices])
         marker_x = np.concatenate(markers)
         self.undefined_markers.setData(marker_x, np.zeros(len(marker_x)))
