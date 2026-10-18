@@ -76,12 +76,16 @@ The left-side matrix tree chooses a source array or archive member. Its children
 choose image channels/combinations, numeric channels or a complex array's
 real/imaginary part, phase (rad) or magnitude. Matrix names can be changed
 for the session without renaming source files; metadata remains in the selector.
-Open file (Ctrl+O) replaces the session; Add file (Ctrl+Shift+O) or dropping
+Open and replace (Ctrl+O) replaces the session; Open (Ctrl+Shift+O) or dropping
 another file appends. File commands and Fit views sit in the matrix panel,
 leaving the top of the window for plots. Right-click matrix rows for visibility,
 rename, color, processing and export actions; right-clicking selects the editing
-target without changing visibility. Plot context menus offer fitting, figure
-export and view-specific controls. A 3D right drag still rolls the camera.
+target without changing visibility. Plot menus group View, Appearance, Slice
+(2D sources only), Data and Export in a consistent order. Numeric matrix/channel/
+slice exports and rendered-image exports share Export, with separate headings.
+Process active matrix uses a fixed caption without the matrix name; its tooltip
+retains the source identity. Raw menus group Selection, Navigation and Table
+controls without changing the active matrix. A 3D right drag still rolls the camera.
 The 3D menu's XYZ scale 1:1:1 (data units) action disables automatic height
 scaling, sets Z multipliers to one for all visible layers, and resets stretched
 XYZ alignments to original coordinates while retaining translation alignments.
@@ -89,6 +93,9 @@ It fits the 3D camera without changing its orientation or projection. Equal
 data-unit scales do not calibrate pixel coordinates into physical distances.
 By default, matrix heights span roughly 30% of the longer XY side; point clouds
 keep a height multiplier of one.
+Small/large 3D Z ranges show a power-of-ten multiplier in the axis title;
+tick labels update with height scaling, cropping, slice markers and overlays.
+This changes annotations only; coordinate geometry and source values are retained.
 Image, signal and derivative context menus offer X:Y scale 1:1 (data units).
 Uncheck it for independent axes. The choice persists across single/overlay views;
 locked plots link wheel zoom and retain equal unit lengths when resized/exported,
@@ -104,8 +111,8 @@ in independent solid colors. Switching back retains the edited checked channel,
 or the first checked channel if the edited one is hidden. In multiple mode,
 row clicks only choose the editing target; checkboxes control visibility.
 Adding files in single mode retains the list but shows
-only the new file's first member. Remove / Remove all release session data without deleting files.
-Rename remains in the context menu and on F2; Remove all is folded into Remove's
+only the new file's first member. Close / Close all release session data without deleting files.
+Rename remains in the context menu and on F2; Close all is folded into Close's
 arrow menu to keep the matrix panel compact.
 Indexed signals and XY tables can share a plot; matrices and point clouds form separate groups.
 XY alignment supports original coordinates, start/end, center and stretch,
@@ -231,7 +238,7 @@ row/column limits and unsupported precision raise errors; NPY preserves dtypes.
 MAT stores 1D arrays as column vectors. Default filenames include the source
 member, processing ranges and layout; existing names receive a numeric suffix.
 Export scope chooses the selected source, its current channel or all visible matrices.
-The matrix-list context menu also offers Save all matrices as NPZ/MAT/XLSX.
+The matrix-list context menu also offers Export > All matrices as NPZ/MAT/XLSX.
 This packs each source group once, including unchecked matrices and generated
 results, using full original values without display-channel conversion, cropping,
 bounds or alignment. Images contribute their original channels as separate 2D
@@ -362,10 +369,10 @@ def main() -> int:
             " views, with slices and lazy derivatives. "
             "Open one or more files from the command line, loaded in order into one workspace, or use the matrix panel. "
             "Failed or canceled imports are skipped. Single matrix mode displays the last added file and retains the others. "
-            "Ctrl+O replaces the session; Ctrl+Shift+O or dropping"
+            "Open and replace (Ctrl+O) replaces the session; Open (Ctrl+Shift+O) or dropping"
             " another file adds it. Single matrix mode shows one channel; Multiple matrices mode overlays compatible data with"
             " separate colors, settings and a selectable alignment reference. Right-click matrices or plots for appearance, processing, "
-            "fitting and export actions. View settings beside each plot groups styles, colors and markers. "
+            "fitting and export actions, grouped by purpose. Close / Close all release session data. View settings beside each plot groups styles, colors and markers. "
             "Numeric files support dense 1D/2D boolean, integer, real and complex arrays. MAT supports legacy and v7.3 files. "
             "NPZ/MAT/Excel files offer member/sheet selection; Excel and CSV/TXT imports allow ranges and header handling. "
             "Two-row/column arrays can open as XY signals, and three-row/column arrays as XYZ point clouds. Ambiguous shapes "
@@ -374,7 +381,7 @@ def main() -> int:
             "Complex data offer Real, Imaginary, Magnitude, Phase (rad) and Magnitude (dB). Raw data can copy selections; "
             "8-bit image values also support hexadecimal display. "
             "Crop by source indices or value bounds, select a slice, and adjust sampling, height, point rendering and 1D/2D/3D point sizes. "
-            "Plot menus offer X:Y=1:1 or XYZ=1:1:1 data scales. Slice plots auto-fit Y by default; disable Auto Y to retain it. "
+            "Plot menus offer X:Y=1:1 or XYZ=1:1:1 data scales; 3D Z ticks label their multiplier. Slice plots auto-fit Y by default; disable Auto Y to retain it. "
             "Optional Inf/-Inf/NaN markers have configurable colors and 1D size. Clipped-value highlighting is enabled by "
             "default and can be disabled. Derivatives compute only when requested and reuse unchanged results. "
             "Transform tools create new matrices: Fourier FFT/IFFT, 1D Laplace and its inverse, data conversions (dB, angles, "
@@ -386,7 +393,7 @@ def main() -> int:
             "Export original matrices, processed results or slices as NPY, MAT, XLSX, CSV or TXT; choose a whole matrix, "
             "one channel or all visible results. Complex sources ask for channel or complex data; text splits real/imaginary files. "
             "A slice menu keeps independent in-memory 1D matrices, asking channel/complex for complex sources. "
-            "Save all matrices packs checked and hidden originals into NPZ/MAT/XLSX. "
+            "Export > All matrices as packs checked and hidden originals into NPZ/MAT/XLSX. "
             "Signals can export as XY tables and matrices as XYZ point clouds. Real 2D arrays also export as normalized grayscale PNG/BMP. "
             "Export figure opens a preview dialog for the current 2D, 3D, 1D or derivative view. Save PNG/TIFF/JPEG, or "
             "SVG for 2D/1D; set image dimensions, DPI, transparency, title and legend. Zoom, camera and visible styling "

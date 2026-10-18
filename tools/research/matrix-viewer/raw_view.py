@@ -2,6 +2,8 @@
 
 8-bit integer image data optionally uses channel-ordered hexadecimal labels.
 A header dropdown browses workspace matrices by name without changing plot selection.
+The workspace context menu groups selection, navigation and table appearance;
+it never changes the active matrix or visibility when inspecting another table.
 Requirements: PySide6 and numpy. Usage: embedded as the Raw data tab.
 """
 
@@ -220,7 +222,7 @@ class RawDataView(QtWidgets.QWidget):
         self.column_width.valueChanged.connect(self._set_column_width)
         bar.addWidget(self.width_slider, 1)
         layout.addLayout(bar)
-        action = QtGui.QAction("Copy selection", self.table)
+        action = self.copy_action = QtGui.QAction("Copy selection", self.table)
         action.setShortcut(QtGui.QKeySequence.StandardKey.Copy)
         action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         action.triggered.connect(self._copy)

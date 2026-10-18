@@ -1,7 +1,7 @@
 """Channel-checkbox workspace with independent controls and automatic overlays.
 
 Requirements: the existing viewer dependencies; no additional packages.
-Usage: constructed by app.run. Open replaces the session; Add file appends one
+Usage: constructed by app.run. Open and replace resets the session; Open appends one
 file and selects NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
 row/column ranges and headers. Dropping a file into a populated session appends.
 Numeric 2-by-N/N-by-2 sources (N > 2) prompt for XY or matrix interpretation;
@@ -41,7 +41,7 @@ full/crop/slice scopes; results retain sample coordinates and are separate entri
 Export figure opens a modal preview for current 2D/3D/signal/derivative views,
 including overlays, titles and legends, with pixel width and print DPI settings.
 File commands and Fit views share the matrix panel; the old top bar is hidden.
-Rename is available through the tree context menu/F2; Remove all is in Remove's
+Rename is available through the tree context menu/F2; Close all is in Close's
 arrow menu. Numeric export settings live in a separate modal window. Complex
 sources first ask for the current channel or both complex components, including
 signal and slice exports; cancellation leaves settings unchanged. The active
@@ -213,14 +213,15 @@ class WorkspaceWindow(ViewerWindow):
         self.single_matrix_mode.setToolTip("Click a channel or single-channel matrix to show it exclusively. Click a multichannel matrix to expand its channels.")
         self.multiple_matrix_mode.setToolTip("Use channel checkboxes to overlay compatible matrices/channels. Row clicks only choose the editing target.")
         self.multiple_matrix_mode.toggled.connect(self._display_mode_changed)
-        self.open_file_action = QtGui.QAction("Open file…", self)
+        self.open_file_action = QtGui.QAction("Open and replace…", self)
         self.open_file_action.setShortcut(QtGui.QKeySequence.StandardKey.Open)
         self.open_file_action.setToolTip("Open a file and replace the current session.")
         self.open_file_action.triggered.connect(self._choose_file)
         self.addAction(self.open_file_action)
         self.open_file_button.setShortcut(QtGui.QKeySequence())
-        self.add_file_action = QtGui.QAction("Add file…", self)
+        self.add_file_action = QtGui.QAction("Open…", self)
         self.add_file_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+O"))
+        self.add_file_action.setToolTip("Open another file in this session. Existing matrices remain in the list.")
         self.add_file_action.triggered.connect(self._choose_overlay)
         self.addAction(self.add_file_action)
         bar = QtWidgets.QHBoxLayout()
@@ -228,9 +229,9 @@ class WorkspaceWindow(ViewerWindow):
         self.add_overlay.setDefaultAction(self.add_file_action)
         self.add_overlay.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         file_menu = QtWidgets.QMenu(self.add_overlay)
-        file_menu.addActions([self.open_file_action, self.add_file_action])
+        file_menu.addActions([self.add_file_action, self.open_file_action])
         self.add_overlay.setMenu(file_menu)
-        self.add_overlay.setToolTip("Add a file, or use the arrow menu to Open and replace the session. Files can also be dropped anywhere in the window.")
+        self.add_overlay.setToolTip("Open another file, or choose Open and replace from the arrow menu. Files can also be dropped anywhere in the window.")
         bar.addWidget(self.add_overlay)
         self.fourier_button = QtWidgets.QPushButton("Transform…")
         self.fourier_button.setEnabled(False)
@@ -257,16 +258,16 @@ class WorkspaceWindow(ViewerWindow):
         self.none_visible.setVisible(self.multiple_matrix_mode.isChecked())
         self.none_visible.clicked.connect(self._hide_all)
         actions.addWidget(self.none_visible)
-        self.remove_action = QtGui.QAction("Remove", self)
+        self.remove_action = QtGui.QAction("Close", self)
         self.remove_action.triggered.connect(self._remove_selected)
         self.remove_matrix = QtWidgets.QToolButton()
         self.remove_matrix.setDefaultAction(self.remove_action)
         self.remove_matrix.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self.remove_matrix.setToolTip("Remove from this session; the source file is unchanged.")
+        self.remove_matrix.setToolTip("Close the selected matrix and its channels. The source file is unchanged.")
         actions.addWidget(self.remove_matrix)
-        self.remove_all = QtGui.QAction("Remove all", self)
+        self.remove_all = QtGui.QAction("Close all", self)
         self.remove_all.triggered.connect(self._remove_all)
-        self.remove_all.setToolTip("Remove all matrices from this session; source files are unchanged.")
+        self.remove_all.setToolTip("Close all matrices in this session. Source files are unchanged.")
         remove_menu = QtWidgets.QMenu(self.remove_matrix)
         remove_menu.addActions([self.remove_action, self.remove_all])
         self.remove_matrix.setMenu(remove_menu)
@@ -401,7 +402,7 @@ class WorkspaceWindow(ViewerWindow):
         if not self._workspace_ready:
             return
         self._store_entry()
-        self.add_overlay.setText("Add overlay…" if multiple else "Add file…")
+        self.add_overlay.setText("Open…")
         if not multiple:
             selected = self._entry()
             retained = selected if selected is not None and selected.visible else next(
@@ -1013,14 +1014,14 @@ class WorkspaceWindow(ViewerWindow):
         self.path_label.clear()
         self._refresh_list()
         self._clear_views()
-        self.statusBar().showMessage("All matrices removed from the session.")
+        self.statusBar().showMessage("All matrices closed.")
 
     def _open_dropped_path(self, path: Path) -> None:
         self.open_path(path, append=bool(self.entries))
 
     def _choose_overlay(self) -> None:
         start = str(self.document.path.parent) if self.document else ""
-        title = "Add one overlay file" if self.multiple_matrix_mode.isChecked() else "Add one matrix file"
+        title = "Open matrix file"
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, start, FILE_FILTER)
         if path:
             self.open_path(Path(path), append=True)

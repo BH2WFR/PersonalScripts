@@ -6,6 +6,9 @@ Single and overlaid slice markers use the shared 3D selection color.
 Clipping caps retain their geometry when optional highlight coloring is off.
 Point rendering uses sampled source vertices without interpolated mesh edges;
 its pixel size applies to matrices and XYZ clouds, including overlay layers.
+Z tick labels use an explicit power-of-ten suffix on the axis title for small
+or large ranges. Labels follow displayed geometry after height scaling, value
+bounds, slice markers and overlay alignment; source values are unchanged.
 """
 
 import math
@@ -30,6 +33,10 @@ DEFAULT_SECTION_OPACITY = 0.65
 SECTION_HEIGHT_PADDING = 0.05
 SOURCE_COLOR_FIELD = "SourceColor"
 SOURCE_INDEX_FIELD = "SourceIndex"
+AXIS_LABEL_FORMAT = "%.6g"
+Z_SCIENTIFIC_MIN = 0.1
+Z_SCIENTIFIC_MAX = 10_000.0
+MIN_LABEL_EXPONENT = -308
 
 
 class ProfileStyle(StrEnum):
@@ -382,7 +389,8 @@ class SurfaceView(QtWidgets.QWidget):
             self.canvas.show_grid(xtitle=frame.x_grid.label() if frame.x_grid else "X" if cloud else "Column (x)",
                                   ytitle=frame.y_grid.label("Y") if frame.y_grid else "Y" if cloud else "Row (y)",
                                   ztitle="Z" if cloud and z_scale == 1 else "Scaled height",
-                                  color="#adb9cb" if self.dark else "#465368", font_size=10)
+                                  color="#adb9cb" if self.dark else "#465368", font_size=10,
+                                  fmt=AXIS_LABEL_FORMAT, render=False)
             if reset:
                 self.canvas.view_isometric()
                 self.canvas.reset_camera()
@@ -446,7 +454,9 @@ class SurfaceView(QtWidgets.QWidget):
             first_frame = self.canvas.layers[0][1].frame
             self.canvas.show_grid(xtitle=first_frame.x_grid.label() if first_frame.x_grid else "Display X",
                                   ytitle=first_frame.y_grid.label("Y") if first_frame.y_grid else "Display Y", ztitle="Display Z",
-                                  color="#adb9cb" if self.dark else "#465368", font_size=10)
+                                  color="#adb9cb" if self.dark else "#465368", font_size=10,
+                                  fmt=AXIS_LABEL_FORMAT, render=False)
+            self._update_axes()
             if reset:
                 self.canvas.view_isometric()
                 self.canvas.reset_camera()
@@ -469,6 +479,7 @@ class SurfaceView(QtWidgets.QWidget):
             self.canvas.remove_actor(actor, reset_camera=False, render=False)
         self._layer_profiles.clear()
         if position is None:
+            self._update_axes()
             self.canvas.render()
             return
         for layer in self._layers:
@@ -504,6 +515,7 @@ class SurfaceView(QtWidgets.QWidget):
                 actor = self.canvas.add_mesh(mesh, color=self.profile_color, line_width=3, lighting=False,
                                             reset_camera=False, render=False)
             self._layer_profiles.append(actor)
+        self._update_axes()
         self.canvas.render()
 
     @staticmethod
@@ -621,16 +633,19 @@ class SurfaceView(QtWidgets.QWidget):
         self._profile_actor = None
         index, by_row = self._index, self._by_row
         if frame is None or index is None or frame.scalar.ndim != 2:
+            self._update_axes()
             self.canvas.render()
             return
         h, w = frame.scalar.shape
         local_index = index - (frame.y_start if by_row else frame.x_start)
         if not 0 <= local_index < (h if by_row else w):
+            self._update_axes()
             self.canvas.render()
             return
         valid = frame.valid[local_index, :] if by_row else frame.valid[:, local_index]
         visible = np.any(frame.valid) if self.profile_style == ProfileStyle.SECTION_PLANE else np.any(valid)
         if not visible:
+            self._update_axes()
             self.canvas.render()
             return
 
@@ -660,7 +675,7 @@ class SurfaceView(QtWidgets.QWidget):
         self._position_profile()
         # add_mesh updates the axes before actor scaling/translation; refresh
         # them again so a small crop is not framed using unscaled Z bounds.
-        self.canvas.renderer.update_bounds_axes()
+        self._update_axes()
         self.canvas.reset_camera_clipping_range()
         self.canvas.render()
 
@@ -711,10 +726,43 @@ class SurfaceView(QtWidgets.QWidget):
             if actor is not None:
                 actor.SetScale(1, 1, value)
         self._position_profile()
-        self.canvas.renderer.update_bounds_axes()
+        self._update_axes()
         self.canvas.reset_camera_clipping_range()
         self._update_resolution()
         self.canvas.render()
+
+    def _update_axes(self) -> None:
+        """Refresh geometry bounds and keep Z tick magnitudes explicit.
+
+        Only the axis annotation range is divided by the displayed multiplier;
+        actor coordinates, camera proportions and source samples stay intact.
+        Recompute after geometry changes because PyVista resets annotation
+        ranges when bounds are updated. Disable VTK's additional automatic
+        scaling to avoid a second, potentially hidden exponent.
+        """
+        self.canvas.renderer.update_bounds_axes()
+        axes = self.canvas.renderer.cube_axes_actor
+        if axes is None:
+            return
+        lower, upper = axes.bounds[4:6]
+        if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
+            return
+        peak = max(abs(lower), abs(upper))
+        exponent = (max(MIN_LABEL_EXPONENT, math.floor(math.log10(peak)))
+                    if peak and (peak < Z_SCIENTIFIC_MIN or peak >= Z_SCIENTIFIC_MAX) else 0)
+        multiplier = 10.0 ** exponent
+        frame = self.canvas.frame
+        title = ("Display Z" if self._layers else
+                 "Z" if frame is not None and frame.point_coordinates is not None and self.z_scale == 1
+                 else "Scaled height")
+        axes.SetLabelScaling(False, 0, 0, 0)
+        # VTK may replace its native format during an earlier camera render.
+        # Restore the custom-label format before regenerating the scaled ticks.
+        axes.x_label_format = AXIS_LABEL_FORMAT
+        axes.y_label_format = AXIS_LABEL_FORMAT
+        axes.z_label_format = AXIS_LABEL_FORMAT
+        axes.z_axis_range = (lower / multiplier, upper / multiplier)
+        axes.z_title = f"{title} (x 10^{exponent})" if exponent else title
 
     def _update_resolution(self) -> None:
         frame = self.canvas.frame
