@@ -205,6 +205,75 @@ class ScanRegionsTests(unittest.TestCase):
             self.assertEqual(int(output[150, 150]), 255)
             self.assertEqual(int(output[150, 650]), 255)
 
+    def test_gradient_dark_text_and_vertical_reversed_text_at_two_scales(self) -> None:
+        """Dark gradient ends must clear without sacrificing low-contrast glyphs."""
+        with Image.new("L", (1200, 1700), 255) as image:
+            gradient = np.tile(np.linspace(125, 225, 800, dtype=np.uint8), (100, 1))
+            image.paste(Image.fromarray(gradient), (100, 200))
+            draw = ImageDraw.Draw(image)
+            font = ImageFont.load_default(size=32)
+            draw.text((130, 230), "DARK TEXT IN A GRADIENT PANEL", font=font, fill=65)
+            draw.rectangle((100, 400, 210, 850), fill=130)
+            for y, text in ((440, "A"), (550, "B"), (660, "C")):
+                draw.text((135, y), text, font=font, fill=245)
+            for scale in (1, 2):
+                with self.subTest(scale=scale), image.resize((1200 * scale, 1700 * scale)) as enlarged:
+                    panels = regions._text_panels(enlarged)
+                    self.assertTrue(any(panel.reliable and panel.reversed for panel in panels))
+                    with app._sauvola(enlarged, 31 * scale | 1, .2) as binary:
+                        with regions._clean_background(enlarged, binary, panels) as result:
+                            values = np.asarray(result)
+                            original = np.asarray(enlarged)
+                            # Broad gradient ends remain white, including the dark end.
+                            self.assertGreater(values[270*scale:285*scale, 120*scale:850*scale].mean(), .99)
+                            area = (slice(220*scale, 270*scale), slice(120*scale, 850*scale))
+                            self.assertGreater((~values[area])[original[area] <= 66].mean(), .98)
+                            area = (slice(420*scale, 800*scale), slice(120*scale, 190*scale))
+                            self.assertGreater(values[area][original[area] >= 244].mean(), .98)
+                            self.assertLess(values[area][original[area] == 130].mean(), .01)
+
+    def test_plain_gray_text_does_not_become_protected_panel(self) -> None:
+        with Image.new("L", (1200, 1700), 255) as image:
+            draw = ImageDraw.Draw(image)
+            for y in range(100, 1500, 70):
+                draw.text((100, y), "Ordinary gray text, not a shaded panel.",
+                          font=ImageFont.load_default(size=38), fill=130)
+            self.assertEqual(regions._text_panels(image), ())
+
+    def test_uncertain_shaded_text_keeps_original_crop_and_explicit_empty_overrides(self) -> None:
+        """Cleanup alone may protect uncertain lettering, but imported [] wins."""
+        with Image.new("RGB", (1200, 1700), "white") as image:
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((100, 200, 900, 400), fill=(150, 150, 150))
+            font = ImageFont.load_default(size=38)
+            # Equal high-contrast opposite signs close together mimic embossed text.
+            for x in range(130, 800, 90):
+                draw.text((x, 250), "H", font=font, fill=(60, 60, 60))
+                draw.text((x + 25, 250), "H", font=font, fill=(240, 240, 240))
+            panels = regions._text_panels(image)
+            self.assertTrue(any(not panel.reliable for panel in panels))
+            settings = regions._Settings(clean_background=True, codec=regions._Codec.FLATE)
+            processing = app._Processing(mode=app._BinarizeMode.SAUVOLA, regions=settings)
+            encoded = app._encode_page(image.copy(), 240, 180, processing)
+            self.assertIsInstance(encoded, regions._Page)
+            self.assertGreater(len(encoded.layers), 0)
+            with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
+                for layer, region in zip(encoded.layers, encoded.regions):
+                    self.assertEqual(region.mode, regions._Mode.KEEP)
+                    xref = next(item[0] for item in doc[0].get_images() if item[2:4] == (layer.width, layer.height))
+                    pix = pymupdf.Pixmap(doc, xref)
+                    with image.crop(layer.box).convert("L") as crop:
+                        self.assertEqual(pix.samples, crop.tobytes())
+            overridden = app._encode_page(image.copy(), 240, 180, processing, ())
+            self.assertEqual(overridden.layers, ())
+
+    def test_cleanup_does_not_restore_original_dark_ink_across_the_whole_page(self) -> None:
+        """Respect incoming threshold/levels away from detected shaded panels."""
+        with Image.new("L", (1200, 1700), 255) as original, Image.new("1", original.size, 1) as binary:
+            ImageDraw.Draw(original).line((100, 100, 900, 100), fill=70, width=2)
+            with regions._clean_background(original, binary, ()) as result:
+                self.assertEqual(result.tobytes(), binary.tobytes())
+
     def test_config_precedence_empty_page_source_binding_and_invalid_bounds(self) -> None:
         path = self.config({"1": {"defaults": {"mode": "gray2", "quality": 60},
                            "regions": [{"rect": [0, 0, .5, .5], "quality": 20}]}, "2": []})
@@ -278,7 +347,7 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
             patch.object(app.Input, "resolve_output_path", return_value=str(target)),
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-            patch("builtins.input", side_effect=["e", "y", "", "", "", "", "f", ""]),
+            patch("builtins.input", side_effect=["n", "y", "", "", "n", "n", "3", ""]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)
@@ -292,7 +361,7 @@ class ScanRegionsTests(unittest.TestCase):
                 app._validate_settings(72, 180, 1, app._Processing(regions=settings))
 
     def test_interactive_enhancements_enable_denoise_without_regions(self) -> None:
-        replies = ["y", "", "", "", ""]
+        replies = ["n", "y", "", "", "n"]
         with patch("builtins.input", side_effect=replies), contextlib.redirect_stdout(io.StringIO()):
             settings = app._configure_enhancements(app.DEFAULT_PROCESSING)
         self.assertTrue(settings.regions.denoise)
@@ -343,7 +412,7 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app.Input, "resolve_output_path", side_effect=[str(preview_one), str(preview_two), str(complete)]),
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
             patch.object(app.System, "open_with_default_app") as viewer,
-            patch("builtins.input", side_effect=["o", "2", "n", "y", "y", "y", "p", "2", "p", "-1", "f", "1"]),
+            patch("builtins.input", side_effect=["", "", "", "y", "2", "n", "y", "y", "y", "1", "2", "1", "-1", "3", "1"]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)
@@ -375,12 +444,40 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
             patch.object(app.Input, "resolve_output_path", return_value=str(target)),
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-            patch("builtins.input", side_effect=["p", "1", "q"]),
+            patch("builtins.input", side_effect=["", "", "", "", "1", "1", "0"]),
             contextlib.redirect_stdout(messages),
         ):
             self.assertEqual(app.main(), 0)
         self.assertIn("Conversion failed", messages.getvalue())
         self.assertEqual(target.read_bytes(), b"Existing file must survive")
+
+    def test_first_setup_includes_illustration_protection_before_action_menu(self) -> None:
+        target = self.folder / "first-setup.pdf"
+        messages = io.StringIO()
+
+        def detect(image: Image.Image, settings: regions._Settings) -> tuple[regions._Region, ...]:
+            self.assertTrue(settings.enabled)
+            self.assertEqual(settings.mode, regions._Mode.GRAY2)
+            self.assertEqual(settings.dither, regions._Dither.ORDERED)
+            return (regions._Region((.1, .1, .7, .6), settings.mode, settings.dither),)
+
+        with (
+            patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
+            patch.object(app.Input, "resolve_output_path", return_value=str(target)),
+            patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
+            patch.object(regions, "_detect", side_effect=detect) as detected,
+            patch.object(app.System, "open_with_default_app"),
+            patch("builtins.input", side_effect=["y", "", "", "gray2", "ordered", "1", "n", "n", "n", "1", "2", "0"]) as prompts,
+            contextlib.redirect_stdout(messages),
+        ):
+            self.assertEqual(app.main(), 0)
+            detected.assert_called_once()
+        text = messages.getvalue()
+        prompt_text = "\n".join(str(call.args[0]) for call in prompts.call_args_list if call.args)
+        self.assertLess(prompt_text.index("Automatically preserve illustrations"), prompt_text.index("Choose action"))
+        self.assertNotIn("JPEG quality=30", text)
+        with pymupdf.open(target) as doc:
+            self.assertEqual(sorted(item[4] for item in doc[0].get_images()), [1, 2])
 
 
 if __name__ == "__main__":

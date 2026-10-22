@@ -450,7 +450,7 @@ class PdfBinarizeTests(unittest.TestCase):
                 patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
                 patch.object(app.Input, "resolve_output_path", return_value=str(target)),
                 patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-                patch("builtins.input", side_effect=["f", selection]),
+                patch("builtins.input", side_effect=["", "", "", "", "3", selection]),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(app.main(), 0)
@@ -595,9 +595,11 @@ class PdfBinarizeTests(unittest.TestCase):
         preview_two = self.folder / "sauvola-preview.pdf"
         replies = [
             "", "72", "", "", "", "",  # fixed, 72 DPI, threshold 180, levels off, 1x, sharpening off
-            "p", "2",
-            "s", "s", "", "30", "31", "", "y", "110", "100", "250", "2", "y", "0.7", "50",
-            "p", "2", "f", "1,-1",
+            "", "", "", "",  # illustrations off, denoise off, cleanup off, advanced settings unchanged
+            "1", "2",
+            "2", "s", "", "30", "31", "", "y", "110", "100", "250", "2", "y", "0.7", "50",
+            "", "", "", "",
+            "1", "2", "3", "1,-1",
         ]
         with (
             patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
@@ -623,7 +625,7 @@ class PdfBinarizeTests(unittest.TestCase):
             patch.object(app.Input, "resolve_output_path", return_value=str(self.output)),
             patch.object(app, "_configure", return_value=(72, 180, processing)),
             patch.object(app.System, "open_with_default_app") as viewer,
-            patch("builtins.input", side_effect=["o", "1", "n", "n", "n", "n", "p", "-1", "q"]),
+            patch("builtins.input", side_effect=["", "", "", "y", "1", "n", "n", "n", "n", "1", "-1", "0"]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)

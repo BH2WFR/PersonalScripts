@@ -5,6 +5,8 @@ pdf-binarize.py entry point; this module is hidden from the script launcher.
 All analysis/encoding functions are thread-local and use no MuPDF objects.
 Only _assemble() touches MuPDF and must run on the caller's main thread.
 Rectangles use normalized displayed-page coordinates (top-left origin).
+Shaded-text cleanup uses local polarity and page-scaled stroke sizes; ambiguous
+text panels are kept as original-image layers by the entry point.
 """
 
 from dataclasses import dataclass, replace
@@ -77,22 +79,29 @@ _MAX_CONFIG_BYTES = 16 * 1024 * 1024
 _DEFLATE_LEVEL = 9
 _ANNOTATION_WIDTH = 1200
 _POINTS_PER_INCH = 72
-_SOLID_INK_LIMIT = 135
-_SOLID_INK_GAP = 35
 _HOLE_MEAN_LIMIT = 175
 _HOLE_PAPER_GAP = 70
-_PANEL_ASPECT = 3.5
-_PANEL_MAX_HEIGHT = 300
-_PANEL_TABLE_HEIGHT = 120
-_PANEL_MEDIAN_MAX = 220
 _PANEL_LIGHT_MIN = 200
 _TABLE_EDGE_LOW = 35
 _TABLE_EDGE_HIGH = 100
-_TABLE_MEDIAN = 31
-_TABLE_POLARITY_WINDOW = 71
+_TABLE_MEDIAN = 25
+_TABLE_POLARITY_WINDOW = 41
 _TABLE_NOISE = 12
-_TABLE_STROKE = 18
+_TABLE_STROKE = 12
+_TABLE_STROKE_RATIO = .35
 _TABLE_BORDER = 3
+_PANEL_MIN_GLYPHS = 1
+_PANEL_MIN_GLYPH_AREA = 4
+_PANEL_MAX_GLYPH_SIDE = 60
+_PANEL_MAX_GLYPH_EXTENT = 180
+_PANEL_TEXT_FRACTION = .45
+_PANEL_RELIABLE_FRACTION = .7
+_PANEL_SMOOTH_FRACTION = .85
+_PANEL_BACKGROUND_DELTA = 12
+_PANEL_POLARITY_RATIO = 2.5
+_PANEL_AMBIGUOUS_FRACTION = .15
+_PANEL_FLAT_SPREAD = 25
+_PANEL_MIN_COVERAGE = .45
 
 type _Box = tuple[int, int, int, int]
 type _Rect = tuple[float, float, float, float]
@@ -157,7 +166,7 @@ class _Settings:
 
     @property
     def active(self) -> bool:
-        return self.enabled or self.input is not None
+        return self.enabled or self.input is not None or self.clean_background
 
 
 @dataclass(frozen=True)
@@ -171,6 +180,15 @@ class _Region:
     quality: int = _JPEG_QUALITY
     codec: _Codec = _Codec.JPEG
     score: float | None = None
+
+
+@dataclass(frozen=True)
+class _Panel:
+    """Shaded text candidate; uncertain panels can become original-image crops."""
+
+    rect: _Rect
+    reliable: bool
+    reversed: bool
 
 
 @dataclass(frozen=True)
@@ -214,7 +232,7 @@ def _validate(settings: _Settings) -> None:
         raise ValueError("Denoise area must be > 0 and <= 100; distance must be 1-100 at 240 DPI.")
     if settings.export or settings.preview_dir:
         if not settings.active:
-            raise ValueError("Region export/annotations require automatic detection (menu E) or a region file (menu O).")
+            raise ValueError("Region export/annotations require illustration protection, shaded-text cleanup or an imported region file; repeat setup.")
 
 
 def _pixel_box(rect: _Rect, size: tuple[int, int]) -> _Box:
@@ -241,17 +259,18 @@ def _area(box: _Box) -> int:
     return (box[2] - box[0]) * (box[3] - box[1])
 
 
-def _candidates(rgb: _Pixels, gray: _Pixels) -> list[_Box]:
+def _candidates(rgb: _Pixels, gray: _Pixels, *, text_panels: bool = False) -> list[_Box]:
     """Find broad interior gray/color evidence, excluding thin black connectors."""
     height, width = gray.shape
-    ink = min(_INK_LIMIT, float(np.percentile(gray, _INK_PERCENTILE)))
+    ink = 0 if text_panels else min(_INK_LIMIT, float(np.percentile(gray, _INK_PERCENTILE)))
     paper = float(np.percentile(gray, _PAPER_PERCENTILE))
     background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((_STROKE_CLOSE,) * 2, np.uint8))
     chroma = rgb.max(axis=2).astype(np.int16) - rgb.min(axis=2)
     tone = ((background > ink + _INK_GAP) & (background < paper - _PAPER_GAP)) | (chroma > _CHROMA_GAP)
     meaningful = cv2.morphologyEx(np.uint8(tone) * _GRAY_MAX, cv2.MORPH_OPEN,
                                  np.ones((_TONE_OPEN,) * 2, np.uint8))
-    meaningful = cv2.morphologyEx(meaningful, cv2.MORPH_CLOSE, np.ones((_TONE_CLOSE,) * 2, np.uint8))
+    close_size = _TONE_OPEN if text_panels else _TONE_CLOSE
+    meaningful = cv2.morphologyEx(meaningful, cv2.MORPH_CLOSE, np.ones((close_size,) * 2, np.uint8))
     contours, _ = cv2.findContours(meaningful, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates: list[_Box] = []
     for contour in contours:
@@ -352,40 +371,114 @@ def _denoise(binary: Image.Image, dpi: int, settings: _Settings) -> Image.Image:
     return Image.fromarray(white)
 
 
-def _text_panel(gray: _Pixels, fallback: _Pixels) -> _Pixels:
-    """Remove mixed-polarity cell backgrounds while retaining dark/light text."""
+def _panel_signal(gray: _Pixels, scale: float = 1.0) -> tuple[_Pixels, NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
+    """Estimate local background and signed stroke evidence at page-scaled sizes.
+
+    Scale is output page width / analysis width, not crop width. Median filtering
+    follows smooth gradients without choosing an absolute gray-level cutoff.
+    Signed evidence is pooled locally, so neighboring cells may have opposite ink.
+    """
+    median_size = max(3, round(_TABLE_MEDIAN * scale) | 1)
+    window = max(3, round(_TABLE_POLARITY_WINDOW * scale) | 1)
+    blur_size = max(3, round(3 * scale) | 1)
+    cleaned = cv2.GaussianBlur(gray, (blur_size,) * 2, .6 * scale)
+    background = cv2.medianBlur(cleaned, median_size)
+    difference = cleaned.astype(np.float32) - background.astype(np.float32)
+    bright = cv2.boxFilter(np.maximum(difference - _TABLE_NOISE, 0), -1, (window,) * 2)
+    dark = cv2.boxFilter(np.maximum(-difference - _TABLE_NOISE, 0), -1, (window,) * 2)
+    return background, difference, bright, dark
+
+
+def _text_panels(image: Image.Image) -> tuple[_Panel, ...]:
+    """Find horizontal/vertical shaded text independently of illustration scores.
+
+    Text evidence uses small connected strokes on a locally smooth background;
+    frames and large tonal boundaries are excluded from the glyph count. This is
+    a conservative image heuristic, not OCR. Ambiguous shadows/embossing are marked
+    for crop protection instead of being silently forced into one polarity.
+    """
+    rgb, gray = _analysis(image)
+    panels: list[_Panel] = []
+    for x0, y0, x1, y1 in _candidates(rgb, gray, text_panels=True):
+        patch = gray[y0:y1, x0:x1]
+        background, difference, bright, dark = _panel_signal(patch)
+        support = (background > _INK_GAP) & (background < _GRAY_MAX - _PAPER_GAP)
+        support = cv2.erode(np.uint8(support), np.ones((_TABLE_BORDER * 2 + 1,) * 2, np.uint8)) > 0
+        support[:_TABLE_BORDER] = support[-_TABLE_BORDER:] = False
+        support[:, :_TABLE_BORDER] = support[:, -_TABLE_BORDER:] = False
+        if float(np.mean(support)) < _PANEL_MIN_COVERAGE:
+            continue
+        residual = (np.abs(difference) > _TABLE_STROKE) & support
+        _, labels, stats, _ = cv2.connectedComponentsWithStats(np.uint8(residual), connectivity=8)
+        glyphs = ((stats[:, 2] >= 2) & (stats[:, 3] >= 3)
+                  & (np.minimum(stats[:, 2], stats[:, 3]) <= _PANEL_MAX_GLYPH_SIDE)
+                  & (np.maximum(stats[:, 2], stats[:, 3]) <= _PANEL_MAX_GLYPH_EXTENT)
+                  & (stats[:, 4] >= _PANEL_MIN_GLYPH_AREA))
+        glyphs[0] = False
+        text_fraction = float(stats[glyphs, 4].sum() / max(1, np.count_nonzero(residual)))
+        if np.count_nonzero(glyphs) < _PANEL_MIN_GLYPHS or text_fraction < _PANEL_TEXT_FRACTION:
+            continue
+        # Normalize by shaded support so a panel's edge against white paper is
+        # not mistaken for illustration texture (especially narrow/round labels).
+        weights = cv2.GaussianBlur(support.astype(np.float32), (_TEXTURE_WINDOW,) * 2, 0)
+        smooth = cv2.GaussianBlur(background.astype(np.float32) * support, (_TEXTURE_WINDOW,) * 2, 0)
+        smooth /= np.maximum(weights, np.finfo(np.float32).eps)
+        smooth_fraction = float(np.mean(np.abs(background.astype(np.float32) - smooth)[support] < _PANEL_BACKGROUND_DELTA))
+        if smooth_fraction < _PANEL_SMOOTH_FRACTION:
+            continue  # Textured illustrations remain the illustration detector's job.
+        glyph_mask = glyphs[labels]
+        ambiguous = np.maximum(bright, dark) < _PANEL_POLARITY_RATIO * np.minimum(bright, dark)
+        reliable = (text_fraction >= _PANEL_RELIABLE_FRACTION
+                    and float(np.mean(ambiguous[glyph_mask])) < _PANEL_AMBIGUOUS_FRACTION)
+        tones = background[support]
+        flat = float(np.percentile(tones, 90) - np.percentile(tones, 10)) < _PANEL_FLAT_SPREAD
+        reversed_text = (flat and float(bright[glyph_mask].sum())
+                         > _PANEL_POLARITY_RATIO * float(dark[glyph_mask].sum()))
+        panels.append(_Panel((x0 / gray.shape[1], y0 / gray.shape[0],
+                              x1 / gray.shape[1], y1 / gray.shape[0]), reliable, reversed_text))
+    return tuple(panels)
+
+
+def _text_panel(gray: _Pixels, fallback: _Pixels, scale: float = 1.0) -> _Pixels:
+    """Remove gradient/mixed-polarity fills while retaining strokes and rules.
+
+    Both bright and dark lettering becomes black on white. Outside the shaded
+    support and along the crop boundary, retain the supplied binary fallback so
+    circular outlines, connectors and adjacent ordinary text are not erased.
+    """
     height, width = gray.shape
     original_edges = cv2.Canny(gray, _TABLE_EDGE_LOW, _TABLE_EDGE_HIGH)
     edges = cv2.dilate(original_edges, np.ones((_TONE_OPEN,) * 2, np.uint8))
     horizontal = cv2.morphologyEx(edges, cv2.MORPH_OPEN, np.ones((1, max(_TEXTURE_CLOSE, width // 4)), np.uint8))
     vertical = cv2.morphologyEx(edges, cv2.MORPH_OPEN, np.ones((max(_TEXTURE_CLOSE, height // 2), 1), np.uint8))
-    cleaned = cv2.GaussianBlur(gray, (3, 3), .6)
-    background = cv2.medianBlur(cleaned, _TABLE_MEDIAN)
-    difference = cleaned.astype(np.float32) - background.astype(np.float32)
-    bright = cv2.boxFilter(np.maximum(difference - _TABLE_NOISE, 0), -1, (_TABLE_POLARITY_WINDOW,) * 2)
-    dark = cv2.boxFilter(np.maximum(-difference - _TABLE_NOISE, 0), -1, (_TABLE_POLARITY_WINDOW,) * 2)
-    ink = np.where(bright > dark, difference > _TABLE_STROKE, difference < -_TABLE_STROKE)
+    background, difference, bright, dark = _panel_signal(gray, scale)
+    stroke_size = max(3, round(_STROKE_CLOSE * scale) | 1)
+    local_contrast = cv2.dilate(np.abs(difference), np.ones((stroke_size,) * 2, np.uint8))
+    cutoff = np.maximum(_TABLE_STROKE, local_contrast * _TABLE_STROKE_RATIO)
+    ink = np.where(bright > dark, difference > cutoff, difference < -cutoff)
     long_rows = np.count_nonzero(horizontal, axis=1) > width * .6
     long_columns = np.count_nonzero(vertical, axis=0) > height * .8
     ink |= (original_edges > 0) & (long_rows[:, None] | long_columns[None, :])
-    border = _TABLE_BORDER
+    border = max(1, round(_TABLE_BORDER * scale))
     result = fallback.copy()
-    result[border:-border, border:-border] = np.uint8(~ink[border:-border, border:-border]) * _GRAY_MAX
+    support = background < _GRAY_MAX - _PAPER_GAP
+    support[:border] = support[-border:] = False
+    support[:, :border] = support[:, -border:] = False
+    result[support] = np.uint8(~ink[support]) * _GRAY_MAX
     return result
 
 
-def _clean_background(image: Image.Image, binary: Image.Image) -> Image.Image:
+def _clean_background(image: Image.Image, binary: Image.Image,
+                      panels: tuple[_Panel, ...] | None = None) -> Image.Image:
     """Opt-in adaptive solid-fill and broad text-panel repair; return owned 1-bit.
 
-    Uses original intensities to retain white counters. Wide shaded headings
-    are rethresholded independently, preventing solid-fill repair swallowing
-    reversed glyphs. Mixed tables use local polarity. This heuristic can alter
-    artwork; protect such regions or leave cleanup off when fidelity matters.
+    Flat reversed labels retain white-on-black; gradients/mixed cells use local
+    polarity, including vertical labels. Uncertain panels retain the incoming
+    binary pixels here; the page encoder protects them as original-image crops.
     """
     with image.convert("L") as gray_image:
         values = np.asarray(gray_image)
-        white = np.asarray(binary).copy() & (values > min(_SOLID_INK_LIMIT,
-                    float(np.percentile(values, _INK_PERCENTILE)) + _SOLID_INK_GAP))
+        white = np.asarray(binary).copy()
         _, labels, stats, _ = cv2.connectedComponentsWithStats(np.uint8(white), connectivity=8)
         totals = np.bincount(labels.ravel(), weights=values.ravel(), minlength=len(stats))
         means = totals / np.maximum(stats[:, cv2.CC_STAT_AREA], 1)
@@ -400,22 +493,21 @@ def _clean_background(image: Image.Image, binary: Image.Image) -> Image.Image:
         fill &= bright == 0
         white[fill[labels]] = False
         base = Image.fromarray(white)
-        rgb, analysis_gray = _analysis(image)
-        for x0, y0, x1, y1 in _candidates(rgb, analysis_gray):
-            width, height = x1 - x0, y1 - y0
-            if width / height < _PANEL_ASPECT or height > _PANEL_MAX_HEIGHT:
-                continue
-            rect = (x0 / analysis_gray.shape[1], y0 / analysis_gray.shape[0],
-                    x1 / analysis_gray.shape[1], y1 / analysis_gray.shape[0])
-            box = _pixel_box(rect, image.size)
+        for panel in _text_panels(image) if panels is None else panels:
+            box = _pixel_box(panel.rect, image.size)
             a, b, c, d = box
             patch = values[b:d, a:c]
-            if np.median(patch) < _PANEL_MEDIAN_MAX and np.percentile(patch, 95) > _PANEL_LIGHT_MIN:
+            if not panel.reliable:
+                with binary.crop(box) as unchanged:
+                    base.paste(unchanged, box)
+                continue
+            if panel.reversed:
                 _, thresholded = cv2.threshold(patch, 0, _GRAY_MAX, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-                if height > _PANEL_TABLE_HEIGHT:
-                    thresholded = _text_panel(patch, np.uint8(white[b:d, a:c]) * _GRAY_MAX)
-                with Image.fromarray(thresholded).convert("1", dither=Image.Dither.NONE) as replacement:
-                    base.paste(replacement, box)
+            else:
+                thresholded = _text_panel(patch, np.uint8(np.asarray(binary)[b:d, a:c]) * _GRAY_MAX,
+                                          image.width / _ANALYSIS_WIDTH)
+            with Image.fromarray(thresholded).convert("1", dither=Image.Dither.NONE) as replacement:
+                base.paste(replacement, box)
         return base
 
 

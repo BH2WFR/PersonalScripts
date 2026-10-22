@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Interactively compress scanned PDFs with a 1-bit text layer and image crops.
 
-Run without arguments. Enter the input path, then use the menus:
-P previews one physical page (-1 = last); S changes binarization, levels,
-upscaling and sharpening; E changes general denoising, automatic regions and
-crop compression; O changes workers, preview opening and region files;
-F converts the document and prompts for pages to skip; Q quits.
+Run without arguments. After selecting the input, a guided setup always asks
+about text processing, illustration preservation/compression and noise cleanup.
+Advanced output options (workers, preview viewer and region files) expand on
+request. The main menu offers 1: preview, 2: repeat setup, 3: convert, 0: quit.
+Preview uses physical page numbers (-1 = last); conversion prompts for skips.
 
 Fixed thresholding is the default; Sauvola uses window=31, k=0.2, R=128.
 Processing order: levels, Lanczos upscale, Unsharp Mask, binarization, optional
@@ -13,7 +13,11 @@ background cleanup, isolated-speck removal, then crop overlays. Levels,
 sharpening, denoising, cleanup and detection default to off; upscale defaults
 to 1x. Window/radius scale with upscaling, but are specified in base pixels.
 Denoise area/distance scale from 240 DPI and protect neighboring punctuation.
-Cleanup requires Sauvola and may alter gray panels; inspect tables/reversed text.
+Cleanup requires Sauvola. It removes gradient fills using local text polarity,
+including vertical labels; flat reversed labels retain white-on-black. Uncertain
+shaded text is preserved as original-color crops (no quantization/contrast), using
+the selected KEEP codec/quality, even with illustration detection off. Explicit
+page region lists override these automatic crops. Preview remains essential.
 
 Detection profiles text-first/balanced/image-first use thresholds 1.0/0.8/0.6.
 Higher custom thresholds retain fewer boxes; scores are heuristic, not
@@ -25,7 +29,7 @@ use actual packed 2/4-bit Flate images; color modes use 4/16 palette colors.
 Dithering and crop contrast are optional and off by default. Crops retain base
 DPI; levels/upscaling/sharpening affect only the binary background.
 
-Menu O can import source-SHA256-bound region JSON and export resolved JSON or
+Advanced output settings can import source-SHA256-bound region JSON and export resolved JSON or
 annotated PNGs beside each PDF. A listed page replaces detection; [] means no
 boxes, omitted pages use automatic detection if enabled. Rectangles use
 rect=[x0,y0,x1,y1], normalized 0..1, origin top-left, x right/y down.
@@ -114,6 +118,27 @@ DEFAULT_WHITE_POINT = GRAY_LEVELS - 1
 DEFAULT_UPSCALE = 1
 MAX_UPSCALE = 4
 _RegionSettings = regions._Settings
+_PROFILE_LABELS: dict[regions._Profile, str] = {
+    regions._Profile.TEXT_FIRST: "Text first - fewer protected illustrations",
+    regions._Profile.BALANCED: "Balanced protection",
+    regions._Profile.IMAGE_FIRST: "Image first - more protected illustrations",
+}
+_IMAGE_MODE_LABELS: dict[regions._Mode, str] = {
+    regions._Mode.KEEP: "Keep original colors / grayscale",
+    regions._Mode.GRAY2: "2-bit grayscale (4 gray levels)",
+    regions._Mode.GRAY4: "4-bit grayscale (16 gray levels)",
+    regions._Mode.COLOR2: "2-bit color (4 palette colors)",
+    regions._Mode.COLOR4: "4-bit color (16 palette colors)",
+}
+_CODEC_LABELS: dict[regions._Codec, str] = {
+    regions._Codec.JPEG: "JPEG - smaller files, lossy",
+    regions._Codec.FLATE: "Flate - lossless",
+}
+_DITHER_LABELS: dict[regions._Dither, str] = {
+    regions._Dither.NONE: "No dithering - usually smaller files",
+    regions._Dither.ORDERED: "Ordered dithering - regular dot pattern",
+    regions._Dither.DIFFUSION: "Error diffusion - smoother tones, may increase size",
+}
 
 
 class _BinarizeMode(enum.StrEnum):
@@ -124,8 +149,6 @@ class _BinarizeMode(enum.StrEnum):
 class _Action(enum.StrEnum):
     PREVIEW = "preview"
     SETTINGS = "settings"
-    ENHANCEMENTS = "enhancements"
-    OUTPUT = "output"
     CONVERT = "convert"
     QUIT = "quit"
 
@@ -184,7 +207,7 @@ def _validate_settings(dpi: int, threshold: int, workers: int, processing: _Proc
         raise ValueError(f"Upscaling must be an integer from 1 to {MAX_UPSCALE}.")
     regions._validate(processing.regions)
     if processing.regions.clean_background and processing.mode is not _BinarizeMode.SAUVOLA:
-        raise ValueError("Background cleanup requires Sauvola mode; change it in menu S or disable cleanup in E.")
+        raise ValueError("Background cleanup requires Sauvola mode; repeat setup to change the mode or disable cleanup.")
 
 
 def _window_mean(values: NDArray[np.float64], window: int) -> NDArray[np.float64]:
@@ -306,6 +329,16 @@ def _encode_page(
     settings = processing.regions
     with rendered, io.BytesIO() as page_pdf, ExitStack() as images:
         boxes = overrides if overrides is not None else (regions._detect(rendered, settings) if settings.enabled else ())
+        panels = regions._text_panels(rendered) if settings.clean_background else ()
+        if overrides is None:
+            # Leave imported page lists authoritative, including explicit [].
+            # Existing protected illustrations take priority over panel guesses.
+            for panel in panels:
+                box = regions._pixel_box(panel.rect, rendered.size)
+                if not panel.reliable and not any(
+                    regions._intersection(box, regions._pixel_box(region.rect, rendered.size)) > 0 for region in boxes
+                ):
+                    boxes += (regions._Region(panel.rect, quality=settings.quality, codec=settings.codec),)
         layers: list[regions._Layer] = []
         # Crops retain their native rendered resolution, unaffected by text-only
         # levels, enlargement and sharpening. Map bounds to the enlarged base.
@@ -319,7 +352,7 @@ def _encode_page(
             binary = images.enter_context(_threshold_image(gray, threshold, processing))
             if settings.clean_background:
                 original = images.enter_context(gray.resize(output_size, Image.Resampling.LANCZOS))
-                binary = images.enter_context(regions._clean_background(original, binary))
+                binary = images.enter_context(regions._clean_background(original, binary, panels))
             if settings.denoise:
                 binary = images.enter_context(regions._denoise(binary, dpi * processing.upscale, settings))
             for region in boxes:
@@ -710,47 +743,54 @@ def _toggle(prompt: str, current: bool) -> bool:
 
 
 def _configure_enhancements(processing: _Processing) -> _Processing:
-    """Configure general cleanup and optional crops without altering base prompts."""
+    """Guide illustration protection first, then independent noise cleanup."""
     settings = processing.regions
-
-    denoise = _toggle("Remove isolated binary specks (also works without regions)?", settings.denoise)
+    print(f"\n{FLYellow}Illustration preservation{CRst}")
+    print(f"{FGray}Protect detected illustrations from text binarization and compress them separately.\n"
+          f"When off, illustrations are binarized; shaded-text cleanup can still protect uncertain text panels.{CRst}")
+    enabled = _toggle("Automatically preserve illustrations?", settings.enabled)
+    profile, threshold = settings.profile, settings.threshold
+    mode, dither, contrast, quality, codec = settings.mode, settings.dither, settings.contrast, settings.quality, settings.codec
+    if enabled or settings.input is not None:
+        if enabled:
+            profile = cast(regions._Profile, Menu.select(
+                [MenuOption([value.value], label, value) for value, label in _PROFILE_LABELS.items()],
+                prompt="Detection profile", default_key=profile.value, separator=False))
+            cutoff = (regions._PROFILE_THRESHOLDS[profile]
+                      if threshold is None or profile != settings.profile else threshold)
+            threshold = float(Input.input_number("Region threshold (higher = fewer boxes)", default=cutoff,
+                                                 min_value=.1, max_value=2))
+        mode = cast(regions._Mode, Menu.select(
+            [MenuOption([value.value], label, value) for value, label in _IMAGE_MODE_LABELS.items()],
+            prompt="Protected image mode", default_key=mode.value, separator=False))
+        if mode is regions._Mode.KEEP:
+            codec = cast(regions._Codec, Menu.select(
+                [MenuOption([value.value], label, value) for value, label in _CODEC_LABELS.items()],
+                prompt="Illustration compression", default_key=codec.value, separator=False))
+            if codec is regions._Codec.JPEG:
+                quality = int(Input.input_number("JPEG crop quality (CCITT background is always lossless)",
+                    default=quality, min_value=1, max_value=95, allow_float=False))
+        else:
+            dither = cast(regions._Dither, Menu.select(
+                [MenuOption([value.value], label, value) for value, label in _DITHER_LABELS.items()],
+                prompt="Dithering (can increase size)", default_key=dither.value, separator=False))
+        contrast = float(Input.input_number("Crop contrast (1 = off)", default=contrast, min_value=1, max_value=4))
+    print(f"\n{FLYellow}Noise and background cleanup{CRst}")
+    denoise = _toggle("Remove isolated binary specks (also works without illustration protection)?", settings.denoise)
     area, distance = settings.denoise_area, settings.denoise_distance
     if denoise:
         area = float(Input.input_number("Maximum speck area at 240 DPI", default=area,
                                        min_value=0, min_value_allowed=False, max_value=100))
         distance = float(Input.input_number("Required distance from other ink at 240 DPI", default=distance,
                                            min_value=1, max_value=100))
-    clean = _toggle("Repair shaded panels/solid fills (requires Sauvola)?", settings.clean_background)
+    clean = _toggle("Clean shaded text (auto polarity; preserve uncertain panels; requires Sauvola)?", settings.clean_background)
+    if clean:
+        print(f"{FGray}Gradient fills become white; flat reversed labels stay white-on-black.\n"
+              f"Uncertain text panels keep original tones with {codec.value} compression"
+              f"{f' (quality {quality})' if codec is regions._Codec.JPEG else ''}. Preview to check lettering.{CRst}")
     if clean and processing.mode is not _BinarizeMode.SAUVOLA:
         print(f"{FLCyan}Switching to Sauvola for background cleanup.{CRst}")
         processing = dataclasses.replace(processing, mode=_BinarizeMode.SAUVOLA)
-    enabled = _toggle("Automatically protect illustrations?", settings.enabled)
-    profile, threshold = settings.profile, settings.threshold
-    mode, dither, contrast, quality, codec = settings.mode, settings.dither, settings.contrast, settings.quality, settings.codec
-    if enabled or settings.input is not None:
-        if enabled:
-            profile = cast(regions._Profile, Menu.select(
-                [MenuOption([value.value], value.value, value) for value in regions._Profile],
-                prompt="Detection profile", default_key=profile.value, separator=False))
-            cutoff = regions._PROFILE_THRESHOLDS[profile] if threshold is None else threshold
-            threshold = float(Input.input_number("Region threshold (higher = fewer boxes)", default=cutoff,
-                                                 min_value=.1, max_value=2))
-        mode = cast(regions._Mode, Menu.select(
-            [MenuOption([value.value], value.value, value) for value in regions._Mode
-             if value not in (regions._Mode.TEXT, regions._Mode.TEXT_INVERT)],
-            prompt="Protected image mode", default_key=mode.value, separator=False))
-        if mode is regions._Mode.KEEP:
-            codec = cast(regions._Codec, Menu.select(
-                [MenuOption([value.value], value.value, value) for value in regions._Codec],
-                prompt="Crop codec (Flate is lossless)", default_key=codec.value, separator=False))
-            if codec is regions._Codec.JPEG:
-                quality = int(Input.input_number("JPEG crop quality (CCITT background is always lossless)",
-                    default=quality, min_value=1, max_value=95, allow_float=False))
-        else:
-            dither = cast(regions._Dither, Menu.select(
-                [MenuOption([value.value], value.value, value) for value in regions._Dither],
-                prompt="Dithering (can increase size)", default_key=dither.value, separator=False))
-        contrast = float(Input.input_number("Crop contrast (1 = off)", default=contrast, min_value=1, max_value=4))
     settings = dataclasses.replace(settings, enabled=enabled, profile=profile, threshold=threshold, mode=mode,
         dither=dither, contrast=contrast, quality=quality, codec=codec, denoise=denoise, denoise_area=area,
         denoise_distance=distance, clean_background=clean)
@@ -795,6 +835,18 @@ def _processing_for_output(
     return dataclasses.replace(processing, regions=settings)
 
 
+def _configure_session(
+    dpi: int, threshold: int, processing: _Processing, options: _OutputOptions,
+) -> tuple[int, int, _Processing, _OutputOptions]:
+    """Run the same complete, ordered setup on first use and later adjustments."""
+    print(f"\n{FLYellow}Text processing{CRst}")
+    dpi, threshold, processing = _configure(dpi, threshold, processing)
+    processing = _configure_enhancements(processing)
+    if _toggle("Change advanced output settings (workers, viewer, region files)?", False):
+        processing, options = _configure_output(processing, options)
+    return dpi, threshold, processing, options
+
+
 def main() -> int:
     """Run the interactive scan-compression menu without command-line options.
 
@@ -809,7 +861,7 @@ def main() -> int:
     Console.print_banner("PDF BINARIZE")
     description = (
         "Compress scans with 1-bit text and optional illustration crops.\n"
-        "Choose thresholding, denoising, image depth and compression in the menus.\n"
+        "Setup covers text, illustration preservation and noise cleanup in order.\n"
         "Preview a page before converting; page sizes and bookmarks are retained.\n"
         "CCITT is lossless; JPEG crop quality defaults to 30.\n"
         "Converted pages lose searchable text and interactive features."
@@ -821,7 +873,7 @@ def main() -> int:
         input_path = Path(Input.resolve_input_path("", prompt="Input PDF path"))
         if not input_path.is_file():
             raise FileNotFoundError(f"Input PDF not found: {input_path}")
-        dpi, threshold, processing = _configure(dpi, threshold, processing)
+        dpi, threshold, processing, options = _configure_session(dpi, threshold, processing, options)
 
         # ── preview / adjustment / final conversion loop ─────────
         while True:
@@ -832,34 +884,38 @@ def main() -> int:
             print(f"\n{FLCyan}{dpi} base DPI; {processing.mode.value}; {details}; "
                   f"levels={levels_info}; upscale={processing.upscale}x ({dpi * processing.upscale} DPI); "
                   f"sharpen={'on' if processing.sharpen else 'off'}{CRst}")
-            print(f"{FLCyan}Denoise={'on' if settings.denoise else 'off'}; "
-                  f"auto regions={'on' if settings.enabled else 'off'}; profile={settings.profile.value}; "
-                  f"region threshold={settings.cutoff:g}; image={settings.mode.value}/{settings.codec.value}; "
-                  f"JPEG quality={settings.quality}; cleanup={'on' if settings.clean_background else 'off'}{CRst}")
+            if settings.enabled or settings.input is not None:
+                codec = settings.codec if settings.mode is regions._Mode.KEEP else regions._Codec.FLATE
+                quality_info = f"; JPEG quality={settings.quality}" if codec is regions._Codec.JPEG else ""
+                detection_info = (f"auto ({settings.profile.value}, threshold={settings.cutoff:g})"
+                                  if settings.enabled else "imported regions only")
+                print(f"{FLCyan}Illustration protection: {detection_info}; "
+                      f"image={settings.mode.value}/{codec.value}{quality_info}{CRst}")
+            else:
+                print(f"{FLCyan}Illustration protection: off; illustrations will be binarized with text.{CRst}")
+            print(f"{FGray}Denoise={'on' if settings.denoise else 'off'}; "
+                  f"background cleanup={'on' if settings.clean_background else 'off'}{CRst}")
+            if settings.clean_background:
+                fallback_info = (f"{settings.codec.value}, quality {settings.quality}"
+                                 if settings.codec is regions._Codec.JPEG else settings.codec.value)
+                print(f"{FGray}Shaded text: local polarity; uncertain panels retain original tones "
+                      f"({fallback_info}); imported page regions take priority.{CRst}")
             print(f"{FGray}Workers={options.workers}; open preview={'yes' if options.open_preview else 'no'}; "
                   f"region input={settings.input or 'none'}; "
                   f"save JSON={'yes' if options.export_regions else 'no'}; "
                   f"annotations={'yes' if options.annotate_regions else 'no'}{CRst}")
             action = Menu.select(
-                [MenuOption(["P"], "Export one-page preview", _Action.PREVIEW),
-                 MenuOption(["S"], "Binarization, levels, upscale and sharpening", _Action.SETTINGS),
-                 MenuOption(["E"], "Denoise, regions and image compression", _Action.ENHANCEMENTS),
-                 MenuOption(["O"], "Workers, preview viewer and region files", _Action.OUTPUT),
-                 MenuOption(["F"], "Convert full PDF", _Action.CONVERT),
-                 MenuOption(["Q"], "Quit", _Action.QUIT)],
-                prompt="Choose action", default_key="F",
+                [MenuOption(["1"], "Preview one page", _Action.PREVIEW),
+                 MenuOption(["2"], "Change settings", _Action.SETTINGS),
+                 MenuOption(["3"], "Convert full PDF", _Action.CONVERT),
+                 MenuOption(["0"], "Quit", _Action.QUIT)],
+                prompt="Choose action", default_key="3",
             )
             if action is _Action.QUIT:
                 return 0
             try:
                 if action is _Action.SETTINGS:
-                    dpi, threshold, processing = _configure(dpi, threshold, processing)
-                    continue
-                if action is _Action.ENHANCEMENTS:
-                    processing = _configure_enhancements(processing)
-                    continue
-                if action is _Action.OUTPUT:
-                    processing, options = _configure_output(processing, options)
+                    dpi, threshold, processing, options = _configure_session(dpi, threshold, processing, options)
                     continue
                 _validate_settings(dpi, threshold, options.workers, processing)
                 if action is _Action.PREVIEW:
