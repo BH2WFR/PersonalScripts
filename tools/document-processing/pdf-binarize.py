@@ -1,61 +1,59 @@
 #!/usr/bin/env python3
-"""Convert scanned PDFs to thresholded, 1-bit black-and-white PDFs.
+"""Interactively compress scanned PDFs with a 1-bit text layer and image crops.
 
-Choose a fixed threshold (default) or Sauvola local adaptive thresholding.
-Optional processing order: black/white levels, Lanczos upscaling, Unsharp Mask,
-then binarization. Levels and sharpening default to off; upscaling defaults to
-1x. Levels map the black point to 0 and white point to 255, linearly stretching
-between them and clipping outside; defaults 0/255 are an identity mapping.
-Use --levels with --black-point / --white-point to enhance faded scans.
-The interactive menu exports a single-page preview PDF, changes settings, or
-converts the whole document. Preview opens in the default PDF viewer and returns
-to the menu; --no-open-preview disables opening. --preview-page N exports just
-one physical page (-1 = last), ignoring skip selections. --batch converts the
-whole PDF without the settings/action menus; omitted settings use defaults.
-Sauvola uses an odd pixel window (default 31), k=0.2 and R=128 for 8-bit gray;
-smaller k generally retains more dark pixels. Window size and sharpening radius
-are in base rendered pixels, so their physical scale changes with DPI. Upscaling
-automatically scales the sharpening radius and window (rounded up to odd).
---upscale 2 doubles raster dimensions without changing PDF page dimensions;
-it interpolates existing pixels, cannot recover missing detail, and uses roughly
-four times the image-processing memory. Integer factors 1-4 are supported.
+Run without arguments. Enter the input path, then use the menus:
+P previews one physical page (-1 = last); S changes binarization, levels,
+upscaling and sharpening; E changes general denoising, automatic regions and
+crop compression; O changes workers, preview opening and region files;
+F converts the document and prompts for pages to skip; Q quits.
 
-PyMuPDF renders visible pages in memory; Pillow/NumPy apply the selected method
-without dithering and write lossless CCITT Group 4 images. PyMuPDF assembles the
-pages, retaining displayed page sizes, document metadata, and bookmark titles,
-hierarchy, and target pages. Bookmark coordinates reset to fit the target page.
-PDF/A identification is automatically removed from the output metadata.
-Converted pages do not retain searchable text or interactive features. Selected
-pages can be skipped: their original page content is copied without rendering
-or binarization, in its original position. Skip selections use physical PDF page
-numbers, not printed labels: 1-3,4 selects the first four pages; -1,-2 selects the
-last two. Empty input skips nothing. No page images or decrypted PDFs are written
-to disk. Page thresholding and CCITT encoding run in a bounded thread pool;
-PyMuPDF rendering and assembly stay on the main thread, in page order.
---workers controls the maximum number of page encoding tasks (default: up to
-eight CPU cores; 1 disables parallel encoding). Raster memory is bounded by this
-queue; the assembled compressed PDF still grows in memory with the document.
-tqdm displays page progress and output-copy byte progress with speed and ETA.
-Final PDF writing shows bytes written and elapsed time without a guessed total.
+Fixed thresholding is the default; Sauvola uses window=31, k=0.2, R=128.
+Processing order: levels, Lanczos upscale, Unsharp Mask, binarization, optional
+background cleanup, isolated-speck removal, then crop overlays. Levels,
+sharpening, denoising, cleanup and detection default to off; upscale defaults
+to 1x. Window/radius scale with upscaling, but are specified in base pixels.
+Denoise area/distance scale from 240 DPI and protect neighboring punctuation.
+Cleanup requires Sauvola and may alter gray panels; inspect tables/reversed text.
 
-Permission-only protection is opened automatically. An opening password, when
-needed, is requested without echo and used only in memory. One completed PDF is stored temporarily
-beside the output, then removed on success, failure, or Ctrl+C. Existing files
-are not overwritten. Input is always preserved.
+Detection profiles text-first/balanced/image-first use thresholds 1.0/0.8/0.6.
+Higher custom thresholds retain fewer boxes; scores are heuristic, not
+probabilities. The text exclusion gate remains fixed. Opaque crops cover white
+holes in the background, which always uses lossless 1-bit CCITT Group 4.
+CCITT has no quality setting. KEEP retains rendered colors before JPEG encoding
+(default quality 30); choose Flate for lossless KEEP. gray2/gray4 and color2/color4
+use actual packed 2/4-bit Flate images; color modes use 4/16 palette colors.
+Dithering and crop contrast are optional and off by default. Crops retain base
+DPI; levels/upscaling/sharpening affect only the binary background.
+
+Menu O can import source-SHA256-bound region JSON and export resolved JSON or
+annotated PNGs beside each PDF. A listed page replaces detection; [] means no
+boxes, omitted pages use automatic detection if enabled. Rectangles use
+rect=[x0,y0,x1,y1], normalized 0..1, origin top-left, x right/y down.
+Optional mode/dither/contrast/quality/codec fields override menu settings;
+page objects may contain {"defaults": {...}, "regions": [...]}.
+Precedence: built-in defaults -> profile -> menu -> page -> region.
+Later boxes paint on top. Region modes text/text-invert remove shaded text-panel
+backgrounds into 1-bit overlays. Preview exports only its physical page;
+skipped pages are omitted. Sidecar paths derive from each selected PDF path.
+
+Displayed page sizes, metadata and bookmark hierarchy/targets are retained;
+bookmark positions reset to fit-page and PDF/A identification is removed.
+Converted pages lose searchable text and interactive features. Skipped pages
+retain their original contents and order. Page selections use physical numbers:
+1-3,4 selects four pages; -1,-2 selects the last two; Enter skips nothing.
+Rendering/assembly stay on the main thread; a bounded worker queue encodes
+pages in memory. Reduce workers for large pages. Preview uses the same pipeline.
+Passwords are requested privately and retained only in memory. Temporary final
+PDFs are cleaned up; sources and existing outputs are never overwritten.
 
 Requirements:
-    - pip: PyMuPDF, Pillow (with libtiff support), numpy, tqdm.
+    - pip: PyMuPDF, Pillow (with libtiff), numpy, opencv-python, tqdm.
 
 Usage:
-    python pdf-binarize.py
-    python pdf-binarize.py input.pdf -o output.pdf --dpi 300 --threshold 180
-    python pdf-binarize.py input.pdf --skip-pages="1,-1"
-    python pdf-binarize.py input.pdf --preview-page 12 --mode sauvola --sharpen
-    python pdf-binarize.py input.pdf --batch --mode sauvola --skip-pages=
-    python pdf-binarize.py input.pdf --preview-page 1 --mode sauvola --levels --black-point 110 --white-point 250 --upscale 2 --sharpen --sharpen-radius 0.7 --sharpen-percent 50
+    conda run -n base python tools/document-processing/pdf-binarize.py
+    conda run -n base python run-script.py pdf-binarize
 """
 
-import argparse
 from collections import deque
 from collections.abc import Generator
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -72,6 +70,9 @@ from typing import cast
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
+# The launcher imports scripts by path; explicitly expose the private sibling.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 try:
     from PIL import Image, ImageFilter, features
     import numpy as np
@@ -79,9 +80,10 @@ try:
     import pymupdf
     from pymupdf.mupdf import FzErrorBase
     from tqdm import tqdm
+    import _pdf_regions as regions
 except ImportError as exc:
     print(f"{FLRed}Missing PDF/image dependency: {exc.name}{CRst}")
-    print(f"{FGray}Install with: pip install PyMuPDF Pillow numpy tqdm{CRst}")
+    print(f"{FGray}Install with: pip install PyMuPDF Pillow numpy opencv-python tqdm{CRst}")
     sys.exit(1)
 
 
@@ -111,6 +113,7 @@ DEFAULT_BLACK_POINT = 0
 DEFAULT_WHITE_POINT = GRAY_LEVELS - 1
 DEFAULT_UPSCALE = 1
 MAX_UPSCALE = 4
+_RegionSettings = regions._Settings
 
 
 class _BinarizeMode(enum.StrEnum):
@@ -121,6 +124,8 @@ class _BinarizeMode(enum.StrEnum):
 class _Action(enum.StrEnum):
     PREVIEW = "preview"
     SETTINGS = "settings"
+    ENHANCEMENTS = "enhancements"
+    OUTPUT = "output"
     CONVERT = "convert"
     QUIT = "quit"
 
@@ -139,9 +144,20 @@ class _Processing:
     black_point: int = DEFAULT_BLACK_POINT
     white_point: int = DEFAULT_WHITE_POINT
     upscale: int = DEFAULT_UPSCALE
+    regions: _RegionSettings = dataclasses.field(default_factory=_RegionSettings)
 
 
 DEFAULT_PROCESSING = _Processing()
+
+
+@dataclasses.dataclass(frozen=True)
+class _OutputOptions:
+    """Interactive session choices, separate from per-page image settings."""
+
+    workers: int = DEFAULT_WORKERS
+    open_preview: bool = True
+    export_regions: bool = False
+    annotate_regions: bool = False
 
 
 def _validate_settings(dpi: int, threshold: int, workers: int, processing: _Processing) -> None:
@@ -166,6 +182,9 @@ def _validate_settings(dpi: int, threshold: int, workers: int, processing: _Proc
         raise ValueError("Levels must satisfy 0 <= black point < white point <= 255.")
     if not isinstance(processing.upscale, int) or not 1 <= processing.upscale <= MAX_UPSCALE:
         raise ValueError(f"Upscaling must be an integer from 1 to {MAX_UPSCALE}.")
+    regions._validate(processing.regions)
+    if processing.regions.clean_background and processing.mode is not _BinarizeMode.SAUVOLA:
+        raise ValueError("Background cleanup requires Sauvola mode; change it in menu S or disable cleanup in E.")
 
 
 def _window_mean(values: NDArray[np.float64], window: int) -> NDArray[np.float64]:
@@ -250,13 +269,15 @@ def _reset_bookmark_positions(document: pymupdf.Document) -> None:
             document.xref_set_key(xref, "Dest", f"[{page_xref} 0 R /Fit]")
 
 
-def _replace_page(document: pymupdf.Document, index: int, encoded: bytes) -> None:
+def _replace_page(document: pymupdf.Document, index: int, encoded: bytes | regions._Page) -> None:
     """Replace one page's contents while retaining its identity and incoming links.
 
     Uses the displayed dimensions (including crop, rotation and UserUnit).
     Removes this page's interactive objects, then places the encoded PDF without
     decoding its 1-bit image. Other pages and document metadata are unchanged.
     """
+    if isinstance(encoded, regions._Page):
+        encoded = regions._assemble(encoded)
     page = document[index]
     rect = page.rect
     for widget in list(page.widgets() or ()):
@@ -275,21 +296,43 @@ def _replace_page(document: pymupdf.Document, index: int, encoded: bytes) -> Non
 
 def _encode_page(
     rendered: Image.Image, dpi: int, threshold: int, processing: _Processing = DEFAULT_PROCESSING,
-) -> bytes:
+    overrides: tuple[regions._Region, ...] | None = None,
+) -> bytes | regions._Page:
     """Threshold one rendered page and return an independent CCITT PDF buffer.
 
     Takes ownership of rendered and closes it even on failure. Each worker owns
     its image and PDF buffer; no PyMuPDF objects enter worker threads.
     """
-    with rendered, io.BytesIO() as page_pdf:
+    settings = processing.regions
+    with rendered, io.BytesIO() as page_pdf, ExitStack() as images:
+        boxes = overrides if overrides is not None else (regions._detect(rendered, settings) if settings.enabled else ())
+        layers: list[regions._Layer] = []
+        # Crops retain their native rendered resolution, unaffected by text-only
+        # levels, enlargement and sharpening. Map bounds to the enlarged base.
+        output_size = (rendered.width * processing.upscale, rendered.height * processing.upscale)
+        for region in boxes:
+            box = regions._pixel_box(region.rect, rendered.size)
+            with rendered.crop(box) as crop:
+                layer = regions._encode_crop(crop, regions._pixel_box(region.rect, output_size), region)
+                layers.append(layer)
         with rendered.convert("L") as gray:
-            with _threshold_image(gray, threshold, processing) as binary:
-                binary.save(page_pdf, format="PDF", resolution=dpi * processing.upscale)
+            binary = images.enter_context(_threshold_image(gray, threshold, processing))
+            if settings.clean_background:
+                original = images.enter_context(gray.resize(output_size, Image.Resampling.LANCZOS))
+                binary = images.enter_context(regions._clean_background(original, binary))
+            if settings.denoise:
+                binary = images.enter_context(regions._denoise(binary, dpi * processing.upscale, settings))
+            for region in boxes:
+                binary.paste(1, regions._pixel_box(region.rect, output_size))
+            binary.save(page_pdf, format="PDF", resolution=dpi * processing.upscale)
         encoded = page_pdf.getvalue()
-    return encoded
+        if settings.active:
+            annotation = regions._annotation(rendered, boxes) if settings.preview_dir else None
+            return regions._Page(encoded, output_size, tuple(layers), boxes, annotation)
+        return encoded
 
 
-def _render_page(document: pymupdf.Document, index: int, dpi: int) -> Image.Image:
+def _render_page(document: pymupdf.Document, index: int, dpi: int, color: bool = False) -> Image.Image:
     """Render one zero-based page into an independently owned grayscale image.
 
     Call only on the main thread. get_pixmap respects the visible crop, rotation,
@@ -297,15 +340,16 @@ def _render_page(document: pymupdf.Document, index: int, dpi: int) -> Image.Imag
     buffer. The caller must close the returned image or transfer it to an encoder.
     """
     page = document.load_page(index)
-    pixmap = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY, alpha=False)
-    return Image.frombytes("L", (pixmap.width, pixmap.height), pixmap.samples)
+    pixmap = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB if color else pymupdf.csGRAY, alpha=False)
+    return Image.frombytes("RGB" if color else "L", (pixmap.width, pixmap.height), pixmap.samples)
 
 
 def _encoded_pages(
     input_path: Path, page_indexes: list[int], dpi: int, threshold: int,
     workers: int, password: str = "",
     processing: _Processing = DEFAULT_PROCESSING,
-) -> Generator[bytes, None, None]:
+    overrides: dict[int, tuple[regions._Region, ...]] | None = None,
+) -> Generator[bytes | regions._Page, None, None]:
     """Render in memory and yield encoded pages with a bounded worker queue.
 
     Only this generator's calling thread uses PyMuPDF. Workers receive independent
@@ -315,20 +359,31 @@ def _encoded_pages(
     """
     if not page_indexes:
         return
+    overrides = overrides or {}
+    def render(document: pymupdf.Document, index: int) -> Image.Image:
+        # Preserve the legacy three-argument call for callers/instrumentation.
+        return (_render_page(document, index, dpi, color=True) if processing.regions.active
+                else _render_page(document, index, dpi))
+
+    def encode(image: Image.Image, index: int) -> bytes | regions._Page:
+        if processing.regions.active:
+            return _encode_page(image, dpi, threshold, processing, overrides.get(index))
+        return _encode_page(image, dpi, threshold, processing)
+
     with Pdf.open_document(input_path, password=password, interactive=False) as (document, _):
         if workers == 1:
             for index in page_indexes:
-                yield _encode_page(_render_page(document, index, dpi), dpi, threshold, processing)
+                yield encode(render(document, index), index)
             return
 
         indexes = iter(page_indexes)
         executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="pdf-encode")
-        pending: deque[tuple[Future[bytes], Image.Image]] = deque()
+        pending: deque[tuple[Future[bytes | regions._Page], Image.Image]] = deque()
 
         def submit(index: int) -> None:
-            rendered = _render_page(document, index, dpi)
+            rendered = render(document, index)
             try:
-                future = executor.submit(_encode_page, rendered, dpi, threshold, processing)
+                future = executor.submit(encode, rendered, index)
             except BaseException:
                 rendered.close()
                 raise
@@ -387,6 +442,43 @@ def _write_pdf_with_progress(writer: pymupdf.Document, completed_pdf: Path) -> N
     print(f"{FLGreen}Final PDF written in {time.monotonic() - started:.1f}s.{CRst}", flush=True)
 
 
+def _prepare_region_files(
+    input_path: Path, output_path: Path, page_count: int, settings: regions._Settings,
+) -> dict[int, tuple[regions._Region, ...]]:
+    """Preflight sidecar destinations and validate source-bound page overrides."""
+    destinations = [output_path, *[path for path in (settings.export, settings.preview_dir) if path is not None]]
+    if len({path.resolve() for path in destinations}) != len(destinations):
+        raise ValueError("PDF, region JSON and annotation directory must have different paths.")
+    for path in destinations[1:]:
+        if path.exists() or path.resolve() == input_path.resolve():
+            raise FileExistsError(f"Region output must be a new path: {path}")
+        if not path.parent.is_dir():
+            raise FileNotFoundError(f"Region output parent directory not found: {path.parent}")
+    return regions._read_config(settings.input, input_path, page_count, settings)
+
+
+def _publish_region_files(
+    input_path: Path, output_path: Path, page_count: int, settings: regions._Settings,
+    records: dict[int, tuple[regions._Region, ...]], annotations: dict[int, bytes],
+) -> None:
+    """Publish optional review artifacts after a successful PDF; never overwrite."""
+    try:
+        if settings.export:
+            regions._write_config(settings.export, input_path, page_count, records)
+            print(f"{FLGreen}Region configuration saved to:{CRst} {FGray}{settings.export}{CRst}")
+        if settings.preview_dir:
+            settings.preview_dir.mkdir(exist_ok=False)
+            for index, png in sorted(annotations.items()):
+                with (settings.preview_dir / f"page-{index + 1:04d}.png").open("xb") as stream:
+                    stream.write(png)
+            print(f"{FLGreen}Region annotations saved to:{CRst} {FGray}{settings.preview_dir}{CRst}")
+    except OSError as exc:
+        raise OSError(f"PDF was saved to {output_path}, but region review output failed: {exc}") from exc
+    if settings.active:
+        print(f"{FLCyan}Protected regions: {sum(map(len, records.values()))}; "
+              f"background: lossless 1-bit CCITT Group 4.{CRst}")
+
+
 def _binarize_pdf(
     input_path: Path,
     output_path: Path,
@@ -428,6 +520,9 @@ def _binarize_pdf(
         if not reader.page_count:
             raise ValueError("The input PDF has no pages.")
         page_count = reader.page_count
+        overrides = _prepare_region_files(input_path, output_path, page_count, processing.regions)
+        records: dict[int, tuple[regions._Region, ...]] = {}
+        annotations: dict[int, bytes] = {}
         selection = (
             Input.input_index_ranges("PDF pages to skip binarizing (Enter = none)", item_count=page_count)
             if skip_pages is None else Input.parse_index_ranges(skip_pages, item_count=page_count)
@@ -450,7 +545,7 @@ def _binarize_pdf(
                 )
             else:
                 print(f"{FLCyan}All pages skipped; rendering and binarization are unnecessary.{CRst}", flush=True)
-            encoded_pages = _encoded_pages(input_path, render_pages, dpi, threshold, workers, password, processing)
+            encoded_pages = _encoded_pages(input_path, render_pages, dpi, threshold, workers, password, processing, overrides)
             with closing(encoded_pages), tqdm(
                 total=page_count, desc="Processing pages", unit="page",
                 file=sys.stdout, dynamic_ncols=True, miniters=1,
@@ -459,6 +554,10 @@ def _binarize_pdf(
                 for number in range(1, page_count + 1):
                     if number - 1 not in skipped:
                         encoded = next(encoded_pages)
+                        if isinstance(encoded, regions._Page):
+                            records[number - 1] = encoded.regions
+                            if encoded.annotation is not None:
+                                annotations[number - 1] = encoded.annotation
                         _replace_page(reader, number - 1, encoded)
                     progress.update(1)
 
@@ -489,6 +588,7 @@ def _binarize_pdf(
                     output_path.unlink(missing_ok=True)
                     raise
             print(f"{FLCyan}Cleaning up temporary files...{CRst}", flush=True)
+        _publish_region_files(input_path, output_path, page_count, processing.regions, records, annotations)
 
 
 def _preview_pdf(
@@ -511,16 +611,24 @@ def _preview_pdf(
     with Pdf.open_document(input_path) as (source, _):
         if not source.page_count:
             raise ValueError("The input PDF has no pages.")
+        overrides = _prepare_region_files(input_path, output_path, source.page_count, processing.regions)
         index = Input.parse_index_ranges(str(page_number), item_count=source.page_count)[0]
         rect = source[index].rect
         print(f"{FLCyan}Converting preview page {index + 1} of {source.page_count}...{CRst}", flush=True)
         Image.init()
-        encoded = _encode_page(_render_page(source, index, dpi), dpi, threshold, processing)
+        if processing.regions.active:
+            encoded = _encode_page(_render_page(source, index, dpi, color=True), dpi, threshold, processing,
+                                   overrides.get(index))
+        else:
+            encoded = _encode_page(_render_page(source, index, dpi), dpi, threshold, processing)
         with pymupdf.open() as preview:
             preview.new_page(width=rect.width, height=rect.height)
             _replace_page(preview, 0, encoded)
             preview.set_metadata(source.metadata or {})
             Pdf.save_new(preview, output_path)
+        if isinstance(encoded, regions._Page):
+            _publish_region_files(input_path, output_path, source.page_count, processing.regions,
+                                  {index: encoded.regions}, {index: encoded.annotation} if encoded.annotation else {})
 
 
 def _configure(
@@ -588,181 +696,199 @@ def _configure(
             "Sharpening amount (%)", default=percent, min_value=1,
             max_value=MAX_SHARPEN_PERCENT, allow_float=False,
         ))
-    return dpi, threshold, _Processing(
+    return dpi, threshold, dataclasses.replace(processing,
         mode=mode, window=window, k=k, sharpen=sharpen, sharpen_radius=radius,
         sharpen_percent=percent, levels=levels, black_point=black_point,
         white_point=white_point, upscale=upscale,
     )
 
 
+def _toggle(prompt: str, current: bool) -> bool:
+    """Prompt for an on/off choice, retaining the current value on Enter."""
+    return bool(Menu.select([MenuOption(["N"], "Off", False), MenuOption(["Y"], "On", True)],
+                            prompt=prompt, default_key="Y" if current else "N", inline=True, separator=False))
+
+
+def _configure_enhancements(processing: _Processing) -> _Processing:
+    """Configure general cleanup and optional crops without altering base prompts."""
+    settings = processing.regions
+
+    denoise = _toggle("Remove isolated binary specks (also works without regions)?", settings.denoise)
+    area, distance = settings.denoise_area, settings.denoise_distance
+    if denoise:
+        area = float(Input.input_number("Maximum speck area at 240 DPI", default=area,
+                                       min_value=0, min_value_allowed=False, max_value=100))
+        distance = float(Input.input_number("Required distance from other ink at 240 DPI", default=distance,
+                                           min_value=1, max_value=100))
+    clean = _toggle("Repair shaded panels/solid fills (requires Sauvola)?", settings.clean_background)
+    if clean and processing.mode is not _BinarizeMode.SAUVOLA:
+        print(f"{FLCyan}Switching to Sauvola for background cleanup.{CRst}")
+        processing = dataclasses.replace(processing, mode=_BinarizeMode.SAUVOLA)
+    enabled = _toggle("Automatically protect illustrations?", settings.enabled)
+    profile, threshold = settings.profile, settings.threshold
+    mode, dither, contrast, quality, codec = settings.mode, settings.dither, settings.contrast, settings.quality, settings.codec
+    if enabled or settings.input is not None:
+        if enabled:
+            profile = cast(regions._Profile, Menu.select(
+                [MenuOption([value.value], value.value, value) for value in regions._Profile],
+                prompt="Detection profile", default_key=profile.value, separator=False))
+            cutoff = regions._PROFILE_THRESHOLDS[profile] if threshold is None else threshold
+            threshold = float(Input.input_number("Region threshold (higher = fewer boxes)", default=cutoff,
+                                                 min_value=.1, max_value=2))
+        mode = cast(regions._Mode, Menu.select(
+            [MenuOption([value.value], value.value, value) for value in regions._Mode
+             if value not in (regions._Mode.TEXT, regions._Mode.TEXT_INVERT)],
+            prompt="Protected image mode", default_key=mode.value, separator=False))
+        if mode is regions._Mode.KEEP:
+            codec = cast(regions._Codec, Menu.select(
+                [MenuOption([value.value], value.value, value) for value in regions._Codec],
+                prompt="Crop codec (Flate is lossless)", default_key=codec.value, separator=False))
+            if codec is regions._Codec.JPEG:
+                quality = int(Input.input_number("JPEG crop quality (CCITT background is always lossless)",
+                    default=quality, min_value=1, max_value=95, allow_float=False))
+        else:
+            dither = cast(regions._Dither, Menu.select(
+                [MenuOption([value.value], value.value, value) for value in regions._Dither],
+                prompt="Dithering (can increase size)", default_key=dither.value, separator=False))
+        contrast = float(Input.input_number("Crop contrast (1 = off)", default=contrast, min_value=1, max_value=4))
+    settings = dataclasses.replace(settings, enabled=enabled, profile=profile, threshold=threshold, mode=mode,
+        dither=dither, contrast=contrast, quality=quality, codec=codec, denoise=denoise, denoise_area=area,
+        denoise_distance=distance, clean_background=clean)
+    return dataclasses.replace(processing, regions=settings)
+
+
+def _configure_output(
+    processing: _Processing, options: _OutputOptions,
+) -> tuple[_Processing, _OutputOptions]:
+    """Configure workers, viewer and region files through interactive prompts."""
+    workers = int(Input.input_number(
+        "Parallel page encoders (1 = serial)", default=options.workers,
+        min_value=1, max_value=MAX_WORKERS, allow_float=False,
+    ))
+    open_preview = _toggle("Open exported previews in the default viewer?", options.open_preview)
+    region_input = processing.regions.input
+    if _toggle("Import a region JSON configuration?", region_input is not None):
+        region_input = Path(Input.resolve_input_path(
+            str(region_input or ""), prompt="Region JSON path",
+        ))
+    else:
+        region_input = None
+    export_regions = _toggle("Save region JSON beside each PDF?", options.export_regions)
+    annotate_regions = _toggle("Save box annotations beside each PDF?", options.annotate_regions)
+    settings = dataclasses.replace(processing.regions, input=region_input)
+    return dataclasses.replace(processing, regions=settings), _OutputOptions(
+        workers=workers, open_preview=open_preview,
+        export_regions=export_regions, annotate_regions=annotate_regions,
+    )
+
+
+def _processing_for_output(
+    processing: _Processing, options: _OutputOptions, output_path: Path,
+) -> _Processing:
+    """Derive per-export sidecar paths so repeated previews use fresh destinations."""
+    settings = dataclasses.replace(
+        processing.regions,
+        export=output_path.with_suffix(".regions.json") if options.export_regions else None,
+        preview_dir=output_path.with_name(f"{output_path.stem}_regions") if options.annotate_regions else None,
+    )
+    regions._validate(settings)
+    return dataclasses.replace(processing, regions=settings)
+
+
 def main() -> int:
-    """Run interactive or argument-driven PDF binarization.
+    """Run the interactive scan-compression menu without command-line options.
 
     Returns:
-        Zero on success, or one on a dependency, input, or conversion failure.
-        argparse exits with its standard status for help or invalid CLI options.
+        Zero after conversion or quitting, or one if the input cannot be opened.
 
-    Prompts for omitted paths/settings and opening passwords, prints progress,
-    and writes a new PDF. Does not modify the source.
+    Prompts for paths, settings and opening passwords; writes new PDFs and
+    optional region review files. Conversion errors return to the menu.
+    Existing files and the source are never overwritten.
     """
-    # ── help and arguments ──────────────────────────────
-    parser = argparse.ArgumentParser(
-        description=f"{FLYellow}{'PDF BINARIZE':^60}{CRst}\n"
-        "Convert scanned PDFs to 1-bit black-and-white images with lossless compression.\n"
-        "Choose fixed (default) or Sauvola adaptive thresholding.\n"
-        "Optional levels -> Lanczos upscale -> sharpening -> binarization.\n"
-        "Levels/sharpening default to off; upscaling defaults to 1x.\n"
-        "Menu: export/open a single-page preview, change settings, convert all, or quit.\n"
-        "Retains displayed page sizes, metadata, and bookmark titles/hierarchy/page targets.\n"
-        "Automatically removes PDF/A identification while retaining other metadata.\n"
-        "Bookmark positions reset to fit-page. Converted pages lose searchable text and interactivity.\n"
-        "Skipped pages are copied with their original contents and page order.\n"
-        "Protected PDFs prompt for an opening password when needed.\n"
-        "Pages are rendered in memory; no temporary page images or decrypted PDFs are written.",
-        epilog=f"{FGray}Requirements: PyMuPDF, Pillow with libtiff, numpy, tqdm.\n"
-        f"Interactive settings use CLI values as initial defaults: {DEFAULT_DPI} DPI, "
-        f"threshold {DEFAULT_THRESHOLD}.\n"
-        f"Parallel page encoding defaults to {DEFAULT_WORKERS} workers; --workers 1 is serial.\n"
-        "Rendering stays on the main thread; a bounded queue feeds parallel Pillow encoders.\n"
-        "The assembled PDF grows in memory; one temporary completed PDF is used for safe output.\n"
-        "tqdm shows page/copy progress with speed and ETA; saving shows bytes and elapsed time.\n"
-        "Higher thresholds make more pixels black; no dithering is used.\n"
-        "Sauvola uses R=128; smaller k generally retains more black. Its window and sharpening\n"
-        "radius are measured in base rendered pixels; adjust them when changing DPI.\n"
-        "Upscaling automatically scales radius/window (window rounded up to odd).\n"
-        "Levels map black/white points to 0/255, clipping outside; 0/255 changes nothing.\n"
-        "Upscaling preserves PDF page sizes and cannot recover lost detail; 2x uses roughly\n"
-        "4x image-processing memory per worker. Reduce --workers for large pages.\n"
-        "Preview uses the same processing as full conversion, renders ONLY the chosen page,\n"
-        "ignores skip selections, and exports a one-page PDF without source bookmarks/attachments.\n"
-        "It opens in the default PDF viewer unless --no-open-preview is specified.\n"
-        "--batch or --preview-page bypasses menus and uses defaults for omitted settings.\n"
-        "Skip PDF pages with 1,2 or 1-3,4; -1,-2 means the last two pages; Enter skips none.\n"
-        "Use --skip-pages=-1,-2 for negative CLI selections; --skip-pages= disables the prompt.\n"
-        f"Example: pdf-binarize.py input.pdf -o output.pdf --dpi 300 --threshold 180{CRst}",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("input", nargs="?", help="input PDF path")
-    parser.add_argument("-o", "--output", help="new output PDF path (existing files are rejected)")
-    parser.add_argument("--dpi", type=int, help=f"base render DPI before upscaling, {MIN_DPI}-{MAX_DPI}")
-    parser.add_argument("--threshold", type=int, help=f"fixed-mode cutoff, {MIN_THRESHOLD}-{MAX_THRESHOLD}")
-    parser.add_argument("--mode", choices=[mode.value for mode in _BinarizeMode], default="fixed",
-                        help="threshold method (default: fixed)")
-    parser.add_argument("--sauvola-window", type=int, default=DEFAULT_SAUVOLA_WINDOW,
-                        help=f"odd base-pixel window, 3-{MAX_SAUVOLA_WINDOW} (default: {DEFAULT_SAUVOLA_WINDOW})")
-    parser.add_argument("--sauvola-k", type=float, default=DEFAULT_SAUVOLA_K,
-                        help="Sauvola k, 0 < k <= 1 (default: 0.2)")
-    parser.add_argument("--levels", action=argparse.BooleanOptionalAction, default=False,
-                        help="stretch black/white levels before upscaling/sharpening (default: off)")
-    parser.add_argument("--black-point", type=int, default=DEFAULT_BLACK_POINT,
-                        help="levels black point, 0-254, below white point (default: 0); requires --levels")
-    parser.add_argument("--white-point", type=int, default=DEFAULT_WHITE_POINT,
-                        help="levels white point, 1-255, above black point (default: 255); requires --levels")
-    parser.add_argument("--upscale", type=int, default=DEFAULT_UPSCALE,
-                        help=f"Lanczos enlargement, integer 1-{MAX_UPSCALE} (default: 1); auto-scales window/radius")
-    parser.add_argument("--sharpen", action=argparse.BooleanOptionalAction, default=False,
-                        help="apply Unsharp Mask before thresholding (default: off)")
-    parser.add_argument("--sharpen-radius", type=float, default=DEFAULT_SHARPEN_RADIUS,
-                        help=f"Unsharp Mask radius in base pixels, 0 < radius <= {MAX_SHARPEN_RADIUS} (default: 1)")
-    parser.add_argument("--sharpen-percent", type=int, default=DEFAULT_SHARPEN_PERCENT,
-                        help=f"Unsharp Mask amount, 1-{MAX_SHARPEN_PERCENT} (default: 100); requires --sharpen")
-    action_group = parser.add_mutually_exclusive_group()
-    action_group.add_argument("--batch", action="store_true", help="convert the whole PDF without menus")
-    action_group.add_argument("--preview-page", type=int, metavar="N",
-                              help="export only physical PDF page N; -1 = last; bypass menus")
-    parser.add_argument("--open-preview", action=argparse.BooleanOptionalAction, default=True,
-                        help="open the preview PDF in the default viewer (default: on)")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
-                        help=f"parallel page encoders, 1-{MAX_WORKERS} (default: {DEFAULT_WORKERS})")
-    parser.add_argument("--skip-pages", metavar="PAGES",
-                        help="pages to leave unconverted (e.g. 1-3,4,-1); omitted: prompt in menu mode, none in batch")
-    args = parser.parse_args()
-    dpi = args.dpi if args.dpi is not None else DEFAULT_DPI
-    threshold = args.threshold if args.threshold is not None else DEFAULT_THRESHOLD
-    processing = _Processing(
-        mode=_BinarizeMode(args.mode), window=args.sauvola_window, k=args.sauvola_k,
-        sharpen=args.sharpen, sharpen_radius=args.sharpen_radius, sharpen_percent=args.sharpen_percent,
-        levels=args.levels, black_point=args.black_point, white_point=args.white_point, upscale=args.upscale,
-    )
-    try:
-        _validate_settings(dpi, threshold, args.workers, processing)
-        if args.preview_page == 0:
-            raise ValueError("Preview page cannot be zero; use 1 for first or -1 for last.")
-    except ValueError as exc:
-        parser.error(str(exc))
-
-    # ── dependencies and input ──────────────────────────
+    # ── introduction and input ──────────────────────────
     Console.print_banner("PDF BINARIZE")
+    description = (
+        "Compress scans with 1-bit text and optional illustration crops.\n"
+        "Choose thresholding, denoising, image depth and compression in the menus.\n"
+        "Preview a page before converting; page sizes and bookmarks are retained.\n"
+        "CCITT is lossless; JPEG crop quality defaults to 30.\n"
+        "Converted pages lose searchable text and interactive features."
+    )
+    print(f"{FGray}{description}{CRst}")
+    dpi, threshold, processing = DEFAULT_DPI, DEFAULT_THRESHOLD, DEFAULT_PROCESSING
+    options = _OutputOptions()
     try:
-        input_path = Path(args.input or Input.resolve_input_path("", prompt="Input PDF path"))
+        input_path = Path(Input.resolve_input_path("", prompt="Input PDF path"))
         if not input_path.is_file():
             raise FileNotFoundError(f"Input PDF not found: {input_path}")
-        direct = args.batch or args.preview_page is not None
-        if not direct:
-            dpi, threshold, processing = _configure(dpi, threshold, processing)
-        print(f"{FLYellow}Converted pages become images: searchable text and interactive features are lost.{CRst}")
+        dpi, threshold, processing = _configure(dpi, threshold, processing)
 
         # ── preview / adjustment / final conversion loop ─────────
         while True:
-            if direct:
-                action = _Action.PREVIEW if args.preview_page is not None else _Action.CONVERT
-            else:
-                details = (f"threshold={threshold}" if processing.mode is _BinarizeMode.FIXED
-                           else f"window={processing.window}, k={processing.k:g}")
-                levels_info = f"{processing.black_point}/{processing.white_point}" if processing.levels else "off"
-                print(f"\n{FLCyan}{dpi} base DPI; {processing.mode.value}; {details}; "
-                      f"levels={levels_info}; upscale={processing.upscale}x ({dpi * processing.upscale} DPI); "
-                      f"sharpen={'on' if processing.sharpen else 'off'}{CRst}")
-                action = Menu.select(
-                    [MenuOption(["P"], "Export and view one-page preview", _Action.PREVIEW),
-                     MenuOption(["S"], "Change processing settings", _Action.SETTINGS),
-                     MenuOption(["F"], "Convert full PDF", _Action.CONVERT),
-                     MenuOption(["Q"], "Quit", _Action.QUIT)],
-                    prompt="Choose action", default_key="F",
-                )
+            details = (f"threshold={threshold}" if processing.mode is _BinarizeMode.FIXED
+                       else f"window={processing.window}, k={processing.k:g}")
+            levels_info = f"{processing.black_point}/{processing.white_point}" if processing.levels else "off"
+            settings = processing.regions
+            print(f"\n{FLCyan}{dpi} base DPI; {processing.mode.value}; {details}; "
+                  f"levels={levels_info}; upscale={processing.upscale}x ({dpi * processing.upscale} DPI); "
+                  f"sharpen={'on' if processing.sharpen else 'off'}{CRst}")
+            print(f"{FLCyan}Denoise={'on' if settings.denoise else 'off'}; "
+                  f"auto regions={'on' if settings.enabled else 'off'}; profile={settings.profile.value}; "
+                  f"region threshold={settings.cutoff:g}; image={settings.mode.value}/{settings.codec.value}; "
+                  f"JPEG quality={settings.quality}; cleanup={'on' if settings.clean_background else 'off'}{CRst}")
+            print(f"{FGray}Workers={options.workers}; open preview={'yes' if options.open_preview else 'no'}; "
+                  f"region input={settings.input or 'none'}; "
+                  f"save JSON={'yes' if options.export_regions else 'no'}; "
+                  f"annotations={'yes' if options.annotate_regions else 'no'}{CRst}")
+            action = Menu.select(
+                [MenuOption(["P"], "Export one-page preview", _Action.PREVIEW),
+                 MenuOption(["S"], "Binarization, levels, upscale and sharpening", _Action.SETTINGS),
+                 MenuOption(["E"], "Denoise, regions and image compression", _Action.ENHANCEMENTS),
+                 MenuOption(["O"], "Workers, preview viewer and region files", _Action.OUTPUT),
+                 MenuOption(["F"], "Convert full PDF", _Action.CONVERT),
+                 MenuOption(["Q"], "Quit", _Action.QUIT)],
+                prompt="Choose action", default_key="F",
+            )
             if action is _Action.QUIT:
                 return 0
-            if action is _Action.SETTINGS:
-                dpi, threshold, processing = _configure(dpi, threshold, processing)
-                continue
             try:
+                if action is _Action.SETTINGS:
+                    dpi, threshold, processing = _configure(dpi, threshold, processing)
+                    continue
+                if action is _Action.ENHANCEMENTS:
+                    processing = _configure_enhancements(processing)
+                    continue
+                if action is _Action.OUTPUT:
+                    processing, options = _configure_output(processing, options)
+                    continue
+                _validate_settings(dpi, threshold, options.workers, processing)
                 if action is _Action.PREVIEW:
-                    if args.preview_page is not None:
-                        page_number = int(args.preview_page)
-                    else:
-                        page_number = int(Input.input_number(
-                            "Physical PDF page to preview (-1 = last)", default=1, allow_float=False,
-                        ))
+                    page_number = int(Input.input_number(
+                        "Physical PDF page to preview (-1 = last)", default=1, allow_float=False,
+                    ))
                     default_output = input_path.with_name(
                         f"{input_path.stem}_preview_p{page_number}_{processing.mode.value}.pdf",
                     )
-                    output_path = Path(args.output) if direct and args.output else Path(Input.resolve_output_path(
-                        str(default_output), prompt="Preview PDF path",
-                    ))
-                    _preview_pdf(input_path, output_path, page_number, dpi, threshold, processing)
+                    output_path = Path(Input.resolve_output_path(str(default_output), prompt="Preview PDF path"))
+                    effective = _processing_for_output(processing, options, output_path)
+                    _preview_pdf(input_path, output_path, page_number, dpi, threshold, effective)
                     print(f"{FLGreen}Preview PDF saved to:{CRst} {FGray}{output_path}{CRst}")
-                    if args.open_preview:
+                    if options.open_preview:
                         try:
                             System.open_with_default_app(str(output_path))
                         except OSError as exc:
                             print(f"{FLYellow}Preview saved; could not open the viewer: {exc}{CRst}")
-                    if direct:
-                        return 0
                 else:
                     default_output = input_path.with_name(f"{input_path.stem}_binary.pdf")
-                    output_path = Path(args.output) if direct and args.output else Path(Input.resolve_output_path(
-                        args.output or str(default_output), prompt="Output PDF path",
-                    ))
-                    skip_pages = (args.skip_pages or "") if direct else args.skip_pages
-                    _binarize_pdf(input_path, output_path, dpi, threshold, args.workers, skip_pages,
-                                  processing=processing)
-                    print(f"{FLGreen}Black-and-white PDF saved to:{CRst} {FGray}{output_path}{CRst}")
+                    output_path = Path(Input.resolve_output_path(str(default_output), prompt="Output PDF path"))
+                    effective = _processing_for_output(processing, options, output_path)
+                    _binarize_pdf(input_path, output_path, dpi, threshold, options.workers, None,
+                                  processing=effective)
+                    print(f"{FLGreen}Compressed PDF saved to:{CRst} {FGray}{output_path}{CRst}")
                     print(f"{FGray}Size: {Console.format_size(input_path.stat().st_size)}"
                           f" -> {Console.format_size(output_path.stat().st_size)}{CRst}")
                     return 0
             except (OSError, ValueError, RuntimeError, pymupdf.FileDataError, FzErrorBase) as exc:
-                if direct:
-                    raise
                 print(f"{FLRed}Conversion failed: {exc}. Adjust settings or choose another output.{CRst}")
     except (OSError, ValueError, RuntimeError, pymupdf.FileDataError, FzErrorBase) as exc:
         print(f"{FLRed}Binarization failed: {exc}{CRst}")

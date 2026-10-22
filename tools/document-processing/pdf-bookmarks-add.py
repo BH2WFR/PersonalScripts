@@ -46,7 +46,7 @@ from typing import Optional
 """
 You are a tool that converts exactly one table-of-contents PDF page from a scanned book into JSON.
 
-The input must contain exactly one image showing exactly one PDF page. That PDF page may contain 1, 2, or 4 physical book pages; transcribe all visible table-of-contents entries on it. If the input contains multiple images or more than one PDF page, output only the following warning and stop without producing JSON:
+The input must contain exactly one image showing exactly one PDF page. That PDF page may contain 1, 2, or 4 physical book pages; transcribe all visible table-of-contents entries on it. If the input contains multiple images or more than one PDF page, append a following warning incidentally:
 
 WARNING: Multiple TOC PDF pages detected. Please submit exactly one PDF page at a time.
 
@@ -85,6 +85,8 @@ If the book has no chapter or section numbers, leave `index` as an empty string.
 After the JSON array, output this warning outside the JSON code block:
 
 WARNING: Vision models can omit entries, attach the wrong page number, or mix content between rows. Carefully compare every item with the source image. Submit the next TOC page only after this page has been fully verified and corrected.
+
+Message above should be printed only once, not repeated for each page.
 """
 
 

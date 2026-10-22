@@ -8,7 +8,6 @@ openpyxl
 # Legacy Excel .xls input
 xlrd
 Pillow
-opencv-python
 PySide6
 pyqtgraph
 pyvista

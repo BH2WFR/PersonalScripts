@@ -174,23 +174,18 @@ class PdfBinarizeTests(unittest.TestCase):
                     self.convert()
             render.assert_not_called()
 
-    def test_cli_and_interactive_defaults(self) -> None:
+    def test_interactive_defaults(self) -> None:
         with (
-            patch.object(sys, "argv", [str(SCRIPT), str(self.source), "-o", str(self.output), "--batch"]),
-            patch.object(app.Input, "input_number", side_effect=[300, 180]),
+            patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
+            patch.object(app.Input, "resolve_output_path", return_value=str(self.output)),
+            patch("builtins.input", return_value=""),
             patch.object(app, "_binarize_pdf") as convert,
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            # The result summary expects the file created by the converter.
             self.output.write_bytes(b"test output")
             self.assertEqual(app.main(), 0)
-            self.assertEqual(convert.call_args.args[2:], (300, 180, app.DEFAULT_WORKERS, ""))
+            self.assertEqual(convert.call_args.args[2:], (300, 180, app.DEFAULT_WORKERS, None))
             self.assertFalse(convert.call_args.kwargs["processing"].sharpen)
-        for flag in ("--dpi", "--threshold", "--workers"):
-            with patch.object(sys, "argv", [str(SCRIPT), flag, "0"]):
-                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exc:
-                    app.main()
-                self.assertEqual(exc.exception.code, 2)
 
     def test_missing_bookmark_title_retains_hierarchy(self) -> None:
         with pymupdf.open(self.source) as document:
@@ -447,18 +442,22 @@ class PdfBinarizeTests(unittest.TestCase):
         with pymupdf.open(self.output) as result:
             self.assertTrue(all(page.get_images()[0][4] == 1 for page in result))
 
-    def test_cli_skip_selection_is_passed_to_converter(self) -> None:
-        self.output.write_bytes(b"test output")
-        for selection in ("1-2,-1", "-1,-2", ""):
+    def test_interactive_skip_selection_preserves_original_pages(self) -> None:
+        for number, selection in enumerate(("1-2,-1", "-1,-2", "")):
+            target = self.folder / f"interactive-skip-{number}.pdf"
             with (
                 self.subTest(selection=selection),
-                patch.object(sys, "argv", [str(SCRIPT), str(self.source), "-o", str(self.output),
-                                            "--batch", "--dpi=72", "--threshold=180", f"--skip-pages={selection}"]),
-                patch.object(app, "_binarize_pdf") as convert,
+                patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
+                patch.object(app.Input, "resolve_output_path", return_value=str(target)),
+                patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
+                patch("builtins.input", side_effect=["f", selection]),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(app.main(), 0)
-                self.assertEqual(convert.call_args.args[-1], selection)
+            skipped = app.Input.parse_index_ranges(selection, item_count=3)
+            with pymupdf.open(target) as result:
+                for index in range(3):
+                    self.assertEqual(result[index].get_images()[0][4], 8 if index in skipped else 1)
 
     def test_skipped_links_forms_custom_metadata_and_rendered_pixels(self) -> None:
         enriched = self.folder / "enriched.pdf"
@@ -595,13 +594,13 @@ class PdfBinarizeTests(unittest.TestCase):
         preview_one = self.folder / "fixed-preview.pdf"
         preview_two = self.folder / "sauvola-preview.pdf"
         replies = [
-            "", "", "", "", "", "",  # fixed, 72 DPI, threshold 180, levels off, 1x, sharpening off
+            "", "72", "", "", "", "",  # fixed, 72 DPI, threshold 180, levels off, 1x, sharpening off
             "p", "2",
             "s", "s", "", "30", "31", "", "y", "110", "100", "250", "2", "y", "0.7", "50",
-            "p", "2", "f",
+            "p", "2", "f", "1,-1",
         ]
         with (
-            patch.object(sys, "argv", [str(SCRIPT), str(self.source), "--dpi=72", "--skip-pages=1,-1"]),
+            patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
             patch.object(app.Input, "resolve_output_path", side_effect=[str(preview_one), str(preview_two), str(self.output)]),
             patch.object(app.System, "open_with_default_app") as viewer,
             patch("builtins.input", side_effect=replies),
@@ -616,14 +615,15 @@ class PdfBinarizeTests(unittest.TestCase):
         with pymupdf.open(preview_one) as result:
             self.assertEqual(len(result), 1)
 
-    def test_direct_preview_ignores_skip_pages_and_can_disable_viewer(self) -> None:
+    def test_interactive_preview_can_disable_viewer_and_quit(self) -> None:
+        processing = app._Processing(mode=app._BinarizeMode.SAUVOLA, sharpen=True,
+                                     levels=True, black_point=110, white_point=250, upscale=2)
         with (
-            patch.object(sys, "argv", [str(SCRIPT), str(self.source), "-o", str(self.output),
-                                      "--dpi=72", "--preview-page=-1", "--mode=sauvola", "--sharpen",
-                                      "--levels", "--black-point=110", "--white-point=250", "--upscale=2",
-                                      "--skip-pages=1-3", "--no-open-preview"]),
+            patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
+            patch.object(app.Input, "resolve_output_path", return_value=str(self.output)),
+            patch.object(app, "_configure", return_value=(72, 180, processing)),
             patch.object(app.System, "open_with_default_app") as viewer,
-            patch("builtins.input", side_effect=AssertionError("Unexpected prompt")),
+            patch("builtins.input", side_effect=["o", "1", "n", "n", "n", "n", "p", "-1", "q"]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)
@@ -634,17 +634,21 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(result[0].rect, pymupdf.Rect(0, 0, 144, 288))
             self.assertEqual(page_image(result, 0).size, (288, 576))
 
-    def test_new_cli_parameters_are_validated_before_rendering(self) -> None:
-        for option in ("--sauvola-window=30", "--sauvola-window=1", "--sauvola-k=nan",
-                       "--sauvola-k=0", "--sharpen-radius=0", "--sharpen-percent=0", "--preview-page=0",
-                       "--black-point=-1", "--black-point=255", "--white-point=0", "--white-point=256",
-                       "--upscale=0", "--upscale=5", "--upscale=1.5"):
-            with (
-                self.subTest(option=option), patch.object(sys, "argv", [str(SCRIPT), option]),
-                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error,
-            ):
-                app.main()
-            self.assertEqual(error.exception.code, 2)
+    def test_invalid_processing_is_rejected_before_rendering(self) -> None:
+        invalid = [
+            app._Processing(window=30), app._Processing(window=1),
+            app._Processing(k=float("nan")), app._Processing(k=0),
+            app._Processing(sharpen_radius=0), app._Processing(sharpen_percent=0),
+            app._Processing(black_point=-1), app._Processing(black_point=255),
+            app._Processing(white_point=0), app._Processing(white_point=256),
+            app._Processing(upscale=0), app._Processing(upscale=5),
+        ]
+        with patch.object(app, "_render_page") as render:
+            for processing in invalid:
+                with self.subTest(processing=processing), self.assertRaises(ValueError):
+                    app._preview_pdf(self.source, self.output, 1, 72, 180, processing)
+            render.assert_not_called()
+        self.assertFalse(self.output.exists())
 
     def test_sauvola_serial_parallel_results_match(self) -> None:
         processing = app._Processing(mode=app._BinarizeMode.SAUVOLA, sharpen=True,
