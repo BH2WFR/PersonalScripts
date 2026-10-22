@@ -7,6 +7,15 @@ coding agents. Keep the CLI description a concise user-facing overview;
 document implementation behavior and detailed defaults here instead of
 expanding command-line help.
 
+Windows directory releases use matrix-viewer/packaging/MatrixViewer.spec with
+PyInstaller in an isolated build environment. The spec stages this private
+package under its import name, collects lazy VTK modules, disables UPX and audits
+dependency origins. Frozen launches import that package directly; source launches
+keep the file-based loader. Distribute the whole MatrixViewer directory.
+The sibling _matrix_viewer_install.py prompts for an install directory, builds
+in the dedicated Conda environment, then updates only changed release files.
+Unchanged runtime libraries retain their original contents and timestamps.
+
 Store test matrices that need permanent preservation in
 matrix-viewer/test-matrixes/ relative to this script (repository-relative:
 tools/research/matrix-viewer/test-matrixes/). This directory already contains
@@ -349,7 +358,8 @@ from pathlib import Path
 import sys
 from typing import Callable, cast
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
 
 PACKAGE_NAME = "personal_matrix_viewer"
@@ -420,15 +430,16 @@ def main() -> int:
     package_dir = Path(__file__).with_name("matrix-viewer")
     try:
         importlib.import_module("openpyxl")
-        spec = importlib.util.spec_from_file_location(
-            PACKAGE_NAME, package_dir / "__init__.py",
-            submodule_search_locations=[str(package_dir)],
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot load viewer from {package_dir}")
-        package = importlib.util.module_from_spec(spec)
-        sys.modules[PACKAGE_NAME] = package
-        spec.loader.exec_module(package)
+        if not getattr(sys, "frozen", False):
+            spec = importlib.util.spec_from_file_location(
+                PACKAGE_NAME, package_dir / "__init__.py",
+                submodule_search_locations=[str(package_dir)],
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Cannot load viewer from {package_dir}")
+            package = importlib.util.module_from_spec(spec)
+            sys.modules[PACKAGE_NAME] = package
+            spec.loader.exec_module(package)
         app_module = importlib.import_module(f"{PACKAGE_NAME}.app")
     except ImportError as exc:
         print(f"{FLRed}Viewer dependency could not be imported: {exc}{CRst}")
