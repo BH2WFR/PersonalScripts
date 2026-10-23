@@ -245,6 +245,8 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
+| `tools/filesystem/list-disks.py` | **磁盘与分区信息查看工具**：以设备树显示挂载点、盘符、卷标、容量和完整 ID，方便在终端中选取复制。支持 Windows、Linux 和 macOS，包括未挂载分区。 | Windows：`pwsh` 7；Linux：`lsblk`；macOS：`diskutil` |
+| `tools/filesystem/path-in-use.py` | **文件/目录占用查询工具**：列出占用进程的 PID、可执行文件路径和被占用路径，支持 Windows、Linux 和 macOS。递归检查目录（含盘符和挂载点），Windows 同时检测文件句柄和内存映射文件。 | `psutil`；Windows 10+：无需外部工具；Linux/macOS：`lsof`；**需要管理员/root 权限** |
 | `tools/filesystem/openssl-file-hash.py` | 基于 OpenSSL 的**文件哈希值计算工具**：<br />支持批量处理文件，并支持 `md5`、`sha256` 等 OpenSSL 提供的常见算法。 | `openssl` |
 | `tools/filesystem/check-filename-overlong.py` | **长文件名自动截断工具**：<br />按 UTF-8 编码统计字节长度，自动截断超过指定字节数（默认 143，适配群晖的加密文件夹限制）的文件名。<br />截断时**保留扩展名**，若发生重名则在扩展名前自动加 `_1`、`_2` 等后缀 |  |
 | `tools/filesystem/modify-file-time.py`        | **文件/文件夹时间戳修改工具**（创建/修改/访问时间），支持加入随机抖动，支持备份/还原指定文件夹下所有文件/文件夹的时间 |  |
@@ -311,6 +313,7 @@
 
 | 脚本                               | 描述                                                         | 依赖                                             |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `tools/windows/usb-eject-log.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **Windows 10+；需要管理员权限**；无需额外库或工具 |
 | `tools/windows/restart-service.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | `tools/power-current.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
 | `tools/power-events.py` | 开关机、睡眠唤醒和锁定/解锁历史日志 GUI 查看器。Linux 下锁屏历史支持有限。 | **macOS / Windows 10+ / 使用 systemd 的 Linux 桌面**<br />**Python 库**：`PySide6` |

@@ -8,6 +8,7 @@ mss
 numpy
 opencv-python
 Pillow
+psutil
 PyMuPDF>=1.28
 fonttools
 pynput

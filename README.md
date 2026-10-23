@@ -254,6 +254,8 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 |------|------|------|
+| `tools/filesystem/list-disks.py` | **Disk and partition inventory:** prints a device tree with mount points, drive letters, labels, capacities, and full native IDs for selection in the terminal. Supports Windows, Linux, and macOS, including unmounted partitions. | Windows: `pwsh` 7; Linux: `lsblk`; macOS: `diskutil` |
+| `tools/filesystem/path-in-use.py` | **File/directory usage query:** lists matching process PIDs, executable paths, and referenced paths on Windows, Linux, and macOS. Checks directories recursively (including drive roots and mount points), with Windows file-handle and mapped-file detection. | `psutil`; Windows 10+: no external tool; Linux/macOS: `lsof`; **administrator/root required** |
 | `tools/filesystem/openssl-file-hash.py` | **File hash calculator based on OpenSSL:**<br />Processes files in batches and supports common algorithms provided by OpenSSL, including `md5` and `sha256`. | `openssl` |
 | `tools/filesystem/check-filename-overlong.py` | **Automatic long-filename truncation tool:**<br />Counts the UTF-8 encoded byte length and truncates filenames that exceed a specified limit (143 bytes by default, for compatibility with Synology encrypted-folder limits).<br />Extensions are **preserved**, and collisions receive an automatic `_1`, `_2`, and so on before the extension. | |
 | `tools/filesystem/modify-file-time.py` | **File/directory timestamp editor** for creation, modification, and access times. Supports random jitter and backup/restore of timestamps for every file and directory under a selected directory. | |
@@ -320,6 +322,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
+| `tools/windows/usb-eject-log.py` | **Device ejection failure log viewer:** shows historical blocking process PIDs, executable paths and device IDs recorded by Windows. Helps identify which process is using a USB drive when it cannot be safely ejected. | **Windows 10+; administrator required**; no extra packages or tools |
 | `tools/windows/restart-service.py` | Windows-only **force-restart tool for system services:**<br />Supports wait and no-wait modes and includes a `Windows Audio` preset, which **can temporarily fix failure to redirect audio from the remote computer in an RDP session**. | **Windows only**<br />**Elevation required** |
 | `tools/power-current.py` | Charger and battery telemetry viewer that **shows the computer's current charging power on macOS**.<br />Uses `ioreg` on macOS, PowerShell CIM/WMI on Windows, and `/sys/class/power_supply` on Linux. Some fields may be unavailable because of firmware or driver limitations. (**The best experience is on macOS.**) | **Best on macOS**; other systems are also supported with incomplete data |
 | `tools/power-events.py` | GUI viewer for historical startup, shutdown, sleep, wake and lock/unlock logs, including Windows Modern Standby transitions and reported sleep details. Lock history support is limited on Linux. | **macOS / Windows 10+ / Linux desktop with systemd**<br />**Python pkg:** `PySide6` |
