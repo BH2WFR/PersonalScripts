@@ -245,8 +245,8 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/filesystem/list-disks.py` | **磁盘与分区信息查看工具**：以设备树显示挂载点、盘符、卷标、容量和完整 ID，方便在终端中选取复制。支持 Windows、Linux 和 macOS，包括未挂载分区。 | Windows：`pwsh` 7；Linux：`lsblk`；macOS：`diskutil` |
-| `tools/filesystem/path-in-use.py` | **文件/目录占用查询工具**：列出占用进程的 PID、可执行文件路径和被占用路径，支持 Windows、Linux 和 macOS。递归检查目录（含盘符和挂载点），Windows 同时检测文件句柄和内存映射文件。 | `psutil`；Windows 10+：无需外部工具；Linux/macOS：`lsof`；**需要管理员/root 权限** |
+| `tools/filesystem/list-disks.py` | **磁盘与分区信息查看工具**：以设备树显示挂载点、盘符、卷标、容量和完整 ID，方便在终端中选取复制。 | Windows：`pwsh` 7；Linux：`lsblk`；macOS：`diskutil` |
+| `tools/filesystem/path-in-use.py` | **文件/目录占用查询工具**：列出占用进程的 PID、可执行文件路径。递归检查目录（含盘符/挂载点），Windows 下同时后检测文件句柄和内存映射文件。 | `psutil`；<br />**需要提权** |
 | `tools/filesystem/openssl-file-hash.py` | 基于 OpenSSL 的**文件哈希值计算工具**：<br />支持批量处理文件，并支持 `md5`、`sha256` 等 OpenSSL 提供的常见算法。 | `openssl` |
 | `tools/filesystem/check-filename-overlong.py` | **长文件名自动截断工具**：<br />按 UTF-8 编码统计字节长度，自动截断超过指定字节数（默认 143，适配群晖的加密文件夹限制）的文件名。<br />截断时**保留扩展名**，若发生重名则在扩展名前自动加 `_1`、`_2` 等后缀 |  |
 | `tools/filesystem/modify-file-time.py`        | **文件/文件夹时间戳修改工具**（创建/修改/访问时间），支持加入随机抖动，支持备份/还原指定文件夹下所有文件/文件夹的时间 |  |
@@ -273,7 +273,7 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/network/tailscale-restart-accept-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
-| `tools/network/rclone-sync.py` | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，依次同步、复制、移动或比较多对目录，也可按精确路径复制和移动单个文件。支持编号命令预览、从失败项重试、灵活的动作权限、备选远端、试运行和取消操作，不可用任务置灰，无可用任务时警告并退出。 | `rclone`<br />**Python 库**：`PyYAML` |
+| [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，同步、复制、移动或比较多对目录，也可复制和移动单个文件，任务列表遵循 schema 顺序。支持云端及本地同步、按卷标定位移动硬盘、字面路径、每组路径临时指定 SFTP/WebDAV 地址、配置文件与原生加解密菜单快捷访问、命令预览、重试、试运行和取消操作。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
 | `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | **Python 库：**`boto3` |
 | `tools/windows/firewall-app-blocker.py` | 仅 Windows，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
 | `tools/network/webserver-run.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |
@@ -313,7 +313,7 @@
 
 | 脚本                               | 描述                                                         | 依赖                                             |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `tools/windows/usb-eject-log.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **Windows 10+；需要管理员权限**；无需额外库或工具 |
+| `tools/windows/usb-eject-log.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
 | `tools/windows/restart-service.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | `tools/power-current.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
 | `tools/power-events.py` | 开关机、睡眠唤醒和锁定/解锁历史日志 GUI 查看器。Linux 下锁屏历史支持有限。 | **macOS / Windows 10+ / 使用 systemd 的 Linux 桌面**<br />**Python 库**：`PySide6` |

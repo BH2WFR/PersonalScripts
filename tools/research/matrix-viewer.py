@@ -96,11 +96,25 @@ slice exports and rendered-image exports share Export, with separate headings.
 Process active matrix uses a fixed caption without the matrix name; its tooltip
 retains the source identity. Raw menus group Selection, Navigation and Table
 controls without changing the active matrix. A 3D right drag still rolls the camera.
-The 3D menu's XYZ scale 1:1:1 (data units) action disables automatic height
-scaling, sets Z multipliers to one for all visible layers, and resets stretched
-XYZ alignments to original coordinates while retaining translation alignments.
-It fits the 3D camera without changing its orientation or projection. Equal
-data-unit scales do not calibrate pixel coordinates into physical distances.
+Every canvas has a Scaling menu and a manual Scaling dialog linked from View
+settings. Images, signals, slices and derivatives accept explicit X/Y ranges
+(including scientific notation) and independent x2/x1.2 or divide-by-2/1.2 zoom.
+Each axis menu also offers Reset: fit that flat axis to displayed data, or
+restore that 3D scene multiplier to one, preserving other axes. Manual
+axis edits release the XY lock; explicit slice Y edits also disable Auto Y on
+slice change. Apply auto scaling fits once, unlike continuous auto-range.
+3D offers positive scene X/Y/Z multipliers (1e-12..1e12), composed after the
+per-matrix height/alignment settings. All surfaces, points, clipping caps and
+slice markers share the display transform; labels/picking undo it. Numeric
+exports retain coordinates while figure exports retain the displayed scaling.
+XY, YZ, ZX and XYZ equal-unit presets match the second axis to the first (XYZ
+resets all three to one). Matched stretch alignments revert to original, with
+translation alignments retained. Presets involving Z disable auto matrix height
+and set per-matrix height to one. Presets fit the camera without rotating it;
+subsequent independent axis edits preserve camera direction and distance.
+Apply auto scaling restores the usual height balance once, leaving continuous
+matrix height off. Per-matrix continuous height remains available explicitly.
+Equal data-unit scales do not calibrate pixel coordinates into physical distances.
 By default, matrix heights span roughly 30% of the longer XY side; point clouds
 keep a height multiplier of one.
 Small/large 3D Z ranges show a power-of-ten multiplier in the axis title;
@@ -392,7 +406,7 @@ def main() -> int:
             "Complex data offer Real, Imaginary, Magnitude, Phase (rad) and Magnitude (dB). Raw data can copy selections; "
             "8-bit image values also support hexadecimal display. "
             "Crop by source indices or value bounds, select a slice, and adjust sampling, height, point rendering and 1D/2D/3D point sizes. "
-            "Plot menus offer X:Y=1:1 or XYZ=1:1:1 data scales; 3D Z ticks label their multiplier. Slice plots auto-fit Y by default; disable Auto Y to retain it. "
+            "Scaling menus offer manual ranges, per-axis x2/x1.2 zoom and Reset, one-shot auto scaling, XY equality and 3D XY/YZ/ZX/XYZ equality; 3D Z ticks label their multiplier. Slice plots auto-fit Y by default; manual Y ranges disable it. "
             "Optional Inf/-Inf/NaN markers have configurable colors and 1D size. Clipped-value highlighting is enabled by "
             "default and can be disabled. Derivatives compute only when requested and reuse unchanged results. "
             "Transform tools create new matrices: Fourier FFT/IFFT, 1D Laplace and its inverse, data conversions (dB, angles, "

@@ -4,6 +4,7 @@ Run: conda run -n base python -m unittest discover -s test -p test_path_in_use.p
 """
 
 import contextlib
+import ctypes
 import importlib.util
 import io
 import json
@@ -114,6 +115,30 @@ class PathUsageTests(unittest.TestCase):
                     self.assertEqual(runner.main(), 1)
                 api.assert_not_called()
                 self.assertIn("administrator", output.getvalue())
+
+    def test_posix_import_excludes_windows_bindings_and_uses_lsof(self) -> None:
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform):
+                module_name = f"path_in_use_{platform}_test"
+                spec = importlib.util.spec_from_file_location(module_name, ROOT / "tools/filesystem/path-in-use.py")
+                assert spec is not None and spec.loader is not None
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                try:
+                    with patch.object(ctypes, "WinDLL", create=True) as load_dll:
+                        spec.loader.exec_module(module)
+                        with self.assertRaisesRegex(OSError, "unavailable"):
+                            module._WindowsHandleApi()
+                        with self.assertRaisesRegex(OSError, "unavailable"):
+                            module._run_windows_query(["unused"], 1)
+                        load_dll.assert_not_called()
+                    result = subprocess.CompletedProcess(["lsof"], 0, b"p42\0ceditor\0\nf3\0n/data/file\0\n", b"")
+                    with patch.object(module.subprocess, "run", return_value=result) as run:
+                        scan = module._native_scan(["lsof"], 5)
+                    self.assertEqual(scan.references[0].path, "/data/file")
+                    self.assertNotIn("creationflags", run.call_args.kwargs)
+                finally:
+                    sys.modules.pop(module_name, None)
 
     @unittest.skipUnless(sys.platform == "win32", "Requires real Windows Kernel32 APIs")
     def test_real_windows_system_table_finds_unicode_file_and_preserves_source(self) -> None:
@@ -261,6 +286,7 @@ else:
         self.assertNotIn("No matching references found", output.getvalue())
         self.assertLessEqual(len(error.getvalue().splitlines()), 4)
 
+    @patch.multiple(runner, FLGreen="", FLYellow="", FGray="", CRst="")
     def test_executable_path_grouping_filters_and_missing_metadata(self) -> None:
         scan = runner.Scan([
             runner.Reference(42, "editor", "/data/file", "3"),
@@ -299,15 +325,26 @@ else:
                     self.assertEqual(runner.main(), 1)
                 scan.assert_not_called()
                 prompt.assert_not_called()
-        with patch.object(sys, "platform", "linux"), patch.object(runner.System, "is_elevated", return_value=False):
-            with patch.object(runner.System, "restart_elevated") as restart, contextlib.redirect_stdout(io.StringIO()) as output:
-                self.assertFalse(runner._require_elevation())
-                restart.assert_not_called()
-            self.assertIn("sudo", output.getvalue())
-        with patch.object(sys, "platform", "win32"), patch.object(runner.System, "is_elevated", return_value=False):
-            with patch.object(runner.System, "restart_elevated") as restart, contextlib.redirect_stdout(io.StringIO()):
-                self.assertFalse(runner._require_elevation())
-                restart.assert_called_once()
+        for platform in ("linux", "darwin", "win32"):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform):
+                with patch.object(runner.System, "is_elevated", return_value=False):
+                    with patch.object(runner.System, "restart_elevated") as restart, contextlib.redirect_stdout(io.StringIO()):
+                        self.assertFalse(runner._require_elevation())
+                        restart.assert_called_once()
+
+    def test_elevation_uses_shared_helper_and_preserves_its_exit(self) -> None:
+        for platform in ("linux", "darwin", "win32"):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform):
+                with patch.object(runner.System, "is_elevated", return_value=True):
+                    with patch.object(runner.System, "restart_elevated") as restart:
+                        self.assertTrue(runner._require_elevation())
+                        restart.assert_not_called()
+                with patch.object(runner.System, "is_elevated", return_value=False):
+                    with patch.object(runner.System, "restart_elevated", side_effect=SystemExit(7)) as restart:
+                        with self.assertRaises(SystemExit) as caught:
+                            runner._require_elevation()
+                        self.assertEqual(caught.exception.code, 7)
+                        restart.assert_called_once()
 
     def test_main_uses_real_path_and_propagates_scan_failure(self) -> None:
         with patch.object(sys, "argv", ["path-in-use.py", str(ROOT)]), patch.object(runner, "_require_elevation", return_value=True):

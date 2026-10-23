@@ -382,22 +382,32 @@ class ImageView(QtWidgets.QWidget):
             self.marker_style = style
             self._update_clip_overlay()
 
-    def reset_view(self) -> None:
-        """Fit the complete matrix bounds, excluding the infinite profile line."""
+    def fit_bounds(self) -> tuple[tuple[float, float], tuple[float, float]] | None:
+        """Return displayed matrix X/Y bounds, excluding the infinite profile line.
+
+        Includes aligned overlays and pixel edges. Returns None without data;
+        reading these bounds does not change either viewport axis.
+        """
         if self._layers:
             xs = [(layer.frame.x_mapping.then(layer.x).forward(layer.frame.x_start - 0.5),
                    layer.frame.x_mapping.then(layer.x).forward(layer.frame.x_start + layer.frame.scalar.shape[1] - 0.5)) for layer in self._layers]
             ys = [(layer.frame.y_mapping.then(layer.y).forward(layer.frame.y_start - 0.5),
                    layer.frame.y_mapping.then(layer.y).forward(layer.frame.y_start + layer.frame.scalar.shape[0] - 0.5)) for layer in self._layers]
-            self.view_box.setRange(xRange=(min(x[0] for x in xs), max(x[1] for x in xs)),
-                                   yRange=(min(y[0] for y in ys), max(y[1] for y in ys)), padding=0.02)
-            return
+            return ((min(x[0] for x in xs), max(x[1] for x in xs)),
+                    (min(y[0] for y in ys), max(y[1] for y in ys)))
         if self.frame is not None:
             h, w = self.frame.scalar.shape
             x, y = self.frame.x_start, self.frame.y_start
             xm, ym = self.frame.x_mapping, self.frame.y_mapping
-            self.view_box.setRange(xRange=(xm.forward(x - 0.5), xm.forward(x + w - 0.5)),
-                                    yRange=(ym.forward(y - 0.5), ym.forward(y + h - 0.5)), padding=0.02)
+            return ((xm.forward(x - 0.5), xm.forward(x + w - 0.5)),
+                    (ym.forward(y - 0.5), ym.forward(y + h - 0.5)))
+        return None
+
+    def reset_view(self) -> None:
+        """Fit the complete matrix bounds, excluding the infinite profile line."""
+        bounds = self.fit_bounds()
+        if bounds is not None:
+            self.view_box.setRange(xRange=bounds[0], yRange=bounds[1], padding=0.02)
 
     def set_theme(self, dark: bool) -> None:
         """Set plot background and axis colors for the requested UI theme.

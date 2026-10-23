@@ -60,6 +60,7 @@ ignore-list:
         - "BUILD/"
         - "INSTALL/"
         - "research/matrix-viewer/"
+        - "network/rclone-sync/"
     platform-specific:
         # 规范：windows, linux, macos
         windows:

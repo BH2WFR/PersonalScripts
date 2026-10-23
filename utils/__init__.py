@@ -22,7 +22,7 @@ from .ansi import *
 from .cmd_check import CmdCheck
 from .console import Console
 from .environment import Environment, PythonEnvironment, RuntimeKind
-from .system import LinuxGui, System
+from .system import DiskInfo, DiskScan, LinuxGui, System
 from .paths import Paths
 from .input import Input
 from .cursor import Cursor
@@ -49,5 +49,5 @@ __all__ = [
     "CEraseDisplayAllScroll", "CEraseLine", "CEraseLineToEnd",
     "CEraseLineToStart", "CmdCheck", "Console", "Environment", "LinuxGui",
     "System", "Paths", "Input", "Cursor", "MenuOption", "Menu", "RuntimeKind", "PythonEnvironment", "Pdf",
-    "Font", "FontFace", "FontStyle",
+    "Font", "FontFace", "FontStyle", "DiskInfo", "DiskScan",
 ]

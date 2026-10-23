@@ -253,6 +253,11 @@ Interactive helpers live in `input.py`, `cursor.py`, `menu_option.py`, and
 and screen-control constants live in `ansi.py`. `utils/__init__.py` re-exports
 the public classes and ANSI constants.
 
+`system.py` owns the internal `_disk_*` native-query and parser helpers shared
+by disk inspection and volume-backed synchronization. `DiskInfo`/`DiskScan`
+retain unknown metadata and partial-scan warnings; callers deciding whether to
+write to a volume must validate completeness and current mount identity.
+
 If a group of utilities is **domain-specific** (e.g. image processing, network
 tools, PDF helpers), it should become a new file under `utils/` (e.g.
 `pdf.py`, `image.py`). **Stop and ask before creating another
@@ -273,6 +278,7 @@ Canonical implementations live there; do not add implementations to the
 | Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` — never re-runs after a helper starts |
 | Check if a CLI tool is in PATH | `Environment.check_commands(*CmdCheck)` or `Environment.which(name)` |
 | OS name / arch / hostname / Linux GUI | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()`, `System.get_linux_gui() -> LinuxGui \| None` |
+| Native disk inventory | `System.scan_disks() -> DiskScan`; returns `DiskInfo` trees with mounts, labels, filesystems, native IDs, platform details, and partial-query warnings. Windows uses PowerShell 7 Storage/CIM; Linux uses lsblk; macOS uses diskutil. Read-only, never mounts/elevates. Each query times out after 60 seconds. |
 | Print a box-drawing banner | `Console.print_banner("TITLE")` |
 | Print a horizontal separator | `Console.print_separator(width=..., color_ansi_esc=...)` |
 | Resolve an ANSI color constant name | `Console.resolve_ansi_color("FLYellow")` |
@@ -928,6 +934,16 @@ not in the README.
   faithfully preserving the owner's wording, style, structure, and meaning.
 
 ## Directory layout
+
+`tools/network/rclone-sync.py` is a thin entry for the private
+`tools/network/rclone-sync/` package, loaded as `personal_rclone_sync`.
+See that package's README.md for module ownership. Keep its internal modules
+out of launcher/compiler script lists. The compiler stages the package under
+its import name for Nuitka/PyInstaller; source launches use the file-based loader.
+Keep `{{script_dir}}` anchored to the entry directory. PathPairConfig stores
+unchanged YAML endpoints; ResolvedPathPair holds runtime addresses and volume
+bindings. Do not reintroduce parallel per-pair metadata lists or export a legacy
+API facade from the entry. Run rclone tests with `-p "test_rclone*.py"`.
 
 ```text
 ./

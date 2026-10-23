@@ -5,6 +5,8 @@
 # This file is detailed documentation for agents and users: schema fields,
 # inheritance rules, runtime behavior, and illustrative configuration examples.
 # Agents should read it when editing rclone-sync.py or a user's actual schema.
+# The entry loads the sibling rclone-sync/ package; its README.md describes the
+# module boundaries. script_dir still means the entry directory, not that package.
 # It is NOT the user's runtime configuration, and is NEVER an automatic default
 # or fallback. Do not execute these examples or treat them as the user's sync plan.
 # Keep this reference consistent with the script; edit the separately selected
@@ -33,7 +35,7 @@
 #   alternative-remote-host  append+dedup
 #   allow-actions          replace (including null, all, or an empty list)
 #   sub-tasks              replace
-#   paths                  required only under a sub-task; ordered [local, remote] pairs
+#   paths                  required only under a sub-task; ordered path1/path2 objects
 #   everything else        replace (override)
 #
 # Multiple profiles can be inherited via `inherit: [p1, p2]` — later
@@ -123,27 +125,59 @@
 #
 # ---- Path variables ---------------------------------------------------
 # Every task requires a non-empty sub-tasks list; at least one must match this machine.
-# Every sub-task requires paths: [[local, remote], ...], even for one pair.
-# Each pair is exactly two non-empty strings, in local/remote order, without a name.
+# Every sub-task requires paths: [{path1: local, path2: remote}, ...], even for one pair.
+# Each object requires path1 and path2, in local/remote order, without a name.
+# Endpoint lists such as [local, remote] are rejected; migrate them to objects.
+# Objects support the optional per-pair custom-host switches described below.
+# An endpoint is a template string, {path: literal}, or {volume: alias, path: relative}.
 # Legacy local-path/remote-path keys are rejected at every level. paths is not
 # allowed in profiles or parent tasks; endpoints cannot be inherited separately.
 # Shared inherit/exclude/path-type and all other options stay on task/sub-task.
 # All pairs use one selected action/comparison and one confirmation, in YAML order.
 # Commands are printed in full with [1/N], [2/N], ... numbering before execution.
 # Failure stops remaining pairs; Ctrl+C cancels the batch. CLI --dry-run prints
-# all commands without probing/transferring; interactive d simulates the whole batch.
+# all commands without transferring (volume discovery still runs); interactive d
+# simulates the whole batch with fresh volume guards.
 # Alternate host selection is shared only among pairs with the same original
 # rclone prefix. Different prefixes get separate menus; local/UNC paths are unchanged.
 # Existing sub-tasks are alternatives, not implicitly combined into a path batch.
 #
-# ``remote-path-type`` controls how the remote endpoint (second string) is classified:
+# ---- Temporary per-pair addresses -------------------------------------
+# Path OBJECTS alone accept these switches (not settings, tasks, or sub-tasks):
+#   enable-custom-sftp-host: false       # default false
+#   enable-custom-webdav-host: false     # default false
+# Only one may be true, and path2 must be a named rclone remote of that backend.
+# The switches declare the actual backend; they do not change its type or resolve
+# crypt/alias wrappers. Local/volume path2 endpoints cannot enable these prompts.
+# Interactive mode first selects any alternative remote, then asks each enabled
+# pair whether to use a custom address. Enter defaults to No. Yes asks for:
+#   SFTP: a hostname or IPv4/IPv6 address, WITHOUT scheme, port, user, or path.
+#         The configured port, username, password, key, and other options remain.
+#   WebDAV: a full http(s) base URL, e.g. https://example.com:8443/dav/.
+#           Include the intended scheme, port, and service path; no credentials,
+#           query, or fragment. Existing authentication and other options remain.
+# Blank address keeps the configured value; Q returns without running the batch.
+# Values are literal, never expanded as variables or wildcards. Only this pair's
+# path2 gets a connection-string override; other pairs and ancillary paths such
+# as backup-dir/additional-args are unchanged. No YAML/rclone config is saved.
+# Checks, pull/push, dry-runs, and retries use the same selected address.
+# CLI --task skips these prompts and retains configured addresses, as it does
+# alternative-remote selection. SSH host/certificate checks remain in effect.
+#
+# Examples:
+#   paths:
+#     - {path1: '~/Projects', path2: 'dav:Projects', enable-custom-webdav-host: true}
+#     - {path1: '/srv/data', path2: 'ssh:backup', enable-custom-sftp-host: true}
+#     - {path1: '/srv/data', path2: {volume: backup-usb, path: 'data'}}
+#
+# ``remote-path-type`` controls how the path2 endpoint is classified:
 #   auto    — infer from the path string (default)
 #   rclone  — force ``remote-path`` to be treated as a rclone remote
 #   local   — force ``remote-path`` to be treated as a local/UNC path
 # This affects rclone-remote-only features such as alternative host selection
 # and whether remote mtime checks use rclone lsjson or local filesystem APIs.
 #
-# Every path endpoint and path field (backup-dir, log-file)
+# Every STRING endpoint and path field (backup-dir, log-file)
 # supports the following placeholders:
 #
 #   $VAR / ${VAR} / %VAR%      any environment variable (all platforms)
@@ -159,10 +193,41 @@
 # Missing variables on other machines' unselected tasks do not block this machine.
 #
 # Examples:
-#   paths: [['~/Documents', 'myremote:Documents']]
-#   paths: [['%USERPROFILE%\Documents', 'myremote:Documents']]  (Windows cmd style)
-#   paths: [['$ENV:APPDATA/Code', 'myremote:Code']]              (PowerShell style)
+#   paths: [{path1: '~/Documents', path2: 'myremote:Documents'}]
+#   paths: [{path1: '%USERPROFILE%\Documents', path2: 'myremote:Documents'}]
+#   paths: [{path1: '$ENV:APPDATA/Code', path2: 'myremote:Code'}]
 #   log-file:  "{{schema_dir}}/rclone-sync.log"     (beside the YAML)
+#
+# ---- Literal endpoints and local volumes ------------------------------
+# {path: 'literal/path'} disables variable, placeholder, and leading ~ expansion.
+# {volume: backup-usb, path: 'data'} locates a mounted volume and joins a literal
+# suffix. Both endpoints accept these objects. Only path and optional volume are
+# allowed; unknown keys/aliases are errors. Plain strings retain existing behavior.
+# YAML single quotes control YAML escaping, not the runner's template expansion.
+# No endpoint does wildcard/glob expansion; use filters for selecting files.
+#
+# Volume aliases live in top-level local-volumes. label is required and exact;
+# filesystem is optional and case-insensitive. Selector values are literal too.
+# Discovery runs only for selected tasks containing volume objects. Missing or
+# duplicate volumes, multiple mount roots, incomplete scans, and unmounted volumes
+# stop the task. No automatic mounting or fallback directory creation is performed.
+# Suffixes use /, reject absolute/drive/UNC paths and .., and use '.' for the root.
+# Endpoint symlinks that escape the root and paths entering another filesystem
+# are rejected. Recursive link handling inside a source remains governed by rclone
+# links/copy-links options. Volume endpoints always use local metadata/host handling.
+# Before pre-checks, transfers, retries, simulated dry-runs, and link repair, the
+# selected volume identity and mount are checked again. Read-only volumes are
+# allowed as copy sources and for check, but not for destinations/move/bisync.
+# Changed identities or mounts require selecting the task again; cached commands
+# never silently rebind to a different location. Guards cannot prevent hot-unplug
+# during a running rclone process. Bisync state uses resolved paths, so stable
+# mounts are recommended; changing a path may require explicit state rebuilding.
+# Native tools: Windows pwsh 7 Storage/CIM, Linux lsblk, macOS diskutil.
+# No additional Python dependency is needed.
+#
+# Examples:
+#   paths: [{path1: '/srv/data', path2: {volume: backup-usb, path: 'server-data'}}]
+#   paths: [{path1: {path: '/srv/$literal/%NAME%/{{text}}'}, path2: {volume: backup-usb, path: '$literal'}}]
 # ============================================================
 
 
@@ -235,11 +300,27 @@ settings:
 
 
 # -------------------------------------------------------------------
+# local-volumes — illustrative literal selectors, not a runtime default
+# -------------------------------------------------------------------
+local-volumes:
+  backup-usb:
+    label: BACKUP
+    filesystem: exfat
+
+# -------------------------------------------------------------------
 # tasks  —  sync task definitions (omit/null/empty means no tasks)
 # -------------------------------------------------------------------
 tasks:
   # ---------- ungrouped tasks ----------
   ungrouped:
+    - name: local-volume-backup
+      preferred-mode: copy
+      sub-tasks:
+        - name: linux
+          platform: linux
+          paths:
+            - {path1: '/srv/example-data', path2: {volume: backup-usb, path: 'server-data'}}
+
     # =================================================================
     # "perfect-task" — demonstrates every available field
     # =================================================================
@@ -412,7 +493,7 @@ tasks:
         - name: desktop-pc
           computer-name: ZL-DESKTOP
           paths:
-            - ['D:\Projects', 'myremote:/Projects']
+            - {path1: 'D:\Projects', path2: 'myremote:/Projects'}
           # At runtime the user can choose:
           #   [0] myremote:/Projects        (current)
           #   [1] myremote-backup:/Projects
@@ -425,19 +506,19 @@ tasks:
           platform: windows
           arch: amd64
           paths:
-            - ['$ENV:HOME\Projects', 'myremote:/Projects']
+            - {path1: '$ENV:HOME\Projects', path2: 'myremote:/Projects'}
 
         # --- Match by platform only ---
         - name: macbook
           platform: darwin
           paths:
-            - ['~/Projects', 'myremote:/Projects']
+            - {path1: '~/Projects', path2: 'myremote:/Projects'}
 
         # --- Match by platform OR (list, any satisfy) ---
         - name: linux-or-macos
           platform: [linux, darwin]
           paths:
-            - ['~/Projects', 'myremote:/Projects']
+            - {path1: '~/Projects', path2: 'myremote:/Projects'}
 
     # =================================================================
     # "minimal" — simplest tasks
@@ -449,26 +530,39 @@ tasks:
         - name: macos
           platform: darwin
           paths:
-            - ['~/Documents', 'myremote:Documents']
+            - {path1: '~/Documents', path2: 'myremote:Documents'}
         - name: windows
           platform: windows
           paths:
-            - ['%USERPROFILE%\Documents', 'myremote:Documents']
+            - {path1: '%USERPROFILE%\Documents', path2: 'myremote:Documents'}
 
     # If there's only one sub-task, paths can stay at sub-task level.
     - name: minimal-single
       sub-tasks:
         - name: default
           paths:
-            - ['~/Documents', 'myremote:Documents']
+            - {path1: '~/Documents', path2: 'myremote:Documents'}
 
     # Multiple pairs execute sequentially, with no additional selection menu.
     - name: multiple-directories
       sub-tasks:
         - name: default
           paths:
-            - ['~/Example/config', 'myremote:Example/config']
-            - ['~/Example/data', 'myremote:Example/data']
+            - {path1: '~/Example/config', path2: 'myremote:Example/config'}
+            - {path1: '~/Example/data', path2: 'myremote:Example/data'}
+
+    # These named remotes must already exist with the matching backend type.
+    - name: temporary-addresses
+      preferred-mode: copy
+      sub-tasks:
+        - name: default
+          paths:
+            - path1: '~/Projects'
+              path2: 'dav:Projects'
+              enable-custom-webdav-host: true
+            - path1: '~/Documents'
+              path2: 'ssh:backup/Documents'
+              enable-custom-sftp-host: true
 
     # One file, two exact filenames; no upload/download sub-task split.
     # Omit allow-actions to also permit the two move-file actions.
@@ -481,12 +575,12 @@ tasks:
         - name: windows
           platform: windows
           paths:
-            - ['$ENV:APPDATA/ExampleApp/config.ini', 'myremote:AppData/ExampleApp/config.ini']
+            - {path1: '$ENV:APPDATA/ExampleApp/config.ini', path2: 'myremote:AppData/ExampleApp/config.ini'}
 
 
   # ---------- grouped tasks ----------
   # Tasks can be organized into named groups for clarity.
-  # Groups are listed alphabetically after ungrouped tasks.
+  # Groups and their tasks are listed in schema order, including ungrouped.
   media:
     # =================================================================
     # "photos-sync" — example using inherit with host-webdav
@@ -506,7 +600,7 @@ tasks:
       sub-tasks:
         - name: default
           paths:
-            - ['~/Pictures', 'myremote:Photos']
+            - {path1: '~/Pictures', path2: 'myremote:Photos'}
           # At runtime the user can choose:
           #   [0] dav-ddns4:/Photos     (current)
           #   [1] dav-ddns6:/Photos     DDNS IPv6 (direct)
@@ -523,4 +617,4 @@ tasks:
       sub-tasks:
         - name: default
           paths:
-            - ['~/Music', 'myremote:Music']
+            - {path1: '~/Music', path2: 'myremote:Music'}

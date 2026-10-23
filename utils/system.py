@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 import platform
+import plistlib
 import shutil
 import socket
 import subprocess
@@ -13,6 +14,8 @@ import sys
 import time
 from collections.abc import Callable
 from enum import StrEnum
+from dataclasses import dataclass, field
+from typing import cast
 
 from .ansi import *
 
@@ -25,7 +28,391 @@ class LinuxGui(StrEnum):
     WAYLAND = "wayland"
 
 
+_DISK_QUERY_TIMEOUT = 60
+_DISK_LINUX_COLUMNS = "NAME,PATH,TYPE,SIZE,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL,TRAN,RM,RO,PTTYPE,FSAVAIL"
+
+
+@dataclass
+class DiskInfo:
+    """One disk, partition, filesystem, or virtual block device.
+
+    Attributes:
+        device: OS device path or name (not a persistent identity).
+        kind: Native device type, such as disk, part, lvm, or APFS container.
+        size: Capacity in bytes, or None when unavailable; zero is valid.
+        free: Filesystem free/available bytes, or None; not disk unallocated space.
+        label: Filesystem label, if reported.
+        filesystem: Native filesystem type, if known.
+        mounts: Drive roots and directory mount points; excludes volume GUIDs.
+        identifiers: Named identifiers, keeping disk, partition, and volume IDs distinct.
+        details: Platform-specific descriptive fields, including topology references.
+        children: Dependent devices. Shared devices may appear under multiple parents.
+        shared_capacity: APFS parent container capacity in bytes, when confirmed.
+    """
+
+    device: str
+    kind: str
+    size: int | None = None
+    free: int | None = None
+    label: str = ""
+    filesystem: str = ""
+    mounts: list[str] = field(default_factory=list)
+    identifiers: dict[str, str] = field(default_factory=dict)
+    details: dict[str, str] = field(default_factory=dict)
+    children: list["DiskInfo"] = field(default_factory=list)
+    shared_capacity: int | None = None
+
+
+@dataclass
+class DiskScan:
+    """Read-only inventory with explicit partial-result diagnostics.
+
+    Attributes:
+        devices: Root devices, including virtual devices exposed by the OS.
+        warnings: Failed optional queries or incomplete topology explanations.
+    """
+
+    devices: list[DiskInfo] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def _disk_record(value: object) -> dict[str, object]:
+    """Validate a native JSON/plist mapping at the parser boundary."""
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise ValueError("Expected a device information object")
+    return cast(dict[str, object], value)
+
+
+def _disk_records(value: object) -> list[dict[str, object]]:
+    """Accept native empty arrays, singleton objects, or arrays of objects."""
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [_disk_record(value)]
+    if not isinstance(value, list):
+        raise ValueError("Expected a device information array")
+    return [_disk_record(item) for item in cast(list[object], value)]
+
+
+def _disk_text(value: object) -> str:
+    """Normalize optional native scalar text without turning null into an ID."""
+    return str(value).strip() if value is not None else ""
+
+
+def _disk_size(value: object) -> int | None:
+    """Read nonnegative native byte counts, preserving unknown and zero."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (str, int)):
+        try:
+            number = int(value)
+            return number if number >= 0 else None
+        except ValueError:
+            pass
+    return None
+
+
+def _disk_strings(value: object) -> list[str]:
+    """Normalize singleton/array text fields and remove absent entries."""
+    values = cast(list[object], value) if isinstance(value, list) else [value]
+    return list(dict.fromkeys(text for item in values if (text := _disk_text(item))))
+
+
+def _disk_fields(data: dict[str, object], mapping: dict[str, str]) -> dict[str, str]:
+    """Pick named scalar fields without inventing missing values."""
+    return {label: value for key, label in mapping.items() if (value := _disk_text(data.get(key)))}
+
+
+def _disk_run(command: list[str]) -> bytes:
+    """Run a bounded read-only query; failures include the native diagnostic."""
+    environment = os.environ.copy()
+    environment["LC_ALL"] = "C"
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=_DISK_QUERY_TIMEOUT, env=environment)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Cannot query {command[0]}: {exc}") from exc
+    if result.returncode:
+        error = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"{command[0]} failed ({result.returncode}): {error}")
+    return result.stdout
+
+
+def _disk_linux_node(data: dict[str, object]) -> DiskInfo:
+    """Preserve lsblk dependency trees, including unmounted and stacked devices."""
+    node = DiskInfo(
+        device=_disk_text(data.get("path")) or f"/dev/{_disk_text(data.get('name'))}",
+        kind=_disk_text(data.get("type")), size=_disk_size(data.get("size")),
+        free=_disk_size(data.get("fsavail")), label=_disk_text(data.get("label")),
+        filesystem=_disk_text(data.get("fstype")),
+        mounts=_disk_strings(data.get("mountpoints", data.get("mountpoint"))),
+        identifiers=_disk_fields(data, {"serial": "Hardware serial", "uuid": "Filesystem UUID", "partuuid": "Partition UUID"}),
+        details=_disk_fields(data, {"model": "Model", "tran": "Transport", "pttype": "Partition table"}),
+        children=[_disk_linux_node(child) for child in _disk_records(data.get("children"))],
+    )
+    for key, label in (("rm", "Removable media"), ("ro", "Read-only")):
+        if data.get(key) is not None:
+            node.details[label] = "yes" if data[key] in (True, 1, "1") else "no"
+    return node
+
+
+def _disk_scan_linux() -> DiskScan:
+    """Query lsblk, with the older single-mountpoint column as a fallback."""
+    command = ["lsblk", "--json", "--bytes", "--tree", "--output", _DISK_LINUX_COLUMNS]
+    warnings: list[str] = []
+    try:
+        raw = _disk_run(command)
+    except RuntimeError as exc:
+        if "unknown column" not in str(exc).lower() or "MOUNTPOINTS" not in str(exc):
+            raise
+        command[-1] = _DISK_LINUX_COLUMNS.replace("MOUNTPOINTS", "MOUNTPOINT")
+        raw = _disk_run(command)
+        warnings.append("This lsblk version exposes only one mount point per filesystem.")
+    data = _disk_record(json.loads(raw))
+    if "blockdevices" not in data:
+        raise ValueError("lsblk response has no blockdevices array")
+    return DiskScan([_disk_linux_node(node) for node in _disk_records(data["blockdevices"])], warnings)
+
+
+# Emit explicit properties rather than serializing provider-dependent CIM objects.
+# GUID access paths are identities, not evidence of a drive/directory mount.
+_DISK_WINDOWS_QUERY = r"""
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$notes = [Collections.Generic.List[string]]::new()
+$disks = @(Get-Disk | Sort-Object Number)
+$parts = @()
+$volumes = @()
+$cimVolumes = @()
+$physical = @()
+try { $parts = @(Get-Partition) } catch { $notes.Add("Partition query failed: $_") }
+try { $volumes = @(Get-Volume) } catch { $notes.Add("Volume query failed: $_") }
+try { $cimVolumes = @(Get-CimInstance Win32_Volume) } catch { $notes.Add("Volume serial query failed: $_") }
+try { $physical = @(Get-CimInstance Win32_DiskDrive) } catch { $notes.Add("Physical disk query failed: $_") }
+$seen = @{}
+function Read-Volume($v, $accessPaths) {
+    $id = [string]$v.Path
+    $seen[$id] = $true
+    $cv = $cimVolumes | Where-Object { $_.DeviceID -eq $id } | Select-Object -First 1
+    $ids = @{ 'Volume GUID path' = $id }
+    if ($null -ne $cv -and $null -ne $cv.SerialNumber) {
+        $hex = ([uint32]$cv.SerialNumber).ToString('X8')
+        $ids['Volume serial'] = $hex.Insert(4, '-')
+    }
+    $mounts = @($accessPaths | Where-Object { $_ -and $_ -notlike '\\?\Volume{*' })
+    if ([int][char]$v.DriveLetter -gt 0) { $mounts += "$($v.DriveLetter):\" }
+    @{
+        device = $id; kind = 'volume'; size = $v.Size; free = $v.SizeRemaining
+        label = [string]$v.FileSystemLabel; filesystem = [string]$v.FileSystemType
+        mounts = @($mounts | Select-Object -Unique); identifiers = $ids
+        details = @{ 'Health' = [string]$v.HealthStatus; 'Drive type' = [string]$v.DriveType }
+    }
+}
+$nodes = @(
+    foreach ($d in $disks) {
+        $hw = $physical | Where-Object { $_.Index -eq $d.Number } | Select-Object -First 1
+        $children = @(
+            foreach ($p in @($parts | Where-Object { $_.DiskNumber -eq $d.Number } | Sort-Object PartitionNumber)) {
+                $letter = [string]$p.DriveLetter
+                $vs = @($volumes | Where-Object {
+                    ($_.Path -and $_.Path -in $p.AccessPaths) -or
+                    ([int][char]$p.DriveLetter -gt 0 -and [string]$_.DriveLetter -eq $letter)
+                })
+                $pids = @{}
+                if ($p.Guid) { $pids['Partition GUID'] = [string]$p.Guid }
+                @{
+                    device = "Disk $($d.Number) / Partition $($p.PartitionNumber)"
+                    kind = 'partition'; size = $p.Size; identifiers = $pids
+                    mounts = @($p.AccessPaths | Where-Object { $_ -and $_ -notlike '\\?\Volume{*' })
+                    details = @{ 'Partition type' = [string]$p.Type; 'Offset (bytes)' = [string]$p.Offset }
+                    children = @(foreach ($v in $vs) { Read-Volume $v $p.AccessPaths })
+                }
+            }
+        )
+        $ids = @{ 'Hardware serial' = [string]$d.SerialNumber; 'Disk unique ID' = [string]$d.UniqueId }
+        if ($d.Guid -and $d.Guid -ne [guid]::Empty) { $ids['Disk GUID'] = [string]$d.Guid }
+        if ([string]$d.PartitionStyle -eq 'MBR') { $ids['MBR signature'] = ([uint32]$d.Signature).ToString('X8') }
+        @{
+            device = "\\.\PHYSICALDRIVE$($d.Number)"; kind = 'disk'; size = $d.Size
+            identifiers = $ids; children = $children
+            details = @{
+                'Model' = [string]$d.FriendlyName; 'Transport' = [string]$d.BusType
+                'Partition table' = [string]$d.PartitionStyle; 'Read-only' = [string]$d.IsReadOnly
+                'Offline' = [string]$d.IsOffline; 'Health' = [string]$d.HealthStatus
+                'Media type' = [string]$hw.MediaType
+            }
+        }
+    }
+    foreach ($hw in $physical) {
+        if ($hw.Index -notin $disks.Number) {
+            $notes.Add("$($hw.DeviceID): Storage topology unavailable (for example, a dynamic disk).")
+            @{
+                device = [string]$hw.DeviceID; kind = 'disk'; size = $hw.Size
+                identifiers = @{ 'Hardware serial' = [string]$hw.SerialNumber }
+                details = @{ 'Model' = [string]$hw.Model; 'Transport' = [string]$hw.InterfaceType }
+            }
+        }
+    }
+    foreach ($v in $volumes) {
+        if (-not $seen.ContainsKey([string]$v.Path)) {
+            $node = Read-Volume $v @()
+            $node.details['Topology'] = 'No partition association reported'
+            $node
+        }
+    }
+)
+@{ devices = $nodes; warnings = @($notes) } | ConvertTo-Json -Depth 12 -Compress
+"""
+
+
+def _disk_windows_node(data: dict[str, object]) -> DiskInfo:
+    """Read the explicit Windows helper contract and omit empty optional IDs."""
+    return DiskInfo(
+        device=_disk_text(data.get("device")), kind=_disk_text(data.get("kind")),
+        size=_disk_size(data.get("size")), free=_disk_size(data.get("free")),
+        label=_disk_text(data.get("label")), filesystem=_disk_text(data.get("filesystem")),
+        mounts=_disk_strings(data.get("mounts")),
+        identifiers={k: v for k, raw in sorted(_disk_record(data.get("identifiers", {})).items()) if (v := _disk_text(raw))},
+        details={k: v for k, raw in sorted(_disk_record(data.get("details", {})).items()) if (v := _disk_text(raw))},
+        children=[_disk_windows_node(child) for child in _disk_records(data.get("children"))],
+    )
+
+
+def _disk_scan_windows() -> DiskScan:
+    """Collect Windows Storage topology and supplemental CIM identity fields."""
+    executable = shutil.which("pwsh")
+    if not executable:
+        raise RuntimeError("PowerShell 7 (pwsh) is required for Windows disk discovery.")
+    raw = _disk_run([executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", _DISK_WINDOWS_QUERY])
+    data = _disk_record(json.loads(raw.decode("utf-8-sig")))
+    if "devices" not in data:
+        raise ValueError("PowerShell response has no devices array")
+    return DiskScan([_disk_windows_node(node) for node in _disk_records(data["devices"])], _disk_strings(data.get("warnings")))
+
+
+def _disk_scan_macos() -> DiskScan:
+    """Read diskutil topology, enriching every device with its info property list."""
+    listing = _disk_record(plistlib.loads(_disk_run(["diskutil", "list", "-plist"])))
+    if "AllDisksAndPartitions" not in listing:
+        raise ValueError("diskutil response has no AllDisksAndPartitions array")
+    result = DiskScan()
+    nodes: dict[str, DiskInfo] = {}
+
+    def read_node(entry: dict[str, object], kind: str) -> DiskInfo:
+        """Keep list metadata when a device disappears during its info query."""
+        identifier = _disk_text(entry.get("DeviceIdentifier"))
+        if not identifier:
+            raise ValueError("diskutil returned a device without an identifier")
+        data = dict(entry)
+        try:
+            data.update(_disk_record(plistlib.loads(_disk_run(["diskutil", "info", "-plist", identifier]))))
+        except (RuntimeError, ValueError, plistlib.InvalidFileException) as exc:
+            result.warnings.append(f"{identifier}: details unavailable: {exc}")
+        if kind == "disk" and _disk_text(data.get("APFSContainerReference")) == identifier:
+            kind = "APFS container"
+        identifiers = _disk_fields(data, {"VolumeUUID": "Volume UUID"})
+        native_uuid = _disk_text(data.get("DiskUUID"))
+        if native_uuid:
+            if kind == "partition":
+                identifiers["Partition UUID"] = native_uuid
+            elif kind == "APFS container":
+                identifiers["APFS container UUID"] = native_uuid
+            elif native_uuid.casefold() != identifiers.get("Volume UUID", "").casefold():
+                # Preserve an otherwise unclassified native ID without calling
+                # it a physical partition or assuming it is a volume UUID.
+                identifiers["Disk UUID (diskutil)"] = native_uuid
+        node = DiskInfo(
+            device=_disk_text(data.get("DeviceNode")) or f"/dev/{identifier}", kind=kind,
+            size=_disk_size(data.get("TotalSize", data.get("Size"))),
+            free=_disk_size(data.get("VolumeFreeSpace")), label=_disk_text(data.get("VolumeName")),
+            filesystem=_disk_text(data.get("FilesystemType")), mounts=_disk_strings(data.get("MountPoint")),
+            identifiers=identifiers,
+            details=_disk_fields(data, {
+                "MediaName": "Media name", "BusProtocol": "Transport", "Content": "Content",
+                "Internal": "Internal", "RemovableMedia": "Removable media", "VirtualOrPhysical": "Device class",
+                "ReadOnlyMedia": "Read-only media", "ReadOnlyVolume": "Read-only volume",
+                "Mounted": "Mounted", "APFSContainerReference": "APFS container",
+            }),
+        )
+        nodes[identifier] = node
+        for key, child_kind in (("Partitions", "partition"), ("APFSVolumes", "APFS volume")):
+            node.children.extend(read_node(child, child_kind) for child in _disk_records(entry.get(key)))
+        return node
+
+    result.devices = [read_node(entry, "disk") for entry in _disk_records(listing["AllDisksAndPartitions"])]
+    # APFS storage is shared. Keep synthesized containers separate, with explicit
+    # physical-store references instead of falsely assigning a single parent.
+    if any("apfs" in f"{node.filesystem} {node.details}".lower() for node in nodes.values()):
+        try:
+            apfs = _disk_record(plistlib.loads(_disk_run(["diskutil", "apfs", "list", "-plist"])))
+            for container in _disk_records(apfs.get("Containers")):
+                reference = _disk_text(container.get("ContainerReference"))
+                node = nodes.get(reference)
+                if node is None:
+                    node = read_node({"DeviceIdentifier": reference}, "APFS container")
+                    result.devices.append(node)
+                node.kind = "APFS container"
+                container_uuid = _disk_text(container.get("APFSContainerUUID"))
+                native_uuid = node.identifiers.get("Disk UUID (diskutil)", "")
+                if native_uuid and native_uuid.casefold() == container_uuid.casefold():
+                    del node.identifiers["Disk UUID (diskutil)"]
+                node.identifiers.update(_disk_fields(container, {"APFSContainerUUID": "APFS container UUID"}))
+                ceiling = _disk_size(container.get("CapacityCeiling"))
+                if ceiling is not None:
+                    node.size = ceiling
+                stores = [_disk_text(store.get("DeviceIdentifier")) for store in _disk_records(container.get("PhysicalStores"))]
+                node.details["Physical stores"] = ", ".join(stores)
+                node.details["Capacity"] = "Shared by APFS volumes; do not sum child capacities"
+                for volume in _disk_records(container.get("Volumes")):
+                    identifier = _disk_text(volume.get("DeviceIdentifier"))
+                    child = nodes.get(identifier)
+                    if child is None:
+                        child = read_node(volume, "APFS volume")
+                        node.children.append(child)
+                    child.identifiers.update(_disk_fields(volume, {"APFSVolumeUUID": "Volume UUID"}))
+                    native_uuid = child.identifiers.get("Disk UUID (diskutil)", "")
+                    if native_uuid and native_uuid.casefold() == child.identifiers.get("Volume UUID", "").casefold():
+                        del child.identifiers["Disk UUID (diskutil)"]
+                for child in node.children:
+                    if child.kind == "APFS volume":
+                        child.shared_capacity = node.size
+        except (RuntimeError, ValueError, plistlib.InvalidFileException) as exc:
+            result.warnings.append(f"APFS topology unavailable: {exc}")
+    return result
+
+
+
 class System:
+    @staticmethod
+    def scan_disks() -> DiskScan:
+        """Discover connected disks, partitions, volumes, and native identifiers.
+
+        Returns:
+            Inventory including unmounted devices and warnings for partial queries.
+            Unknown values remain absent. Virtual devices are retained as reported
+            by the OS; shared devices can appear in multiple dependency branches.
+
+        Raises:
+            RuntimeError: Unsupported platform, missing tool, timeout, or failed scan.
+            ValueError: Native output is malformed or lacks its inventory field.
+
+        Side effects:
+            Runs read-only OS commands, without elevation, mounting, or printing.
+            Each subprocess has a 60-second timeout. Hardware may change during a scan.
+        """
+        try:
+            if sys.platform == "win32":
+                return _disk_scan_windows()
+            if sys.platform == "linux":
+                return _disk_scan_linux()
+            if sys.platform == "darwin":
+                return _disk_scan_macos()
+        except plistlib.InvalidFileException as exc:
+            raise ValueError(f"Invalid diskutil property list: {exc}") from exc
+        raise RuntimeError(f"Unsupported disk inventory platform: {sys.platform}")
+
+
+
     @staticmethod
     def get_arch() -> str:
         """Return the normalized machine architecture."""

@@ -23,8 +23,10 @@ links inside the directory are not exhaustively followed. The input path's
 symlinks are resolved. Deleted paths reported by lsof remain searchable under
 an existing parent directory. A reference does not prove a delete/unmount lock.
 
-Actual scans require administrator/root privileges. Windows uses the project's
-elevation helper; on Unix, run with sudo using the same Python interpreter.
+Actual scans require administrator/root privileges. All platforms use the
+project's elevation helper; Linux/macOS restart through sudo in the current
+terminal, preserving the Python interpreter and arguments. sudo may prompt
+for a password. Already elevated processes continue without restarting.
 Help never elevates. Protected processes and concurrent changes can hide data;
 an empty result means no references were found, not proof a path is unused.
 Exit 0: query completed; 1: failed/incomplete query or unavailable metadata;
@@ -39,13 +41,14 @@ Requirements:
     Python 3.13+, project utils, psutil (pip install psutil).
     Windows 10+: built-in Kernel32/Ntdll APIs via standard-library ctypes.
     Linux/macOS: lsof on PATH (Linux: install with your package manager;
-        macOS: /usr/sbin/lsof). Administrator/root privileges for scans.
+        macOS: /usr/sbin/lsof); sudo for elevation when not already root.
+    Administrator/root privileges for scans; elevation is requested automatically.
 
 Usage:
     python path-in-use.py
     python path-in-use.py "D:/Data" --process editor
     python path-in-use.py /mnt/data --pid 1234 --timeout 120
-    sudo /path/to/conda/bin/python path-in-use.py /path/to/file
+    /path/to/conda/bin/python path-in-use.py /path/to/file
 """
 
 import argparse
@@ -60,7 +63,6 @@ from pathlib import Path
 import posixpath
 import queue
 import re
-import shlex
 import subprocess
 import sys
 import threading
@@ -153,10 +155,11 @@ def _parser() -> argparse.ArgumentParser:
         "  Drive roots and mount points are treated as directories (D: means D:/).",
         epilog=f"{FGray}Requirements:\n"
         "  psutil (pip install psutil); Windows 10+: built-in APIs, no external tool.\n"
-        "  Linux/macOS: lsof on PATH. Scans require administrator/root privileges.\n"
-        "  Windows requests elevation; Unix users must launch with sudo/root.\n\n"
+        "  Linux/macOS: lsof on PATH; sudo for elevation when not already root.\n"
+        "  Scans automatically request administrator/root privileges.\n"
+        "  Linux/macOS restart in the current terminal; sudo may prompt for a password.\n\n"
         "Examples:\n  python path-in-use.py D:/Data --process editor\n"
-        "  sudo /path/to/conda/bin/python path-in-use.py /mnt/data --pid 1234\n\n"
+        "  /path/to/conda/bin/python path-in-use.py /mnt/data --pid 1234\n\n"
         "Notes:\n  No disk/volume-specific scanning. Uses reported paths, not file identity.\n"
         "  Windows checks file handles and mapped files/modules using NT names.\n"
         "  Alternate hard links and restricted processes may still be missed.\n"
@@ -178,13 +181,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _require_elevation() -> bool:
-    """Require root on Unix or restart through the shared Windows helper."""
+    """Request elevation through the shared helper on every supported platform."""
     if not System.is_elevated():
-        if sys.platform != "win32":
-            command = shlex.join([sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]])
-            print(f"{FLRed}Root privileges are required. Re-run from a sudo/root shell:{CRst}")
-            print(f"  sudo {command}")
-            return False
         System.restart_elevated()
     if not System.is_elevated():
         print(f"{FLRed}Elevation failed; no scan was started.{CRst}")
@@ -194,6 +192,8 @@ def _require_elevation() -> bool:
 
 def _run_windows_query(command: list[str], timeout: float) -> subprocess.CompletedProcess[bytes]:
     """Restart only our worker after a stalled query, skipping its PID/handle pair."""
+    if sys.platform != "win32":
+        raise OSError("The Windows query worker is unavailable on this platform")
     deadline = time.monotonic() + timeout
     output: list[bytes] = []
     skipped: set[tuple[int, int]] = set()
@@ -269,8 +269,7 @@ def _run_query(command: list[str], timeout: float) -> subprocess.CompletedProces
         if sys.platform == "win32":
             return _run_windows_query(command, timeout)
         return subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=timeout, env=environment, check=False,
-                              creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+                              timeout=timeout, env=environment, check=False)
     except subprocess.TimeoutExpired as exc:
         if sys.platform == "win32":
             message = f"Windows worker timed out after {timeout:g}s; completed records were retained."
@@ -315,200 +314,206 @@ class _WindowsHandleApi:
     No target handles are closed and no target threads are terminated.
     """
 
-    def __init__(self) -> None:
-        """Bind Win32/NT signatures; raise OSError outside Windows."""
-        if sys.platform != "win32":
-            raise OSError("Windows handle APIs are unavailable on this platform")
-        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        self.ntdll = ctypes.WinDLL("ntdll")
-        self.advapi = ctypes.WinDLL("advapi32", use_last_error=True)
-        handle, dword = ctypes.c_void_p, ctypes.c_uint32
-        self.kernel.OpenProcess.argtypes = [dword, ctypes.c_int, dword]
-        self.kernel.OpenProcess.restype = handle
-        self.kernel.GetCurrentProcess.argtypes = []
-        self.kernel.GetCurrentProcess.restype = handle
-        self.kernel.CloseHandle.argtypes = [handle]
-        self.kernel.CloseHandle.restype = ctypes.c_int
-        self.kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, dword, dword, handle, dword, dword, handle]
-        self.kernel.CreateFileW.restype = handle
-        self.kernel.DuplicateHandle.argtypes = [handle, handle, handle, ctypes.POINTER(handle),
-                                               dword, ctypes.c_int, dword]
-        self.kernel.DuplicateHandle.restype = ctypes.c_int
-        self.kernel.GetFileType.argtypes = [handle]
-        self.kernel.GetFileType.restype = dword
-        self.ntdll.NtQuerySystemInformation.argtypes = [dword, handle, dword, ctypes.POINTER(dword)]
-        self.ntdll.NtQuerySystemInformation.restype = ctypes.c_int32
-        self.ntdll.NtQueryObject.argtypes = [handle, dword, handle, dword, ctypes.POINTER(dword)]
-        self.ntdll.NtQueryObject.restype = ctypes.c_int32
-        self.advapi.OpenProcessToken.argtypes = [handle, dword, ctypes.POINTER(handle)]
-        self.advapi.OpenProcessToken.restype = ctypes.c_int
-        self.advapi.LookupPrivilegeValueW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, handle]
-        self.advapi.LookupPrivilegeValueW.restype = ctypes.c_int
-        self.advapi.AdjustTokenPrivileges.argtypes = [handle, ctypes.c_int, handle, dword, handle, handle]
-        self.advapi.AdjustTokenPrivileges.restype = ctypes.c_int
-        self.current: int = self.kernel.GetCurrentProcess()
+    # Keep Windows-only bindings and methods out of POSIX static analysis.
+    if sys.platform == "win32":
+        def __init__(self) -> None:
+            """Bind Win32/NT signatures; raise OSError outside Windows."""
+            if sys.platform != "win32":
+                raise OSError("Windows handle APIs are unavailable on this platform")
+            self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            self.ntdll = ctypes.WinDLL("ntdll")
+            self.advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+            handle, dword = ctypes.c_void_p, ctypes.c_uint32
+            self.kernel.OpenProcess.argtypes = [dword, ctypes.c_int, dword]
+            self.kernel.OpenProcess.restype = handle
+            self.kernel.GetCurrentProcess.argtypes = []
+            self.kernel.GetCurrentProcess.restype = handle
+            self.kernel.CloseHandle.argtypes = [handle]
+            self.kernel.CloseHandle.restype = ctypes.c_int
+            self.kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, dword, dword, handle, dword, dword, handle]
+            self.kernel.CreateFileW.restype = handle
+            self.kernel.DuplicateHandle.argtypes = [handle, handle, handle, ctypes.POINTER(handle),
+                                                   dword, ctypes.c_int, dword]
+            self.kernel.DuplicateHandle.restype = ctypes.c_int
+            self.kernel.GetFileType.argtypes = [handle]
+            self.kernel.GetFileType.restype = dword
+            self.ntdll.NtQuerySystemInformation.argtypes = [dword, handle, dword, ctypes.POINTER(dword)]
+            self.ntdll.NtQuerySystemInformation.restype = ctypes.c_int32
+            self.ntdll.NtQueryObject.argtypes = [handle, dword, handle, dword, ctypes.POINTER(dword)]
+            self.ntdll.NtQueryObject.restype = ctypes.c_int32
+            self.advapi.OpenProcessToken.argtypes = [handle, dword, ctypes.POINTER(handle)]
+            self.advapi.OpenProcessToken.restype = ctypes.c_int
+            self.advapi.LookupPrivilegeValueW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, handle]
+            self.advapi.LookupPrivilegeValueW.restype = ctypes.c_int
+            self.advapi.AdjustTokenPrivileges.argtypes = [handle, ctypes.c_int, handle, dword, handle, handle]
+            self.advapi.AdjustTokenPrivileges.restype = ctypes.c_int
+            self.current: int = self.kernel.GetCurrentProcess()
 
-    def enable_debug_privilege(self) -> bool:
-        """Enable SeDebugPrivilege on our token, if assigned; always close the token.
+        def enable_debug_privilege(self) -> bool:
+            """Enable SeDebugPrivilege on our token, if assigned; always close the token.
 
-        Returns:
-            True if enabled, False if not assigned or otherwise unavailable.
-        Side effects:
-            Adjusts only this worker's token for the duration of its lifetime.
-        """
-        token = ctypes.c_void_p()
-        if not self.advapi.OpenProcessToken(self.current, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
-                                           ctypes.byref(token)):
-            return False
-        try:
-            privilege = _TokenPrivileges(count=1, attributes=SE_PRIVILEGE_ENABLED)
-            luid = ctypes.byref(privilege, _TokenPrivileges.low.offset)
-            if not self.advapi.LookupPrivilegeValueW(None, "SeDebugPrivilege", luid):
+            Returns:
+                True if enabled, False if not assigned or otherwise unavailable.
+            Side effects:
+                Adjusts only this worker's token for the duration of its lifetime.
+            """
+            token = ctypes.c_void_p()
+            if not self.advapi.OpenProcessToken(self.current, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                                               ctypes.byref(token)):
                 return False
-            ctypes.set_last_error(0)
-            success = self.advapi.AdjustTokenPrivileges(token, False, ctypes.byref(privilege), 0, None, None)
-            return bool(success) and ctypes.get_last_error() != ERROR_NOT_ALL_ASSIGNED
-        finally:
-            self.kernel.CloseHandle(token)
+            try:
+                privilege = _TokenPrivileges(count=1, attributes=SE_PRIVILEGE_ENABLED)
+                luid = ctypes.byref(privilege, _TokenPrivileges.low.offset)
+                if not self.advapi.LookupPrivilegeValueW(None, "SeDebugPrivilege", luid):
+                    return False
+                ctypes.set_last_error(0)
+                success = self.advapi.AdjustTokenPrivileges(token, False, ctypes.byref(privilege), 0, None, None)
+                return bool(success) and ctypes.get_last_error() != ERROR_NOT_ALL_ASSIGNED
+            finally:
+                self.kernel.CloseHandle(token)
 
-    def _open_path(self, path: str) -> int:
-        """Open metadata only, sharing read/write/delete and supporting directories."""
-        handle: int | None = self.kernel.CreateFileW(path, 0, FILE_SHARE_ALL, None, OPEN_EXISTING,
-                                                     FILE_FLAG_BACKUP_SEMANTICS, None)
-        if handle is None or handle == ctypes.c_void_p(-1).value:
-            raise ctypes.WinError(ctypes.get_last_error())
-        return handle
+        def _open_path(self, path: str) -> int:
+            """Open metadata only, sharing read/write/delete and supporting directories."""
+            handle: int | None = self.kernel.CreateFileW(path, 0, FILE_SHARE_ALL, None, OPEN_EXISTING,
+                                                         FILE_FLAG_BACKUP_SEMANTICS, None)
+            if handle is None or handle == ctypes.c_void_p(-1).value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            return handle
 
-    def _kernel_name(self, handle: int | ctypes.c_void_p) -> str:
-        """Query an NT name with a growable buffer and decode counted UTF-16 bytes."""
-        size = INITIAL_QUERY_BYTES
-        while size <= MAX_QUERY_BYTES:
-            buffer = ctypes.create_string_buffer(size)
-            required = ctypes.c_uint32()
-            status = self.ntdll.NtQueryObject(handle, OBJECT_NAME_INFORMATION, buffer, size,
-                                             ctypes.byref(required)) & 0xFFFFFFFF
-            if status in (STATUS_INFO_LENGTH_MISMATCH, STATUS_BUFFER_TOO_SMALL, STATUS_BUFFER_OVERFLOW):
-                size = max(size * 2, required.value)
-                continue
-            if status:
-                raise OSError(f"NtQueryObject failed: NTSTATUS 0x{status:08X}")
-            name = _UnicodeString.from_buffer(buffer)
-            if not name.buffer or not name.length:
-                return ""
-            start = ctypes.addressof(buffer)
-            if name.length % 2 or not (start <= name.buffer <= start + size - name.length):
-                raise OSError("NtQueryObject returned an invalid Unicode string")
-            return ctypes.string_at(name.buffer, name.length).decode("utf-16-le", errors="surrogatepass")
-        raise OSError("NT object name exceeded the query buffer limit")
-
-    def path_to_kernel_name(self, path: str) -> str:
-        """Resolve a file/directory to an NT name and immediately close our handle.
-
-        Args:
-            path: Existing absolute Windows file/directory path.
-        Returns:
-            Kernel object name, including its device prefix.
-        Raises:
-            OSError: Opening or querying the path fails.
-        """
-        handle = self._open_path(path)
-        try:
-            return self._kernel_name(handle)
-        finally:
-            self.kernel.CloseHandle(handle)
-
-    def handles(self) -> list[_SystemHandleEntry]:
-        """Snapshot all file-type handles using one system table, without PSS.
-
-        Returns:
-            Owned copies of file-handle records; non-file object types are excluded.
-        Raises:
-            OSError: The NT query fails or its returned layout is invalid.
-        Side effects:
-            Temporarily opens the Python/application executable to identify the
-            kernel's file type index.
-        """
-        probe = self._open_path(sys.executable)
-        try:
+        def _kernel_name(self, handle: int | ctypes.c_void_p) -> str:
+            """Query an NT name with a growable buffer and decode counted UTF-16 bytes."""
             size = INITIAL_QUERY_BYTES
             while size <= MAX_QUERY_BYTES:
                 buffer = ctypes.create_string_buffer(size)
                 required = ctypes.c_uint32()
-                status = self.ntdll.NtQuerySystemInformation(SYSTEM_EXTENDED_HANDLE_INFORMATION,
-                    buffer, size, ctypes.byref(required)) & 0xFFFFFFFF
-                if status == STATUS_INFO_LENGTH_MISMATCH:
+                status = self.ntdll.NtQueryObject(handle, OBJECT_NAME_INFORMATION, buffer, size,
+                                                 ctypes.byref(required)) & 0xFFFFFFFF
+                if status in (STATUS_INFO_LENGTH_MISMATCH, STATUS_BUFFER_TOO_SMALL, STATUS_BUFFER_OVERFLOW):
                     size = max(size * 2, required.value)
                     continue
                 if status:
-                    raise OSError(f"System handle enumeration failed: NTSTATUS 0x{status:08X}")
-                header_size = ctypes.sizeof(ctypes.c_size_t) * 2
-                count = ctypes.c_size_t.from_buffer(buffer).value
-                entry_size = ctypes.sizeof(_SystemHandleEntry)
-                if header_size + count * entry_size > size:
-                    raise OSError("Invalid NT system handle table length")
-                entries = (_SystemHandleEntry * count).from_buffer(buffer, header_size)
-                file_type = next((entry.type_index for entry in entries
-                                  if entry.pid == os.getpid() and entry.handle == probe), None)
-                if file_type is None:
-                    raise OSError("Could not identify the file object type in the system handle table")
-                return [_SystemHandleEntry.from_buffer_copy(entry) for entry in entries
-                        if entry.type_index == file_type]
-            raise OSError("System handle table exceeded the query buffer limit")
-        finally:
-            self.kernel.CloseHandle(probe)
+                    raise OSError(f"NtQueryObject failed: NTSTATUS 0x{status:08X}")
+                name = _UnicodeString.from_buffer(buffer)
+                if not name.buffer or not name.length:
+                    return ""
+                start = ctypes.addressof(buffer)
+                if name.length % 2 or not (start <= name.buffer <= start + size - name.length):
+                    raise OSError("NtQueryObject returned an invalid Unicode string")
+                return ctypes.string_at(name.buffer, name.length).decode("utf-16-le", errors="surrogatepass")
+            raise OSError("NT object name exceeded the query buffer limit")
 
-    def _file_path(self, process: int, source: int) -> str | None:
-        """Query a known file-type handle's NT name, closing only our local copy."""
-        duplicate = ctypes.c_void_p()
-        if not self.kernel.DuplicateHandle(process, source, self.current, ctypes.byref(duplicate),
-                                           0, False, DUPLICATE_SAME_ACCESS):
-            if ctypes.get_last_error() == ERROR_INVALID_HANDLE:
-                return None  # A normal close/reuse race after taking the table snapshot.
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            if self.kernel.GetFileType(duplicate) != FILE_TYPE_DISK:
-                return None
-            return self._kernel_name(duplicate)
-        finally:
-            self.kernel.CloseHandle(duplicate)
+        def path_to_kernel_name(self, path: str) -> str:
+            """Resolve a file/directory to an NT name and immediately close our handle.
 
-    def scan_process(self, pid: int, emit: Callable[[Reference], None],
-                     entries: list[_SystemHandleEntry] | None = None,
-                     checking: Callable[[int, int], None] | None = None) -> int:
-        """Emit NT names for one PID using only PROCESS_DUP_HANDLE access.
+            Args:
+                path: Existing absolute Windows file/directory path.
+            Returns:
+                Kernel object name, including its device prefix.
+            Raises:
+                OSError: Opening or querying the path fails.
+            """
+            handle = self._open_path(path)
+            try:
+                return self._kernel_name(handle)
+            finally:
+                self.kernel.CloseHandle(handle)
 
-        Args:
-            pid: Positive process identifier.
-            emit: Receives resolved file/directory NT references.
-            entries: Pre-filtered system-table entries, or None to take a snapshot.
-            checking: Optional progress callback before each potentially blocking query.
-        Returns:
-            Number of unsuccessful handle queries.
-        Raises:
-            OSError: Opening the process or enumerating handles fails.
-        Side effects:
-            Creates and closes local process/duplicate handles; invokes callbacks.
-        """
-        if entries is None:
-            entries = [entry for entry in self.handles() if entry.pid == pid]
-        process: int | None = self.kernel.OpenProcess(PROCESS_DUP_HANDLE, False, pid)
-        if not process:
-            raise ctypes.WinError(ctypes.get_last_error())
-        failed = 0
-        try:
-            for entry in entries:
-                if checking:
-                    checking(pid, entry.handle)
-                try:
-                    path = self._file_path(process, entry.handle)
-                except OSError:
-                    failed += 1
-                    continue
-                if path:
-                    emit(Reference(pid, "<unavailable>", path, f"handle {entry.handle:X}"))
-            return failed
-        finally:
-            self.kernel.CloseHandle(process)
+        def handles(self) -> list[_SystemHandleEntry]:
+            """Snapshot all file-type handles using one system table, without PSS.
+
+            Returns:
+                Owned copies of file-handle records; non-file object types are excluded.
+            Raises:
+                OSError: The NT query fails or its returned layout is invalid.
+            Side effects:
+                Temporarily opens the Python/application executable to identify the
+                kernel's file type index.
+            """
+            probe = self._open_path(sys.executable)
+            try:
+                size = INITIAL_QUERY_BYTES
+                while size <= MAX_QUERY_BYTES:
+                    buffer = ctypes.create_string_buffer(size)
+                    required = ctypes.c_uint32()
+                    status = self.ntdll.NtQuerySystemInformation(SYSTEM_EXTENDED_HANDLE_INFORMATION,
+                        buffer, size, ctypes.byref(required)) & 0xFFFFFFFF
+                    if status == STATUS_INFO_LENGTH_MISMATCH:
+                        size = max(size * 2, required.value)
+                        continue
+                    if status:
+                        raise OSError(f"System handle enumeration failed: NTSTATUS 0x{status:08X}")
+                    header_size = ctypes.sizeof(ctypes.c_size_t) * 2
+                    count = ctypes.c_size_t.from_buffer(buffer).value
+                    entry_size = ctypes.sizeof(_SystemHandleEntry)
+                    if header_size + count * entry_size > size:
+                        raise OSError("Invalid NT system handle table length")
+                    entries = (_SystemHandleEntry * count).from_buffer(buffer, header_size)
+                    file_type = next((entry.type_index for entry in entries
+                                      if entry.pid == os.getpid() and entry.handle == probe), None)
+                    if file_type is None:
+                        raise OSError("Could not identify the file object type in the system handle table")
+                    return [_SystemHandleEntry.from_buffer_copy(entry) for entry in entries
+                            if entry.type_index == file_type]
+                raise OSError("System handle table exceeded the query buffer limit")
+            finally:
+                self.kernel.CloseHandle(probe)
+
+        def _file_path(self, process: int, source: int) -> str | None:
+            """Query a known file-type handle's NT name, closing only our local copy."""
+            duplicate = ctypes.c_void_p()
+            if not self.kernel.DuplicateHandle(process, source, self.current, ctypes.byref(duplicate),
+                                               0, False, DUPLICATE_SAME_ACCESS):
+                if ctypes.get_last_error() == ERROR_INVALID_HANDLE:
+                    return None  # A normal close/reuse race after taking the table snapshot.
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                if self.kernel.GetFileType(duplicate) != FILE_TYPE_DISK:
+                    return None
+                return self._kernel_name(duplicate)
+            finally:
+                self.kernel.CloseHandle(duplicate)
+
+        def scan_process(self, pid: int, emit: Callable[[Reference], None],
+                         entries: list[_SystemHandleEntry] | None = None,
+                         checking: Callable[[int, int], None] | None = None) -> int:
+            """Emit NT names for one PID using only PROCESS_DUP_HANDLE access.
+
+            Args:
+                pid: Positive process identifier.
+                emit: Receives resolved file/directory NT references.
+                entries: Pre-filtered system-table entries, or None to take a snapshot.
+                checking: Optional progress callback before each potentially blocking query.
+            Returns:
+                Number of unsuccessful handle queries.
+            Raises:
+                OSError: Opening the process or enumerating handles fails.
+            Side effects:
+                Creates and closes local process/duplicate handles; invokes callbacks.
+            """
+            if entries is None:
+                entries = [entry for entry in self.handles() if entry.pid == pid]
+            process: int | None = self.kernel.OpenProcess(PROCESS_DUP_HANDLE, False, pid)
+            if not process:
+                raise ctypes.WinError(ctypes.get_last_error())
+            failed = 0
+            try:
+                for entry in entries:
+                    if checking:
+                        checking(pid, entry.handle)
+                    try:
+                        path = self._file_path(process, entry.handle)
+                    except OSError:
+                        failed += 1
+                        continue
+                    if path:
+                        emit(Reference(pid, "<unavailable>", path, f"handle {entry.handle:X}"))
+                return failed
+            finally:
+                self.kernel.CloseHandle(process)
+    else:
+        def __init__(self) -> None:
+            """Reject accidental native-backend use on Linux/macOS."""
+            raise OSError("Windows handle APIs are unavailable on this platform")
 
 
 def _windows_match_path(path: str, kernel_target: str, target: str, directory: bool) -> str | None:
@@ -838,7 +843,7 @@ def main() -> int:
         KeyboardInterrupt: Propagates to the standard module-level handler.
 
     Side effects:
-        May request Windows elevation; prompts when no path is supplied, invokes
+        May request administrator/root elevation; prompts when no path is supplied, invokes
         native read-only queries, and writes results/diagnostics to the terminal.
     """
     args = _parser().parse_args()
@@ -848,9 +853,9 @@ def main() -> int:
             raise ValueError("Invalid internal query skip record")
         return _windows_worker(args._windows_worker, args.pid, args.path,
                                {(item[0], item[1]) for item in skipped})
-    Console.print_banner("PATH IN USE")
     if not _require_elevation():
         return 1
+    Console.print_banner("PATH IN USE")
     if sys.platform not in SUPPORTED_PLATFORMS:
         print(f"{FLRed}Unsupported platform: {sys.platform}{CRst}")
         return 1

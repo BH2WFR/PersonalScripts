@@ -7,9 +7,12 @@ The sidebar retains data interpretation, cropping, sampling and alignment.
 Changes apply immediately; Close retains them. Opening a page never selects a
 plot tab or calculates derivatives. Background, slice markers and axes options
 are shared; channel colors and point sizes target the visible active entry.
+Dimension pages link to the shared Scaling editor. Hidden 3D/unopened derivative
+scaling is disabled until that view is displayed, retaining lazy rendering.
 """
 
 from enum import IntEnum
+from functools import partial
 from typing import TYPE_CHECKING
 
 from PySide6 import QtCore, QtWidgets
@@ -70,9 +73,10 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         self.auto_y.toggled.connect(window._set_profile_auto_y)
         for checkbox in (self.signal_grid, self.derivative_grid, self.auto_y):
             axes_layout.addWidget(checkbox)
-        self._page("1D", self.profile_stack, axes)
-        self._page("2D", window.image_controls)
-        self._page("3D", window.surface_controls, window.slice_appearance)
+        self.scaling_buttons: dict[FigureView, QtWidgets.QPushButton] = {}
+        self._page("1D", self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)
+        self._page("2D", self._scaling_group(FigureView.IMAGE), window.image_controls)
+        self._page("3D", self._scaling_group(FigureView.SURFACE), window.surface_controls, window.slice_appearance)
         self._page("Colors", window.display_box, window.overlay_appearance)
         self._page("Markers", window.marker_controls)
         layout.addWidget(window.background_controls)
@@ -80,6 +84,18 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _scaling_group(self, *views: FigureView) -> QtWidgets.QGroupBox:
+        """Expose viewport scaling separately from active-matrix appearance."""
+        group = QtWidgets.QGroupBox("Scaling (all visible matrices)")
+        layout = QtWidgets.QHBoxLayout(group)
+        for view in views:
+            button = QtWidgets.QPushButton(f"{view.value} scaling…")
+            button.clicked.connect(partial(self.workspace.scaling.show_for, view))
+            button.setToolTip("Open the corresponding plot first. Adjust ranges, individual axes or equal-unit presets; data values stay unchanged.")
+            self.scaling_buttons[view] = button
+            layout.addWidget(button)
+        return group
 
     def _page(self, title: str, *widgets: QtWidgets.QWidget) -> None:
         """Host a scrollable page so high-DPI/small screens retain every field."""
@@ -121,6 +137,8 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         matrix = mode == ViewMode.MATRIX
         spatial = mode in (ViewMode.MATRIX, ViewMode.POINTS)
         overlay = window._overlay()
+        for view, button in self.scaling_buttons.items():
+            button.setEnabled(window.scaling.available(view))
         self.source.setText(f"Editing: {window._channel_label(entry)}" if entry else "No matrix selected")
         self.profile_stack.setCurrentIndex(int(window._profile_uses_overlay))
         profile = window.overlay_profile if window._profile_uses_overlay else window.profile_view

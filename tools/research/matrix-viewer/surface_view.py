@@ -9,6 +9,9 @@ its pixel size applies to matrices and XYZ clouds, including overlay layers.
 Z tick labels use an explicit power-of-ten suffix on the axis title for small
 or large ranges. Labels follow displayed geometry after height scaling, value
 bounds, slice markers and overlay alignment; source values are unchanged.
+Scene axis multipliers are a separate display transform shared by meshes,
+clipping caps and slice markers. Picking and tick ranges undo that transform;
+per-matrix height/alignment remains independent and numeric exports are untouched.
 """
 
 import math
@@ -19,6 +22,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import pyvista as pv
 from pyvistaqt import QtInteractor
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker
+from vtkmodules.vtkCommonMath import vtkMatrix4x4
 
 from .data_model import DEFAULT_CLIP_COLOR, ColorArray, FilterMode, FloatArray, Frame, format_sample
 from .workspace import RenderLayer, profile_series
@@ -37,6 +41,8 @@ AXIS_LABEL_FORMAT = "%.6g"
 Z_SCIENTIFIC_MIN = 0.1
 Z_SCIENTIFIC_MAX = 10_000.0
 MIN_LABEL_EXPONENT = -308
+MIN_AXIS_SCALE = 1e-12
+MAX_AXIS_SCALE = 1e12
 
 
 class ProfileStyle(StrEnum):
@@ -70,6 +76,7 @@ class SurfaceCanvas(QtInteractor):
         super().__init__(parent=parent, auto_update=False, multi_samples=0)
         self.frame: Frame | None = None
         self.layers: list[tuple[vtkActor, RenderLayer]] = []
+        self.axis_scale = (1.0, 1.0, 1.0)
         self._last = QtCore.QPointF()
         self._action: Gesture | None = None
         self._pending_hover: QtCore.QPointF | None = None
@@ -233,7 +240,7 @@ class SurfaceCanvas(QtInteractor):
         prefix = ""
         if layer is not None:
             frame = layer.frame
-            world = self.picker.GetPickPosition()
+            world = self.display_position(self.picker.GetPickPosition())
             prefix = f"{layer.label} | Display ({world[0]:.6g}, {world[1]:.6g}, {world[2]:.6g}) | "
         if frame.point_coordinates is not None:
             dataset = self.picker.GetDataSet()
@@ -252,7 +259,7 @@ class SurfaceCanvas(QtInteractor):
             return
         # Clipping inserts vertices, so recover the nearest original pixel from
         # world X/Y rather than interpreting an actor-local point ID as a source ID.
-        world = self.picker.GetPickPosition()
+        world = self.display_position(self.picker.GetPickPosition())
         world_x = layer.x.inverse(world[0]) if layer is not None else world[0]
         world_y = layer.y.inverse(world[1]) if layer is not None else world[1]
         column = int(math.floor(frame.x_mapping.inverse(world_x) + 0.5))
@@ -269,6 +276,17 @@ class SurfaceCanvas(QtInteractor):
             f"{prefix}x={frame.x_mapping.forward(column):.6g}   y={frame.y_mapping.forward(row):.6g}   "
             f"z={value}  [column={column}, row={row}]{suffix}"
         )
+
+    def display_position(self, world: tuple[float, float, float]) -> tuple[float, float, float]:
+        """Undo scene stretching on a picked world point, retaining alignment.
+
+        Args:
+            world: VTK pick position after the scene display transformation.
+
+        Returns:
+            Coordinates before scene scaling, for source index lookup/readout.
+        """
+        return (world[0] / self.axis_scale[0], world[1] / self.axis_scale[1], world[2] / self.axis_scale[2])
 
 
 class SurfaceView(QtWidgets.QWidget):
@@ -391,6 +409,7 @@ class SurfaceView(QtWidgets.QWidget):
                                   ztitle="Z" if cloud and z_scale == 1 else "Scaled height",
                                   color="#adb9cb" if self.dark else "#465368", font_size=10,
                                   fmt=AXIS_LABEL_FORMAT, render=False)
+            self._update_axes()
             if reset:
                 self.canvas.view_isometric()
                 self.canvas.reset_camera()
@@ -740,11 +759,16 @@ class SurfaceView(QtWidgets.QWidget):
         ranges when bounds are updated. Disable VTK's additional automatic
         scaling to avoid a second, potentially hidden exponent.
         """
+        self._apply_axis_scale()
         self.canvas.renderer.update_bounds_axes()
         axes = self.canvas.renderer.cube_axes_actor
         if axes is None:
             return
-        lower, upper = axes.bounds[4:6]
+        bounds = axes.bounds
+        sx, sy, sz = self.canvas.axis_scale
+        axes.x_axis_range = (bounds[0] / sx, bounds[1] / sx)
+        axes.y_axis_range = (bounds[2] / sy, bounds[3] / sy)
+        lower, upper = bounds[4] / sz, bounds[5] / sz
         if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
             return
         peak = max(abs(lower), abs(upper))
@@ -763,6 +787,46 @@ class SurfaceView(QtWidgets.QWidget):
         axes.z_label_format = AXIS_LABEL_FORMAT
         axes.z_axis_range = (lower / multiplier, upper / multiplier)
         axes.z_title = f"{title} (x 10^{exponent})" if exponent else title
+
+    def _apply_axis_scale(self) -> None:
+        """Compose scene stretching after each actor's height and alignment."""
+        matrix = vtkMatrix4x4()
+        for axis, value in enumerate(self.canvas.axis_scale):
+            matrix.SetElement(axis, axis, value)
+        for actor in (self._surface_actor, self._profile_actor, *self._clip_actors,
+                      *(actor for actor, _layer in self.canvas.layers), *self._layer_profiles):
+            if actor is not None:
+                actor.SetUserMatrix(matrix)
+
+    def set_axis_scale(self, values: tuple[float, float, float], *, fit: bool = False) -> None:
+        """Stretch each scene axis without changing samples or actor-local data.
+
+        Args:
+            values: Positive X/Y/Z multipliers in [1e-12, 1e12]. Applied after
+                per-matrix height and alignment to every visible layer/marker.
+            fit: Fit the camera after applying; otherwise keep its distance
+                and orientation, moving its focus with the stretched scene.
+
+        Raises:
+            ValueError: A multiplier is nonfinite or outside the allowed range.
+
+        Side effects:
+            Updates geometry transforms, coordinate labels, picking and render.
+        """
+        if any(not math.isfinite(value) or not MIN_AXIS_SCALE <= value <= MAX_AXIS_SCALE for value in values):
+            raise ValueError(f"Axis multipliers must be between {MIN_AXIS_SCALE:g} and {MAX_AXIS_SCALE:g}.")
+        previous = self.canvas.axis_scale
+        camera = self.canvas.camera
+        focus, position = camera.GetFocalPoint(), camera.GetPosition()
+        shift = tuple(focus[axis] * (values[axis] / previous[axis] - 1) for axis in range(3))
+        self.canvas.axis_scale = values
+        self._update_axes()
+        camera.SetFocalPoint(*(focus[axis] + shift[axis] for axis in range(3)))
+        camera.SetPosition(*(position[axis] + shift[axis] for axis in range(3)))
+        if fit:
+            self.canvas.reset_camera()
+        self.canvas.reset_camera_clipping_range()
+        self.canvas.render()
 
     def _update_resolution(self) -> None:
         frame = self.canvas.frame

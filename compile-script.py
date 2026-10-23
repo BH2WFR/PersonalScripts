@@ -7,12 +7,15 @@ Usage:
 Lists all Python scripts in the project, lets you choose one by number,
 then compiles it with Nuitka or PyInstaller. Output goes to BUILD/ with
 directory structure preserved (e.g. BUILD/link-create_nuitka/).
+The rclone-sync private package is excluded from script selection and staged
+under its Python import name when compiling its entry point.
 """
 
 import sys
 import os
 import subprocess
 import shutil
+import tempfile
 
 from utils import *
 
@@ -38,7 +41,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync"}
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -175,6 +178,49 @@ def choose_tool() -> str:
 
 # ============ Build ============
 
+def _run_compiler(
+    cmd: list[str], script_path: str, build_root: str, tool: str,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a compiler, staging rclone's private package under its import name.
+
+    Args:
+        cmd: Compiler command whose last argument is the entry script.
+        script_path: Absolute path to the selected source entry.
+        build_root: Existing BUILD output directory for temporary staging.
+        tool: The selected compiler, either nuitka or pyinstaller.
+
+    Returns:
+        Compiler subprocess result, with stdout/stderr inherited.
+
+    Raises:
+        OSError: Staging or process launch fails.
+
+    Side effects:
+        Copies package Python sources to a unique directory under build_root,
+        runs the compiler, then removes only that temporary staging directory.
+        PYTHONPATH changes apply exclusively to the compiler subprocess.
+    """
+    package_src = os.path.join(os.path.dirname(script_path), "rclone-sync")
+    if os.path.basename(script_path) != "rclone-sync.py" or not os.path.isfile(os.path.join(package_src, "__init__.py")):
+        return subprocess.run(cmd, check=False)
+    with tempfile.TemporaryDirectory(prefix="_rclone_sync_imports_", dir=build_root) as staging:
+        package_dest = os.path.join(staging, "personal_rclone_sync")
+        os.makedirs(package_dest)
+        # Only implementation modules are needed; tests/docs/configs stay outside.
+        for filename in os.listdir(package_src):
+            if filename.endswith(".py"):
+                shutil.copy2(os.path.join(package_src, filename), os.path.join(package_dest, filename))
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            part for part in (staging, environment.get("PYTHONPATH", "")) if part
+        )
+        options = (
+            ["--include-package=personal_rclone_sync"] if tool == "nuitka" else
+            ["--paths", staging, "--collect-submodules", "personal_rclone_sync"]
+        )
+        return subprocess.run([*cmd[:-1], *options, cmd[-1]], check=False, env=environment)
+
+
 def _build_nuitka(script_dir: str, script_rel: str, out_dir: str) -> int:
     """Compile *script_rel* with Nuitka --standalone, output to *out_dir*."""
     script_path = os.path.join(script_dir, script_rel)
@@ -193,7 +239,7 @@ def _build_nuitka(script_dir: str, script_rel: str, out_dir: str) -> int:
 
     print(f"\n{FLYellow}Compiling with Nuitka (standalone)...{CRst}")
     print(f"{FGray}  Source: {script_path}{CRst}")
-    result = subprocess.run(cmd, check=False)
+    result = _run_compiler(cmd, script_path, parent_dir, "nuitka")
 
     if result.returncode != 0:
         print(f"\n{FLRed}Nuitka build failed with exit code {result.returncode}{CRst}")
@@ -257,7 +303,7 @@ def _build_pyinstaller(script_dir: str, script_rel: str, out_dir: str) -> int:
 
     print(f"\n{FLYellow}Compiling with PyInstaller (onedir)...{CRst}")
     print(f"{FGray}  Source: {script_path}{CRst}")
-    result = subprocess.run(cmd, check=False)
+    result = _run_compiler(cmd, script_path, parent_dir, "pyinstaller")
 
     # Clean up build artifacts
     if os.path.isdir(work_dir):

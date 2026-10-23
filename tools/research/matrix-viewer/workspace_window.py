@@ -4,6 +4,9 @@ Requirements: the existing viewer dependencies; no additional packages.
 Usage: constructed by app.run. Open and replace resets the session; Open appends one
 file and selects NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
 row/column ranges and headers. Dropping a file into a populated session appends.
+Scaling menus and View settings share view-wide ranges and XYZ multipliers.
+Auto scaling fits once; equal-axis presets reset only matched stretch alignments
+and reset matrix height for Z pairs. Numerical exports retain source coordinates.
 Numeric 2-by-N/N-by-2 sources (N > 2) prompt for XY or matrix interpretation;
 3-by-N/N-by-3 sources (N > 3) prompt for XYZ point cloud or matrix interpretation
 before insertion, unless --mode was supplied. Cancel preserves the workspace.
@@ -80,6 +83,7 @@ from .channel_tree import ChannelTree
 from .bundle_export import BUNDLE_FORMATS, prepare_bundle, serialize_bundle
 from .context_menus import WorkspaceMenus
 from .view_settings import ViewSettingsDialog
+from .view_scaling import Axis, ViewScaling
 from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits, RealArray,
                          Selection, ViewMode, default_selection, prepare_frame, select_image_member)
 from .overlay_profile import OverlayProfile
@@ -108,7 +112,7 @@ from .slice_snapshot import freeze_slice
 from .value_markers import DEFAULT_MARKER_SIZE, MarkerStyle
 from .workspace import (COLORS, Alignment, ChannelChoice, LoadedFile, MatrixEntry, RenderLayer, Setting,
                         active_channel, align_axis, channel_choices, coordinate_bounds, family, height_bounds, load_file,
-                        overlay_auto_height, profile_series)
+                        overlay_auto_height, profile_series, AUTO_HEIGHT_FRACTION)
 from .workspace_export import (ExportScope, default_stem, mat_variable_names,
                                prepare_displayed_export, serialize_displayed_mat)
 
@@ -190,6 +194,7 @@ class WorkspaceWindow(ViewerWindow):
         self.figure_export_button.clicked.connect(self._export_figure)
         self.export_form.addRow(self.figure_export_button)
         self._workspace_ready = True
+        self.scaling = ViewScaling(self)
         self.context_menus = WorkspaceMenus(self)
         self.view_settings = ViewSettingsDialog(self)
         self.view_settings_button = QtWidgets.QPushButton("View settings…")
@@ -2342,12 +2347,16 @@ class WorkspaceWindow(ViewerWindow):
             with self._single_view_context():
                 super()._height_changed()
 
-    def _equal_xyz_scale(self) -> None:
-        """Restore equal data-unit scales for every visible surface or cloud.
+    def _equal_xyz_scale(self, axes: tuple[Axis, ...] = (Axis.X, Axis.Y, Axis.Z)) -> None:
+        """Match chosen data-unit axes for every visible surface or cloud.
+
+        Args:
+            axes: X/Y/Z indices to match. The default restores all three to
+                unit scale; a pair matches the second axis to the first.
 
         Side effects:
-            Disables automatic height scaling, sets height multipliers to one,
-            and changes stretched overlay axes to original coordinates. Pure
+            For pairs involving Z, disables automatic height and sets height
+            multipliers to one. Resets stretch alignment on matched axes. Pure
             translation alignments are retained. Refreshes controls and fits
             only the 3D camera, preserving its orientation and projection.
             Source samples, crops and physical coordinate grids are unchanged;
@@ -2361,13 +2370,15 @@ class WorkspaceWindow(ViewerWindow):
         self._store_entry()
         unstretched = False
         for entry in visible:
-            entry.settings["auto_height"] = False
-            entry.settings["height_scale"] = 1.0
-            for axis in ("align_x", "align_y", "align_z"):
-                if getattr(entry, axis) == Alignment.STRETCH:
-                    setattr(entry, axis, Alignment.ORIGINAL)
+            if Axis.Z in axes:
+                entry.settings["auto_height"] = False
+                entry.settings["height_scale"] = 1.0
+            for axis in axes:
+                attribute = ("align_x", "align_y", "align_z")[axis]
+                if getattr(entry, attribute) == Alignment.STRETCH:
+                    setattr(entry, attribute, Alignment.ORIGINAL)
                     unstretched = True
-        if self._entry() in visible:
+        if Axis.Z in axes and self._entry() in visible:
             with QtCore.QSignalBlocker(self.auto_height), QtCore.QSignalBlocker(self.height_scale):
                 self.auto_height.setChecked(False)
                 self.height_scale.setValue(1.0)
@@ -2375,12 +2386,59 @@ class WorkspaceWindow(ViewerWindow):
         self._sync_alignment()
         self._single_render_key = None
         self._render_workspace()
-        self.surface_view.canvas.reset_camera()
-        self.surface_view.canvas.render()
-        message = "XYZ scale = 1:1:1 in data units for all visible layers. Pixel coordinates are not physical distances."
+        scales = list(self.surface_view.canvas.axis_scale)
+        target = 1.0 if len(axes) == 3 else scales[axes[0]]
+        for axis in axes:
+            scales[axis] = target
+        self.surface_view.set_axis_scale((scales[0], scales[1], scales[2]), fit=True)
+        names = ":".join(("X", "Y", "Z")[axis] for axis in axes)
+        ratio = ":".join("1" for _axis in axes)
+        message = f"{names} = {ratio} in data units for visible layers. Pixel coordinates are not physical distances."
         if unstretched:
             message = f"{message} Stretch alignment reset to original coordinates."
         self.statusBar().showMessage(message)
+
+    def _auto_3d_scale(self) -> None:
+        """Apply the usual height balance once, retaining manual control after it.
+
+        Matrix heights span about 30 percent of the largest XY extent. Point
+        clouds retain unit height. Overlay matrices share a height factor;
+        alignment settings remain unchanged. The camera orientation is retained.
+        """
+        visible = [entry for entry in self.entries if entry.visible and entry.frame is not None]
+        if not visible or self._layout_mode not in (ViewMode.MATRIX, ViewMode.POINTS):
+            return
+        self._store_entry()
+        reference = self._entry(self.reference_uid)
+        if reference is None or reference not in visible:
+            reference = visible[0]
+        # The shared estimator normally excludes manual layers. An explicit
+        # auto-scaling command must include them, including after equal-axis use.
+        for entry in visible:
+            entry.settings["auto_height"] = True
+        common = overlay_auto_height(visible, reference)
+        for entry in visible:
+            frame = entry.frame
+            if frame is None:
+                continue
+            height = 1.0
+            if frame.scalar.ndim == 2:
+                extent = max(frame.scalar.shape[1] * abs(frame.x_mapping.scale),
+                             frame.scalar.shape[0] * abs(frame.y_mapping.scale))
+                span = frame.limits[1] - frame.limits[0]
+                height = common if self._overlay() else extent * AUTO_HEIGHT_FRACTION / span
+            entry.settings["auto_height"] = False
+            entry.settings["height_scale"] = height
+        selected = self._entry()
+        if selected is not None and selected in visible:
+            with QtCore.QSignalBlocker(self.auto_height), QtCore.QSignalBlocker(self.height_scale):
+                self.auto_height.setChecked(False)
+                self.height_scale.setValue(float(selected.settings["height_scale"]))
+            self._update_height_controls()
+        self._single_render_key = None
+        self._render_workspace()
+        self.surface_view.set_axis_scale((1.0, 1.0, 1.0), fit=True)
+        self.statusBar().showMessage("Automatic 3D scaling applied once; manual axis scaling remains available.")
 
     def _choose_clip_color(self) -> None:
         super()._choose_clip_color()

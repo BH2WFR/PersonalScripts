@@ -14,6 +14,8 @@ background remains global. Numeric menu editors ignore the wheel and synchronize
 with their original controls; signal/derivative menus share the 1D point size.
 Every canvas also opens the centralized View settings dialog on its own page.
 Quick style/color actions consistently live in Appearance submenus.
+Scaling groups manual ranges/multipliers, one-shot fitting and equal-unit
+presets. Camera orientation remains separate; neither menu computes derivatives.
 Plot menus group view, appearance, slice, processing and export commands in a
 fixed order. Tree menus group file, selection/display, data and close actions.
 Raw menus offer selection/navigation/table controls without activating a matrix.
@@ -34,6 +36,7 @@ from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
 from .raw_view import DEFAULT_COLUMN_WIDTH
 from .workspace import MatrixEntry
+from .view_scaling import Axis, EqualAxes, FINE_ZOOM_STEP, ZOOM_STEP
 
 if TYPE_CHECKING:
     from .workspace_window import WorkspaceWindow
@@ -382,15 +385,33 @@ class WorkspaceMenus(QtCore.QObject):
     def _projection(self) -> None:
         self.window.parallel.toggle()
 
-    def _equal_xy(self, view: FigureView, enabled: bool) -> None:
-        """Apply the viewport's aspect choice in single and overlay modes."""
-        window = self.window
-        if view == FigureView.IMAGE:
-            window.image_view.set_equal_xy(enabled)
-            return
-        for profile in (window.profile_view, window.overlay_profile):
-            pane = profile.derivative_pane if view == FigureView.DERIVATIVE else profile.signal_pane
-            pane.view_box.setAspectLocked(enabled, ratio=1.0)
+    def _scaling(self, menu: QtWidgets.QMenu, view: FigureView) -> None:
+        """Use the same per-axis controls and presets as the scaling dialog."""
+        controller = self.window.scaling
+        scale = menu.addMenu("Scaling")
+        scale.setEnabled(controller.available(view))
+        self._add(scale, "Manual scaling…", partial(controller.show_for, view))
+        self._add(scale, "Apply auto scaling", partial(controller.apply_auto, view))
+        scale.addSeparator()
+        if view == FigureView.SURFACE:
+            for preset in EqualAxes:
+                action = self._add(scale, preset.value, partial(controller.equal_axes, view, preset))
+                action.setToolTip("Match data units once, resetting stretch on matched axes and height to 1 for Z presets. Manual scaling remains available.")
+        else:
+            locked = controller.box(view).state["aspectLocked"] is not False
+            self._add(scale, "Lock X:Y = 1:1", partial(controller.equal_xy, view, not locked), checked=locked)
+        scale.addSeparator()
+        for axis in tuple(Axis) if view == FigureView.SURFACE else (Axis.X, Axis.Y):
+            axis_menu = scale.addMenu(f"{axis.name} axis")
+            self._add(axis_menu, "Enlarge ×2", partial(controller.zoom_from_menu, view, axis, ZOOM_STEP))
+            self._add(axis_menu, "Enlarge ×1.2", partial(controller.zoom_from_menu, view, axis, FINE_ZOOM_STEP))
+            self._add(axis_menu, "Shrink ÷1.2", partial(controller.zoom_from_menu, view, axis, 1 / FINE_ZOOM_STEP))
+            self._add(axis_menu, "Shrink ÷2", partial(controller.zoom_from_menu, view, axis, 1 / ZOOM_STEP))
+            axis_menu.addSeparator()
+            reset = self._add(axis_menu, "Reset", partial(controller.reset_from_menu, view, axis))
+            reset.setToolTip("Restore this scene axis multiplier to 1; keep other axes and matrix heights."
+                             if view == FigureView.SURFACE else
+                             "Fit this axis to displayed data once; keep the other axis range.")
 
     def view_menu(self, view: FigureView) -> QtWidgets.QMenu:
         """Offer plot-specific actions without computing hidden derivatives.
@@ -416,28 +437,16 @@ class WorkspaceMenus(QtCore.QObject):
         active = window._entry()
         appearance_ready = (ready and active is not None and active.visible and active.frame is not None
                             and window.controls.isEnabled())
-        scale = menu.addMenu("Scale / camera" if view == FigureView.SURFACE else "Axis scale")
-        scale.setEnabled(ready)
-        if view != FigureView.SURFACE:
-            box = window.image_view.view_box if view == FigureView.IMAGE else pane.view_box
-            locked = box.state["aspectLocked"] is not False
-            equal_xy = self._add(scale, "X:Y scale 1:1 (data units)", partial(self._equal_xy, view, not locked),
-                                 enabled=ready, checked=locked)
-            equal_xy.setToolTip("Equal lengths for one X unit and one Y unit. Zoom links both axes while locked; uncheck for free scaling.")
+        self._scaling(menu, view)
         if view == FigureView.SURFACE:
-            equal_scale = self._add(scale, "XYZ scale 1:1:1 (data units)", window._equal_xyz_scale, enabled=ready)
-            equal_scale.setToolTip(
-                "Apply to all visible layers: disable Auto height scale, set Height multiplier to 1, "
-                "and reset stretched XYZ alignments to original coordinates. Translation alignments remain. "
-                "One data unit has the same length on every axis; pixel coordinates are not calibrated distances."
-            )
-            scale.addSeparator()
+            camera = menu.addMenu("Camera")
+            camera.setEnabled(ready)
             canvas = window.surface_view.canvas
             for text, callback in (("Isometric", canvas.view_isometric), ("XY / top", canvas.view_xy),
                                    ("XZ / front", canvas.view_xz), ("YZ / side", canvas.view_yz)):
-                self._add(scale, text, callback)
-            scale.addSeparator()
-            self._add(scale, "Parallel projection", self._projection, checked=bool(canvas.camera.GetParallelProjection()))
+                self._add(camera, text, callback)
+            camera.addSeparator()
+            self._add(camera, "Parallel projection", self._projection, checked=bool(canvas.camera.GetParallelProjection()))
 
         # Appearance edits the active channel; navigation applies to the view.
         if view in (FigureView.IMAGE, FigureView.SURFACE):
