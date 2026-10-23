@@ -3,14 +3,17 @@
 
 Run with Conda Python. The interactive destination is the directory containing
 MatrixViewer.exe, not its parent; Enter reuses the last successful destination.
-The first default is D:/Portable_Programs/MatrixViewer. Optional --output skips
-the prompt, --environment selects an existing dedicated Conda environment, and
+The first default is D:/Portable_Programs/MatrixViewer. The build environment is
+also prompted, initially defaulting to base; both choices are remembered after
+a successful install. --output and --environment skip their respective prompts.
 --clean clears PyInstaller's build cache. No dependencies are installed here.
 
 Requirements: Windows 10+, Python 3.13+, Conda, and PyInstaller plus the viewer's
-runtime dependencies in matrix-viewer-build (or --environment). The driver uses
-only the standard library and project utils; base may run the driver but is
-never used to compile the application.
+runtime dependencies in the selected environment. The driver uses only the
+standard library and project utils. Base builds may use the current user's
+site-packages, matching ordinary base Python. Other Conda environments use -I
+isolation. PYTHONPATH/PYTHONHOME are removed from the build process in both modes;
+the spec audits package origins and excludes unused optional integrations.
 
 Builds finish in BUILD/MatrixViewer/install-stage before touching the release.
 SHA-256 comparisons preserve identical destination files, including timestamps;
@@ -29,7 +32,7 @@ Usage:
     In an activated Conda PowerShell:
     & "$env:CONDA_PREFIX/python.exe" tools/research/_matrix_viewer_install.py
     Noninteractive:
-    conda run -n base python tools/research/_matrix_viewer_install.py --output D:/Portable_Programs/MatrixViewer
+    conda run -n base python tools/research/_matrix_viewer_install.py --environment base --output D:/Portable_Programs/MatrixViewer
     conda run -n base python tools/research/_matrix_viewer_install.py --help
 """
 
@@ -51,7 +54,7 @@ from utils import *  # noqa: E402
 APP_NAME = "MatrixViewer"
 EXECUTABLE = f"{APP_NAME}.exe"
 DEFAULT_OUTPUT = Path("D:/Portable_Programs/MatrixViewer")
-DEFAULT_ENVIRONMENT = "matrix-viewer-build"
+DEFAULT_ENVIRONMENT = "base"
 BUILD_DIR = PROJECT_DIR / "BUILD" / APP_NAME
 STAGE_DIR = BUILD_DIR / "install-stage"
 SPEC_FILE = Path(__file__).with_name("matrix-viewer") / "packaging" / f"{APP_NAME}.spec"
@@ -262,22 +265,22 @@ def _output_path(text: str) -> Path:
 
 
 def main() -> int:
-    """Prompt, build in the dedicated environment, then publish changed files.
+    """Prompt, build in the selected Conda environment, then publish changed files.
 
     Returns:
         Zero on success, one on a reported build/install error.
 
     Side effects:
-        Prompts unless --output is supplied, runs PyInstaller, updates the chosen
-        release and remembers its path. KeyboardInterrupt propagates to the CLI.
+        Prompts for unspecified output/environment choices, runs PyInstaller,
+        updates the release and remembers both. KeyboardInterrupt propagates.
     """
     parser = argparse.ArgumentParser(
         description=f"{FLYellow}MatrixViewer build and install{CRst}\nBuild an onedir release; preserve unchanged installed libraries.",
-        epilog="Requirements: Windows 10+, Conda, Python 3.13+; PyInstaller and viewer dependencies in a dedicated environment.",
+        epilog="Requirements: Windows 10+, Conda, Python 3.13+; PyInstaller and viewer dependencies. Base may use user-site packages; other environments are isolated.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--output", help="Install directory containing MatrixViewer.exe; otherwise prompt")
-    parser.add_argument("--environment", default=DEFAULT_ENVIRONMENT, help=f"Existing Conda build environment (default: {DEFAULT_ENVIRONMENT})")
+    parser.add_argument("--environment", help=f"Existing Conda build environment; otherwise prompt (initial default: {DEFAULT_ENVIRONMENT})")
     parser.add_argument("--clean", action="store_true", help="Clear PyInstaller's cache before building")
     args = parser.parse_args()
     if sys.platform != "win32":
@@ -286,10 +289,15 @@ def main() -> int:
     try:
         # ── destination and build environment ──────────────
         default = str(DEFAULT_OUTPUT)
+        default_environment = DEFAULT_ENVIRONMENT
         if SETTINGS_FILE.is_file():
-            saved = _read_record(SETTINGS_FILE).get("output")
+            settings = _read_record(SETTINGS_FILE)
+            saved = settings.get("output")
             if isinstance(saved, str):
                 default = saved
+            saved_environment = settings.get("environment")
+            if isinstance(saved_environment, str) and saved_environment.strip():
+                default_environment = saved_environment
         requested = args.output or Input.prompt(
             f"{FLYellow}Install directory (contains {EXECUTABLE}){CRst}\n{FGray}[{default}]{CRst} > ", default=default,
         )
@@ -301,11 +309,19 @@ def main() -> int:
         conda = Environment.find_conda_executable()
         if conda is None:
             raise RuntimeError("Conda is unavailable. No packages or environments were installed.")
-        if args.environment.casefold() == "base":
-            raise ValueError("Use a dedicated build environment, not Conda base.")
+        selected_environment = (args.environment if args.environment is not None else Input.prompt(
+            f"{FLYellow}Conda build environment (base or another existing name){CRst}\n{FGray}[{default_environment}]{CRst} > ",
+            default=default_environment,
+        )).strip()
+        if not selected_environment:
+            raise ValueError("A Conda environment name is required.")
+        use_base = selected_environment.casefold() == "base"
+        if use_base:
+            selected_environment = "base"
         if not SPEC_FILE.is_file():
             raise FileNotFoundError(f"Build configuration not found: {SPEC_FILE}")
-        command = [conda, "run", "--no-capture-output", "-n", args.environment, "python", "-I", "-m", "PyInstaller",
+        python_options = ["-P", "-X", "utf8"] if use_base else ["-I"]
+        command = [conda, "run", "--no-capture-output", "-n", selected_environment, "python", *python_options, "-m", "PyInstaller",
                    "--noconfirm", "--distpath", str(STAGE_DIR), "--workpath", str(BUILD_DIR / "work")]
         if args.clean:
             command.append("--clean")
@@ -314,18 +330,24 @@ def main() -> int:
         environment.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONHASHSEED="0")
         environment.pop("PYTHONPATH", None)
         environment.pop("PYTHONHOME", None)
+        if use_base:
+            environment.pop("PYTHONNOUSERSITE", None)
+        else:
+            environment["PYTHONNOUSERSITE"] = "1"
 
         # ── build first, then compare and install ──────────
         with _build_lock():
             if not STAGE_DIR.resolve().is_relative_to(BUILD_DIR.resolve()):
                 raise ValueError("The staging directory must remain inside the build directory.")
-            print(f"{FLCyan}Building with {args.environment}; install to {destination}{CRst}", flush=True)
+            print(f"{FLCyan}Building with {selected_environment}; install to {destination}{CRst}", flush=True)
+            print("Package scope: environment + current user-site" if use_base else "Package scope: selected environment only", flush=True)
             result = subprocess.run(command, cwd=PROJECT_DIR, env=environment, check=False)
             if result.returncode:
                 raise RuntimeError(f"PyInstaller exited with code {result.returncode}; installed release was not modified.")
             print(f"{FLCyan}Comparing release files and installing changes...{CRst}", flush=True)
             counts = install_release(STAGE_DIR / APP_NAME, destination)
-            SETTINGS_FILE.write_text(json.dumps({"application": APP_NAME, "output": str(destination)}, indent=2), encoding="utf-8")
+            SETTINGS_FILE.write_text(json.dumps({"application": APP_NAME, "output": str(destination),
+                                                "environment": selected_environment}, indent=2), encoding="utf-8")
         print(f"{FLGreen}Installed: {destination / EXECUTABLE}{CRst}")
         print(f"Updated: {counts.updated}; unchanged: {counts.unchanged}; removed obsolete: {counts.removed}")
         return 0

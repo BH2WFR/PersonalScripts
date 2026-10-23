@@ -8,12 +8,13 @@ document implementation behavior and detailed defaults here instead of
 expanding command-line help.
 
 Windows directory releases use matrix-viewer/packaging/MatrixViewer.spec with
-PyInstaller in an isolated build environment. The spec stages this private
+PyInstaller in the selected build environment. The spec stages this private
 package under its import name, collects lazy VTK modules, disables UPX and audits
 dependency origins. Frozen launches import that package directly; source launches
 keep the file-based loader. Distribute the whole MatrixViewer directory.
-The sibling _matrix_viewer_install.py prompts for an install directory, builds
-in the dedicated Conda environment, then updates only changed release files.
+The sibling _matrix_viewer_install.py prompts for an install directory and Conda
+environment (initially base), then updates only changed release files. Base can
+use current-user packages; other environments retain isolated package searches.
 Unchanged runtime libraries retain their original contents and timestamps.
 
 Store test matrices that need permanent preservation in

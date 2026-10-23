@@ -138,7 +138,7 @@ class InstallTests(unittest.TestCase):
         with (patch.multiple(installer, BUILD_DIR=build, STAGE_DIR=build / "stage", SETTINGS_FILE=build / "settings.json"),
               patch.object(installer.Environment, "find_conda_executable", return_value="conda.exe"),
               patch.object(installer.subprocess, "run", return_value=SimpleNamespace(returncode=7)),
-              patch.object(sys, "argv", [str(SCRIPT), "--output", str(self.destination)]),
+              patch.object(sys, "argv", [str(SCRIPT), "--output", str(self.destination), "--environment", "matrix-viewer-build"]),
               redirect_stdout(StringIO())):
             self.assertEqual(installer.main(), 1)
         self.assertEqual(before, {path: path.read_bytes() for path in before})
@@ -147,21 +147,56 @@ class InstallTests(unittest.TestCase):
         build = self.root / "build"
         build.mkdir()
         settings = build / "settings.json"
-        settings.write_text(json.dumps({"application": "MatrixViewer", "output": str(self.destination)}), encoding="utf-8")
+        settings.write_text(json.dumps({"application": "MatrixViewer", "output": str(self.destination),
+                                        "environment": "matrix-viewer-build"}), encoding="utf-8")
         with (patch.multiple(installer, BUILD_DIR=build, STAGE_DIR=build / "stage", SETTINGS_FILE=settings),
               patch.object(installer.Environment, "find_conda_executable", return_value="conda.exe"),
-              patch.object(installer.Input, "prompt", return_value=str(self.destination)) as prompt,
+              patch.object(installer.Input, "prompt", side_effect=[str(self.destination), "matrix-viewer-build"]) as prompt,
               patch.object(installer.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run,
               patch.object(installer, "install_release", return_value=installer.InstallResult(1, 2, 0)) as install,
               patch.object(sys, "argv", [str(SCRIPT)]), redirect_stdout(StringIO())):
             self.assertEqual(installer.main(), 0)
-        self.assertEqual(prompt.call_args.kwargs["default"], str(self.destination))
+        self.assertEqual(prompt.call_args_list[0].kwargs["default"], str(self.destination))
+        self.assertEqual(prompt.call_args_list[1].kwargs["default"], "matrix-viewer-build")
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("-n") + 1], "matrix-viewer-build")
         self.assertIn("-I", command)
+        self.assertEqual(run.call_args.kwargs["env"]["PYTHONNOUSERSITE"], "1")
         self.assertNotIn("--clean", command)
         self.assertEqual(command[command.index("--distpath") + 1], str(build / "stage"))
         install.assert_called_once_with(build / "stage" / "MatrixViewer", self.destination)
+        self.assertEqual(json.loads(settings.read_text(encoding="utf-8"))["environment"], "matrix-viewer-build")
+
+    def test_base_build_allows_user_site_without_inheriting_pythonpath(self) -> None:
+        build = self.root / "build"
+        settings = build / "settings.json"
+        with (patch.multiple(installer, BUILD_DIR=build, STAGE_DIR=build / "stage", SETTINGS_FILE=settings),
+              patch.object(installer.Environment, "find_conda_executable", return_value="conda.exe"),
+              patch.object(installer.Input, "prompt") as prompt,
+              patch.dict(os.environ, {"PYTHONNOUSERSITE": "1", "PYTHONPATH": "unwanted", "PYTHONHOME": "unwanted"}),
+              patch.object(installer.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run,
+              patch.object(installer, "install_release", return_value=installer.InstallResult(0, 3, 0)),
+              patch.object(sys, "argv", [str(SCRIPT), "--output", str(self.destination), "--environment", "base"]),
+              redirect_stdout(StringIO())):
+            self.assertEqual(installer.main(), 0)
+        prompt.assert_not_called()
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-n") + 1], "base")
+        self.assertIn("-P", command)
+        self.assertNotIn("-I", command)
+        for name in ("PYTHONNOUSERSITE", "PYTHONPATH", "PYTHONHOME"):
+            self.assertNotIn(name, run.call_args.kwargs["env"])
+        self.assertEqual(json.loads(settings.read_text(encoding="utf-8"))["environment"], "base")
+
+    def test_initial_environment_prompt_defaults_to_base(self) -> None:
+        build = self.root / "build"
+        with (patch.multiple(installer, BUILD_DIR=build, STAGE_DIR=build / "stage", SETTINGS_FILE=build / "settings.json"),
+              patch.object(installer.Environment, "find_conda_executable", return_value="conda.exe"),
+              patch.object(installer.Input, "prompt", return_value="base") as prompt,
+              patch.object(installer.subprocess, "run", return_value=SimpleNamespace(returncode=7)),
+              patch.object(sys, "argv", [str(SCRIPT), "--output", str(self.destination)]), redirect_stdout(StringIO())):
+            self.assertEqual(installer.main(), 1)
+        self.assertEqual(prompt.call_args.kwargs["default"], "base")
 
     @unittest.skipUnless(sys.platform == "win32", "Windows sharing/lock semantics")
     def test_locked_executable_prevents_all_release_changes(self) -> None:

@@ -1,10 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Build the Windows viewer as an isolated, non-UPX, one-directory application.
+"""Build the Windows viewer as a non-UPX, one-directory application.
 
-Requirements: PyInstaller 6 and the viewer's runtime dependencies, installed in
-a dedicated environment (not Conda base). No packages are installed by this file.
+Requirements: PyInstaller 6 and the viewer's runtime dependencies in the selected
+environment. Base can also use current-user site-packages when Python enables
+them; dedicated environments remain isolated. No packages are installed here.
 Usage from the repository root:
-    conda run -n matrix-viewer-build python -I -m PyInstaller --clean \
+    conda run -n base python -P -X utf8 -m PyInstaller --clean \
         --distpath D:/Portable_Programs --workpath BUILD/MatrixViewer/work \
         tools/research/matrix-viewer/packaging/MatrixViewer.spec
 
@@ -24,6 +25,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import site
 import sys
 
 from PyInstaller.building.api import COLLECT, EXE, PYZ
@@ -41,16 +43,20 @@ WORK_DIR = Path(CONF["workpath"]).resolve()
 STAGING_DIR = WORK_DIR / "viewer-source"
 PACKAGE_DIR = STAGING_DIR / PACKAGE_NAME
 
-# Keep analysis and its helper processes away from base/user-site packages.
+# Use only the selected environment and, for base, its enabled user-site.
 if sys.platform != "win32":
     raise SystemExit("This release configuration targets Windows.")
-if any((ENVIRONMENT_DIR / "conda-meta").glob("conda-[0-9]*.json")):
-    raise SystemExit("Build in a dedicated environment, not Conda base.")
+is_base = any((ENVIRONMENT_DIR / "conda-meta").glob("conda-[0-9]*.json"))
+use_user_site = is_base and site.ENABLE_USER_SITE is True
+package_roots = (ENVIRONMENT_DIR, Path(site.getusersitepackages()).resolve()) if use_user_site else (ENVIRONMENT_DIR,)
 for search_path in sys.path:
     candidate = Path(search_path).resolve()
-    if "site-packages" in candidate.parts and not candidate.is_relative_to(ENVIRONMENT_DIR):
-        raise SystemExit("Foreign site-packages detected. Rerun with python -I -m PyInstaller in the build environment.")
-os.environ["PYTHONNOUSERSITE"] = "1"
+    if "site-packages" in candidate.parts and not any(candidate.is_relative_to(root) for root in package_roots):
+        raise SystemExit("Foreign site-packages detected outside the selected package scope.")
+if use_user_site:
+    os.environ.pop("PYTHONNOUSERSITE", None)
+else:
+    os.environ["PYTHONNOUSERSITE"] = "1"
 os.environ.pop("PYTHONPATH", None)
 os.environ["QT_API"] = "pyside6"
 os.environ["PYQTGRAPH_QT_LIB"] = "PySide6"
@@ -71,7 +77,10 @@ for source in modules:
 
 # The cache must also notice content-only source edits and package upgrades.
 # Custom hooksconfig entries participate in Analysis's cache identity.
-build_versions = {distribution.metadata["Name"]: distribution.version for distribution in metadata.distributions()}
+build_versions: dict[str, str] = {}
+for distribution in metadata.distributions():
+    # Keep the first distribution on sys.path, including user-site precedence.
+    build_versions.setdefault(distribution.metadata["Name"], distribution.version)
 build_inputs = [*modules, SOURCE_DIR.with_suffix(".py"), *sorted((PROJECT_DIR / "utils").glob("*.py")),
                 *sorted(PACKAGING_DIR.rglob("*.py")), PACKAGING_DIR / "MatrixViewer.spec"]
 input_hashes = {str(path.relative_to(PROJECT_DIR)): hashlib.sha256(path.read_bytes()).hexdigest() for path in build_inputs}
@@ -85,6 +94,8 @@ excludes = [
     "torch", "tensorflow", "jax", "cupy", "pandas", "sympy",
     "trame", "trame_vtk", "trame_vuetify", "trame_pyvista", "cvista",
     "pymupdf", "fitz", "win10toast", "pytest",
+    # Unused PyVista conversions and remote/movie I/O can pull large optional stacks from base.
+    "trimesh", "meshio", "pyarrow", "imageio", "fsspec",
     "vtk",  # PyVista uses vtkmodules; the eager vtk shim imports every module.
 ]
 hiddenimports = [PACKAGE_NAME, "openpyxl", "xlrd", "pyvista.plotting"]
@@ -98,15 +109,16 @@ analysis = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[str(PACKAGING_DIR / "hooks")],
     hooksconfig={"matplotlib": {"backends": ["Agg"]},
-                 "matrix_viewer": {"environment": build_versions, "inputs": input_hashes}},
+                 "matrix_viewer": {"environment": build_versions, "inputs": input_hashes,
+                                   "package_roots": [str(root) for root in package_roots], "python": sys.version}},
     runtime_hooks=[],
     excludes=excludes,
     noarchive=False,
 )
 
-# Fail instead of silently publishing DLLs/modules resolved from Conda base,
-# user-site or another project. Windows system DLLs are legitimate dependencies.
-allowed_roots = (ENVIRONMENT_DIR, PROJECT_DIR, WORK_DIR, Path(os.environ["SystemRoot"]).resolve())
+# Reject modules from other environments and unapproved external locations.
+# Windows system DLLs are legitimate dependencies.
+allowed_roots = (*package_roots, PROJECT_DIR, WORK_DIR, Path(os.environ["SystemRoot"]).resolve())
 foreign_sources: set[str] = set()
 for _name, source, _kind in [*analysis.pure, *analysis.binaries, *analysis.datas]:
     if source:
@@ -114,13 +126,14 @@ for _name, source, _kind in [*analysis.pure, *analysis.binaries, *analysis.datas
         if not any(path.is_relative_to(root) for root in allowed_roots):
             foreign_sources.add(str(path))
 if foreign_sources:
-    raise SystemExit(f"Files outside the isolated build environment were collected: {sorted(foreign_sources)}")
+    raise SystemExit(f"Files outside the selected package scope were collected: {sorted(foreign_sources)}")
 
 manifest = {
     "application": APP_NAME,
     "layout": "onedir",
     "upx": False,
     "utf8_mode": True,
+    "user_site_enabled": use_user_site,
     "python": sys.version.split()[0],
     "build_environment": build_versions,
     "modules": sorted(name for name, _source, _kind in analysis.pure),
