@@ -25,7 +25,7 @@ def display_filters(task: schema_ops.SyncTask) -> str:
     """Format the configured machine filters without printing.
 
     Args:
-        task: Task whose platform, architecture, and computer filters are shown.
+        task: Task whose platform, architecture, computer, and GUI filters are shown.
 
     Returns:
         Colored summary, or an empty string if no filters are configured.
@@ -40,6 +40,8 @@ def display_filters(task: schema_ops.SyncTask) -> str:
     cn = task.computer_name.strip() if isinstance(task.computer_name, str) else task.computer_name
     if cn:
         parts.append(f"computer-name: {cn}")
+    if task.linux_gui_required:
+        parts.append("linux-gui-required: true")
     return f"  {FGray}[{', '.join(parts)}]{CRst}" if parts else ""
 
 
@@ -647,7 +649,7 @@ def _print_help() -> None:
 {FLYellow}Description:{CRst}
   Interactive rclone task runner driven by a YAML schema.
   Lists tasks from the schema, lets you pick one by number,
-  auto-filters sub-tasks by platform/arch/computer-name, then
+  auto-filters sub-tasks by platform/arch/computer-name/Linux GUI availability, then
   builds numbered commands for every paths pair and runs them sequentially.
 
 {FLYellow}Usage:{CRst}
@@ -698,6 +700,11 @@ def _print_help() -> None:
 
 {FLYellow}Action menu and inheritance:{CRst}
   Task groups, tasks, and sub-tasks retain schema order, including ungrouped.
+  linux-gui-required: true requires X11/Wayland on Linux; false has no GUI requirement.
+  Omit to inherit (default false); explicit false clears an inherited requirement.
+  Only booleans are accepted. Ignored on Windows/macOS.
+  Profiles, tasks, and sub-tasks accept this filter. Detection uses the current
+  process display environment; SSH sessions can be headless on desktop machines.
   Task menu: P shows the active rclone config path; O opens that file with
   the default application; E opens the YAML schema; Q/Enter quits.
   P and O exit this script after the selected operation.

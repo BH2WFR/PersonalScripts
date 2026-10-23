@@ -7,7 +7,7 @@ All sync/network subprocesses are mocked.
 import io
 import unittest
 import yaml
-from _rclone_test_support import models, schema_ops
+from _rclone_test_support import models, schema_ops, terminal
 
 
 class SchemaLoadingTests(unittest.TestCase):
@@ -62,6 +62,51 @@ other: {name: other}
                 schema_ops._load_schema(io.StringIO(source))
         # The strict loader must not change other tools' PyYAML behavior.
         self.assertEqual(yaml.safe_load("value: 1\nvalue: 2"), {"value": 2})
+
+
+class LinuxGuiFilterTests(unittest.TestCase):
+    """Check the optional GUI requirement, platform scoping, and inheritance."""
+
+    def test_linux_gui_requires_boolean_at_every_scope(self) -> None:
+        for value in (True, False, None, "true", "false", "x11", 0, 1, [], {}):
+            valid = isinstance(value, bool)
+            for scope in ("profile", "task", "subtask"):
+                with self.subTest(value=value, scope=scope):
+                    profile: dict[str, object] = {}
+                    sub: dict[str, object] = {"name": "sub", "paths": [{"path1": "local", "path2": "target"}]}
+                    task: dict[str, object] = {"name": "task", "sub-tasks": [sub]}
+                    {"profile": profile, "task": task, "subtask": sub}[scope]["linux-gui-required"] = value
+                    errors = schema_ops._validate_schema({"settings": {"base": profile}, "tasks": {"test": [task]}})
+                    self.assertEqual(not errors, valid, errors)
+            if not valid:
+                with self.assertRaises(ValueError):
+                    schema_ops.SyncTask.from_dict({"linux-gui-required": value})
+
+    def test_linux_matching_and_non_linux_ignore_the_gui_filter(self) -> None:
+        for required in (True, False):
+            task = schema_ops.SyncTask.from_dict({"linux-gui-required": required})
+            for detected in (True, False, None):
+                with self.subTest(required=required, detected=detected):
+                    self.assertEqual(task.matches_machine("linux", "amd64", "machine", detected),
+                                     not required or detected is True)
+                    for platform in ("win32", "darwin"):
+                        self.assertTrue(task.matches_machine(platform, "amd64", "machine", detected))
+            if required:
+                self.assertIn("linux-gui-required: true", terminal.display_filters(task))
+            else:
+                self.assertNotIn("linux-gui-required", terminal.display_filters(task))
+
+    def test_inheritance_keeps_true_and_explicit_false_clears_requirement(self) -> None:
+        self.assertIs(schema_ops.SyncTask.from_dict({}).linux_gui_required, False)
+        settings = {"default": {"linux-gui-required": True}, "unrestricted": {"linux-gui-required": False}}
+        task = schema_ops.SyncTask.from_inheritance_chain(settings, {"name": "task"})
+        self.assertIs(task.linux_gui_required, True)
+        self.assertIs(task.merge(schema_ops.SyncTask.from_dict({})).linux_gui_required, True)
+        sub = schema_ops.SyncTask.from_dict({"inherit": "unrestricted"}).resolve_profiles(settings)
+        self.assertIs(task.merge(sub).linux_gui_required, False)
+        self.assertIs(task.merge(schema_ops.SyncTask.from_dict({"linux-gui-required": False})).linux_gui_required, False)
+        cleared = schema_ops.SyncTask.from_dict({"inherit": "default", "linux-gui-required": False}).resolve_profiles(settings)
+        self.assertIs(task.merge(cleared).linux_gui_required, False)
 
 
 class InheritanceTests(unittest.TestCase):

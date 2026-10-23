@@ -273,7 +273,7 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/network/tailscale-restart-accept-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
-| [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，同步、复制、移动或比较多对目录，也可复制和移动单个文件，任务列表遵循 schema 顺序。支持云端及本地同步、按卷标定位移动硬盘、字面路径、每组路径临时指定 SFTP/WebDAV 地址、配置文件与原生加解密菜单快捷访问、命令预览、重试、试运行和取消操作。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
+| [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务（含 Linux GUI 条件），同步、复制、移动或比较多对目录，也可复制和移动单个文件。支持云端及本地同步，支持按卷标定位移动硬盘、字面路径、每组路径临时指定 SFTP/WebDAV 地址、命令预览、重试、试运行和取消操作。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
 | `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | **Python 库：**`boto3` |
 | `tools/windows/firewall-app-blocker.py` | 仅 Windows，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
 | `tools/network/webserver-run.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |

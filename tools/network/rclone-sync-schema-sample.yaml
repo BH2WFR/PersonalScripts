@@ -478,12 +478,21 @@ tasks:
 
       # ---- sub-tasks ------------------------------------------------
       # Per-machine overrides.  Only sub-tasks matching the current
-      # machine (platform / arch / hostname) are offered at runtime.
+      # machine (platform / arch / hostname / Linux GUI) are offered at runtime.
       #
       # ``platform``, ``arch``, and ``computer-name`` each accept:
       #   str       — exact match (case-insensitive)
       #   list[str] — OR semantics (satisfy any one)
       #   empty / omitted — match any machine
+      #
+      # ``linux-gui-required`` accepts true / false only (not null, strings or lists):
+      #   true  — on Linux, require an X11 or Wayland session
+      #   false — no GUI requirement; runs with or without a display (default)
+      #   omitted inherits; explicit false clears an inherited GUI requirement
+      # Ignored on Windows/macOS; add platform: linux for Linux-only tasks.
+      # May appear in settings profiles, tasks, or sub-tasks.
+      # Uses System.get_linux_gui(): DISPLAY / WAYLAND_DISPLAY, not whether
+      # desktop packages are installed. SSH without display variables is headless.
       #
       # ``alternative-remote-host`` can appear at the sub-task level
       # too, providing machine-specific alternative hosts. It is ignored
@@ -517,6 +526,13 @@ tasks:
         # --- Match by platform OR (list, any satisfy) ---
         - name: linux-or-macos
           platform: [linux, darwin]
+          paths:
+            - {path1: '~/Projects', path2: 'myremote:/Projects'}
+
+        # --- Linux session requiring a GUI ---
+        - name: linux-desktop
+          platform: linux
+          linux-gui-required: true
           paths:
             - {path1: '~/Projects', path2: 'myremote:/Projects'}
 

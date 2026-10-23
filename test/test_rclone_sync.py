@@ -13,7 +13,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, mock_open, patch
 import yaml
-from _rclone_test_support import app, backend, execution, models, schema_ops, terminal, utility
+from _rclone_test_support import app, backend, endpoint_ops, execution, models, schema_ops, terminal, utility
 
 
 class WorkflowTests(unittest.TestCase):
@@ -180,7 +180,7 @@ class WorkflowTests(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_unmatched_task_is_gray_and_has_no_selection_number_for_every_filter_scope(self) -> None:
-        for field, value in (("platform", "linux"), ("arch", "arm64"), ("computer-name", "another-device")):
+        for field, value in (("platform", "linux"), ("arch", "arm64"), ("computer-name", "another-device"), ("linux-gui-required", True)):
             for scope in ("task", "subtask", "task-profile", "subtask-profile"):
                 with self.subTest(field=field, scope=scope):
                     self.output.seek(0)
@@ -197,7 +197,16 @@ class WorkflowTests(unittest.TestCase):
                     schema = {"settings": {"other": profile}, "tasks": {"test": [inactive,
                         {"name": "available", "sub-tasks": [{"name": "all", "paths": [{"path1": "local", "path2": "remote"}]}]},
                     ]}}
-                    with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(utility.Input, "resolve_input_path", return_value="schema.yaml"), patch.object(sys, "platform", "win32"), patch.object(utility.System, "get_arch", return_value="amd64"), patch.object(utility.System, "get_computer_name", return_value="this-device"), patch("builtins.input", side_effect=["1", "q"]) as prompt:
+                    with (
+                        patch.object(sys, "argv", ["runner"]),
+                        patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))),
+                        patch.object(utility.Input, "resolve_input_path", return_value="schema.yaml"),
+                        patch.object(sys, "platform", "linux" if field == "linux-gui-required" else "win32"),
+                        patch.object(utility.System, "get_linux_gui", return_value=utility.LinuxGui.NO_GUI),
+                        patch.object(utility.System, "get_arch", return_value="amd64"),
+                        patch.object(utility.System, "get_computer_name", return_value="this-device"),
+                        patch("builtins.input", side_effect=["1", "q"]) as prompt,
+                    ):
                         self.assertEqual(app.main(), 0, self.output.getvalue())
                     output = self.output.getvalue()
                     self.assertIn(f"{utility.FGray}     test/inactive{utility.CRst}", output)
@@ -205,6 +214,31 @@ class WorkflowTests(unittest.TestCase):
                     self.assertIn("Invalid number: 1", output)
                     self.assertNotIn("No tasks have", output)
                     self.assertEqual(prompt.call_count, 2)
+        self.run.assert_not_called()
+
+    def test_cli_linux_gui_filter_uses_utils_and_applies_before_path_resolution(self) -> None:
+        for platform in ("linux", "win32", "darwin"):
+            for gui in utility.LinuxGui:
+                for required in (True, False):
+                    with self.subTest(platform=platform, gui=gui, required=required):
+                        matches = platform != "linux" or not required or gui is not utility.LinuxGui.NO_GUI
+                        schema = {"tasks": {"test": [{"name": "demo", "linux-gui-required": required, "sub-tasks": [
+                            {"name": "all", "do-not-check-modified-time": True, "paths": [
+                                {"path1": "local" if matches else "$UNDEFINED", "path2": "target"},
+                            ]},
+                        ]}]}}
+                        with (
+                            patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-copy", "--comparison", "size_only", "--dry-run"]),
+                            patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))),
+                            patch.object(sys, "platform", platform),
+                            patch.object(utility.System, "get_linux_gui", return_value=gui) as detect,
+                            patch.object(endpoint_ops, "resolve_paths", wraps=endpoint_ops.resolve_paths) as resolve,
+                            patch("builtins.input") as prompt,
+                        ):
+                            self.assertEqual(app.main(), 0 if matches else 1, self.output.getvalue())
+                        self.assertEqual(detect.call_count, int(platform == "linux"))
+                        self.assertEqual(resolve.call_count, int(matches))
+                        prompt.assert_not_called()
         self.run.assert_not_called()
 
     def test_cli_unmatched_task_warns_and_returns_nonzero_without_prompting(self) -> None:

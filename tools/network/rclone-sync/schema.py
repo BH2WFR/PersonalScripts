@@ -36,6 +36,8 @@ class FieldDef:
     def validate(self, value: Any, path: str = "") -> Optional[str]:
         """Validate *value* against this field.  Returns an error or ``None``."""
         if value is None:
+            if self.yaml_key == "linux-gui-required":
+                return f"{path}: '{self.yaml_key}' must be bool"
             return None
         if self.check_type is int and isinstance(value, bool):
             return f"{path}: '{self.yaml_key}' must be int"
@@ -157,6 +159,7 @@ _FIELDS: list[FieldDef] = [
     FieldDef("platform",          "platform",           default="",          allowed=models.VALID_PLATFORMS),
     FieldDef("arch",              "arch",               default="",          allowed=models.VALID_ARCHS),
     FieldDef("computer-name",     "computer_name",      default=""),
+    FieldDef("linux-gui-required", "linux_gui_required", default=False,      check_type=bool),
 ]
 
 
@@ -357,6 +360,7 @@ class SyncTask:
     platform:                Union[str, list] = ""
     arch:                    Union[str, list] = ""
     computer_name:           Union[str, list] = ""
+    linux_gui_required:      bool = False
     sub_tasks:         list['SyncTask'] = dataclasses.field(default_factory=list)
     explicit_fields:   set[str] = dataclasses.field(default_factory=set, repr=False)
 
@@ -393,6 +397,10 @@ class SyncTask:
             if yk == "preferred-mode" and (val is None or isinstance(val, str) and not val.strip()):
                 # An explicit empty mode clears an inherited menu preference.
                 val = ""
+            if yk == "linux-gui-required":
+                error = _validate_field_in_dict(yk, val, "task")
+                if error:
+                    raise ValueError(error)
             if attr is not None and (val is not None or yk == "allow-actions"):
                 kwargs[attr] = val
                 explicit_fields.add(attr)
@@ -517,7 +525,7 @@ class SyncTask:
 
         return errors
 
-    # ---- platform / arch / computer-name matching ----
+    # ---- machine and Linux display environment matching ----
 
     def _filter_matches(self, value: str | list[str], current: str, case_sensitive: bool = False) -> bool:
         """Check *value* (str, list[str], or empty) against *current*.
@@ -552,13 +560,29 @@ class SyncTask:
             return result
         return p
 
-    def matches_machine(self, platform: str, arch: str, hostname: str) -> bool:
-        """Return True if this task's filters match the given machine identity."""
+    def matches_machine(
+        self, platform: str, arch: str, hostname: str, linux_has_gui: bool | None = None,
+    ) -> bool:
+        """Match all configured machine filters without performing detection.
+
+        Args:
+            platform: Current sys.platform value, such as linux or win32.
+            arch: Current architecture name.
+            hostname: Current computer name.
+            linux_has_gui: Whether the Linux session has X11/Wayland; None
+                means unknown. Ignored on other operating systems.
+
+        Returns:
+            True when all constraints match. linux-gui-required defaults to False
+            (no GUI requirement). True rejects missing or unknown GUI on Linux.
+        """
         if not self._filter_matches(self._normalize_platform(self.platform), platform):
             return False
         if not self._filter_matches(self.arch, arch):
             return False
         if not self._filter_matches(self.computer_name.strip() if isinstance(self.computer_name, str) else self.computer_name, hostname):
+            return False
+        if platform == "linux" and self.linux_gui_required and linux_has_gui is not True:
             return False
         return True
 

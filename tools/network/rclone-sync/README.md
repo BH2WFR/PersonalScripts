@@ -20,6 +20,15 @@ and output inherited. Choose its `s) Set configuration password` entry to set,
 change, or remove encryption. The runner exits when the native menu closes,
 including cancellation or failure; restart it to use the resulting configuration.
 
+Profiles, tasks, and sub-tasks accept `linux-gui-required: true` (requires a graphical
+Linux session) or `false` (no GUI requirement, the default). Omission inherits the
+parent setting; explicit `false` clears an inherited requirement. Only booleans
+are accepted, not `null`. Other platforms ignore this
+constraint. `System.get_linux_gui()` detects the current process environment:
+X11/Wayland count as GUI, so an SSH session without display variables can count
+as headless even if a desktop is installed. Interactive and CLI task selection
+apply the same filter before resolving paths or executing commands.
+
 ## Module ownership
 
 | Module | Responsibility |

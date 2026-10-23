@@ -242,9 +242,14 @@ def main(script_dir: str | None = None) -> int:
     platform_cur = sys.platform
     arch_cur = System.get_arch()
     computer_cur = System.get_computer_name()
+    linux_has_gui_cur: bool | None = None
+    if platform_cur == "linux":
+        linux_gui_cur = System.get_linux_gui()
+        if linux_gui_cur is not None:
+            linux_has_gui_cur = linux_gui_cur in (LinuxGui.X11, LinuxGui.WAYLAND)
 
     # Pre-compute matching sub-tasks for every task (reused in Steps 4-5).
-    # Task-level ``platform`` / ``arch`` / ``computer-name`` are merged
+    # Task-level platform, arch, computer-name, and linux-gui-required are merged
     # into each sub-task for matching, and both task-level and sub-task-level
     # ``inherit`` profiles are resolved so that machine constraints inside
     # profiles also participate.  The stored SyncTask is the original sub-task
@@ -270,7 +275,7 @@ def main(script_dir: str | None = None) -> int:
                 except ValueError as e:
                     print(f"{FLRed}Inheritance error in sub-task '{task_label}/{st.get('name', '')}': {e}{CRst}")
                     return 1
-                if parent.merge(sub_prof).matches_machine(platform_cur, arch_cur, computer_cur):
+                if parent.merge(sub_prof).matches_machine(platform_cur, arch_cur, computer_cur, linux_has_gui_cur):
                     matching.append(sub)
             _matching_subs_cache[i] = matching
             if matching:
@@ -278,7 +283,7 @@ def main(script_dir: str | None = None) -> int:
         else:
             _matching_subs_cache[i] = []
             parent = schema_ops.SyncTask.from_inheritance_chain(settings, t)
-            if parent.matches_machine(platform_cur, arch_cur, computer_cur):
+            if parent.matches_machine(platform_cur, arch_cur, computer_cur, linux_has_gui_cur):
                 _matching_entries.add(i)
 
     while True:
@@ -524,7 +529,7 @@ def main(script_dir: str | None = None) -> int:
         # ---- Merge sub-task into final task, resolve paths ----
         if selected_subtask:
             # Re-validate sub-task matches this machine at execution time
-            if not selected_subtask.matches_machine(platform_cur, arch_cur, computer_cur):
+            if not selected_subtask.matches_machine(platform_cur, arch_cur, computer_cur, linux_has_gui_cur):
                 print(f"{FLRed}Selected sub-task '{_task_label}/{selected_subtask.name}' does not match this machine.{CRst}")
                 return 1
             # Resolve sub-task's own inherit profiles on top of the sub-task

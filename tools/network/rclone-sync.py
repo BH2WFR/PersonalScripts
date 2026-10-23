@@ -4,6 +4,7 @@
 Supports directory/file actions, ordered path1/path2 pairs, literal paths,
 mounted-volume selection, temporary SFTP/WebDAV addresses, checks, and retries.
 Task groups and their tasks are displayed in schema order, including ungrouped.
+linux-gui-required: true requires a Linux GUI via project utils; false imposes no requirement.
 The task menu can show the active rclone config path or open its file, then exit.
 Encrypt/Decrypt opens rclone's native config menu, then exits this script.
 Configuration reference: rclone-sync-schema-sample.yaml beside this entry point.
