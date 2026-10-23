@@ -56,7 +56,7 @@ class ScanRegionsTests(unittest.TestCase):
                     with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
                         info = doc[0].get_images()
                         expected_bits = 1 if mode in (regions._Mode.TEXT, regions._Mode.TEXT_INVERT) else (
-                            8 if mode is regions._Mode.KEEP else (2 if mode.value.endswith("2") else 4))
+                            8 if mode in (regions._Mode.KEEP, regions._Mode.GRAY8) else (2 if mode.value.endswith("2") else 4))
                         self.assertEqual(sorted(item[4] for item in info), sorted([1, expected_bits]))
                         base = next(item for item in info if "CCITT" in item[8])
                         pix = pymupdf.Pixmap(doc, base[0])
@@ -65,7 +65,7 @@ class ScanRegionsTests(unittest.TestCase):
                         self.assertTrue((binary[y0:y1, x0:x1] == 255).all())
                         if expected_bits > 1:
                             crop = next(item for item in info if item[4] == expected_bits)
-                            self.assertEqual(crop[8], "DCTDecode" if mode is regions._Mode.KEEP else "FlateDecode")
+                            self.assertEqual(crop[8], "DCTDecode" if mode in (regions._Mode.KEEP, regions._Mode.GRAY8) else "FlateDecode")
                             crop_pix = pymupdf.Pixmap(doc, crop[0])
                             self.assertEqual((crop_pix.width, crop_pix.height), (x1 - x0, y1 - y0))
                             if expected_bits in (2, 4):
@@ -73,6 +73,54 @@ class ScanRegionsTests(unittest.TestCase):
                                 self.assertLessEqual(len(np.unique(samples, axis=0)), 1 << expected_bits)
                         # Exercise rendered placement, not just xref metadata.
                         self.assertEqual(doc[0].get_pixmap().width, image.width)
+
+    def test_gray8_color_conversion_and_full_gray_ramp_without_quantization(self) -> None:
+        values = np.random.default_rng(9).integers(0, 256, (40, 256, 3), dtype=np.uint8)
+        values[0] = np.arange(256, dtype=np.uint8)[:, None]
+        with Image.fromarray(values) as image, image.convert("L") as expected:
+            for codec in regions._Codec:
+                for dither in regions._Dither:
+                    with self.subTest(codec=codec, dither=dither):
+                        region = regions._Region((0, 0, 1, 1), mode=regions._Mode.GRAY8, codec=codec, dither=dither)
+                        encoded = app._encode_page(image.copy(), 72, 180,
+                            app._Processing(regions=regions._Settings(enabled=True)), (region,))
+                        with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
+                            crop = next(item for item in doc[0].get_images() if item[4] == 8)
+                            self.assertEqual(crop[5], "DeviceGray")
+                            self.assertEqual(crop[8], "DCTDecode" if codec is regions._Codec.JPEG else "FlateDecode")
+                            pix = pymupdf.Pixmap(doc, crop[0])
+                            self.assertEqual(pix.n, 1)
+                            if codec is regions._Codec.FLATE:
+                                self.assertEqual(pix.samples, expected.tobytes())
+                                self.assertEqual(len(set(pix.samples[:256])), 256)
+
+    def test_uncertain_color_panel_inherits_selected_gray_mode_and_dither(self) -> None:
+        with Image.new("RGB", (60, 60), (180, 60, 30)) as image:
+            panel = regions._Panel((.1, .1, .9, .9), reliable=False, reversed=False)
+            for mode, bits in ((regions._Mode.GRAY2, 2), (regions._Mode.GRAY4, 4), (regions._Mode.GRAY8, 8)):
+                settings = regions._Settings(mode=mode, dither=regions._Dither.ORDERED,
+                                             clean_background=True, codec=regions._Codec.FLATE)
+                with self.subTest(mode=mode), patch.object(regions, "_text_panels", return_value=(panel,)):
+                    encoded = app._encode_page(image.copy(), 72, 180,
+                        app._Processing(mode=app._BinarizeMode.SAUVOLA, regions=settings))
+                    self.assertEqual(encoded.regions[0].mode, mode)
+                    self.assertEqual(encoded.regions[0].dither, settings.dither)
+                    with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
+                        crop = next(item for item in doc[0].get_images() if item[4] == bits)
+                        self.assertEqual(crop[5], "DeviceGray")
+
+    def test_gray8_menu_skips_dither_and_region_json_roundtrips(self) -> None:
+        replies = ["y", "", "", "gray8", "flate", "", "n", "n"]
+        with patch("builtins.input", side_effect=replies) as prompts, contextlib.redirect_stdout(io.StringIO()):
+            processing = app._configure_enhancements(app.DEFAULT_PROCESSING)
+        self.assertEqual(processing.regions.mode, regions._Mode.GRAY8)
+        self.assertEqual(processing.regions.codec, regions._Codec.FLATE)
+        self.assertFalse(any("Dithering" in str(call.args) for call in prompts.call_args_list))
+        config = self.config({"1": [{"rect": [0, 0, 1, 1], "mode": "gray8", "codec": "flate"}]})
+        loaded = regions._read_config(config, self.source, 3, regions._Settings())
+        exported = self.folder / "gray8.json"
+        regions._write_config(exported, self.source, 3, loaded)
+        self.assertEqual(regions._read_config(exported, self.source, 3, regions._Settings()), loaded)
 
     def test_packed_gray_roundtrip_odd_width_and_predictor(self) -> None:
         for bits in (2, 4):

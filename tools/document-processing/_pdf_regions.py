@@ -6,7 +6,8 @@ All analysis/encoding functions are thread-local and use no MuPDF objects.
 Only _assemble() touches MuPDF and must run on the caller's main thread.
 Rectangles use normalized displayed-page coordinates (top-left origin).
 Shaded-text cleanup uses local polarity and page-scaled stroke sizes; ambiguous
-text panels are kept as original-image layers by the entry point.
+text panels bypass text cleanup but follow the selected crop mode. gray8 converts
+color to 8-bit grayscale without palette reduction; supports JPEG or Flate.
 """
 
 from dataclasses import dataclass, replace
@@ -118,6 +119,7 @@ class _Mode(StrEnum):
     KEEP = "keep"
     GRAY2 = "gray2"
     GRAY4 = "gray4"
+    GRAY8 = "gray8"
     COLOR2 = "color2"
     COLOR4 = "color4"
     TEXT = "text"
@@ -598,14 +600,15 @@ def _deflate(rows: _Pixels) -> tuple[bytes, bool]:
 def _encode_crop(crop: Image.Image, box: _Box, region: _Region) -> _Layer:
     """Encode one crop without touching PDF APIs; never JPEG-encode reduced bits."""
     rgb = np.asarray(crop.convert("RGB"))
-    gray = np.array_equal(rgb[:, :, 0], rgb[:, :, 1]) and np.array_equal(rgb[:, :, 0], rgb[:, :, 2])
+    gray = (region.mode is _Mode.GRAY8
+            or (np.array_equal(rgb[:, :, 0], rgb[:, :, 1]) and np.array_equal(rgb[:, :, 0], rgb[:, :, 2])))
     prepared = crop.convert("L" if gray else "RGB")
     try:
         if region.contrast != 1:
             enhanced = ImageEnhance.Contrast(prepared).enhance(region.contrast)
             prepared.close()
             prepared = enhanced
-        if region.mode is _Mode.KEEP:
+        if region.mode in (_Mode.KEEP, _Mode.GRAY8):
             colorspace = "/DeviceGray" if gray else "/DeviceRGB"
             if region.codec is _Codec.JPEG:
                 with io.BytesIO() as stream:

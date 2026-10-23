@@ -15,8 +15,8 @@ to 1x. Window/radius scale with upscaling, but are specified in base pixels.
 Denoise area/distance scale from 240 DPI and protect neighboring punctuation.
 Cleanup requires Sauvola. It removes gradient fills using local text polarity,
 including vertical labels; flat reversed labels retain white-on-black. Uncertain
-shaded text is preserved as original-color crops (no quantization/contrast), using
-the selected KEEP codec/quality, even with illustration detection off. Explicit
+shaded text avoids text cleanup but follows the selected image mode and dithering
+(without contrast enhancement), even with illustration detection off. Explicit
 page region lists override these automatic crops. Preview remains essential.
 
 Detection profiles text-first/balanced/image-first use thresholds 1.0/0.8/0.6.
@@ -24,7 +24,9 @@ Higher custom thresholds retain fewer boxes; scores are heuristic, not
 probabilities. The text exclusion gate remains fixed. Opaque crops cover white
 holes in the background, which always uses lossless 1-bit CCITT Group 4.
 CCITT has no quality setting. KEEP retains rendered colors before JPEG encoding
-(default quality 30); choose Flate for lossless KEEP. gray2/gray4 and color2/color4
+(default quality 30); choose Flate for lossless KEEP. gray8 only converts to 8-bit
+grayscale (up to 256 levels), with JPEG/Flate compression and no dithering.
+gray2/gray4 and color2/color4
 use actual packed 2/4-bit Flate images; color modes use 4/16 palette colors.
 Dithering and crop contrast are optional and off by default. Crops retain base
 DPI; levels/upscaling/sharpening affect only the binary background.
@@ -127,6 +129,7 @@ _IMAGE_MODE_LABELS: dict[regions._Mode, str] = {
     regions._Mode.KEEP: "Keep original colors / grayscale",
     regions._Mode.GRAY2: "2-bit grayscale (4 gray levels)",
     regions._Mode.GRAY4: "4-bit grayscale (16 gray levels)",
+    regions._Mode.GRAY8: "8-bit grayscale (256 gray levels; remove color only)",
     regions._Mode.COLOR2: "2-bit color (4 palette colors)",
     regions._Mode.COLOR4: "4-bit color (16 palette colors)",
 }
@@ -338,7 +341,8 @@ def _encode_page(
                 if not panel.reliable and not any(
                     regions._intersection(box, regions._pixel_box(region.rect, rendered.size)) > 0 for region in boxes
                 ):
-                    boxes += (regions._Region(panel.rect, quality=settings.quality, codec=settings.codec),)
+                    boxes += (regions._Region(panel.rect, mode=settings.mode, dither=settings.dither,
+                                              quality=settings.quality, codec=settings.codec),)
         layers: list[regions._Layer] = []
         # Crops retain their native rendered resolution, unaffected by text-only
         # levels, enlargement and sharpening. Map bounds to the enlarged base.
@@ -763,7 +767,7 @@ def _configure_enhancements(processing: _Processing) -> _Processing:
         mode = cast(regions._Mode, Menu.select(
             [MenuOption([value.value], label, value) for value, label in _IMAGE_MODE_LABELS.items()],
             prompt="Protected image mode", default_key=mode.value, separator=False))
-        if mode is regions._Mode.KEEP:
+        if mode in (regions._Mode.KEEP, regions._Mode.GRAY8):
             codec = cast(regions._Codec, Menu.select(
                 [MenuOption([value.value], label, value) for value, label in _CODEC_LABELS.items()],
                 prompt="Illustration compression", default_key=codec.value, separator=False))
@@ -785,9 +789,10 @@ def _configure_enhancements(processing: _Processing) -> _Processing:
                                            min_value=1, max_value=100))
     clean = _toggle("Clean shaded text (auto polarity; preserve uncertain panels; requires Sauvola)?", settings.clean_background)
     if clean:
+        effective_codec = codec if mode in (regions._Mode.KEEP, regions._Mode.GRAY8) else regions._Codec.FLATE
         print(f"{FGray}Gradient fills become white; flat reversed labels stay white-on-black.\n"
-              f"Uncertain text panels keep original tones with {codec.value} compression"
-              f"{f' (quality {quality})' if codec is regions._Codec.JPEG else ''}. Preview to check lettering.{CRst}")
+              f"Uncertain text panels use {mode.value}/{effective_codec.value} without contrast enhancement"
+              f"{f' (quality {quality})' if effective_codec is regions._Codec.JPEG else ''}. Preview to check lettering.{CRst}")
     if clean and processing.mode is not _BinarizeMode.SAUVOLA:
         print(f"{FLCyan}Switching to Sauvola for background cleanup.{CRst}")
         processing = dataclasses.replace(processing, mode=_BinarizeMode.SAUVOLA)
@@ -885,7 +890,7 @@ def main() -> int:
                   f"levels={levels_info}; upscale={processing.upscale}x ({dpi * processing.upscale} DPI); "
                   f"sharpen={'on' if processing.sharpen else 'off'}{CRst}")
             if settings.enabled or settings.input is not None:
-                codec = settings.codec if settings.mode is regions._Mode.KEEP else regions._Codec.FLATE
+                codec = settings.codec if settings.mode in (regions._Mode.KEEP, regions._Mode.GRAY8) else regions._Codec.FLATE
                 quality_info = f"; JPEG quality={settings.quality}" if codec is regions._Codec.JPEG else ""
                 detection_info = (f"auto ({settings.profile.value}, threshold={settings.cutoff:g})"
                                   if settings.enabled else "imported regions only")
@@ -896,9 +901,11 @@ def main() -> int:
             print(f"{FGray}Denoise={'on' if settings.denoise else 'off'}; "
                   f"background cleanup={'on' if settings.clean_background else 'off'}{CRst}")
             if settings.clean_background:
-                fallback_info = (f"{settings.codec.value}, quality {settings.quality}"
-                                 if settings.codec is regions._Codec.JPEG else settings.codec.value)
-                print(f"{FGray}Shaded text: local polarity; uncertain panels retain original tones "
+                fallback_codec = (settings.codec if settings.mode in (regions._Mode.KEEP, regions._Mode.GRAY8)
+                                  else regions._Codec.FLATE)
+                fallback_info = (f"{settings.mode.value}/{fallback_codec.value}, quality {settings.quality}"
+                                 if fallback_codec is regions._Codec.JPEG else f"{settings.mode.value}/{fallback_codec.value}")
+                print(f"{FGray}Shaded text: local polarity; uncertain panels follow image mode "
                       f"({fallback_info}); imported page regions take priority.{CRst}")
             print(f"{FGray}Workers={options.workers}; open preview={'yes' if options.open_preview else 'no'}; "
                   f"region input={settings.input or 'none'}; "
