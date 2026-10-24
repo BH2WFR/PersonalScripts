@@ -77,6 +77,55 @@ class Pdf:
     """Common PDF operations used by the document-processing scripts."""
 
     @staticmethod
+    def new_object(document: "pymupdf.Document", value: str = "<<>>", data: bytes | None = None) -> int:
+        """Allocate a new PDF object, optionally with a decoded content stream.
+
+        Args:
+            document: Authenticated PDF to modify in memory.
+            value: Valid PDF object syntax; defaults to an empty dictionary.
+            data: Decoded stream bytes, or None for a non-stream object.
+
+        Returns:
+            The newly allocated cross-reference number.
+
+        Raises:
+            ValueError: The document is closed or the object syntax is invalid.
+
+        Mutates only a new object in memory. Does not save or overwrite a file.
+        """
+        xref = document.get_new_xref()
+        document.update_object(xref, value)
+        if data is not None:
+            document.update_stream(xref, data)
+        return xref
+
+    @staticmethod
+    def read_dictionary(document: "pymupdf.Document", xref: int, key: str) -> str:
+        """Resolve a direct/indirect dictionary without copying its child objects.
+
+        Args:
+            document: Open PDF containing the dictionary owner.
+            xref: Owner object's cross-reference number.
+            key: PDF key or slash-separated nested key path.
+
+        Returns:
+            Serialized dictionary syntax; an absent/null entry becomes ``<< >>``.
+
+        Raises:
+            ValueError: The entry is not a dictionary or the owner is invalid.
+
+        Read-only; indirect references inside the dictionary remain references.
+        """
+        kind, value = document.xref_get_key(xref, key)
+        if kind == "xref":
+            return document.xref_object(int(value.split()[0]))
+        if kind == "dict":
+            return value
+        if kind == "null":
+            return "<< >>"
+        raise ValueError(f"Expected a dictionary for object {xref}/{key}.")
+
+    @staticmethod
     def has_pdfa_identification(document: "pymupdf.Document") -> bool:
         """Check for PDF/A identification independently of encryption or permissions.
 

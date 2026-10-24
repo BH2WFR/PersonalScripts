@@ -21,7 +21,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import pymupdf
 
-from test_pdf_binarize import ROOT, app, make_source
+from test_pdf_binarize import ROOT, app, make_source, objects, raster, workflow
 
 regions = app.regions
 
@@ -50,7 +50,7 @@ class ScanRegionsTests(unittest.TestCase):
                 with self.subTest(mode=mode, dither=dither), Image.fromarray(values) as image:
                     settings = regions._Settings(enabled=True, mode=mode, dither=dither)
                     region = regions._Region((.1, .1, .9, .9), mode, dither)
-                    encoded = app._encode_page(image.copy(), 72, 180, app._Processing(regions=settings), (region,))
+                    encoded = raster._encode_page(image.copy(), 72, 180, app._Processing(regions=settings), (region,))
                     self.assertIsInstance(encoded, regions._Page)
                     self.assertEqual(len(encoded.layers), 1)
                     with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
@@ -82,7 +82,7 @@ class ScanRegionsTests(unittest.TestCase):
                 for dither in regions._Dither:
                     with self.subTest(codec=codec, dither=dither):
                         region = regions._Region((0, 0, 1, 1), mode=regions._Mode.GRAY8, codec=codec, dither=dither)
-                        encoded = app._encode_page(image.copy(), 72, 180,
+                        encoded = raster._encode_page(image.copy(), 72, 180,
                             app._Processing(regions=regions._Settings(enabled=True)), (region,))
                         with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
                             crop = next(item for item in doc[0].get_images() if item[4] == 8)
@@ -101,7 +101,7 @@ class ScanRegionsTests(unittest.TestCase):
                 settings = regions._Settings(mode=mode, dither=regions._Dither.ORDERED,
                                              clean_background=True, codec=regions._Codec.FLATE)
                 with self.subTest(mode=mode), patch.object(regions, "_text_panels", return_value=(panel,)):
-                    encoded = app._encode_page(image.copy(), 72, 180,
+                    encoded = raster._encode_page(image.copy(), 72, 180,
                         app._Processing(mode=app._BinarizeMode.SAUVOLA, regions=settings))
                     self.assertEqual(encoded.regions[0].mode, mode)
                     self.assertEqual(encoded.regions[0].dither, settings.dither)
@@ -129,7 +129,7 @@ class ScanRegionsTests(unittest.TestCase):
                 values = np.tile((np.arange(width) % levels) * (255 // (levels - 1)), (31, 1)).astype(np.uint8)
                 with self.subTest(bits=bits, width=width), Image.fromarray(values) as image:
                     mode = regions._Mode.GRAY2 if bits == 2 else regions._Mode.GRAY4
-                    encoded = app._encode_page(image.copy(), 72, 180,
+                    encoded = raster._encode_page(image.copy(), 72, 180,
                         app._Processing(regions=regions._Settings(enabled=True)), (regions._Region((0, 0, 1, 1), mode),))
                     with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
                         xref = next(item[0] for item in doc[0].get_images() if item[4] == bits)
@@ -141,7 +141,7 @@ class ScanRegionsTests(unittest.TestCase):
             for mode in (regions._Mode.KEEP, regions._Mode.COLOR2, regions._Mode.COLOR4):
                 with self.subTest(color=color, mode=mode), Image.new("RGB", (19, 13), color) as image:
                     region = regions._Region((0, 0, 1, 1), mode=mode, codec=regions._Codec.FLATE)
-                    encoded = app._encode_page(image.copy(), 72, 180,
+                    encoded = raster._encode_page(image.copy(), 72, 180,
                         app._Processing(regions=regions._Settings(enabled=True)), (region,))
                     with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
                         xref = next(item[0] for item in doc[0].get_images() if item[4] > 1)
@@ -162,7 +162,7 @@ class ScanRegionsTests(unittest.TestCase):
                 with image.resize((100 * scale, 100 * scale), Image.Resampling.NEAREST) as scaled:
                     for enabled in (False, True):
                         settings = regions._Settings(enabled=enabled, denoise=True)
-                        encoded = app._encode_page(scaled.convert("L"), 240 * scale, 180,
+                        encoded = raster._encode_page(scaled.convert("L"), 240 * scale, 180,
                                                    app._Processing(regions=settings), () if enabled else None)
                         payload = regions._assemble(encoded) if isinstance(encoded, regions._Page) else encoded
                         with pymupdf.open(stream=payload, filetype="pdf") as doc:
@@ -180,7 +180,7 @@ class ScanRegionsTests(unittest.TestCase):
                 draw.point((x, 20), fill=0)
             draw.point((90, 90), fill=0)
             region = regions._Region((.8, .8, 1, 1), codec=regions._Codec.FLATE)
-            encoded = app._encode_page(image.copy(), 240, 180,
+            encoded = raster._encode_page(image.copy(), 240, 180,
                 app._Processing(regions=regions._Settings(enabled=True, denoise=True)), (region,))
             with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
                 base_xref = next(item[0] for item in doc[0].get_images() if item[4] == 1)
@@ -230,7 +230,7 @@ class ScanRegionsTests(unittest.TestCase):
             draw.ellipse((30, 30, 60, 60), fill="white")
             draw.rectangle((100, 200, 1100, 300), fill=(140, 140, 140))
             draw.text((160, 225), "READABLE TITLE 123", font=ImageFont.load_default(size=42), fill="white")
-            with image.convert("L") as gray, app._sauvola(gray, 31, .08) as thresholded:
+            with image.convert("L") as gray, raster._sauvola(gray, 31, .08) as thresholded:
                 with regions._clean_background(image, thresholded) as base:
                     original = np.asarray(gray)[210:290, 120:1000]
                     result = np.asarray(base)[210:290, 120:1000]
@@ -268,7 +268,7 @@ class ScanRegionsTests(unittest.TestCase):
                 with self.subTest(scale=scale), image.resize((1200 * scale, 1700 * scale)) as enlarged:
                     panels = regions._text_panels(enlarged)
                     self.assertTrue(any(panel.reliable and panel.reversed for panel in panels))
-                    with app._sauvola(enlarged, 31 * scale | 1, .2) as binary:
+                    with raster._sauvola(enlarged, 31 * scale | 1, .2) as binary:
                         with regions._clean_background(enlarged, binary, panels) as result:
                             values = np.asarray(result)
                             original = np.asarray(enlarged)
@@ -302,7 +302,7 @@ class ScanRegionsTests(unittest.TestCase):
             self.assertTrue(any(not panel.reliable for panel in panels))
             settings = regions._Settings(clean_background=True, codec=regions._Codec.FLATE)
             processing = app._Processing(mode=app._BinarizeMode.SAUVOLA, regions=settings)
-            encoded = app._encode_page(image.copy(), 240, 180, processing)
+            encoded = raster._encode_page(image.copy(), 240, 180, processing)
             self.assertIsInstance(encoded, regions._Page)
             self.assertGreater(len(encoded.layers), 0)
             with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
@@ -312,7 +312,7 @@ class ScanRegionsTests(unittest.TestCase):
                     pix = pymupdf.Pixmap(doc, xref)
                     with image.crop(layer.box).convert("L") as crop:
                         self.assertEqual(pix.samples, crop.tobytes())
-            overridden = app._encode_page(image.copy(), 240, 180, processing, ())
+            overridden = raster._encode_page(image.copy(), 240, 180, processing, ())
             self.assertEqual(overridden.layers, ())
 
     def test_cleanup_does_not_restore_original_dark_ink_across_the_whole_page(self) -> None:
@@ -360,12 +360,12 @@ class ScanRegionsTests(unittest.TestCase):
             target = self.folder / f"full-{workers}.pdf"
             outputs.append(target)
             with contextlib.redirect_stdout(io.StringIO()), patch.object(regions, "_assemble", side_effect=checked_assemble):
-                app._binarize_pdf(self.source, target, 72, 180, workers, "1", processing=processing)
+                workflow._binarize_pdf(self.source, target, 72, 180, workers, "1", processing=processing)
         preview = self.folder / "preview.pdf"
         exported = self.folder / "resolved.json"
         annotated = self.folder / "annotations"
         with contextlib.redirect_stdout(io.StringIO()):
-            app._preview_pdf(self.source, preview, 2, 72, 180,
+            workflow._preview_pdf(self.source, preview, 2, 72, 180,
                 replace(processing, regions=replace(settings, export=exported, preview_dir=annotated)))
         with pymupdf.open(outputs[0]) as serial, pymupdf.open(outputs[1]) as parallel, pymupdf.open(preview) as one:
             for index in range(3):
@@ -384,8 +384,8 @@ class ScanRegionsTests(unittest.TestCase):
         for settings in (regions._Settings(enabled=True, export=path),
                          regions._Settings(enabled=True, export=target),
                          regions._Settings(input=self.folder / "missing.json")):
-            with patch.object(app, "_render_page") as render, self.assertRaises((OSError, ValueError)):
-                app._binarize_pdf(self.source, target, 72, 180, 1, processing=app._Processing(regions=settings))
+            with patch.object(objects, "_render_image") as render, self.assertRaises((OSError, ValueError)):
+                workflow._binarize_pdf(self.source, target, 72, 180, 1, processing=app._Processing(regions=settings))
             render.assert_not_called()
             self.assertFalse(target.exists())
 
@@ -395,7 +395,7 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
             patch.object(app.Input, "resolve_output_path", return_value=str(target)),
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-            patch("builtins.input", side_effect=["n", "y", "", "", "n", "n", "3", ""]),
+            patch("builtins.input", side_effect=["n", "n", "y", "", "", "n", "n", "3", ""]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)
@@ -424,7 +424,7 @@ class ScanRegionsTests(unittest.TestCase):
         settings = app._Processing(regions=regions._Settings(input=config))
         output = self.folder / "encrypted-result.pdf"
         with patch.object(app.Input, "input_password", return_value="test-open"), contextlib.redirect_stdout(io.StringIO()):
-            app._binarize_pdf(self.source, output, 72, 180, 3, processing=settings)
+            workflow._binarize_pdf(self.source, output, 72, 180, 3, processing=settings)
         with pymupdf.open(output) as doc:
             self.assertFalse(doc.is_encrypted)
             self.assertEqual(len(doc[1].get_images()), 2)
@@ -432,7 +432,7 @@ class ScanRegionsTests(unittest.TestCase):
         with (patch.object(app.Input, "input_password", return_value="test-open"),
               patch.object(regions, "_encode_crop", side_effect=RuntimeError("crop failure")),
               contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, "crop failure")):
-            app._binarize_pdf(self.source, failed, 72, 180, 3, processing=settings)
+            workflow._binarize_pdf(self.source, failed, 72, 180, 3, processing=settings)
         self.assertFalse(failed.exists())
         self.assertEqual(list(self.folder.glob(".pdf-binary-*")), [])
         self.assertEqual(self.source.read_bytes(), original)
@@ -441,7 +441,7 @@ class ScanRegionsTests(unittest.TestCase):
         with Image.new("RGB", (80, 60), (120, 60, 20)) as image:
             first = regions._Region((.1, .1, .7, .8), mode=regions._Mode.GRAY2)
             last = regions._Region((.3, .3, .9, .9), codec=regions._Codec.FLATE)
-            encoded = app._encode_page(image.copy(), 72, 180,
+            encoded = raster._encode_page(image.copy(), 72, 180,
                 app._Processing(upscale=2, regions=regions._Settings(enabled=True)), (first, last))
             with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
                 pix = doc[0].get_pixmap(dpi=72)
@@ -460,7 +460,7 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app.Input, "resolve_output_path", side_effect=[str(preview_one), str(preview_two), str(complete)]),
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
             patch.object(app.System, "open_with_default_app") as viewer,
-            patch("builtins.input", side_effect=["", "", "", "y", "2", "n", "y", "y", "y", "1", "2", "1", "-1", "3", "1"]),
+            patch("builtins.input", side_effect=["", "", "", "", "y", "2", "n", "y", "y", "y", "1", "2", "1", "-1", "3", "1"]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)
@@ -492,7 +492,7 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
             patch.object(app.Input, "resolve_output_path", return_value=str(target)),
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-            patch("builtins.input", side_effect=["", "", "", "", "1", "1", "0"]),
+            patch("builtins.input", side_effect=["", "", "", "", "", "1", "1", "0"]),
             contextlib.redirect_stdout(messages),
         ):
             self.assertEqual(app.main(), 0)
@@ -515,7 +515,7 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
             patch.object(regions, "_detect", side_effect=detect) as detected,
             patch.object(app.System, "open_with_default_app"),
-            patch("builtins.input", side_effect=["y", "", "", "gray2", "ordered", "1", "n", "n", "n", "1", "2", "0"]) as prompts,
+            patch("builtins.input", side_effect=["n", "y", "", "", "gray2", "ordered", "1", "n", "n", "n", "1", "2", "0"]) as prompts,
             contextlib.redirect_stdout(messages),
         ):
             self.assertEqual(app.main(), 0)

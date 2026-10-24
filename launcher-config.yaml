@@ -61,6 +61,7 @@ ignore-list:
         - "INSTALL/"
         - "research/matrix-viewer/"
         - "network/rclone-sync/"
+        - "document-processing/pdf-binarize"
     platform-specific:
         # 规范：windows, linux, macos
         windows:

@@ -13,6 +13,57 @@ from .menu_option import MenuOption
 from .paths import Paths
 
 class Input:
+    @staticmethod
+    def parse_color(text: str) -> tuple[float, float, float]:
+        """Parse an opaque RGB color into normalized red, green and blue values.
+
+        Args:
+            text: ``R, G, B`` (channels from 0 to 255), ``#RGB``, ``#RRGGBB``,
+                or CSS-style ``rgb(R, G, B)`` / ``rgb(R G B)``. RGB functions
+                also accept percentages from 0% to 100%; comma-separated
+                functions require all channels to use the same unit. Decimal
+                channels and surrounding whitespace are allowed. This is a
+                strict RGB subset, not a full CSS color parser: named colors,
+                alpha, other color spaces and CSS expressions are unsupported.
+
+        Returns:
+            A three-float tuple with each channel in [0, 1]. Numeric channels
+            always use the 0-255 scale, so ``1, 0, 0`` is dark red, not full red.
+
+        Raises:
+            ValueError: If the input is empty, malformed, unsupported, non-finite
+                or out of range. Values are rejected rather than clamped.
+
+        This pure helper has no I/O or other side effects and needs no packages.
+        """
+        value = text.strip()
+        if re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", value):
+            digits = value[1:]
+            if len(digits) == 3:
+                digits = "".join(char * 2 for char in digits)
+            return (int(digits[0:2], 16) / 255, int(digits[2:4], 16) / 255,
+                    int(digits[4:6], 16) / 255)
+
+        function = re.fullmatch(r"rgb\((.*)\)", value, re.IGNORECASE | re.DOTALL)
+        body = function[1].strip() if function else value
+        comma_separated = "," in body
+        parts = [part.strip() for part in body.split(",")] if comma_separated else body.split()
+        number_pattern = r"[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+        if (len(parts) != 3 or (not function and not comma_separated)
+                or any(re.fullmatch(f"{number_pattern}%?", part) is None for part in parts)):
+            raise ValueError("Use R, G, B; #RGB; #RRGGBB; or rgb(R, G, B) / rgb(R G B).")
+        percentages = [part.endswith("%") for part in parts]
+        if (not function and any(percentages)) or (comma_separated and len(set(percentages)) > 1):
+            raise ValueError("Percentages require rgb(); comma-separated rgb() cannot mix units.")
+        channels: list[float] = []
+        for part, percentage in zip(parts, percentages):
+            channel = float(part.removesuffix("%"))
+            maximum = 100 if percentage else 255
+            if not math.isfinite(channel) or not 0 <= channel <= maximum:
+                raise ValueError(f"RGB channels must be between 0 and {maximum}{'%' if percentage else ''}.")
+            channels.append(channel / maximum)
+        return channels[0], channels[1], channels[2]
+
     #* ============ 密码输入 ============
     @staticmethod
     def input_password(prompt: str = "Enter password") -> str:

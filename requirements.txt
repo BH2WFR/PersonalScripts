@@ -10,6 +10,7 @@ opencv-python
 Pillow
 psutil
 PyMuPDF>=1.28
+pypdf>=6
 fonttools
 pynput
 PySide6

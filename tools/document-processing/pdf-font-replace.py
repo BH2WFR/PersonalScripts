@@ -3,13 +3,21 @@
 
 Interactively select source fonts from used PDF text (whole document or page ranges), enter
 their PDF names, or replace all fonts. Source fonts need not be installed.
-Filter by effective font size and ignore physical page ranges. Target fonts can
+Filter by effective font size and original text color, and ignore physical page ranges. Target fonts can
 be searched by installed names/localized aliases or selected as TTF/OTF/TTC files.
 Regular, bold, italic and bold-italic use matching faces, retaining existing text
 matrices and synthetic styling. Missing faces/glyphs fail instead of falling back.
 Add multiple replacement rules for the same PDF before starting. Rules match
 original text, never another rule's output; the first matching rule wins.
-Each rule keeps its own font, size, ignored-page and embedding choices.
+Each rule keeps its own font, size, ignored-page, color and embedding choices.
+Keep original text colors (default) or enter an RGB replacement color per rule:
+255, 0, 0; #FF0000; #F00; rgb(255, 0, 0); or rgb(100% 0% 0%).
+Only matched text changes color, including both fill and stroke; transparency
+is retained. Invalid colors prompt again. CSS names and alpha are unsupported.
+Source-color filters can select multiple colors discovered on chosen pages or
+one manually entered RGB color. Colors are compared as 8-bit RGB, independently
+of opacity; either visible fill or stroke can match. Invisible and pattern-filled
+text has no selectable solid fill color. Page selection only scopes color discovery.
 Each rule can retain original font embeddings (default) or remove them when no
 remaining content uses them. Shared fonts requested by a retaining rule stay
 embedded. Target fonts always remain embedded; unused original font names and
@@ -37,7 +45,7 @@ Usage:
     python pdf-font-replace.py input.pdf -o output.pdf
 
 Only input/output paths can be supplied on the command line. All font, size,
-page and embedding choices are made interactively.
+page, color and embedding choices are made interactively.
 """
 
 import argparse
@@ -51,14 +59,14 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
 if TYPE_CHECKING:
     import pymupdf
-    from pymupdf.mupdf import PdfFontDesc
+    from pymupdf.mupdf import FzColorspace, PdfFontDesc
 
 MAX_FORM_DEPTH = 32
 SIZE_TOLERANCE = 0.0001
@@ -66,11 +74,35 @@ SUBSET_PREFIX = re.compile(r"^[A-Z]{6}\+")
 NUMBER = re.compile(rb"[+-]?(?:\d+(?:\.\d*)?|\.\d+)")
 WHITESPACE = b"\x00\t\n\x0c\r "
 DELIMITERS = WHITESPACE + b"()<>[]{}/%"
+DEVICE_COLOR_SPACES: dict[bytes, str] = {
+    b"g": "/DeviceGray", b"rg": "/DeviceRGB", b"k": "/DeviceCMYK",
+}
+BUILTIN_COLOR_SPACES: frozenset[str] = frozenset((*DEVICE_COLOR_SPACES.values(), "/Pattern"))
 
 
 class _Embedding(StrEnum):
     SUBSET = "subset"
     FULL = "full"
+
+
+class _SourceColorMode(StrEnum):
+    ALL = "all"
+    PAGES = "pages"
+    MANUAL = "manual"
+
+
+def _rgb_key(color: Sequence[float]) -> int:
+    """Normalize extracted RGB or gray to the same rounded 8-bit comparison key."""
+    channels = tuple(color) * 3 if len(color) == 1 else tuple(color)
+    if len(channels) != 3 or not all(math.isfinite(value) for value in channels):
+        raise ValueError("Expected a finite RGB or gray text color.")
+    red, green, blue = (min(255, max(0, int(value * 255 + 0.5))) for value in channels)
+    return (red << 16) | (green << 8) | blue
+
+
+def _color_label(color: int) -> str:
+    """Show an 8-bit color in both accepted hex and RGB input notations."""
+    return f"#{color:06X} / rgb({color >> 16}, {(color >> 8) & 255}, {color & 255})"
 
 
 def _font_name(name: str) -> str:
@@ -218,25 +250,8 @@ def _reference(document: "pymupdf.Document", xref: int, key: str) -> int:
     return int(match[1])
 
 
-def _dictionary(document: "pymupdf.Document", xref: int, key: str) -> str:
-    """Resolve a direct or indirect PDF dictionary, treating null as empty."""
-    kind, value = document.xref_get_key(xref, key)
-    if kind == "xref":
-        return document.xref_object(int(value.split()[0]))
-    if kind == "dict":
-        return value
-    if kind == "null":
-        return "<< >>"
-    raise ValueError(f"Expected a dictionary for object {xref}/{key}.")
-
-
-def _object(document: "pymupdf.Document", value: str, stream: bytes | None = None) -> int:
-    """Allocate a new PDF object and optionally attach a decoded stream."""
-    xref = document.get_new_xref()
-    document.update_object(xref, value)
-    if stream is not None:
-        document.update_stream(xref, stream)
-    return xref
+_dictionary = Pdf.read_dictionary
+_object = Pdf.new_object
 
 
 def _unicode_map(document: "pymupdf.Document", xref: int, composite: bool) -> dict[int, str]:
@@ -524,6 +539,13 @@ class _State:
     font: int = 0
     size: float = 0
     horizontal_scale: float = 1
+    render_mode: int = 0
+    fill_space: str = "/DeviceGray"
+    fill_color: bytes = b"0 sc"
+    fill_pattern: str | None = None
+    stroke_space: str = "/DeviceGray"
+    stroke_color: bytes = b"0 SC"
+    stroke_pattern: str | None = None
 
     def effective_size(self) -> float:
         """Match MuPDF's baseline-direction size, including horizontal scaling."""
@@ -533,7 +555,7 @@ class _State:
 
 @dataclass(frozen=True)
 class _Rule:
-    """One replacement's original-text filters, target faces and embedding choice."""
+    """One replacement's original-text filters, target faces, embedding and color."""
 
     names: set[str] | None
     sizes: tuple[tuple[float, float], ...]
@@ -541,6 +563,8 @@ class _Rule:
     faces: dict[FontStyle, FontFace]
     embedding: _Embedding
     remove_original: bool = False
+    color: tuple[float, float, float] | None = None
+    source_colors: frozenset[int] | None = None
 
 
 @dataclass
@@ -554,6 +578,57 @@ class _Engine:
     current_page: int = -1
     retained_fonts: set[int] = field(default_factory=set)
     processed_forms: set[int] = field(default_factory=set)
+    converted_colors: dict[tuple[str, bytes], int] = field(default_factory=dict)
+    loaded_color_spaces: dict[str, "FzColorspace"] = field(default_factory=dict)
+
+    def source_color(self, space: str, command: bytes, pattern: str | None) -> int | None:
+        """Convert a solid original color with the same MuPDF conversion as texttrace.
+
+        Cache by resolved color space and operands. Pattern paints have no single
+        RGB value and return None. New color-space objects stay in memory until
+        the ordinary save cleanup removes unused objects.
+        """
+        if pattern is not None or space == "/Pattern":
+            return None
+        key = (space, command)
+        if key not in self.converted_colors:
+            import pymupdf.mupdf as mupdf
+
+            if space not in self.loaded_color_spaces:
+                native = mupdf.pdf_document_from_fz_document(self.document.this)
+                xref = _object(self.document, space)
+                self.loaded_color_spaces[space] = mupdf.pdf_load_colorspace(mupdf.pdf_new_indirect(native, xref, 0))
+            colorspace = self.loaded_color_spaces[space]
+            count = mupdf.fz_colorspace_n(colorspace)
+            values = [float(token.raw) for token in _tokens(command) if token.kind == "number"]
+            if not values:
+                values = [0.0] * count
+                if mupdf.fz_colorspace_is_cmyk(colorspace):
+                    values[-1] = 1.0
+                elif mupdf.fz_colorspace_is_device_n(colorspace):
+                    values = [1.0] * count
+            if len(values) != count:
+                raise ValueError("Original text color has an invalid number of components.")
+            components = mupdf.new_floats(count)
+            try:
+                for index, value in enumerate(values):
+                    mupdf.floats_setitem(components, index, value)
+                rgb = mupdf.fz_convert_color(colorspace, components, mupdf.fz_device_rgb(),
+                                             mupdf.FzColorspace(), mupdf.FzColorParams())
+                self.converted_colors[key] = _rgb_key(rgb[:3])
+            finally:
+                mupdf.delete_floats(components)
+        return self.converted_colors[key]
+
+    def matches_color(self, state: _State, colors: frozenset[int]) -> bool:
+        """Match either painted component; hidden/clip-only text cannot match."""
+        if state.render_mode in (0, 2, 4, 6):
+            if self.source_color(state.fill_space, state.fill_color, state.fill_pattern) in colors:
+                return True
+        if state.render_mode in (1, 2, 5, 6):
+            if self.source_color(state.stroke_space, state.stroke_color, state.stroke_pattern) in colors:
+                return True
+        return False
 
     def selected(self, state: _State) -> int | None:
         """Return the first rule matching the original font, size and current page."""
@@ -567,6 +642,8 @@ class _Engine:
             if self.current_page in rule.ignored:
                 continue
             if rule.names is not None and not any(candidate.casefold() in names for candidate in rule.names):
+                continue
+            if rule.source_colors is not None and not self.matches_color(state, rule.source_colors):
                 continue
             if not rule.sizes or any(low - SIZE_TOLERANCE <= size <= high + SIZE_TOLERANCE
                                      for low, high in rule.sizes):
@@ -593,28 +670,66 @@ class _Engine:
         """Clone resources and isolate changed forms for this single page/invocation.
 
         All non-text operators and operands retain their original bytes. The only
-        inserted text operators select the replacement font before a text show,
-        then restore the original font. No text matrices or advances are changed.
+        inserted operators select the replacement font and optional RGB color
+        before a text show, then restore the original font and color spaces.
+        No text matrices, spacing, transparency or advances are changed.
         """
         if len(ancestors) > MAX_FORM_DEPTH:
             raise ValueError("PDF form nesting is too deep.")
         document = self.document
         resource = _object(document, resources)
-        for key in ("Font", "XObject"):
+        recoloring = any(rule.color is not None or rule.source_colors is not None for rule in self.rules)
+        resource_keys = ("Font", "XObject", "ColorSpace", "Pattern") if recoloring else ("Font", "XObject")
+        for key in resource_keys:
             document.xref_set_key(resource, key, _dictionary(document, resource, key))
         state = replace(initial)
         stack: list[_State] = []
         operands: list[_Token] = []
         patches: list[tuple[int, int, bytes]] = []
+        color_aliases: dict[str, str] = {}
+        pattern_aliases: dict[str, str] = {}
 
-        def font_alias(xref: int) -> str:
-            name = f"FR{xref}"
-            while document.xref_get_key(resource, f"Font/{name}")[0] != "null":
-                if document.xref_get_key(resource, f"Font/{name}")[1] == f"{xref} 0 R":
+        def resource_alias(category: Literal["Font", "ColorSpace", "Pattern"], value: str, name: str) -> str:
+            """Add a resource without replacing an existing name or definition."""
+            while document.xref_get_key(resource, f"{category}/{name}")[0] != "null":
+                if document.xref_get_key(resource, f"{category}/{name}")[1] == value:
                     return name
                 name += "x"
-            document.xref_set_key(resource, f"Font/{name}", f"{xref} 0 R")
+            document.xref_set_key(resource, f"{category}/{name}", value)
             return name
+
+        def font_alias(xref: int) -> str:
+            """Name a source or replacement font in this invocation's resources."""
+            return resource_alias("Font", f"{xref} 0 R", f"FR{xref}")
+
+        def resolve_color_space(name: str) -> str:
+            """Resolve named spaces using the same device-space semantics as texttrace."""
+            # MuPDF's trace reports device colors without applying DefaultRGB,
+            # DefaultGray or DefaultCMYK substitutions. Match that discovery view.
+            if name in BUILTIN_COLOR_SPACES:
+                return name
+            kind, value = document.xref_get_key(resource, f"ColorSpace/{name[1:]}")
+            if kind == "null":
+                raise ValueError("Missing PDF color space resource.")
+            return value
+
+        def restore_color(space: str, color: bytes, pattern: str | None, *, stroke: bool) -> bytes:
+            """Restore even inherited named spaces in this invocation's resources."""
+            if space in BUILTIN_COLOR_SPACES:
+                alias = space
+            else:
+                if space not in color_aliases:
+                    name = resource_alias("ColorSpace", space, f"FRColor{len(color_aliases)}")
+                    color_aliases[space] = f"/{name}"
+                alias = color_aliases[space]
+            if pattern is not None:
+                if pattern not in pattern_aliases:
+                    name = resource_alias("Pattern", pattern, f"FRPattern{len(pattern_aliases)}")
+                    pattern_aliases[pattern] = f"/{name}"
+                pattern_token = list(_tokens(color))[-2]
+                color = (color[:pattern_token.start] + pattern_aliases[pattern].encode("ascii")
+                         + color[pattern_token.end:])
+            return f"{alias} {'CS' if stroke else 'cs'}\n".encode("ascii") + color
 
         # ── interpret state and collect byte patches ───────────
         for token in _tokens(data):
@@ -638,6 +753,29 @@ class _Engine:
                 state.text_matrix = _matrix([float(item.raw) for item in operands])
             elif op == b"Tz":
                 state.horizontal_scale = float(operands[0].raw) / 100
+            elif op == b"Tr":
+                state.render_mode = int(operands[0].raw)
+            elif recoloring and op.lower() in (b"g", b"rg", b"k", b"cs", b"sc", b"scn"):
+                stroke = op.isupper()
+                lower = op.lower()
+                space = state.stroke_space if stroke else state.fill_space
+                color = data[operands[0].start:token.end]
+                pattern: str | None = None
+                if lower in DEVICE_COLOR_SPACES:
+                    space = resolve_color_space(DEVICE_COLOR_SPACES[lower])
+                elif lower == b"cs":
+                    space = resolve_color_space(f"/{_name(operands[0].raw)}")
+                    color = b""  # Selecting a color space also initializes its color.
+                elif lower == b"scn" and operands[-1].kind == "name":
+                    kind, pattern = document.xref_get_key(resource, f"Pattern/{_name(operands[-1].raw)}")
+                    if kind == "null":
+                        raise ValueError("Missing PDF color pattern resource.")
+                if stroke:
+                    state.stroke_space, state.stroke_color = space, color
+                    state.stroke_pattern = pattern
+                else:
+                    state.fill_space, state.fill_color = space, color
+                    state.fill_pattern = pattern
             elif op == b"Tf":
                 state.font = _reference(document, resource, f"Font/{_name(operands[0].raw)}")
                 state.size = float(operands[1].raw)
@@ -689,6 +827,12 @@ class _Engine:
                     start = operands[0].start
                     changed_show = (f"/{target_alias} {size} Tf\n".encode("ascii") + data[start:token.end]
                                     + f"\n/{original_alias} {size} Tf".encode("ascii"))
+                    text_color = self.rules[rule_index].color
+                    if text_color is not None:
+                        rgb = " ".join(f"{channel:.12f}" for channel in text_color)
+                        changed_show = (f"{rgb} rg\n{rgb} RG\n".encode("ascii") + changed_show + b"\n"
+                                        + restore_color(state.fill_space, state.fill_color, state.fill_pattern, stroke=False) + b"\n"
+                                        + restore_color(state.stroke_space, state.stroke_color, state.stroke_pattern, stroke=True))
                     patches.append((start, token.end, changed_show))
             elif op in (b"Tj", b"TJ", b"'", b'"') and state.font:
                 # Even hidden/clipping text must retain its original font data.
@@ -720,7 +864,7 @@ class _Engine:
         for index in tqdm(pages, desc="Replacing fonts", unit="page", disable=None, dynamic_ncols=True):
             self.current_page = index
             page = self.document[index]
-            if not any(index not in rule.ignored and _matching_font_names(page, rule.names, rule.sizes)
+            if not any(index not in rule.ignored and _matching_font_names(page, rule.names, rule.sizes, rule.source_colors)
                        for rule in self.rules):
                 if cleaning:
                     self.retained_fonts.update(row[0] for row in page.get_fonts(full=True))
@@ -870,10 +1014,12 @@ def _pdf_fonts(document: "pymupdf.Document", pages: Sequence[int]) -> list[str]:
 
 def _matching_font_names(
     page: "pymupdf.Page", names: set[str] | None, sizes: tuple[tuple[float, float], ...],
+    source_colors: frozenset[int] | None = None,
 ) -> set[str]:
     """Find actually used fonts with matching names/sizes, including hidden text."""
     folded = {name.casefold() for name in names} if names is not None else None
     return {_font_name(span["font"]) for span in page.get_texttrace() if span["chars"]
+            and (source_colors is None or (span["type"] in (0, 1) and _rgb_key(span["color"]) in source_colors))
             and (folded is None or _font_name(span["font"]).casefold() in folded)
             and (not sizes or any(low - SIZE_TOLERANCE <= span["size"] <= high + SIZE_TOLERANCE for low, high in sizes))}
 
@@ -917,31 +1063,87 @@ def _select_source_fonts(document: "pymupdf.Document") -> set[str] | None:
             if not choice:
                 raise KeyboardInterrupt
             continue
-        options = [MenuOption([str(index)], name, str(index), desc_color=FLCyan)
-                   for index, name in enumerate(names, 1)]
-        options.extend([
-            MenuOption(["R"], "Select pages/search again", "R", desc_color=FGray),
-            MenuOption(["E"], "Exit", "E", desc_color=FGray),
-        ])
-        while True:
-            answers = cast(list[str], Menu.select(
-                options, prompt="Font numbers/ranges", required=True,
-                allow_multiple=True, accept_custom_string=True, key_color=FGray, separator=False,
-            ))
+        indexes = _select_numbered_items(names, "Font numbers/ranges")
+        if indexes is not None:
+            return {names[index] for index in indexes}
+
+
+def _select_numbered_items(labels: Sequence[str], prompt: str) -> tuple[int, ...] | None:
+    """Share font/color multi-selection: R returns to discovery; E cancels."""
+    options = [MenuOption([str(index)], label, str(index), desc_color=FLCyan)
+               for index, label in enumerate(labels, 1)]
+    options.extend([
+        MenuOption(["R"], "Select pages/search again", "R", desc_color=FGray),
+        MenuOption(["E"], "Exit", "E", desc_color=FGray),
+    ])
+    while True:
+        answers = cast(list[str], Menu.select(
+            options, prompt=prompt, required=True,
+            allow_multiple=True, accept_custom_string=True, key_color=FGray, separator=False,
+        ))
+        try:
+            actions = {answer.casefold() for answer in answers} & {"r", "e"}
+            if actions:
+                if len(answers) != 1:
+                    raise ValueError("Use R or E alone, without item numbers.")
+                if "e" in actions:
+                    raise KeyboardInterrupt
+                return None
+            indexes = Input.parse_index_ranges(",".join(answers), item_count=len(labels))
+            if not indexes:
+                raise ValueError("Choose at least one item, R, or E.")
+            return indexes
+        except ValueError as exc:
+            print(f"{FLRed}{exc}{CRst}")
+
+
+def _pdf_colors(document: "pymupdf.Document", pages: Sequence[int]) -> list[int]:
+    """List unique 8-bit RGB colors of painted text, excluding images and hidden text."""
+    from tqdm import tqdm
+
+    colors: set[int] = set()
+    for index in tqdm(pages, desc="Scanning text colors", unit="page", disable=None, dynamic_ncols=True):
+        colors.update(_rgb_key(span["color"]) for span in document[index].get_texttrace()
+                      if span["chars"] and span["type"] in (0, 1))
+    return sorted(colors)
+
+
+def _select_source_colors(document: "pymupdf.Document") -> frozenset[int] | None:
+    """Choose original text colors by page discovery or input; None means all colors."""
+    while True:
+        mode = Menu.select(
+            [MenuOption(["A"], "Match all original text colors", _SourceColorMode.ALL),
+             MenuOption(["P"], "Choose original text colors from PDF pages", _SourceColorMode.PAGES),
+             MenuOption(["C"], "Enter an original text color", _SourceColorMode.MANUAL)],
+            prompt="Original text color filter", required=True, default_key="A", separator=False,
+        )
+        if mode is None:
+            raise KeyboardInterrupt
+        if mode == _SourceColorMode.ALL:
+            return None
+        if mode == _SourceColorMode.MANUAL:
+            value = Input.prompt(f"{FLYellow}Original text color (RGB or hex; Enter = back) > {CRst}")
+            if not value:
+                continue
             try:
-                actions = {answer.casefold() for answer in answers} & {"r", "e"}
-                if actions:
-                    if len(answers) != 1:
-                        raise ValueError("Use R or E alone, without font numbers.")
-                    if "e" in actions:
-                        raise KeyboardInterrupt
-                    break
-                indexes = Input.parse_index_ranges(",".join(answers), item_count=len(names))
-                if not indexes:
-                    raise ValueError("Choose at least one font, R, or E.")
-                return {names[index] for index in indexes}
+                return frozenset((_rgb_key(Input.parse_color(value)),))
             except ValueError as exc:
-                print(f"{FLRed}{exc}{CRst}")
+                print(f"{FLRed}Invalid color: {exc}{CRst}")
+                continue
+        # ── discover colors without modifying the input ────────
+        print(f"{FGray}Scan pages only supply color choices; use ignored pages to limit replacement. "
+              f"Colors match at 8-bit RGB precision, regardless of opacity.{CRst}")
+        pages = Input.input_index_ranges(
+            "Pages to inspect for text colors (Enter = whole document)", item_count=document.page_count,
+            default=f"1-{document.page_count}",
+        )
+        colors = _pdf_colors(document, pages or ())
+        if not colors:
+            print(f"{FLYellow}No visible solid text colors found. Choose other pages or enter a color.{CRst}")
+            continue
+        indexes = _select_numbered_items([_color_label(color) for color in colors], "Color numbers/ranges")
+        if indexes is not None:
+            return frozenset(colors[index] for index in indexes)
 
 
 def _pick_target(catalog: list[FontFace]) -> FontFace:
@@ -982,6 +1184,7 @@ def _pick_target(catalog: list[FontFace]) -> FontFace:
 def _required_styles(
     document: "pymupdf.Document", names: set[str] | None,
     sizes: tuple[tuple[float, float], ...], ignored: Sequence[int],
+    source_colors: frozenset[int] | None = None,
 ) -> set[FontStyle]:
     """Determine required styles from text on pages eligible for replacement."""
     refs: set[int] = set()
@@ -990,7 +1193,7 @@ def _required_styles(
         if index in ignored:
             continue
         page = document[index]
-        used = _matching_font_names(page, names, sizes)
+        used = _matching_font_names(page, names, sizes, source_colors)
         if not used:
             continue
         for row in page.get_fonts(full=True):
@@ -1037,6 +1240,7 @@ def _collect_rules(document: "pymupdf.Document") -> tuple[_Rule, ...]:
         sizes = Input.input_real_ranges("Font sizes (Enter = all)") or ()
         if any(low <= 0 for low, _ in sizes):
             raise ValueError("Font sizes must be greater than zero.")
+        source_colors = _select_source_colors(document)
 
         # ── target face and style matching ─────────────────────
         catalog: list[FontFace] = []
@@ -1044,7 +1248,7 @@ def _collect_rules(document: "pymupdf.Document") -> tuple[_Rule, ...]:
         faces = Font.family_faces(base, catalog)
         ignored = Input.input_index_ranges("Pages to ignore for this rule (Enter = none)",
                                            item_count=document.page_count) or ()
-        _complete_styles(faces, _required_styles(document, names, sizes, ignored))
+        _complete_styles(faces, _required_styles(document, names, sizes, ignored, source_colors))
         for style, face in faces.items():
             print(f"{style.name}: {face.label()}")
         embedding = cast(_Embedding, Menu.select(
@@ -1058,11 +1262,29 @@ def _collect_rules(document: "pymupdf.Document") -> tuple[_Rule, ...]:
              MenuOption(["D"], "Delete original embeddings when no longer used", True)],
             prompt="Original fonts for this rule", required=True, default_key="D", separator=False,
         ))
-        rules.append(_Rule(names, sizes, ignored, faces, embedding, remove_original))
+        change_color = Menu.select(
+            [MenuOption(["K"], "Keep original text colors", False),
+             MenuOption(["C"], "Change replacement text color", True)],
+            prompt="Text color for this rule", required=True, default_key="K", separator=False,
+        )
+        color: tuple[float, float, float] | None = None
+        if change_color:
+            print(f"{FGray}Use 255, 0, 0; #FF0000; #F00; rgb(255, 0, 0); or rgb(100% 0% 0%).{CRst}")
+            while True:
+                try:
+                    color = Input.parse_color(Input.prompt(f"{FLYellow}Replacement text color > {CRst}"))
+                    break
+                except ValueError as exc:
+                    print(f"{FLRed}Invalid color: {exc}{CRst}")
+        rules.append(_Rule(names, sizes, ignored, faces, embedding, remove_original, color, source_colors))
 
         # ── add another rule or process the document ───────────
         sources = ", ".join(sorted(names)) if names is not None else "All fonts"
         print(f"{FLGreen}Rule {len(rules)} added:{CRst} {sources} -> {base.name}")
+        source_label = "All colors" if source_colors is None else "; ".join(_color_label(value) for value in sorted(source_colors))
+        print(f"{FGray}Original text colors: {source_label}{CRst}")
+        color_label = "Keep original" if color is None else f"rgb({', '.join(f'{channel * 255:g}' for channel in color)})"
+        print(f"{FGray}Text color: {color_label}{CRst}")
         start = Menu.select(
             [MenuOption(["S"], f"Start replacement ({len(rules)} rule(s))", True),
              MenuOption(["A"], "Add another replacement to this PDF", False)],
@@ -1085,10 +1307,18 @@ def _parser() -> argparse.ArgumentParser:
                     "  Interactive selection supports PDF fonts, sizes, page exclusions, localized\n"
                     "  installed font names, and font files. Original bold/italic styles are retained.\n"
                     "  Add multiple replacement rules, then start once for the same PDF.\n"
+                    "  Each rule can retain original text colors (default) or set an RGB color.\n"
+                    "  Filter original text colors by selecting colors from pages or entering RGB.\n"
                     "  Only paths are command-line arguments; all other choices are interactive.",
         epilog=f"{FGray}Requirements: PyMuPDF>=1.28, fonttools, tqdm. Windows / Linux / macOS.\n"
                "Font scanning and conversion show progress bars in interactive terminals.\n"
                "Rules match original text; the first matching rule wins when rules overlap.\n"
+               "Original-color filters support multiple colors, compared at 8-bit RGB precision.\n"
+               "Either visible fill or stroke can match; opacity is ignored. Color-scan pages\n"
+               "only provide choices, not replacement scope. Hidden/pattern paints are excluded.\n"
+               "Color input: 255, 0, 0; #FF0000; #F00; rgb(255, 0, 0); rgb(100% 0% 0%).\n"
+               "RGB fill/stroke changes affect matched text only; opacity is retained. Invalid\n"
+               "colors retry. CSS names, alpha and other color spaces are unsupported.\n"
                "Each rule can keep original embeddings (default) or delete them if unused;\n"
                "fonts needed by other content or a retaining rule remain embedded.\n"
                "Only embedded output is offered: subset (default) or full face. Source fonts\n"

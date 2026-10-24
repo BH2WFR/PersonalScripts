@@ -290,6 +290,8 @@ Canonical implementations live there; do not add implementations to the
 | Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |
 | Resolve `$VAR` / `{{placeholders}}` in paths | `Paths.resolve_vars(path, schema_dir=..., script_dir=...)` |
 | Open a PDF for processing | `with Pdf.open_document(path, password=None, interactive=True) as (document, password): ...`; all PDF tools use this authenticated context manager for input files; closes on success, failure, or cancellation; reuse the returned password with `interactive=False` for secondary/background readers |
+| Allocate a private PDF object | `Pdf.new_object(document, value="<<>>", data=None) -> int`; adds a new object and optional decoded stream in memory, without changing a source xref |
+| Resolve a PDF resource dictionary | `Pdf.read_dictionary(document, xref, key) -> str`; direct/indirect dictionary syntax, null becomes empty; child references remain shared; used by font replacement and image binarization |
 | Authenticate an already open PDF | `Pdf.unlock(document, password=None, interactive=True) -> str`; validates PDF input, silently handles empty-password protection, tries a supplied password, otherwise prompts privately with retry and cancellation; False raises instead of prompting; does not recover a password from an already authenticated document |
 | Detect PDF/A identification | `Pdf.has_pdfa_identification(document) -> bool`; read-only check for XMP identification elements/attributes, independent of encryption; namespace declarations alone do not count; malformed PDF/A XMP raises ValueError; does not validate PDF/A conformance |
 | Save a new ordinary PDF | `Pdf.save_new(document, output_path, compact=True) -> None`; always removes encryption and PDF/A identification from XMP, including for unencrypted input, while retaining other metadata; exclusive output creation, removes its partial output on failure, drops unused objects; use `compact=False` for continued editing/repeated saves to preserve live object references; PyMuPDF is imported lazily in `utils/pdf.py` |
@@ -332,6 +334,7 @@ Canonical implementations live there; do not add implementations to the
 | Need | Use |
 |---|---|
 | General text or separated-list input | `Input.prompt(prompt, default=..., transform=..., separator=",", deduplicate=True)` |
+| Parse an RGB color | `Input.parse_color(text) -> tuple[float, float, float]`; pure parser returning channels in [0, 1]. Accepts `R,G,B` (0-255), `#RGB`, `#RRGGBB`, and CSS-style `rgb()` with commas or spaces and numeric/percentage channels. Rejects malformed/out-of-range values, alpha, names and other color spaces with ValueError; numeric 1 means 1/255, not full intensity |
 | Numeric input with validation | `Input.input_number(prompt, default=..., min_value=..., allow_float=...)` |
 | Merge consecutive integers into ranges | `Input.merge_integer_ranges(values: Iterable[int]) -> tuple[tuple[int, int], ...]`; sorts and deduplicates any integer iterable, supports negatives and zero, returns inclusive endpoint pairs; singletons have equal endpoints; empty input returns () |
 | Format integer ranges as text | `Input.format_integer_ranges(ranges: Iterable[tuple[int, int]]) -> str`; `((1, 3), (5, 5))` becomes `"1-3,5"`; preserves order, duplicates, and descending ranges; supports signed endpoints; empty input returns `""`; output uses parse_integer_ranges syntax |
@@ -934,6 +937,11 @@ not in the README.
   faithfully preserving the owner's wording, style, structure, and meaning.
 
 ## Directory layout
+
+`tools/document-processing/pdf-binarize.py` loads the private `pdf-binarize/`
+package as `personal_pdf_binarize`. See its README for module ownership. Keep
+internals out of launcher/compiler lists; the compiler stages the import alias.
+This tool is interactive-only. Run its tests with `-p "test_pdf_binarize*.py"`.
 
 `tools/network/rclone-sync.py` is a thin entry for the private
 `tools/network/rclone-sync/` package, loaded as `personal_rclone_sync`.

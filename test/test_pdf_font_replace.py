@@ -183,8 +183,9 @@ class FontReplaceTests(unittest.TestCase):
         path = self.folder / "alternate.ttf"
         make_font(path, family="Alternate")
         alternate = {FontStyle.REGULAR: Font.read_faces(path)[0]}
-        rules = [app._Rule({"Helvetica"}, ((12, 12),), (1,), self.faces, app._Embedding.SUBSET),
-                 app._Rule({"Helvetica"}, (), (), alternate, app._Embedding.FULL)]
+        rules = [app._Rule({"Helvetica"}, ((12, 12),), (1,), self.faces, app._Embedding.SUBSET,
+                          color=(1, 0, 0)),
+                 app._Rule({"Helvetica"}, (), (), alternate, app._Embedding.FULL, color=(0, 0, 1))]
         with Pdf.open_document(self.source) as (document, _), contextlib.redirect_stdout(io.StringIO()):
             app._convert(document, self.output, rules)
         with pymupdf.open(self.output) as result:
@@ -194,6 +195,8 @@ class FontReplaceTests(unittest.TestCase):
                              ["Fixture-Regular", "Alternate-Regular", "Times-Roman"])
             self.assertEqual([span["font"] for span in second],
                              ["Alternate-Regular", "Alternate-Regular", "Times-Roman"])
+            self.assertEqual([span["color"] for span in first], [(1, 0, 0), (0, 0, 1), (0, 0, 0)])
+            self.assertEqual([span["color"] for span in second], [(0, 0, 1), (0, 0, 1), (0, 0, 0)])
             with pymupdf.open(self.source) as original:
                 for before_page, after_page in zip(original, result):
                     before = [(char[0], char[2]) for span in before_page.get_texttrace() for char in span["chars"]]
@@ -202,8 +205,8 @@ class FontReplaceTests(unittest.TestCase):
 
     def test_interactive_add_rule_then_start_saves_once(self) -> None:
         with patch.object(sys, "argv", [str(app.__file__), str(self.source), "-o", str(self.output)]), \
-                patch.object(Menu, "select", side_effect=["P", ["1"], "F", app._Embedding.SUBSET, False, False,
-                                                        "P", ["2"], "F", app._Embedding.FULL, True, True]), \
+                patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.ALL, "F", app._Embedding.SUBSET, False, False, False,
+                                                        "P", ["2"], app._SourceColorMode.ALL, "F", app._Embedding.FULL, True, False, True]), \
                 patch.object(Input, "input_real_ranges", return_value=None), \
                 patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (), (0, 1), ()]), \
                 patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.REGULAR].path)), \
@@ -213,6 +216,233 @@ class FontReplaceTests(unittest.TestCase):
         self.assertEqual(save.call_count, 1)
         with pymupdf.open(self.output) as result:
             self.assertEqual({span["font"] for page in result for span in page.get_texttrace()}, {"Fixture-Regular"})
+
+    def test_color_restores_graphics_and_preserves_text_show_state(self) -> None:
+        colors = (b"", b".4 g .7 G", b"0 .5 .7 rg .8 .2 .1 RG",
+                  b"1 0 .5 0 k 0 1 .5 0 K",
+                  b"/DeviceRGB cs .1 .2 .3 sc /DeviceRGB CS .7 .8 .9 SCN")
+        for index, setup in enumerate(colors):
+            with self.subTest(setup=setup), Pdf.open_document(self.source) as (document, _):
+                content = (setup + b" q .1 g .2 G Q BT /helv 12 Tf 2 Tr 15 TL 1 0 0 1 30 250 Tm "
+                           b"(A) Tj [(B) -30 (C)] TJ (D) ' 2 1 (E F) \" "
+                           b"/tiro 12 Tf (Keep) Tj ET 20 20 30 30 re B")
+                stream = app._object(document, "<< >>", content)
+                document.xref_set_key(document[0].xref, "Contents", f"{stream} 0 R")
+                before = document[0].get_texttrace()
+                drawings = document[0].get_drawings()
+                output = self.folder / f"colors-{index}.pdf"
+                rule = app._Rule({"Helvetica"}, (), (1,), self.faces, app._Embedding.SUBSET, color=(1, 0, 0))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    app._convert(document, output, (rule,))
+                with pymupdf.open(output) as result:
+                    after = result[0].get_texttrace()
+                    # Color changes can split MuPDF's batches, so compare glyphs
+                    # separately for fill/stroke rather than relying on span counts.
+                    for render_type in (0, 1):
+                        original_chars = [(span, char) for span in before if span["type"] == render_type
+                                          for char in span["chars"]]
+                        changed_chars = [(span, char) for span in after if span["type"] == render_type
+                                         for char in span["chars"]]
+                        self.assertEqual(len(original_chars), len(changed_chars))
+                        for (original, first), (changed, second) in zip(original_chars, changed_chars):
+                            expected = (1, 0, 0) if original["font"] == "Helvetica" else original["color"]
+                            self.assertEqual(changed["color"], expected)
+                            for key in ("dir", "size", "opacity", "type"):
+                                self.assertEqual(original[key], changed[key])
+                            self.assertEqual(first[0], second[0])
+                            for a, b in zip(first[2], second[2]):
+                                self.assertAlmostEqual(a, b, delta=0.0001)
+                    self.assertEqual([{k: v for k, v in item.items() if k != "seqno"} for item in drawings],
+                                     [{k: v for k, v in item.items() if k != "seqno"} for item in result[0].get_drawings()])
+                    self.assertEqual(document[1].get_texttrace(), result[1].get_texttrace())
+
+    def test_source_color_discovery_and_multiselection(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            page = document[0]
+            page.insert_text((30, 180), "Red", color=(1, 0, 0))
+            page.insert_text((30, 210), "Hidden", color=(0, 0, 1), render_mode=3)
+            page.draw_rect(pymupdf.Rect(10, 10, 20, 20), color=(0, 1, 0), fill=(0, 1, 0))
+            before = page.read_contents()
+            xref_count = document.xref_length()
+            self.assertEqual(app._pdf_colors(document, (0,)), [0, 0xFF0000])
+            self.assertEqual(app._pdf_colors(document, (1,)), [0])
+            with patch.object(Menu, "select", side_effect=[app._SourceColorMode.PAGES, ["1-2"]]), \
+                    patch.object(Input, "input_index_ranges", return_value=(0,)), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(app._select_source_colors(document), frozenset((0, 0xFF0000)))
+            self.assertEqual(page.read_contents(), before)
+            self.assertEqual(document.xref_length(), xref_count)
+
+    def test_source_color_empty_pages_back_manual_and_exit(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            document.new_page()
+            scenarios = [
+                ([app._SourceColorMode.PAGES, app._SourceColorMode.ALL], [(2,)], [], None),
+                ([app._SourceColorMode.PAGES, ["R"], app._SourceColorMode.MANUAL], [(0,)], ["#F00"], frozenset((0xFF0000,))),
+                ([app._SourceColorMode.MANUAL, app._SourceColorMode.MANUAL, app._SourceColorMode.ALL], [], ["bad", ""], None),
+            ]
+            for menus, pages, values, expected in scenarios:
+                with self.subTest(menus=menus), patch.object(Menu, "select", side_effect=menus), \
+                        patch.object(Input, "input_index_ranges", side_effect=pages), \
+                        patch.object(Input, "prompt", side_effect=values), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(app._select_source_colors(document), expected)
+            with patch.object(Menu, "select", side_effect=[app._SourceColorMode.PAGES, ["E"]]), \
+                    patch.object(Input, "input_index_ranges", return_value=(0,)), \
+                    contextlib.redirect_stdout(io.StringIO()), self.assertRaises(KeyboardInterrupt):
+                app._select_source_colors(document)
+
+    def test_source_color_combines_with_font_size_pages_and_rule_priority(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            page = document[0]
+            content = (b"BT /helv 12 Tf 30 250 Td 1 0 0 rg (A) Tj 0 0 1 rg (B) Tj "
+                       b"1 0 0 rg /helv 18 Tf (C) Tj /tiro 12 Tf (D) Tj ET")
+            stream = app._object(document, "<< >>", content)
+            document.xref_set_key(page.xref, "Contents", f"{stream} 0 R")
+            before = [(char[0], char[2]) for span in page.get_texttrace() for char in span["chars"]]
+            rules = (
+                app._Rule({"Helvetica"}, ((12, 12),), (1,), self.faces, app._Embedding.SUBSET,
+                          color=(0, 1, 0), source_colors=frozenset((0xFF0000,))),
+                app._Rule({"Helvetica"}, ((12, 12),), (1,), self.faces, app._Embedding.SUBSET,
+                          color=(1, 1, 0), source_colors=frozenset((0xFF0000, 0x0000FF))),
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(app._convert(document, self.output, rules), 2)
+        with pymupdf.open(self.output) as result:
+            spans = result[0].get_texttrace()
+            self.assertEqual([span["font"] for span in spans],
+                             ["Fixture-Regular", "Fixture-Regular", "Helvetica", "Times-Roman"])
+            self.assertEqual([span["color"] for span in spans], [(0, 1, 0), (1, 1, 0), (1, 0, 0), (1, 0, 0)])
+            self.assertEqual(before, [(char[0], char[2]) for span in spans for char in span["chars"]])
+            self.assertNotIn("Fixture-Regular", {span["font"] for span in result[1].get_texttrace()})
+
+    def test_source_color_gray_cmyk_named_and_default_spaces(self) -> None:
+        for index, color in enumerate((b".5 g", b"0 .5 1 0 k", b"/Original cs .2 .5 .8 scn",
+                                       b"/DeviceCMYK cs", b".2 .5 .8 rg")):
+            with self.subTest(color=color), Pdf.open_document(self.source) as (document, _):
+                page = document[0]
+                resources = app._reference(document, page.xref, "Resources")
+                document.xref_set_key(resources, "ColorSpace",
+                                      "<< /Original [/CalRGB << /WhitePoint [1 1 1] >>] "
+                                      "/DefaultRGB [/CalRGB << /WhitePoint [1 1 1] /Gamma [2 2 2] >>] >>")
+                content = color + b" BT /helv 12 Tf 30 250 Td (A) Tj 0 1 0 rg (B) Tj ET"
+                stream = app._object(document, "<< >>", content)
+                document.xref_set_key(page.xref, "Contents", f"{stream} 0 R")
+                original = page.get_texttrace()
+                rule = app._Rule({"Helvetica"}, (), (1,), self.faces, app._Embedding.SUBSET,
+                                 source_colors=frozenset((app._rgb_key(original[0]["color"]),)))
+                output = self.folder / f"source-color-{index}.pdf"
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(app._convert(document, output, (rule,)), 1)
+                with pymupdf.open(output) as result:
+                    spans = result[0].get_texttrace()
+                    self.assertEqual([span["font"] for span in spans], ["Fixture-Regular", "Helvetica"])
+                    self.assertEqual([span["color"] for span in spans], [span["color"] for span in original])
+
+    def test_source_color_matches_stroke_but_not_hidden_or_fill_only_text(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            content = (b"0 1 0 rg 0 0 1 RG BT /helv 12 Tf 30 250 Td 2 Tr (A) Tj "
+                       b"0 Tr (B) Tj 3 Tr (C) Tj ET")
+            stream = app._object(document, "<< >>", content)
+            document.xref_set_key(document[0].xref, "Contents", f"{stream} 0 R")
+            rule = app._Rule({"Helvetica"}, (), (1,), self.faces, app._Embedding.SUBSET,
+                             source_colors=frozenset((0x0000FF,)))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(app._convert(document, self.output, (rule,)), 1)
+        with pymupdf.open(self.output) as result:
+            self.assertEqual([span["font"] for span in result[0].get_texttrace()],
+                             ["Fixture-Regular", "Fixture-Regular", "Helvetica", "Helvetica"])
+
+    def test_interactive_source_color_from_pages(self) -> None:
+        with patch.object(sys, "argv", [str(app.__file__), str(self.source), "-o", str(self.output)]), \
+                patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.PAGES, ["1"], "F",
+                                                        app._Embedding.SUBSET, False, False, True]), \
+                patch.object(Input, "input_real_ranges", return_value=None), \
+                patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (0,), (1,)]), \
+                patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.REGULAR].path)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(app.main(), 0)
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(result[0].get_texttrace()[0]["font"], "Fixture-Regular")
+            self.assertEqual(result[1].get_texttrace()[0]["font"], "Helvetica")
+
+    def test_source_color_limits_required_styles_and_can_match_nothing(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            document[0].insert_text((30, 180), "Red bold", fontname="hebo", color=(1, 0, 0))
+            self.assertEqual(app._required_styles(document, None, (), (), frozenset((0xFF0000,))),
+                             {FontStyle.BOLD})
+            rule = app._Rule(None, (), (), self.faces, app._Embedding.SUBSET,
+                             source_colors=frozenset((0xFF00FF,)))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(app._convert(document, self.output, (rule,)), 0)
+            self.assertFalse(self.output.exists())
+
+    def test_color_in_form_restores_inherited_named_color_space(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            page = document[0]
+            resources = app._reference(document, page.xref, "Resources")
+            fonts = app._dictionary(document, resources, "Font")
+            document.xref_set_key(resources, "ColorSpace", "<< /Original [/CalRGB << /WhitePoint [1 1 1] >>] >>")
+            form = app._object(document, f"<< /Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                               f"/Resources << /Font {fonts} >> >>",
+                               b"BT /helv 12 Tf 30 250 Td (A) Tj /tiro 12 Tf (B) Tj ET 20 20 30 30 re f")
+            document.xref_set_key(resources, "XObject", f"<< /Fixture {form} 0 R >>")
+            stream = app._object(document, "<< >>", b"/Original cs .2 .5 .8 scn /Fixture Do")
+            document.xref_set_key(page.xref, "Contents", f"{stream} 0 R")
+            before = page.get_texttrace()
+            drawings = page.get_drawings()
+            rule = app._Rule({"Helvetica"}, (), (1,), self.faces, app._Embedding.SUBSET, color=(1, 0, 0),
+                             source_colors=frozenset((app._rgb_key(before[0]["color"]),)))
+            with contextlib.redirect_stdout(io.StringIO()):
+                app._convert(document, self.output, (rule,))
+        with pymupdf.open(self.output) as result:
+            after = result[0].get_texttrace()
+            self.assertEqual(after[0]["color"], (1, 0, 0))
+            self.assertEqual(after[1]["color"], before[1]["color"])
+            self.assertEqual(after[1]["chars"], before[1]["chars"])
+            self.assertEqual([{k: v for k, v in item.items() if k != "seqno"} for item in drawings],
+                             [{k: v for k, v in item.items() if k != "seqno"} for item in result[0].get_drawings()])
+
+    def test_interactive_color_retries_invalid_input(self) -> None:
+        with patch.object(sys, "argv", [str(app.__file__), str(self.source), "-o", str(self.output)]), \
+                patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.ALL, "F", app._Embedding.SUBSET,
+                                                        False, True, True]), \
+                patch.object(Input, "prompt", side_effect=["256, 0, 0", "#FF0000"]) as prompt, \
+                patch.object(Input, "input_real_ranges", return_value=None), \
+                patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (1,)]), \
+                patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.REGULAR].path)), \
+                contextlib.redirect_stdout(io.StringIO()) as messages:
+            self.assertEqual(app.main(), 0)
+        self.assertEqual(prompt.call_count, 2)
+        self.assertIn("Invalid color", messages.getvalue())
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(result[0].get_texttrace()[0]["color"], (1, 0, 0))
+            self.assertEqual(result[1].get_texttrace()[0]["color"], (0, 0, 0))
+
+    def test_color_in_form_restores_inherited_pattern(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            page = document[0]
+            resources = app._reference(document, page.xref, "Resources")
+            fonts = app._dictionary(document, resources, "Font")
+            pattern = app._object(document, "<< /Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+                                  "/BBox [0 0 5 5] /XStep 5 /YStep 5 /Resources << >> >>",
+                                  b"0 0 1 rg 0 0 3 3 re f")
+            document.xref_set_key(resources, "Pattern", f"<< /Original {pattern} 0 R >>")
+            form = app._object(document, f"<< /Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                               f"/Resources << /Font {fonts} >> >>",
+                               b"BT /helv 12 Tf 30 250 Td (A) Tj /tiro 12 Tf (B) Tj ET 20 20 30 30 re f")
+            document.xref_set_key(resources, "XObject", f"<< /Fixture {form} 0 R >>")
+            stream = app._object(document, "<< >>",
+                                 b"q 0 g BT /helv 12 Tf 60 200 Td (Trigger) Tj ET Q "
+                                 b"/Pattern cs /Original scn /Fixture Do")
+            document.xref_set_key(page.xref, "Contents", f"{stream} 0 R")
+            clip = pymupdf.Rect(10, 240, 60, 290)
+            before = page.get_pixmap(clip=clip).samples
+            self.assertIn(0, before)
+            rule = app._Rule({"Helvetica"}, (), (1,), self.faces, app._Embedding.SUBSET, color=(1, 0, 0))
+            with contextlib.redirect_stdout(io.StringIO()):
+                app._convert(document, self.output, (rule,))
+        with pymupdf.open(self.output) as result:
+            self.assertEqual(before, result[0].get_pixmap(clip=clip).samples)
 
     def embedded_source(self) -> tuple[int, int]:
         """Build two pages sharing an embedded font; return font and program xrefs."""
@@ -570,7 +800,7 @@ class FontReplaceTests(unittest.TestCase):
                 if supplied_paths:
                     arguments.extend([str(self.source), "-o", str(output)])
                 with patch.object(sys, "argv", arguments), \
-                        patch.object(Menu, "select", side_effect=["P", ["1"], "F", app._Embedding.SUBSET, False, True]), \
+                        patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.ALL, "F", app._Embedding.SUBSET, False, False, True]), \
                         patch.object(Input, "prompt", return_value="1"), \
                         patch.object(Input, "input_real_ranges", return_value=((12, 12),)), \
                         patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (1,)]), \

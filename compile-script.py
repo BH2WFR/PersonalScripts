@@ -7,8 +7,8 @@ Usage:
 Lists all Python scripts in the project, lets you choose one by number,
 then compiles it with Nuitka or PyInstaller. Output goes to BUILD/ with
 directory structure preserved (e.g. BUILD/link-create_nuitka/).
-The rclone-sync private package is excluded from script selection and staged
-under its Python import name when compiling its entry point.
+The rclone-sync and pdf-binarize private packages are excluded from script
+selection and staged under their Python import names when compiling their entries.
 """
 
 import sys
@@ -41,7 +41,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-binarize"}
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -181,7 +181,7 @@ def choose_tool() -> str:
 def _run_compiler(
     cmd: list[str], script_path: str, build_root: str, tool: str,
 ) -> subprocess.CompletedProcess[bytes]:
-    """Run a compiler, staging rclone's private package under its import name.
+    """Run a compiler, staging a supported private package under its import name.
 
     Args:
         cmd: Compiler command whose last argument is the entry script.
@@ -200,11 +200,17 @@ def _run_compiler(
         runs the compiler, then removes only that temporary staging directory.
         PYTHONPATH changes apply exclusively to the compiler subprocess.
     """
-    package_src = os.path.join(os.path.dirname(script_path), "rclone-sync")
-    if os.path.basename(script_path) != "rclone-sync.py" or not os.path.isfile(os.path.join(package_src, "__init__.py")):
+    packages = {"rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
+                "pdf-binarize.py": ("pdf-binarize", "personal_pdf_binarize")}
+    package = packages.get(os.path.basename(script_path))
+    if package is None:
         return subprocess.run(cmd, check=False)
-    with tempfile.TemporaryDirectory(prefix="_rclone_sync_imports_", dir=build_root) as staging:
-        package_dest = os.path.join(staging, "personal_rclone_sync")
+    directory, import_name = package
+    package_src = os.path.join(os.path.dirname(script_path), directory)
+    if not os.path.isfile(os.path.join(package_src, "__init__.py")):
+        raise FileNotFoundError(f"Private package is missing: {package_src}")
+    with tempfile.TemporaryDirectory(prefix=f"_{import_name}_imports_", dir=build_root) as staging:
+        package_dest = os.path.join(staging, import_name)
         os.makedirs(package_dest)
         # Only implementation modules are needed; tests/docs/configs stay outside.
         for filename in os.listdir(package_src):
@@ -215,8 +221,8 @@ def _run_compiler(
             part for part in (staging, environment.get("PYTHONPATH", "")) if part
         )
         options = (
-            ["--include-package=personal_rclone_sync"] if tool == "nuitka" else
-            ["--paths", staging, "--collect-submodules", "personal_rclone_sync"]
+            [f"--include-package={import_name}"] if tool == "nuitka" else
+            ["--paths", staging, "--collect-submodules", import_name]
         )
         return subprocess.run([*cmd[:-1], *options, cmd[-1]], check=False, env=environment)
 

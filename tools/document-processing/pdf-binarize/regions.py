@@ -1,10 +1,11 @@
 """Private scan segmentation, denoising and layer codec for pdf-binarize.py.
 
-Requires numpy, opencv-python, Pillow and PyMuPDF. Import through the adjacent
-pdf-binarize.py entry point; this module is hidden from the script launcher.
+Requires numpy, opencv-python, Pillow and PyMuPDF. The private application
+package imports this module; it is hidden from the script launcher.
 All analysis/encoding functions are thread-local and use no MuPDF objects.
 Only _assemble() touches MuPDF and must run on the caller's main thread.
-Rectangles use normalized displayed-page coordinates (top-left origin).
+Analysis rectangles use normalized image coordinates (top-left origin). The PDF
+object engine maps these to displayed-page coordinates for JSON and annotations.
 Shaded-text cleanup uses local polarity and page-scaled stroke sizes; ambiguous
 text panels bypass text cleanup but follow the selected crop mode. gray8 converts
 color to 8-bit grayscale without palette reduction; supports JPEG or Flate.

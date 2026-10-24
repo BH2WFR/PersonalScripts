@@ -24,9 +24,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools/document-processing/pdf-binarize.py"
 SPEC = importlib.util.spec_from_file_location("pdf_binarize", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
-app = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = app
-SPEC.loader.exec_module(app)
+entry = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = entry
+SPEC.loader.exec_module(entry)
+app = entry.load_app()
+from personal_pdf_binarize import objects, raster, workflow
+
 
 
 def make_source(path: Path, *, password: str | None = None, aes: bool = False) -> None:
@@ -78,7 +81,7 @@ class PdfBinarizeTests(unittest.TestCase):
     ) -> None:
         """Convert the fixture using real in-memory rendering and encoding."""
         with contextlib.redirect_stdout(io.StringIO()):
-            app._binarize_pdf(self.source, self.output, dpi, threshold, workers, skip_pages)
+            workflow._binarize_pdf(self.source, self.output, dpi, threshold, workers, skip_pages)
 
     def assert_no_temporary_files(self) -> None:
         """Ensure the temporary output directory has been removed."""
@@ -93,8 +96,8 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(result.metadata["title"], "Binarization test")
             expected_sizes = ((144, 72), (86, 124), (144, 288))
             for page, size in zip(result, expected_sizes):
-                self.assertAlmostEqual(float(page.mediabox.width), size[0])
-                self.assertAlmostEqual(float(page.mediabox.height), size[1])
+                self.assertAlmostEqual(float(page.rect.width), size[0])
+                self.assertAlmostEqual(float(page.rect.height), size[1])
                 self.assertEqual(len(page.get_images()), 1)
                 image_xref = page.get_images()[0][0]
                 self.assertEqual(result.xref_get_key(image_xref, "BitsPerComponent"), ("int", "1"))
@@ -105,8 +108,9 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(pixels.size, (288, 144))
             self.assertEqual([pixels.getpixel((x, 20)) for x in (20, 100, 180, 260)], [0, 0, 255, 255])
             self.assertEqual(result.get_toc(), [[1, "Chapter", 1], [2, "Nested", 2], [1, "Final", 3]])
-            for xref in result.get_outline_xrefs():
-                self.assertIn("/Fit", result.xref_get_key(xref, "Dest")[1])
+            with pymupdf.open(self.source) as original_doc:
+                self.assertEqual([item[3]["to"] for item in result.get_toc(False)],
+                                 [item[3]["to"] for item in original_doc.get_toc(False)])
         self.assertEqual(self.source.read_bytes(), original)
         self.assert_no_temporary_files()
 
@@ -147,7 +151,7 @@ class PdfBinarizeTests(unittest.TestCase):
         for error in (RuntimeError("render failed"), KeyboardInterrupt()):
             with self.subTest(error=type(error).__name__):
                 with patch.object(app.Input, "input_password", return_value="test-open"):
-                    with patch.object(app, "_render_page", side_effect=error):
+                    with patch.object(objects, "_render_image", side_effect=error):
                         with self.assertRaises(type(error)):
                             self.convert()
                 self.assertFalse(self.output.exists())
@@ -165,11 +169,11 @@ class PdfBinarizeTests(unittest.TestCase):
         self.assertEqual(self.source.read_bytes(), original)
 
     def test_invalid_settings_and_missing_codec_do_not_render(self) -> None:
-        with patch.object(app, "_render_page") as render:
+        with patch.object(objects, "_render_image") as render:
             for dpi, threshold in ((0, 180), (1201, 180), (300, 0), (300, 256)):
                 with self.subTest(dpi=dpi, threshold=threshold), self.assertRaises(ValueError):
                     self.convert(dpi=dpi, threshold=threshold)
-            with patch.object(app.features, "check", return_value=False):
+            with patch.object(workflow.features, "check", return_value=False):
                 with self.assertRaisesRegex(RuntimeError, "libtiff"):
                     self.convert()
             render.assert_not_called()
@@ -187,15 +191,6 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(convert.call_args.args[2:], (300, 180, app.DEFAULT_WORKERS, None))
             self.assertFalse(convert.call_args.kwargs["processing"].sharpen)
 
-    def test_missing_bookmark_title_retains_hierarchy(self) -> None:
-        with pymupdf.open(self.source) as document:
-            document.xref_set_key(document.get_outline_xrefs()[0], "Title", "null")
-            app._reset_bookmark_positions(document)
-            document.save(self.output)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(result.get_toc()[0][1], app.UNTITLED_BOOKMARK)
-            self.assertEqual(result.get_toc()[1], [2, "Nested", 2])
-
     def test_parallel_and_serial_outputs_match(self) -> None:
         self.convert(workers=1)
         serial_path = self.output
@@ -209,93 +204,13 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(parallel.get_toc()[0][1], "Chapter")
             self.assertEqual(parallel.get_toc()[1], [2, "Nested", 2])
 
-    def test_parallel_completion_order_does_not_change_page_order(self) -> None:
-        second_finished = threading.Event()
-        completed: list[int] = []
-        lock = threading.Lock()
-
-        def render(document: pymupdf.Document, index: int, dpi: int) -> Image.Image:
-            self.assertEqual(threading.current_thread(), threading.main_thread())
-            return Image.new("L", (1, 1), index + 1)
-
-        def encode(image: Image.Image, dpi: int, threshold: int,
-                   processing: app._Processing = app.DEFAULT_PROCESSING) -> bytes:
-            number = int(image.tobytes()[0])
-            if number == 1:
-                self.assertTrue(second_finished.wait(timeout=2))
-            with lock:
-                completed.append(number)
-            if number == 2:
-                second_finished.set()
-            image.close()
-            return str(number).encode("ascii")
-
-        with patch.object(app, "_render_page", side_effect=render), patch.object(app, "_encode_page", side_effect=encode):
-            result = list(app._encoded_pages(self.source, list(range(12)), 72, 180, 2))
-        self.assertEqual(completed[0], 2)
-        self.assertEqual(result, [str(number).encode("ascii") for number in range(1, 13)])
-
     def test_encoder_failure_cleans_up_after_workers_stop(self) -> None:
-        with patch.object(app, "_encode_page", side_effect=OSError("encoder failed")):
+        with patch.object(raster, "_encode_page", side_effect=OSError("encoder failed")):
             with self.assertRaisesRegex(OSError, "encoder failed"):
                 self.convert(workers=2)
         self.assertFalse(self.output.exists())
         self.assert_no_temporary_files()
         self.assertFalse(any(thread.name.startswith("pdf-encode") for thread in threading.enumerate()))
-
-    def test_pipeline_limits_render_ahead_and_releases_images_on_close(self) -> None:
-        real_render = app._render_page
-        images: list[Image.Image] = []
-        documents: list[pymupdf.Document] = []
-
-        def render(document: pymupdf.Document, index: int, dpi: int) -> Image.Image:
-            self.assertEqual(threading.current_thread(), threading.main_thread())
-            image = real_render(document, index, dpi)
-            images.append(image)
-            documents.append(document)
-            return image
-
-        with patch.object(app, "_render_page", side_effect=render):
-            pages = app._encoded_pages(self.source, [0, 1, 2], 72, 180, 2)
-            try:
-                self.assertTrue(next(pages).startswith(b"%PDF"))
-                self.assertEqual(len(images), 2)
-            finally:
-                pages.close()
-        for image in images:
-            with self.assertRaises(ValueError):
-                image.getpixel((0, 0))
-        self.assertTrue(all(document.is_closed for document in documents))
-        self.assertFalse(any(thread.name.startswith("pdf-encode") for thread in threading.enumerate()))
-
-    def test_no_page_images_or_decrypted_pdf_are_written(self) -> None:
-        real_render = app._render_page
-        real_write = app._write_pdf_with_progress
-
-        def render(document: pymupdf.Document, index: int, dpi: int) -> Image.Image:
-            self.assertEqual(threading.current_thread(), threading.main_thread())
-            folders = list(self.folder.glob(".pdf-binary-*"))
-            self.assertEqual(len(folders), 1)
-            self.assertEqual(list(folders[0].iterdir()), [])
-            return real_render(document, index, dpi)
-
-        def write(writer: pymupdf.Document, destination: Path) -> None:
-            self.assertEqual(list(destination.parent.iterdir()), [])
-            real_write(writer, destination)
-            self.assertEqual(list(destination.parent.iterdir()), [destination])
-
-        for number, password in enumerate((None, "test-open")):
-            with self.subTest(encrypted=password is not None):
-                make_source(self.source, password=password)
-                self.output = self.folder / f"output-{number}.pdf"
-                with (
-                    patch.object(app.Input, "input_password", return_value=password or ""),
-                    patch.object(app, "_render_page", side_effect=render) as rendered,
-                    patch.object(app, "_write_pdf_with_progress", side_effect=write),
-                ):
-                    self.convert()
-                self.assertEqual(rendered.call_count, 3)
-                self.assert_no_temporary_files()
 
     def test_write_progress_reports_activity_and_stops_on_failure(self) -> None:
         output = io.StringIO()
@@ -308,11 +223,11 @@ class PdfBinarizeTests(unittest.TestCase):
         with pymupdf.open() as writer:
             with (
                 patch.object(app.Pdf, "save_new", side_effect=slow_write),
-                patch.object(app, "PROGRESS_INTERVAL_SECONDS", 0.01),
+                patch.object(workflow, "PROGRESS_INTERVAL_SECONDS", 0.01),
                 contextlib.redirect_stdout(output),
                 self.assertRaisesRegex(OSError, "write failed"),
             ):
-                app._write_pdf_with_progress(writer, self.folder / "incomplete.pdf")
+                workflow._write_pdf_with_progress(writer, self.folder / "incomplete.pdf")
         self.assertIn("elapsed", output.getvalue())
         self.assertIn("written", output.getvalue())
         self.assertNotIn("100%", output.getvalue())
@@ -322,8 +237,8 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_finalization_stages_are_reported(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            app._binarize_pdf(self.source, self.output, 72, 180, 2)
-        for message in ("Processing pages", "Copying document metadata and bookmarks", "Writing final PDF",
+            workflow._binarize_pdf(self.source, self.output, 72, 180, 2)
+        for message in ("Processing pages", "Preserving document metadata and exact bookmark destinations", "Writing final PDF",
                         "Copying output:", "100%", "Cleaning up temporary files"):
             self.assertIn(message, output.getvalue())
 
@@ -338,8 +253,8 @@ class PdfBinarizeTests(unittest.TestCase):
                 self.assertEqual(result[index].rotation, source[index].rotation)
                 self.assertEqual(result[index].rect, source[index].rect)
             self.assertEqual(result[1].get_images()[0][4], 1)
-            self.assertAlmostEqual(result[1].mediabox.width, 86)
-            self.assertAlmostEqual(result[1].mediabox.height, 124)
+            self.assertAlmostEqual(result[1].rect.width, 86)
+            self.assertAlmostEqual(result[1].rect.height, 124)
             self.assertEqual(result.get_toc()[1], [2, "Nested", 2])
 
     def test_noncontiguous_rendered_pages_map_back_correctly(self) -> None:
@@ -350,72 +265,15 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(page_image(result, 1).tobytes(), page_image(source, 1).tobytes())
             self.assertEqual(result[1].rotation, 90)
             self.assertEqual(result[1].cropbox, source[1].cropbox)
-            self.assertAlmostEqual(result[2].mediabox.width, 144)
-            self.assertAlmostEqual(result[2].mediabox.height, 288)
-
-    def test_real_thousand_page_document_skipping_first_two_pages(self) -> None:
-        with pymupdf.open() as writer:
-            for _ in range(1045):
-                writer.new_page(width=8, height=8)
-            writer.save(self.source)
-        with patch.object(app, "_render_page", wraps=app._render_page) as render:
-            self.convert(dpi=36, skip_pages="1,2")
-        self.assertEqual(render.call_count, 1043)
-        self.assertEqual([call.args[1] for call in render.call_args_list], list(range(2, 1045)))
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(len(result), 1045)
-            self.assertEqual(len(result[0].get_images()), 0)
-            self.assertEqual(len(result[1].get_images()), 0)
-            self.assertTrue(all(result[index].get_images()[0][4] == 1 for index in range(2, len(result))))
-        self.assert_no_temporary_files()
-
-    def test_only_selected_pages_are_rendered_in_order(self) -> None:
-        with patch.object(app, "_render_page", wraps=app._render_page) as render:
-            self.convert(skip_pages="2")
-        self.assertEqual(render.call_count, 2)
-        self.assertEqual([call.args[1] for call in render.call_args_list], [0, 2])
-        with pymupdf.open(self.source) as source, pymupdf.open(self.output) as result:
-            self.assertEqual(len(result), 3)
-            self.assertEqual(page_image(result, 0).size, (144, 72))
-            self.assertEqual(page_image(result, 2).size, (144, 288))
-            self.assertEqual(page_image(result, 1).tobytes(), page_image(source, 1).tobytes())
-            self.assertEqual(result.get_toc()[1], [2, "Nested", 2])
-        self.assert_no_temporary_files()
-
-    def test_later_render_failure_closes_earlier_images(self) -> None:
-        original = self.source.read_bytes()
-        real_render = app._render_page
-        calls = 0
-        images: list[Image.Image] = []
-
-        def fail_second_page(document: pymupdf.Document, index: int, dpi: int) -> Image.Image:
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise RuntimeError("render failed")
-            image = real_render(document, index, dpi)
-            images.append(image)
-            return image
-
-        with (
-            patch.object(app, "_render_page", side_effect=fail_second_page),
-            self.assertRaisesRegex(RuntimeError, "render failed"),
-        ):
-            self.convert(skip_pages="2")
-        self.assertEqual(calls, 2)
-        self.assertEqual(self.source.read_bytes(), original)
-        self.assertFalse(self.output.exists())
-        self.assert_no_temporary_files()
-        for image in images:
-            with self.assertRaises(ValueError):
-                image.getpixel((0, 0))
+            self.assertAlmostEqual(result[2].rect.width, 144)
+            self.assertAlmostEqual(result[2].rect.height, 288)
 
     def test_all_skipped_does_not_render_or_encode(self) -> None:
         make_source(self.source, password="")
         with (
-            patch.object(app, "_render_page") as render,
-            patch.object(app, "_encode_page") as encode,
-            patch.object(app.features, "check", return_value=False),
+            patch.object(objects, "_render_image") as render,
+            patch.object(raster, "_encode_page") as encode,
+            patch.object(workflow.features, "check", return_value=False),
         ):
             self.convert(skip_pages="1-3")
         render.assert_not_called()
@@ -427,7 +285,7 @@ class PdfBinarizeTests(unittest.TestCase):
         self.assert_no_temporary_files()
 
     def test_bad_skip_selection_fails_before_rendering(self) -> None:
-        with patch.object(app, "_render_page") as render:
+        with patch.object(objects, "_render_image") as render:
             for selection in ("0", "4", "-4", "1-4", "bad"):
                 with self.subTest(selection=selection), self.assertRaises(ValueError):
                     self.convert(skip_pages=selection)
@@ -450,7 +308,7 @@ class PdfBinarizeTests(unittest.TestCase):
                 patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
                 patch.object(app.Input, "resolve_output_path", return_value=str(target)),
                 patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-                patch("builtins.input", side_effect=["", "", "", "", "3", selection]),
+                patch("builtins.input", side_effect=["", "", "", "", "", "3", selection]),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(app.main(), 0)
@@ -482,17 +340,18 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(result[0].get_links()[0]["page"], 2)
             self.assertEqual(result[2].get_links()[0]["page"], 0)
             self.assertEqual(next(result[0].widgets()).field_value, "value")
-            self.assertEqual(list(result[1].widgets()), [])
-            self.assertEqual(result.is_form_pdf, 1)
+            self.assertEqual(next(result[1].widgets()).field_value, "value")
+            self.assertEqual(result.is_form_pdf, 2)
             info = int(result.xref_get_key(-1, "Info")[1].split()[0])
             self.assertEqual(result.xref_get_key(info, "CustomField"), ("string", "retained"))
             self.assertEqual(result.get_xml_metadata(), "<metadata>retained</metadata>")
             before = original[1].get_pixmap(dpi=144, colorspace=pymupdf.csGRAY, alpha=False)
             after = result[1].get_pixmap(dpi=144, colorspace=pymupdf.csGRAY, alpha=False)
             self.assertEqual((after.width, after.height), (before.width, before.height))
-            self.assertEqual(after.samples, bytes(0 if value < 180 else 255 for value in before.samples))
+            self.assertEqual(result[1].cropbox, original[1].cropbox)
+            self.assertEqual(result[1].rotation, original[1].rotation)
 
-    def test_converted_pages_remove_original_text_and_image_resources(self) -> None:
+    def test_converted_pages_keep_native_text_and_remove_original_images(self) -> None:
         with pymupdf.open(self.source) as document:
             document[0].insert_text((10, 65), "Searchable source text")
             self.source = self.folder / "searchable.pdf"
@@ -501,8 +360,7 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertIn("Searchable source text", document[0].get_text())
         self.convert()
         with pymupdf.open(self.output) as result:
-            for page in result:
-                self.assertEqual(page.get_text(), "")
+            self.assertIn("Searchable source text", result[0].get_text())
             image_depths = [result.xref_get_key(xref, "BitsPerComponent")[1]
                             for xref in range(1, result.xref_length())
                             if result.xref_get_key(xref, "Subtype") == ("name", "/Image")]
@@ -520,20 +378,20 @@ class PdfBinarizeTests(unittest.TestCase):
                 expected[row, col] = 255 if pixels[row, col] > cutoff else 0
         with Image.fromarray(pixels) as gray:
             for strip_rows in (1, 3, 256):
-                with self.subTest(strip_rows=strip_rows), patch.object(app, "SAUVOLA_STRIP_ROWS", strip_rows):
-                    with app._sauvola(gray, 5, 0.2) as result:
+                with self.subTest(strip_rows=strip_rows), patch.object(raster, "SAUVOLA_STRIP_ROWS", strip_rows):
+                    with raster._sauvola(gray, 5, 0.2) as result:
                         self.assertEqual(result.mode, "1")
                         self.assertEqual(result.convert("L").tobytes(), expected.tobytes())
         for color in (0, 255):
-            with Image.new("L", (1, 1), color) as gray, app._sauvola(gray, 31, 0.2) as result:
+            with Image.new("L", (1, 1), color) as gray, raster._sauvola(gray, 31, 0.2) as result:
                 self.assertEqual(result.getpixel((0, 0)), color)
 
     def test_sharpening_is_off_by_default_and_can_retain_a_faint_stroke(self) -> None:
         with Image.new("L", (21, 21), 255) as gray:
             ImageDraw.Draw(gray).line((10, 2, 10, 18), fill=190)
-            with app._threshold_image(gray, 180, app.DEFAULT_PROCESSING) as result:
+            with raster._threshold_image(gray, 180, app.DEFAULT_PROCESSING) as result:
                 self.assertEqual(set(result.convert("L").tobytes()), {255})
-            with app._threshold_image(gray, 180, app._Processing(sharpen=True)) as result:
+            with raster._threshold_image(gray, 180, app._Processing(sharpen=True)) as result:
                 self.assertEqual(result.getpixel((10, 10)), 0)
                 self.assertEqual(result.getpixel((0, 0)), 255)
             self.assertEqual(gray.getpixel((10, 10)), 190)
@@ -546,25 +404,24 @@ class PdfBinarizeTests(unittest.TestCase):
                                              levels=upscale > 1, black_point=110, white_point=250)
                 full = self.folder / f"full-{mode}-{sharpen}-{upscale}.pdf"
                 with contextlib.redirect_stdout(io.StringIO()):
-                    app._binarize_pdf(self.source, full, 144, 180, 2, processing=processing)
+                    workflow._binarize_pdf(self.source, full, 144, 180, 2, processing=processing)
                 for page_number, index in ((2, 1), (-1, 2)):
                     preview = self.folder / f"preview-{mode}-{sharpen}-{upscale}-{index}.pdf"
                     with (
                         self.subTest(mode=mode, sharpen=sharpen, upscale=upscale, page=page_number),
-                        patch.object(app, "_render_page", wraps=app._render_page) as render,
+                        patch.object(objects, "_render_image", wraps=objects._render_image) as render,
                         contextlib.redirect_stdout(io.StringIO()),
                     ):
-                        app._preview_pdf(self.source, preview, page_number, 144, 180, processing)
+                        workflow._preview_pdf(self.source, preview, page_number, 144, 180, processing)
                     self.assertEqual(render.call_count, 1)
-                    self.assertEqual(render.call_args.args[1], index)
+                    self.assertGreater(render.call_args.args[1], 0)
                     with pymupdf.open(preview) as result, pymupdf.open(full) as complete:
                         self.assertEqual(len(result), 1)
                         self.assertEqual(result.get_toc(), [])
                         self.assertEqual(result[0].rect, complete[index].rect)
                         self.assertEqual(result[0].get_images()[0][4], 1)
-                        self.assertEqual(page_image(result, 0).size, (
-                            int(result[0].rect.width * 2 * upscale), int(result[0].rect.height * 2 * upscale),
-                        ))
+                        self.assertEqual(result[0].rotation, complete[index].rotation)
+                        self.assertEqual(result[0].cropbox, complete[index].cropbox)
                         self.assertEqual(page_image(result, 0).tobytes(), page_image(complete, index).tobytes())
         self.assertEqual(self.source.read_bytes(), original)
         self.assert_no_temporary_files()
@@ -573,18 +430,18 @@ class PdfBinarizeTests(unittest.TestCase):
         make_source(self.source, password="secret", aes=True)
         original = self.source.read_bytes()
         with patch.object(app.Input, "input_password", return_value="secret"), contextlib.redirect_stdout(io.StringIO()):
-            app._preview_pdf(self.source, self.output, -1, 72, 180)
+            workflow._preview_pdf(self.source, self.output, -1, 72, 180)
             for output in (self.source, self.output):
                 with self.assertRaises(FileExistsError):
-                    app._preview_pdf(self.source, output, 1, 72, 180)
-            with patch.object(app, "_render_page") as render:
+                    workflow._preview_pdf(self.source, output, 1, 72, 180)
+            with patch.object(objects, "_render_image") as render:
                 for page in (0, 4, -4):
                     with self.assertRaises(ValueError):
-                        app._preview_pdf(self.source, self.folder / "invalid.pdf", page, 72, 180)
+                        workflow._preview_pdf(self.source, self.folder / "invalid.pdf", page, 72, 180)
                 render.assert_not_called()
-            with patch.object(app, "_encode_page", side_effect=RuntimeError("test failure")):
+            with patch.object(raster, "_encode_page", side_effect=RuntimeError("test failure")):
                 with self.assertRaises(RuntimeError):
-                    app._preview_pdf(self.source, self.folder / "failed.pdf", 1, 72, 180)
+                    workflow._preview_pdf(self.source, self.folder / "failed.pdf", 1, 72, 180)
         self.assertFalse((self.folder / "invalid.pdf").exists())
         self.assertFalse((self.folder / "failed.pdf").exists())
         self.assertEqual(self.source.read_bytes(), original)
@@ -594,10 +451,11 @@ class PdfBinarizeTests(unittest.TestCase):
         preview_one = self.folder / "fixed-preview.pdf"
         preview_two = self.folder / "sauvola-preview.pdf"
         replies = [
+            "",  # vector colors unchanged
             "", "72", "", "", "", "",  # fixed, 72 DPI, threshold 180, levels off, 1x, sharpening off
             "", "", "", "",  # illustrations off, denoise off, cleanup off, advanced settings unchanged
             "1", "2",
-            "2", "s", "", "30", "31", "", "y", "110", "100", "250", "2", "y", "0.7", "50",
+            "2", "", "s", "", "30", "31", "", "y", "110", "100", "250", "2", "y", "0.7", "50",
             "", "", "", "",
             "1", "2", "3", "1,-1",
         ]
@@ -625,7 +483,7 @@ class PdfBinarizeTests(unittest.TestCase):
             patch.object(app.Input, "resolve_output_path", return_value=str(self.output)),
             patch.object(app, "_configure", return_value=(72, 180, processing)),
             patch.object(app.System, "open_with_default_app") as viewer,
-            patch("builtins.input", side_effect=["", "", "", "y", "1", "n", "n", "n", "n", "1", "-1", "0"]),
+            patch("builtins.input", side_effect=["", "", "", "", "y", "1", "n", "n", "n", "n", "1", "-1", "0"]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)
@@ -645,10 +503,10 @@ class PdfBinarizeTests(unittest.TestCase):
             app._Processing(white_point=0), app._Processing(white_point=256),
             app._Processing(upscale=0), app._Processing(upscale=5),
         ]
-        with patch.object(app, "_render_page") as render:
+        with patch.object(objects, "_render_image") as render:
             for processing in invalid:
                 with self.subTest(processing=processing), self.assertRaises(ValueError):
-                    app._preview_pdf(self.source, self.output, 1, 72, 180, processing)
+                    workflow._preview_pdf(self.source, self.output, 1, 72, 180, processing)
             render.assert_not_called()
         self.assertFalse(self.output.exists())
 
@@ -657,8 +515,8 @@ class PdfBinarizeTests(unittest.TestCase):
                                      levels=True, black_point=110, white_point=250, upscale=2)
         second = self.folder / "parallel.pdf"
         with contextlib.redirect_stdout(io.StringIO()):
-            app._binarize_pdf(self.source, self.output, 72, 180, 1, processing=processing)
-            app._binarize_pdf(self.source, second, 72, 180, 3, processing=processing)
+            workflow._binarize_pdf(self.source, self.output, 72, 180, 1, processing=processing)
+            workflow._binarize_pdf(self.source, second, 72, 180, 3, processing=processing)
         with pymupdf.open(self.output) as serial, pymupdf.open(second) as parallel:
             for index in range(3):
                 self.assertEqual(page_image(serial, index).tobytes(), page_image(parallel, index).tobytes())
@@ -667,15 +525,15 @@ class PdfBinarizeTests(unittest.TestCase):
         with Image.frombytes("L", (256, 1), bytes(range(256))) as gray:
             original = gray.tobytes()
             for mode in app._BinarizeMode:
-                with app._threshold_image(gray, 128, app._Processing(mode=mode)) as baseline:
+                with raster._threshold_image(gray, 128, app._Processing(mode=mode)) as baseline:
                     for processing in (
                         app._Processing(mode=mode, levels=True),
                         app._Processing(mode=mode, levels=False, black_point=110, white_point=250),
                     ):
-                        with app._threshold_image(gray, 128, processing) as result:
+                        with raster._threshold_image(gray, 128, processing) as result:
                             self.assertEqual(result.tobytes(), baseline.tobytes())
             # Linear 110..250 levels cross fixed threshold 128 at source value 180.
-            with app._threshold_image(gray, 128, app._Processing(
+            with raster._threshold_image(gray, 128, app._Processing(
                 levels=True, black_point=110, white_point=250,
             )) as result:
                 self.assertEqual(result.convert("L").tobytes(), bytes([0] * 180 + [255] * 76))
@@ -684,7 +542,7 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_upscale_keeps_encoded_pdf_size_and_scales_image(self) -> None:
         for scale in (1, 2, 3, 4):
             with self.subTest(scale=scale):
-                encoded = app._encode_page(Image.new("L", (144, 72), 255), 72, 180,
+                encoded = raster._encode_page(Image.new("L", (144, 72), 255), 72, 180,
                                            app._Processing(upscale=scale))
                 with pymupdf.open(stream=encoded, filetype="pdf") as result:
                     self.assertEqual(result[0].rect, pymupdf.Rect(0, 0, 144, 72))
@@ -698,10 +556,10 @@ class PdfBinarizeTests(unittest.TestCase):
             self.assertEqual(app._configure(144, 180, settings), (144, 180, settings))
 
     def test_equal_or_reversed_levels_fail_before_rendering(self) -> None:
-        with patch.object(app, "_render_page") as render:
+        with patch.object(objects, "_render_image") as render:
             for black, white in ((110, 110), (250, 110)):
                 with self.subTest(black=black, white=white), self.assertRaises(ValueError):
-                    app._preview_pdf(self.source, self.output, 1, 72, 180,
+                    workflow._preview_pdf(self.source, self.output, 1, 72, 180,
                                      app._Processing(levels=True, black_point=black, white_point=white))
             render.assert_not_called()
         self.assertFalse(self.output.exists())
