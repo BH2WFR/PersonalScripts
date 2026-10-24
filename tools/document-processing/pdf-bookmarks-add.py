@@ -52,11 +52,13 @@ WARNING: Multiple TOC PDF pages detected. Please submit exactly one PDF page at 
 
 Transcribe every visible table-of-contents entry from top to bottom. Do not summarize, omit entries, add placeholders, or invent titles and page numbers that are not visible in the image.
 
+Output only the table-of-contents entries visible on the current PDF page. Do not repeat or merge entries from previously submitted pages or earlier responses. Use preceding-page context only to determine the hierarchy of entries on the current page.
+
 The script adds the root-level "Cover" and "Table of Contents" bookmarks separately. Do not invent them in the JSON; include either title only if it is visibly printed as a table-of-contents entry.
 
 The first visible entry may continue a section from the preceding page and is very likely not a level-1 heading. Determine its actual level from its numbering, indentation, typography, surrounding entries, and any preceding-page context available. Do not reset the hierarchy at the start of each image.
 
-Output one valid JSON array in the following format. Put each complete table-of-contents entry on one physical line:
+All output must be enclosed in fenced code blocks; do not output any text outside them. Output one valid JSON array inside a `json` code block in the following format. Put each complete table-of-contents entry on one physical line. Put any required warnings in a separate `text` code block after the JSON code block:
 
 ```json
 [
@@ -82,7 +84,7 @@ If the book has "parts" or "sections" above the chapter level, treat them as lev
 
 If the book has no chapter or section numbers, leave `index` as an empty string.
 
-After the JSON array, output this warning outside the JSON code block:
+After the JSON code block, output this warning inside a separate `text` code block:
 
 WARNING: Vision models can omit entries, attach the wrong page number, or mix content between rows. Carefully compare every item with the source image. Submit the next TOC page only after this page has been fully verified and corrected.
 
