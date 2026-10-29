@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import *  # noqa: E402
 
-SPEC = importlib.util.spec_from_file_location("power_events", ROOT / "tools/power-events.py")
+SPEC = importlib.util.spec_from_file_location("power_events", ROOT / "tools/others/power-events.py")
 assert SPEC is not None and SPEC.loader is not None
 app = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = app

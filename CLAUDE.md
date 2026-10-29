@@ -235,7 +235,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from utils import *  # noqa: E402
 ```
 
-Scripts directly under `tools/` use one `".."` component instead of two.
+Do not place scripts directly under `tools/`. Use an appropriate category
+subdirectory; scripts without a clear category belong in `tools/others/`.
 
 This makes ALL names from `utils` available: ANSI color constants (`FRed`,
 `FLGreen`, `CRst`, …), responsibility classes (`Console`, `Environment`,
@@ -306,6 +307,10 @@ Canonical implementations live there; do not add implementations to the
 | Resolve a path against an explicit base directory | `Paths.resolve_path(path, base_dir, expand_environment=True, resolve_symlinks=False) -> str`; native variable expansion preserves undefined references, False avoids re-expanding literal/template results |
 | Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |
 | DPI awareness (Windows) | `System.enable_dpi_awareness()` |
+| Normalize keyboard names | `Keyboard.normalize_name(name, collapse_modifiers=False) -> str`; keeps left/right identity by default, True folds modifiers for hotkey matching; empty input becomes `?` |
+| Windows key and scan-code lookup | `Keyboard.windows_key_name(vk, scan_code=None)`, `windows_virtual_key(name) -> int \| None`, `windows_scan_name(scan_code)`, `windows_scan_code(name) -> WindowsScanCode \| None`; scan lookup uses common PC set-1 US physical labels, retains E0/keypad distinctions, and does not infer registry support |
+| Scan-code representation | `WindowsScanCode(code, prefix=ScanCodePrefix.NONE)`; immutable byte plus NONE/E0/E1 prefix, `.value` is the encoded word, `from_value(word)` validates it, `from_hook(scan_code, flags)` preserves the hook's E0 flag without inferring E1 |
+| Other platform key codes | `Keyboard.macos_key_name(vk, chars=None)`, `macos_virtual_key(name) -> int \| None`, `macos_media_name(code) -> str \| None`, `hid_usage_name(usage)`, `x11_keysym_name(name)`; HID usages refer specifically to keyboard/keypad page 0x07 |
 | Find bash / pwsh / conda | `Environment.find_bash()`, `Environment.find_pwsh()`, `Environment.find_conda()` |
 | Discover a strict runtime and verify its version | `Environment.resolve_runtime(RuntimeKind, executable=..., environment=..., cwd=...) -> tuple[str, str]`; `runtime_candidates(kind, environment, cwd=...)` discovers paths without probes; relative PATH uses cwd, launch paths preserve symlinks |
 | Find a program using a child environment | `Environment.which(name, environment=..., cwd=...) -> str \| None`; explicit PATH/PATHEXT search relative to cwd, absolute result preserves symlinks; no options retains native shutil.which behavior |
@@ -938,6 +943,15 @@ not in the README.
 
 ## Directory layout
 
+`tools/others/keyboard-hook-viewer.py` loads the private `keyboard-hook-viewer/`
+package as `personal_keyboard_hook_viewer`. See its README for module ownership.
+Keep internals out of launcher/compiler lists; the compiler stages the import
+alias. `utils/keyboard.py` owns key-name aliases and platform mappings; its
+private tables feed the public `Keyboard` helpers. Importing utils never loads
+Quartz/Xlib, installs hooks or changes the registry. Viewer backends receive an
+EventSink; runtime owns callback/hotkey state and ui owns terminal state.
+Run keyboard regression tests with `-p "test_keyboard*.py"`.
+
 `tools/document-processing/pdf-binarize.py` loads the private `pdf-binarize/`
 package as `personal_pdf_binarize`. See its README for module ownership. Keep
 internals out of launcher/compiler lists; the compiler stages the import alias.
@@ -965,6 +979,7 @@ API facade from the entry. Run rclone tests with `-p "test_rclone*.py"`.
 │   ├── filesystem/
 │   ├── multimedia/
 │   ├── network/
+│   ├── others/            # Miscellaneous tools; launcher folder color FGray
 │   ├── research/
 │   ├── windows/           # Windows-only scripts
 │   ├── macos/             # macOS-only scripts
@@ -979,6 +994,7 @@ API facade from the entry. Run rclone tests with `-p "test_rclone*.py"`.
 │   ├── paths.py            # Path placeholder and environment expansion
 │   ├── pdf.py              # Lazy PyMuPDF authentication and safe new-file output
 │   ├── font.py             # Installed font discovery, localized names, and style matching
+│   ├── keyboard.py         # Key names, platform key codes and Windows scan codes
 │   ├── input.py            # Input
 │   ├── cursor.py           # Cursor
 │   ├── menu_option.py      # MenuOption
@@ -1046,8 +1062,8 @@ API facade from the entry. Run rclone tests with `-p "test_rclone*.py"`.
   otherwise.
 - **`./output/`** — General output directory, gitignored.
 - **`./BUILD/`** — Compiled executables from `compile-script.py`, gitignored.
-- Non-platform-specific new scripts go in `tools/` or the appropriate category
-  under `tools/`.
+- **No scripts directly under `tools/`.** Place scripts in the appropriate
+  category subdirectory. If the category is unclear, always use `tools/others/`.
 
 ## Platform & cross-platform rules
 

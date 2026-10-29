@@ -30,6 +30,7 @@ from .menu_option import MenuOption
 from .menu import Menu
 from .pdf import Pdf
 from .font import Font, FontFace, FontStyle
+from .keyboard import Keyboard, ScanCodePrefix, WindowsScanCode
 
 # Export only public helpers, not package submodules such as ``utils.input``
 # that would shadow Python built-ins during ``from utils import *``.
@@ -50,4 +51,5 @@ __all__ = [
     "CEraseLineToStart", "CmdCheck", "Console", "Environment", "LinuxGui",
     "System", "Paths", "Input", "Cursor", "MenuOption", "Menu", "RuntimeKind", "PythonEnvironment", "Pdf",
     "Font", "FontFace", "FontStyle", "DiskInfo", "DiskScan",
+    "Keyboard", "ScanCodePrefix", "WindowsScanCode",
 ]

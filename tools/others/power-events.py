@@ -39,8 +39,8 @@ Requirements:
       journalctl. Additional log privileges may be needed for some sources.
 
 Usage:
-    conda run --no-capture-output -n base python tools/power-events.py
-    conda run -n base python tools/power-events.py --help
+    conda run --no-capture-output -n base python tools/others/power-events.py
+    conda run -n base python tools/others/power-events.py --help
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ import time
 from typing import cast
 import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
 

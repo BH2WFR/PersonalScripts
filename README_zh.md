@@ -283,13 +283,13 @@
 | 脚本                                | 描述                                                         | 依赖                                    |
 | ----------------------------------- | ------------------------------------------------------------ | --------------------------------------- |
 | `tools/windows/file-association.py` | 仅 Windows，**为指定扩展名的文件在系统中注册指定 EXE 作为打开方式的工具**：<br />可用于给一些便携软件注册对指定扩展名的打开方式 | **仅 Windows**<br />**需要提权** |
-| `tools/script-to-app.py` | 在 Windows、macOS 和 Linux 桌面为 Python 脚本创建文件打开方式，统一收纳到 `PersonalScripts`，使用选定的 Python 环境，不打包依赖。支持自定义输出目录和中文名称；macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式，后者效果取决于文件管理器。 | **Windows / macOS / Linux 桌面**<br />Windows 需提权或使用可写目录；Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选） |
+| `tools/others/script-to-app.py` | 在 Windows、macOS 和 Linux 桌面为 Python 脚本创建文件打开方式，统一收纳到 `PersonalScripts`，使用选定的 Python 环境，不打包依赖。支持自定义输出目录和中文名称；macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式，后者效果取决于文件管理器。 | **Windows / macOS / Linux 桌面**<br />Windows 需提权或使用可写目录；Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选） |
 
 ### 文本处理
 
 | 脚本                            | 描述                                                         | 依赖                                 |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------ |
-| `tools/parse-unicode-string.py` | **Unicode 字符信息显示工具**：<br />可获取输入文本中每个字符的序号、字符、十六进制、十进制、说明等信息，特殊字符（如控制符或空格等）有特殊标注格式。<br />支持用 `--clip`（剪贴板读取）参数从剪贴板读取文本，也可以使用常规的多行交互输入。 | Linux 剪贴板需 `wl-paste` 或 `xclip` |
+| `tools/others/parse-unicode-string.py` | **Unicode 字符信息显示工具**：<br />可获取输入文本中每个字符的序号、字符、十六进制、十进制、说明等信息，特殊字符（如控制符或空格等）有特殊标注格式。<br />支持用 `--clip`（剪贴板读取）参数从剪贴板读取文本，也可以使用常规的多行交互输入。 | Linux 剪贴板需 `wl-paste` 或 `xclip` |
 
 ### 显示器工具
 
@@ -315,9 +315,9 @@
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
 | `tools/windows/usb-eject-log.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
 | `tools/windows/restart-service.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
-| `tools/power-current.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
-| `tools/power-events.py` | 开关机、睡眠唤醒和锁定/解锁历史日志 GUI 查看器。Linux 下锁屏历史支持有限。 | **macOS / Windows 10+ / 使用 systemd 的 Linux 桌面**<br />**Python 库**：`PySide6` |
-| `tools/disk-smart-info.py`         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools` |
+| `tools/others/power-current.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
+| `tools/others/power-events.py` | 开关机、睡眠唤醒和锁定/解锁历史日志 GUI 查看器。Linux 下锁屏历史支持有限。 | **macOS / Windows 10+ / 使用 systemd 的 Linux 桌面**<br />**Python 库**：`PySide6` |
+| `tools/others/disk-smart-info.py`         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools` |
 | `tools/macos/rdp-clipboard-image-fix.py`  | 修复在 macOS 中通过 Windows App (RDP) 远程控制 Windows 设备时，从 Windows 复制到剪贴板后，无法在 macOS 中正常粘贴的图片。可将剪贴板中伪装成 png 的 tiff 图片恢复成有效的 PNG 剪贴板数据。<br /> 加 `--force` 参数时无需确认，直接恢复。 | **仅 macOS**；系统内置 `osascript` 和 AppKit                 |
 
 ### 软件启动
@@ -330,7 +330,7 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/run-commands.py` | **预设命令运行器**：<br />选择自己的配置文件，再通过菜单选择并执行保存的命令或脚本；[配置样例](tools/run-commands-schema-sample.yaml) 提供详细说明。 | **Python 库**：`PyYAML`；预设命令所需的程序或解释器 |
+| `tools/others/run-commands.py` | **预设命令运行器**：<br />选择自己的配置文件，再通过菜单选择并执行保存的命令或脚本；[配置样例](tools/others/run-commands-schema-sample.yaml) 提供详细说明。 | **Python 库**：`PyYAML`；预设命令所需的程序或解释器 |
 
 ### 科研工具
 
@@ -343,5 +343,5 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：<br />macOS 使用 CGEvent tap 与 IOHID（可显示事件来源设备 ID）；Windows 使用 ctypes 调用 `SetWindowsHookEx`；Linux 使用 X11 XRecord | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
+| `tools/others/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：显示 Windows 扫描码，区分左右修饰键和小键盘 Enter；macOS 可显示事件来源设备信息，Linux 使用 X11 XRecord。**仅限键盘测试、特殊热键、经授权的自动化操作等正当用途。** | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
 | `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | **命令行参数打印工具**：<br />可打印出所有传入脚本的 argv 参数，用于判断脚本传入参数是否正确 |  |

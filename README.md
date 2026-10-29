@@ -217,7 +217,7 @@ Core utility package: `utils/` — separates console, runtime environment, syste
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/run-commands.py` | **Preset command runner:** Select your configuration file, then choose and execute a saved command or script from a menu. A [configuration sample](tools/run-commands-schema-sample.yaml) documents the supported features. | **Python pkg:** `PyYAML`; programs or runtimes required by the selected preset |
+| `tools/others/run-commands.py` | **Preset command runner:** Select your configuration file, then choose and execute a saved command or script from a menu. A [configuration sample](tools/others/run-commands-schema-sample.yaml) documents the supported features. | **Python pkg:** `PyYAML`; programs or runtimes required by the selected preset |
 
 ### PDF Tools
 
@@ -292,13 +292,13 @@ editing restrictions, or PDF/A identification. Source files are retained.
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
 | `tools/windows/file-association.py` | Windows-only tool that **registers a selected EXE as an Open With handler for specified file extensions:**<br />Useful for registering file associations for portable applications. | **Windows only**<br />**Elevation required** |
-| `tools/script-to-app.py` | Creates Open With launchers for Python scripts on Windows, macOS and Linux desktops, organized under `PersonalScripts` with a selected Python environment and no bundled dependencies. Supports custom output directories and Unicode names; macOS apps can be moved or renamed, while Linux offers explicit MIME types or an all-files attempt whose availability depends on the file manager. | **Windows / macOS / Linux desktop**<br />Windows elevation or a writable directory; Linux Bash and a desktop terminal (`desktop-file-utils` optional) |
+| `tools/others/script-to-app.py` | Creates Open With launchers for Python scripts on Windows, macOS and Linux desktops, organized under `PersonalScripts` with a selected Python environment and no bundled dependencies. Supports custom output directories and Unicode names; macOS apps can be moved or renamed, while Linux offers explicit MIME types or an all-files attempt whose availability depends on the file manager. | **Windows / macOS / Linux desktop**<br />Windows elevation or a writable directory; Linux Bash and a desktop terminal (`desktop-file-utils` optional) |
 
 ### Text Processing
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/parse-unicode-string.py` | **Unicode character information viewer:**<br />Shows each input character's index, character, hexadecimal value, decimal value, description, and other information. Special characters such as control characters and spaces use dedicated notation.<br />Read text from the clipboard with `--clip`, or use regular interactive multiline input. | Linux clipboard access requires `wl-paste` or `xclip` |
+| `tools/others/parse-unicode-string.py` | **Unicode character information viewer:**<br />Shows each input character's index, character, hexadecimal value, decimal value, description, and other information. Special characters such as control characters and spaces use dedicated notation.<br />Read text from the clipboard with `--clip`, or use regular interactive multiline input. | Linux clipboard access requires `wl-paste` or `xclip` |
 
 ### Display Tools
 
@@ -324,9 +324,9 @@ editing restrictions, or PDF/A identification. Source files are retained.
 | ------ | ----------- | ------------ |
 | `tools/windows/usb-eject-log.py` | **Device ejection failure log viewer:** shows historical blocking process PIDs, executable paths and device IDs recorded by Windows. Helps identify which process is using a USB drive when it cannot be safely ejected. | **Windows 10+ only**;<br />**Elevation required** |
 | `tools/windows/restart-service.py` | Windows-only **force-restart tool for system services:**<br />Supports wait and no-wait modes and includes a `Windows Audio` preset, which **can temporarily fix failure to redirect audio from the remote computer in an RDP session**. | **Windows only**<br />**Elevation required** |
-| `tools/power-current.py` | Charger and battery telemetry viewer that **shows the computer's current charging power on macOS**.<br />Uses `ioreg` on macOS, PowerShell CIM/WMI on Windows, and `/sys/class/power_supply` on Linux. Some fields may be unavailable because of firmware or driver limitations. (**The best experience is on macOS.**) | **Best on macOS**; other systems are also supported with incomplete data |
-| `tools/power-events.py` | GUI viewer for historical startup, shutdown, sleep, wake and lock/unlock logs, including Windows Modern Standby transitions and reported sleep details. Lock history support is limited on Linux. | **macOS / Windows 10+ / Linux desktop with systemd**<br />**Python pkg:** `PySide6` |
-| `tools/disk-smart-info.py` | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools` |
+| `tools/others/power-current.py` | Charger and battery telemetry viewer that **shows the computer's current charging power on macOS**.<br />Uses `ioreg` on macOS, PowerShell CIM/WMI on Windows, and `/sys/class/power_supply` on Linux. Some fields may be unavailable because of firmware or driver limitations. (**The best experience is on macOS.**) | **Best on macOS**; other systems are also supported with incomplete data |
+| `tools/others/power-events.py` | GUI viewer for historical startup, shutdown, sleep, wake and lock/unlock logs, including Windows Modern Standby transitions and reported sleep details. Lock history support is limited on Linux. | **macOS / Windows 10+ / Linux desktop with systemd**<br />**Python pkg:** `PySide6` |
+| `tools/others/disk-smart-info.py` | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools` |
 | `tools/macos/rdp-clipboard-image-fix.py` | Repairs images that cannot be pasted correctly on macOS after being copied from a Windows device controlled remotely through Windows App (RDP), converting clipboard TIFF images mislabeled as PNG into valid PNG clipboard data.<br />Use `--force` to repair immediately without confirmation. | **macOS only**; built-in `osascript` and AppKit |
 
 ### Software Launching
@@ -346,5 +346,5 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/keyboard-hook-viewer.py` | **Global keyboard and mouse hook monitor:**<br />Uses CGEvent taps and IOHID on macOS (and can display the source device ID), `SetWindowsHookEx` through `ctypes` on Windows, and X11 XRecord on Linux. | **Windows/macOS/Linux X11**; Wayland is not supported<br />macOS: `pip install pyobjc-framework-Quartz`<br />Linux: `pip install python-xlib`<br />Windows: none (standard-library `ctypes`) |
+| `tools/others/keyboard-hook-viewer.py` | **Global keyboard and mouse hook monitor:** shows Windows scan codes and distinguishes sided modifiers and keypad Enter; macOS can display the source device identity, and Linux uses X11 XRecord. **For legitimate keyboard testing, custom hotkeys and authorized automation only.** | **Windows/macOS/Linux X11**; Wayland is not supported<br />macOS: `pip install pyobjc-framework-Quartz`<br />Linux: `pip install python-xlib`<br />Windows: none (standard-library `ctypes`) |
 | `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | **Command-line argument printer:**<br />Prints every `argv` argument passed to the script, for checking whether arguments are being forwarded correctly. | |

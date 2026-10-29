@@ -7,7 +7,7 @@ Usage:
 Lists all Python scripts in the project, lets you choose one by number,
 then compiles it with Nuitka or PyInstaller. Output goes to BUILD/ with
 directory structure preserved (e.g. BUILD/link-create_nuitka/).
-The rclone-sync and pdf-binarize private packages are excluded from script
+The rclone-sync, pdf-binarize and keyboard-hook-viewer packages are excluded from script
 selection and staged under their Python import names when compiling their entries.
 """
 
@@ -41,7 +41,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-binarize"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-binarize", "keyboard-hook-viewer"}
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -200,7 +200,8 @@ def _run_compiler(
         runs the compiler, then removes only that temporary staging directory.
         PYTHONPATH changes apply exclusively to the compiler subprocess.
     """
-    packages = {"rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
+    packages = {"keyboard-hook-viewer.py": ("keyboard-hook-viewer", "personal_keyboard_hook_viewer"),
+                "rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
                 "pdf-binarize.py": ("pdf-binarize", "personal_pdf_binarize")}
     package = packages.get(os.path.basename(script_path))
     if package is None:

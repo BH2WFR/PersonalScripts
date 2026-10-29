@@ -7,10 +7,10 @@ Requirements:
       Conda; tsx uses Node and the project's installed tsx package.
 
 Usage:
-    conda run --no-capture-output -n base python tools/run-commands.py
-    conda run -n base python tools/run-commands.py --schema-file ./commands.yaml --list
-    conda run -n base python tools/run-commands.py --task android/adb-devices --yes
-    conda run -n base python tools/run-commands.py --schema-file ./commands.yaml --validate
+    conda run --no-capture-output -n base python tools/others/run-commands.py
+    conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --list
+    conda run -n base python tools/others/run-commands.py --task android/adb-devices --yes
+    conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --validate
 
 Interactive startup asks for a configuration path, defaulting to --schema-file
 or ZL_RUN_COMMANDS_SCHEMA_FILE. With --task or redirected stdin, one of those paths
@@ -39,7 +39,7 @@ import sys
 import tempfile
 from typing import cast
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -613,10 +613,10 @@ Configuration:
   --yes skips confirmation, not required input prompts.
 
 Examples:
-  conda run --no-capture-output -n base python tools/run-commands.py
-  conda run -n base python tools/run-commands.py --schema-file ./commands.yaml --list
-  conda run -n base python tools/run-commands.py --task android/adb-devices --yes
-  conda run -n base python tools/run-commands.py --schema-file ./commands.yaml --validate
+  conda run --no-capture-output -n base python tools/others/run-commands.py
+  conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --list
+  conda run -n base python tools/others/run-commands.py --task android/adb-devices --yes
+  conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --validate
 """,
     )
     parser.add_argument("--schema-file", help="YAML path; prompt default interactively, direct selection with --task or redirected stdin")

@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional, Union
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
 
 

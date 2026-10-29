@@ -25,7 +25,7 @@ variables.
 `tools/network/rclone-sync-schema-sample.yaml` is detailed configuration
 documentation for agents and users, not a runtime configuration or fallback.
 
-## `tools/run-commands.py`
+## `tools/others/run-commands.py`
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ documentation for agents and users, not a runtime configuration or fallback.
 
 Use an absolute configuration path for portability across working directories.
 Relative configuration paths are resolved from the invocation directory.
-`tools/run-commands-schema-sample.yaml` is documentation for agents and users,
+`tools/others/run-commands-schema-sample.yaml` is documentation for agents and users,
 not an actual runtime configuration or an automatic default/fallback.
 
 ## `tools/network/upload-ipaddress.py`
@@ -46,7 +46,7 @@ not an actual runtime configuration or an automatic default/fallback.
 | `ZL-IP-ADDRESS-S3-ID` | Yes | S3 access key ID. |
 | `ZL-IP-ADDRESS-S3-SECRET` | Yes | S3 secret access key. |
 
-## `tools/script-to-app.py`
+## `tools/others/script-to-app.py`
 
 Generated `.cmd` launchers set the following internal-only variables inside
 `setlocal`. They are not user configuration: recorded values override inherited

@@ -57,7 +57,7 @@ from typing import Optional, Union
 from unicodedata import normalize
 from uuid import NAMESPACE_URL, uuid5
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
 SUBDIR = "PersonalScripts"

@@ -22,7 +22,7 @@ from typing import cast
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "tools/run-commands.py"
+RUNNER = ROOT / "tools/others/run-commands.py"
 SPEC = importlib.util.spec_from_file_location("run_commands_test_target", RUNNER)
 assert SPEC is not None and SPEC.loader is not None
 runner = importlib.util.module_from_spec(SPEC)

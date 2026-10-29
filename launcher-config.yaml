@@ -41,6 +41,8 @@ script-name-highlight-pattern:
         - "\\.ps1$"
 
 folder-name-highlight-pattern:
+    FGray:
+        - "^others/"
     FLGreen:
         - "^windows/"
         - "^macos/"
@@ -61,6 +63,7 @@ ignore-list:
         - "INSTALL/"
         - "research/matrix-viewer/"
         - "network/rclone-sync/"
+        - "others/keyboard-hook-viewer/"
         - "document-processing/pdf-binarize"
     platform-specific:
         # 规范：windows, linux, macos
@@ -88,15 +91,15 @@ ignore-list:
     linux-gui-specific:
         # 规范：no-gui, wayland, x11
         no-gui:
-            - "script-to-app.py"
-            - "keyboard-hook-viewer.py"
+            - "others/script-to-app.py"
+            - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
             - "research/matrix-viewer.py"
         wayland:
-            - "keyboard-hook-viewer.py"
+            - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
         x11:
-            # - "keyboard-hook-viewer.py"
+            # - "others/keyboard-hook-viewer.py"
 
 extra-env-paths:
     # 规范：all-platforms, windows, linux, macos

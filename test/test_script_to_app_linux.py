@@ -21,7 +21,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("linux_script_to_app", ROOT / "tools/script-to-app.py")
+SPEC = importlib.util.spec_from_file_location("linux_script_to_app", ROOT / "tools/others/script-to-app.py")
 assert SPEC is not None and SPEC.loader is not None
 app = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(app)
@@ -45,7 +45,7 @@ class LinuxLauncherTests(unittest.TestCase):
                                 (str(self.root), str(self.root))):
             with self.subTest(value=value), patch.object(sys, "platform", "linux"), \
                     patch.dict(os.environ, {"XDG_DATA_HOME": value}):
-                self.assertEqual(app._resolve_output_dir(None), os.path.join(expected, "applications/PersonalScripts"))
+                self.assertEqual(app._resolve_output_dir(None), os.path.join(expected, "applications", "PersonalScripts"))
                 self.assertEqual(app._resolve_output_dir(str(self.root)), str(self.root))
 
     def test_mime_validation_and_interactive_retry(self) -> None:

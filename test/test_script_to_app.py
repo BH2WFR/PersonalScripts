@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("merged_script_to_app", ROOT / "tools/script-to-app.py")
+SPEC = importlib.util.spec_from_file_location("merged_script_to_app", ROOT / "tools/others/script-to-app.py")
 assert SPEC is not None and SPEC.loader is not None
 app = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(app)
@@ -90,7 +90,7 @@ class LauncherWorkflowTests(unittest.TestCase):
                 patch("builtins.input", return_value=""), contextlib.redirect_stdout(output):
             self.assertEqual(app.main(self.arguments()), 0)
         self.assertIs(sys.argv, original_argv)
-        self.assertEqual(replayed, [str(ROOT / "tools/script-to-app.py"), *self.arguments()])
+        self.assertEqual(replayed, [str(ROOT / "tools/others/script-to-app.py"), *self.arguments()])
         bundle.assert_not_called()
         launcher = self.root / "launchers/Example.cmd"
         data = launcher.read_bytes()
