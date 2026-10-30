@@ -15,6 +15,10 @@ and reset matrix height for Z pairs. Numerical exports retain source coordinates
 Numeric 2-by-N/N-by-2 sources (N > 2) prompt for XY or matrix interpretation;
 3-by-N/N-by-3 sources (N > 3) prompt for XYZ point cloud or matrix interpretation
 before insertion, unless --mode was supplied. Cancel preserves the workspace.
+Interpretation and 3D split/skip prompts optionally reuse choices in the current
+import (including queued files). 2D rules match coordinate axis/length and
+real/complex type; 3D rules match chosen axis/length, with the latest rule first.
+New explicit opens reset all rules; member/range selection remains per file.
 Single-matrix mode is the default: clicking a channel clears other selections.
 Multiple-matrix mode permits compatible checkbox selections to overlay.
 Hide controls are exposed only in multiple mode. Auto Y on slice change is
@@ -101,7 +105,7 @@ from .complex_merge_dialog import ComplexMergeDialog
 from .complex_input import ComplexDataChoice, choose_complex_data
 from .data_conversion import ConversionOptions, run_conversion
 from .data_conversion_dialog import DataConversionDialog
-from .import_catalog import INSPECT_EXTENSIONS, ImportCatalog, ImportChoice, inspect_source
+from .import_catalog import INSPECT_EXTENSIONS, ImportCatalog, ImportChoice, SplitAxis, inspect_source
 from .import_dialog import ImportDialog, SplitArrayDialog
 from .export_dialog import ComplexExportChoice, choose_complex_export
 from .exporting import ExportFormat, ExportLayout, ExportSnapshot, ExportTarget
@@ -166,6 +170,8 @@ class WorkspaceWindow(ViewerWindow):
         self._rendering = False
         self._append_pending = False
         self._pending_files: deque[tuple[Path, str | None, ViewMode | None, int | None]] = deque()
+        self._opening_modes: dict[tuple[int, int, bool], ViewMode] = {}
+        self._split_choices: dict[tuple[SplitAxis, int], bool] = {}
         self._workspace_ready = False
         self._profile_uses_overlay = False
         self._render_layers: tuple[RenderLayer, ...] = ()
@@ -1018,6 +1024,8 @@ class WorkspaceWindow(ViewerWindow):
 
     def _remove_all(self) -> None:
         self._pending_files.clear()
+        self._opening_modes = {}
+        self._split_choices = {}
         self._rebuild.stop()
         for kind in (JobKind.FRAME, JobKind.LOAD, JobKind.BUNDLE, JobKind.INSPECT, JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE, JobKind.DATA_CONVERSION):
             self._latest[kind] = -1
@@ -1258,9 +1266,11 @@ class WorkspaceWindow(ViewerWindow):
                 new file's first member; multiple mode adds compatible overlays.
 
         Side effects:
-            Discards queued command-line imports and starts this file's load.
+            Discards queued imports and batch choices, then starts this file's load.
         """
         self._pending_files.clear()
+        self._opening_modes = {}
+        self._split_choices = {}
         self._start_open_path(path, key, append=append)
 
     def _start_open_path(self, path: Path, key: str | None, *, append: bool) -> None:
@@ -1307,16 +1317,30 @@ class WorkspaceWindow(ViewerWindow):
         if self._closing or self._latest.get(JobKind.INSPECT) != number:
             return
         resolved: list[ImportChoice] = []
+        split_choices = self._split_choices
         for choice in choices:
             member = next(member for member in catalog.members if member.key == choice.key)
             if len(member.shape) != 3:
                 resolved.append(choice)
                 continue
+            matching = next(((axis, should_open) for (axis, size), should_open in reversed(split_choices.items())
+                             if member.shape[axis] == size), None)
+            if matching is not None:
+                axis, should_open = matching
+                if should_open:
+                    resolved.append(replace(choice, split_axis=axis))
+                continue
             split_dialog = SplitArrayDialog(catalog.path.name, member, self)
             self._import_dialog = split_dialog
             try:
-                if split_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-                    resolved.append(replace(choice, split_axis=split_dialog.axis()))
+                accepted = split_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted
+                if self._closing or self._latest.get(JobKind.INSPECT) != number:
+                    return
+                axis = split_dialog.axis()
+                if accepted:
+                    resolved.append(replace(choice, split_axis=axis))
+                if split_dialog.apply_matching.isChecked() and (accepted or split_dialog.skipped_explicitly):
+                    split_choices[(axis, member.shape[axis])] = accepted
             finally:
                 self._import_dialog = None
                 split_dialog.deleteLater()
@@ -1374,6 +1398,10 @@ class WorkspaceWindow(ViewerWindow):
         source = f"{document.path.name} :: {document.key}" if document.key is not None else document.path.name
         coordinates = "columns" if shape[1] == count else "rows"
         coordinate_mode = ViewMode.XY if count == 2 else ViewMode.POINTS
+        match_key = (1 if coordinates == "columns" else 0, count, document.is_complex)
+        opening_modes = self._opening_modes
+        if match_key in opening_modes:
+            return default_selection(document, opening_modes[match_key])
         dialog = QtWidgets.QMessageBox(self)
         dialog.setWindowTitle("Choose matrix interpretation")
         dialog.setIcon(QtWidgets.QMessageBox.Icon.Question)
@@ -1391,13 +1419,24 @@ class WorkspaceWindow(ViewerWindow):
             coordinate_button.setEnabled(False)
             explanation = f"{explanation}\n\n{'XY' if count == 2 else 'XYZ'} coordinates require real values; this complex matrix can be opened in 2D mode."
         dialog.setInformativeText(explanation)
+        apply_matching = QtWidgets.QCheckBox("Apply to matching arrays in this import", dialog)
+        apply_matching.setToolTip(
+            f"Apply to later {'complex' if document.is_complex else 'real'} matrices with {count} {coordinates} "
+            f"and more than {count} elements on the other axis. "
+            "Row and column layouts are remembered separately. A new import resets this choice.")
+        dialog.setCheckBox(apply_matching)
         dialog.setDefaultButton(matrix)
         dialog.setEscapeButton(cancel)
         dialog.exec()
         chosen = dialog.clickedButton()
+        remember = apply_matching.isChecked()
+        dialog.deleteLater()
         if chosen is not coordinate_button and chosen is not matrix:
             return None
-        return default_selection(document, coordinate_mode if chosen is coordinate_button else ViewMode.MATRIX)
+        chosen_mode = coordinate_mode if chosen is coordinate_button else ViewMode.MATRIX
+        if remember:
+            opening_modes[match_key] = chosen_mode
+        return default_selection(document, chosen_mode)
 
     def _job_done(self, number: int, kind_text: str, result: object) -> None:
         kind = JobKind(kind_text)

@@ -207,13 +207,15 @@ class SplitArrayDialog(QtWidgets.QDialog):
         member: Metadata for one nonempty numeric rank-3 array.
         parent: Owning workspace; no file access occurs in this dialog.
 
-    Acceptance exposes axis(); rejection, Escape and window close skip only
-    this member. The smallest dimension is suggested, preferring the last axis
-    on ties; the choice always requires explicit confirmation.
+    Acceptance exposes axis(); Escape and window close skip only this member.
+    The smallest dimension is suggested, preferring the last axis
+    on ties. An explicit split/skip can apply to later arrays with the same
+    length on the chosen axis, within the current import only.
     """
 
     def __init__(self, source: str, member: ImportMember, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.skipped_explicitly = False
         if len(member.shape) != 3 or any(size <= 0 for size in member.shape):
             raise ValueError("Channel splitting requires a nonempty 3D array.")
         self.setWindowTitle("Open 3D array")
@@ -232,15 +234,38 @@ class SplitArrayDialog(QtWidgets.QDialog):
         self.channel_axis.setCurrentIndex(int(default))
         layout.addWidget(self.channel_axis)
         note = QtWidgets.QLabel("All channels on this axis will be opened. Original values and dtype are preserved. "
-                               "Axis and channel indices start at 0. Don't open skips only this array.")
+                               "Axis and channel indices start at 0. Don't open skips this array; "
+                               "check the option below to also skip later matching arrays.")
         note.setWordWrap(True)
         layout.addWidget(note)
+        self.apply_matching = QtWidgets.QCheckBox("Apply to matching arrays in this import")
+        self.apply_matching.setToolTip(
+            "Remember Split and open or Don't open for later 3D arrays with the same "
+            "length on the selected axis. Other dimensions may differ. Escape/window close "
+            "skips only this array. A new import resets this choice.")
+        layout.addWidget(self.apply_matching)
+        self.match_description = QtWidgets.QLabel()
+        self.match_description.setWordWrap(True)
+        layout.addWidget(self.match_description)
+
+        def update_match_description() -> None:
+            axis = self.axis()
+            self.match_description.setText(
+                f"Matches 3D arrays where Axis {axis.value} has {member.shape[axis]} elements.")
+
+        self.channel_axis.currentIndexChanged.connect(update_match_description)
+        update_match_description()
         buttons = QtWidgets.QDialogButtonBox()
         self.split_button = buttons.addButton("Split and open", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
         self.skip_button = buttons.addButton("Don't open", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole)
         buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        self.skip_button.clicked.connect(self._skip)
         layout.addWidget(buttons)
+
+    def _skip(self) -> None:
+        """Distinguish an explicit batch skip from Escape or window close."""
+        self.skipped_explicitly = True
+        self.reject()
 
     def axis(self) -> SplitAxis:
         """Return the chosen zero-based channel axis without decoding arrays."""
