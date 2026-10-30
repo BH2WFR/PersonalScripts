@@ -2,6 +2,32 @@
 
 Standard-library only. Use the Keyboard class through ``from utils import *``.
 
+The scan table includes PC set-1 positions, F1-F24, ISO/JIS/Korean extras and
+media keys. Scan words, Windows virtual keys and USB HID usages are separate
+code spaces; none of these tables guarantees registry-remapping support.
+
+Regional naming notes (all code values below are hexadecimal):
+    - Hangul/Hanja use 0072/0071; F2/F1 are their legacy-message forms, kept
+      as hangul_legacy/hanja_legacy rather than silently changing the bytes.
+      Windows documents these language usages as release-only events.
+    - JIS International1 (ro, also Brazilian /) is 0073; International3
+      (yen) is 007D. Kana, convert and nonconvert are 0070, 0079 and 007B.
+    - ISO's extra key is 0056, not the ANSI backslash/ISO hash position 002B.
+      OEM_102 is a virtual-key identity, not a universal physical scan code.
+    - JIS hankaku/zenkaku and eisu share the US grave/Caps Lock positions
+      0029/003A. Name-to-scan aliases preserve the default reverse labels.
+    - 0076 is F24 and also USB LANG5 (zenkaku_hankaku_usb). A scan word
+      alone cannot distinguish those usages; reverse lookup defaults to f24.
+    - VK 15 is shared by Kana/Hangul; VK 19 by Kanji/Hanja. Without a matching
+      scan code, VK naming returns kana_or_hangul / kanji_or_hanja.
+
+Sources (numeric facts, not copied implementation):
+    https://learn.microsoft.com/windows/win32/inputdev/about-keyboard-input
+    https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes
+    https://www.usb.org/sites/default/files/hut1_21_0.pdf (section 10)
+    https://github.com/microsoft/Windows-driver-samples/blob/main/input/layout/fe_kbds/jpn/106/kbd106.c
+    https://github.com/microsoft/PowerToys/blob/main/src/common/interop/keyboard_layout.cpp
+
 Intended for legitimate keyboard testing, custom hotkeys and authorized
 automation. Do not use in covert surveillance, credential collection or other
 unauthorized activity. Users are responsible for their use and its consequences.
@@ -139,6 +165,20 @@ _NAME_ALIASES: dict[str, str] = {
     "lctrl": "ctrl", "rctrl": "ctrl",
     "lalt": "alt", "ralt": "alt",
     "lwin": "super", "rwin": "super",
+    # Physical names stay distinct even when their Windows VK values coincide.
+    "iso_extra": "non_us_backslash", "iso_backslash": "non_us_backslash",
+    "ro": "international1", "jis_ro": "international1",
+    "yen": "international3", "jis_yen": "international3",
+    "international2": "kana", "katakana_hiragana": "kana",
+    "international4": "convert", "henkan": "convert",
+    "international5": "nonconvert", "muhenkan": "nonconvert",
+    "non_convert": "nonconvert",
+    "hangeul": "hangul", "hangul_english": "hangul",
+    "lang1": "hangul", "lang2": "hanja",
+    "lang3": "katakana", "lang4": "hiragana",
+    "lang5": "zenkaku_hankaku_usb",
+    "hankaku_zenkaku": "zenkaku_hankaku",
+    "eisu_toggle": "eisu", "vk_oem_102": "oem_102",
 }
 
 _VK_MAP: dict[int, str] = {
@@ -199,6 +239,9 @@ _HID_KEYBOARD_USAGE_MAP: dict[int, str] = {
     0x62: "kp0", 0x63: "kp.", 0x64: "non_us_backslash", 0x65: "menu",
     0x66: "power", 0x67: "kp=",
     **{usage: f"F{usage - 0x5B}" for usage in range(0x68, 0x74)},
+    0x85: "kp,",
+    **{usage: f"international{usage - 0x86}" for usage in range(0x87, 0x90)},
+    **{usage: f"lang{usage - 0x8F}" for usage in range(0x90, 0x99)},
     0xE0: "ctrl", 0xE1: "shift", 0xE2: "alt", 0xE3: "cmd",
     0xE4: "ctrl_r", 0xE5: "shift_r", 0xE6: "alt_r", 0xE7: "cmd_r",
 }
@@ -222,17 +265,23 @@ _WIN_VK_MAP: dict[int, str] = {
     0x0C: "clear", 0x0D: "enter",
     0x10: "shift", 0x11: "ctrl", 0x12: "alt", 0x13: "pause",
     0x14: "caps_lock",
+    0x15: "kana_or_hangul", 0x16: "ime_on", 0x17: "junja", 0x18: "final",
+    0x19: "kanji_or_hanja", 0x1A: "ime_off",
     0x1B: "esc",
+    0x1C: "convert", 0x1D: "nonconvert", 0x1E: "ime_accept", 0x1F: "ime_mode_change",
     0x20: "space", 0x21: "page_up", 0x22: "page_down",
     0x23: "end", 0x24: "home",
     0x25: "left", 0x26: "up", 0x27: "right", 0x28: "down",
+    0x29: "select", 0x2A: "print", 0x2B: "execute",
     0x2C: "print_screen", 0x2D: "insert", 0x2E: "delete",
+    0x2F: "help",
     0x5B: "lwin", 0x5C: "rwin", 0x5D: "apps",
     0x5F: "sleep",
     0x60: "kp0",   0x61: "kp1",   0x62: "kp2",   0x63: "kp3",
     0x64: "kp4",   0x65: "kp5",   0x66: "kp6",   0x67: "kp7",
     0x68: "kp8",   0x69: "kp9",
     0x6A: "kp*",   0x6B: "kp+",
+    0x6C: "separator",
     0x6D: "kp-",   0x6E: "kp.",   0x6F: "kp/",
     0x70: "F1",  0x71: "F2",  0x72: "F3",  0x73: "F4",
     0x74: "F5",  0x75: "F6",  0x76: "F7",  0x77: "F8",
@@ -253,6 +302,19 @@ _WIN_VK_MAP: dict[int, str] = {
     0xB3: "media_play_pause",
     0xB4: "launch_mail", 0xB5: "launch_media_select",
     0xB6: "launch_app1", 0xB7: "launch_app2",
+}
+
+# These names intentionally share VKs, but must not share physical scan aliases.
+_WIN_VK_ALIASES: dict[str, int] = {
+    "kana": 0x15, "hangul": 0x15, "hangul_legacy": 0x15,
+    "kanji": 0x19, "hanja": 0x19, "hanja_legacy": 0x19,
+    "oem_102": 0xE2,
+}
+_VK_OEM_102 = _WIN_VK_ALIASES["oem_102"]
+_WIN_IME_SCAN_NAMES: dict[tuple[int, int], str] = {
+    (0x15, 0x0070): "kana", (0x15, 0x0072): "hangul",
+    (0x15, 0x00F2): "hangul", (0x19, 0x0071): "hanja",
+    (0x19, 0x00F1): "hanja",
 }
 
 _NX_KEYTYPE_SOUND_UP, _NX_KEYTYPE_SOUND_DOWN = 0, 1
@@ -329,11 +391,35 @@ _SCAN_NAMES: dict[int, str] = {
     0x4A: "kp-", 0x4B: "kp4", 0x4C: "kp5", 0x4D: "kp6", 0x4E: "kp+",
     0x4F: "kp1", 0x50: "kp2", 0x51: "kp3", 0x52: "kp0", 0x53: "kp.",
     0x56: "non_us_backslash", 0x57: "f11", 0x58: "f12",
-    0xE01C: "kp_enter", 0xE01D: "right_ctrl", 0xE035: "kp/", 0xE037: "print_screen",
+    0x59: "kp=", 0x5C: "international6",
+    **{i + 0x64: f"f{i + 13}" for i in range(11)},
+    0x70: "kana", 0x71: "hanja", 0x72: "hangul", 0x73: "international1",
+    # F24 is not 006F. USB LANG5 shares 0076; see the name-only aliases below.
+    0x76: "f24", 0x77: "hiragana", 0x78: "katakana",
+    0x79: "convert", 0x7B: "nonconvert", 0x7D: "international3", 0x7E: "kp,",
+    0xF1: "hanja_legacy", 0xF2: "hangul_legacy",
+    0xE010: "media_previous", 0xE019: "media_next",
+    0xE01C: "kp_enter", 0xE01D: "right_ctrl",
+    0xE020: "media_volume_mute", 0xE021: "launch_app2",
+    0xE022: "media_play_pause", 0xE024: "media_stop",
+    0xE02E: "media_volume_down", 0xE030: "media_volume_up", 0xE032: "browser_home",
+    0xE035: "kp/", 0xE037: "print_screen",
     0xE038: "right_alt", 0xE047: "home", 0xE048: "up", 0xE049: "page_up",
     0xE04B: "left", 0xE04D: "right", 0xE04F: "end", 0xE050: "down",
     0xE051: "page_down", 0xE052: "insert", 0xE053: "delete",
     0xE05B: "left_super", 0xE05C: "right_super", 0xE05D: "menu",
+    0xE05E: "power", 0xE05F: "sleep", 0xE063: "wake",
+    0xE065: "browser_search", 0xE066: "browser_favorites", 0xE067: "browser_refresh",
+    0xE068: "browser_stop", 0xE069: "browser_forward", 0xE06A: "browser_back",
+    0xE06B: "launch_app1", 0xE06C: "launch_mail", 0xE06D: "launch_media_select",
+}
+# Regional key legends / USB usages that share another key's scan word.
+# Do not normalize them to the default label: their HID/VK meanings differ.
+_SCAN_CODE_ALIASES: dict[str, int] = {
+    "non_us_hash": 0x002B,
+    "zenkaku_hankaku": 0x0029,
+    "eisu": 0x003A,
+    "zenkaku_hankaku_usb": 0x0076,
 }
 
 _TO_UNICODE_NO_STATE_CHANGE = 0x04
@@ -370,7 +456,8 @@ class Keyboard:
 
     Table lookups are portable and use the standard library. Printable
     character fallbacks in Windows name/VK lookup use the active Windows layout.
-    Scan tables describe common PC set-1 positions (US labels), not text input.
+    Scan tables use US base-position labels plus regional keys, not text input.
+    Shared regional positions have one default reverse label; see module notes.
     No method installs hooks, sends input, or modifies the registry.
     """
 
@@ -401,15 +488,21 @@ class Keyboard:
         Args:
             vk: Virtual-key integer.
             scan_code: Optional hook scan code, distinguishing keypad Enter and
-                sided modifiers. Other scan identities are available separately.
+                sided modifiers, plus known Kana/Hangul and Hanja scan pairs.
+                Other scan identities are available separately.
 
         Returns:
             Canonical key name; unknown codes use 'key(number)'. On Windows,
-            otherwise unmapped printable keys use the current layout.
+            otherwise unmapped printable keys use the current layout. Shared
+            IME VKs without a matching scan use kana_or_hangul/kanji_or_hanja.
 
         Side effects:
             Printable fallback queries Windows without changing keyboard state.
         """
+        if scan_code is not None:
+            regional = _WIN_IME_SCAN_NAMES.get((vk, scan_code.value))
+            if regional is not None:
+                return regional
         if scan_code is not None and vk in (0x0D, 0x10, 0x11, 0x12):
             physical = _SCAN_NAMES.get(scan_code.value)
             if physical is not None:
@@ -419,7 +512,8 @@ class Keyboard:
         raw = _WIN_VK_MAP.get(vk)
         if raw is not None:
             return Keyboard.normalize_name(raw)
-        return _windows_printable_name(vk, scan_code) or f"key({vk})"
+        fallback = "oem_102" if vk == _VK_OEM_102 else f"key({vk})"
+        return _windows_printable_name(vk, scan_code) or fallback
 
     @staticmethod
     def windows_virtual_key(name: str) -> int | None:
@@ -428,6 +522,8 @@ class Keyboard:
         Args:
             name: Canonical name or alias. Generic modifiers choose generic VKs;
                 kp_enter shares VK_RETURN with enter (use its scan code too).
+                Kana/Hangul and Kanji/Hanja share VKs but not physical identity.
+                OEM_102 identifies a VK, not a specific ISO/JIS position.
 
         Returns:
             VK integer or None. Single printable characters may use VkKeyScanW
@@ -440,6 +536,8 @@ class Keyboard:
         generic = {"shift": 0x10, "ctrl": 0x11, "alt": 0x12, "super": 0x5B, "kp_enter": 0x0D}
         if normalized in generic:
             return generic[normalized]
+        if normalized in _WIN_VK_ALIASES:
+            return _WIN_VK_ALIASES[normalized]
         for vk, raw in _WIN_VK_MAP.items():
             if Keyboard.normalize_name(raw) == normalized:
                 return vk
@@ -457,10 +555,16 @@ class Keyboard:
 
     @staticmethod
     def windows_scan_name(scan_code: WindowsScanCode) -> str:
-        """Return a common PC set-1 physical label or 'scan(0xNNNN)'.
+        """Return a default PC set-1 label or 'scan(0xNNNN)'.
 
         Args:
             scan_code: Validated scan-code word; independent of keyboard layout.
+
+        Returns:
+            Static label, not a layout-derived character. Regional collisions
+            retain US base labels: 0029 is grave, 003A caps_lock, 0076 f24.
+            Legacy F1/F2 language codes have distinct *_legacy labels. No OS
+            calls or registry-support checks are performed.
         """
         return _SCAN_NAMES.get(scan_code.value, f"scan({scan_code})")
 
@@ -470,6 +574,9 @@ class Keyboard:
 
         Args:
             name: Name or alias; generic modifiers select their left-hand key.
+                Hangul/Hanja select 0072/0071; *_legacy selects F2/F1.
+                zenkaku_hankaku selects JIS 0029, while lang5 or
+                zenkaku_hankaku_usb selects 0076 (also F24).
 
         Returns:
             Scan code or None for unsupported keys (including Pause's special
@@ -478,10 +585,27 @@ class Keyboard:
         normalized = Keyboard.normalize_name(name)
         if normalized in ("shift", "ctrl", "alt", "super"):
             normalized = f"left_{normalized}"
+        if normalized in _SCAN_CODE_ALIASES:
+            return WindowsScanCode.from_value(_SCAN_CODE_ALIASES[normalized])
         for value, label in _SCAN_NAMES.items():
             if label == normalized:
                 return WindowsScanCode.from_value(value)
         return None
+
+    @staticmethod
+    def windows_scan_entries() -> tuple[tuple[str, WindowsScanCode], ...]:
+        """Enumerate known physical labels and regional aliases for selectors.
+
+        Returns:
+            Immutable (name, scan-code) pairs sorted by code then name. Multiple
+            names may share a code (for example F24 and USB LANG5). Unknown
+            words and the disabled value are not included. No OS calls occur;
+            entries do not guarantee support by the registry mapper.
+        """
+        entries = [(name, value) for value, name in _SCAN_NAMES.items()]
+        entries.extend(_SCAN_CODE_ALIASES.items())
+        return tuple((name, WindowsScanCode.from_value(value))
+                     for name, value in sorted(entries, key=lambda item: (item[1], item[0])))
 
     @staticmethod
     def macos_key_name(vk: int, chars: str | None = None) -> str:

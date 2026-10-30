@@ -40,6 +40,12 @@ The terminal displays sided names and Windows scan-code words. Existing
 lock-key hotkeys keep their toggle-state behavior; callbacks for lock toggles
 receive a logical press/release pair, rather than raw hardware transitions.
 
+Windows scroll display and callbacks use integer `(dx, dy)` steps: positive
+means right/up, negative means left/down. Nonzero deltas smaller than 120 native
+units produce one signed step; larger magnitudes are truncated to whole steps
+symmetrically. Zero deltas are ignored. This is per-event direction monitoring,
+not accumulated high-resolution scrolling or a physical-distance measurement.
+
 After loading the entry with `importlib.util`, call `entry.load_app()` to
 register the package. Then import `personal_keyboard_hook_viewer.api` for
 `setup`, `Hotkey`, `Key`, `press`, `release`, `tap`, `hotkey`, `send`, mouse

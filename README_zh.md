@@ -313,6 +313,7 @@
 
 | 脚本                               | 描述                                                         | 依赖                                             |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `tools/windows/keyboard-remap.py` | **注册表键盘映射 GUI**：支持列表选键或捕获按键、禁用按键、拖动排序及最终十六进制预览。写入前确认并备份，支持恢复，保存后需重启 Windows 生效。 | **Windows 10+**<br />`PySide6`<br />写入时需要管理员权限 |
 | `tools/windows/usb-eject-log.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
 | `tools/windows/restart-service.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | `tools/others/power-current.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
@@ -343,5 +344,5 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/others/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：显示 Windows 扫描码，区分左右修饰键和小键盘 Enter；macOS 可显示事件来源设备信息，Linux 使用 X11 XRecord。**仅限键盘测试、特殊热键、经授权的自动化操作等正当用途。** | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
+| `tools/others/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：显示 Windows 扫描码，区分左右修饰键、小键盘 Enter 和滚轮方向（含小幅滚动）；macOS 可显示事件来源设备信息，Linux 使用 X11 XRecord。**仅限键盘测试、特殊热键、经授权的自动化操作等正当用途。** | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
 | `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | **命令行参数打印工具**：<br />可打印出所有传入脚本的 argv 参数，用于判断脚本传入参数是否正确 |  |

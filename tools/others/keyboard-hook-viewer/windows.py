@@ -2,6 +2,8 @@
 
 Private implementation; launch ../keyboard-hook-viewer.py.
 Platform dependencies are loaded only when the backend is used.
+Scroll events use signed integer display steps; nonzero sub-notch deltas retain
+their direction instead of becoming zero. These are not precise wheel distances.
 """
 
 from __future__ import annotations
@@ -27,6 +29,30 @@ _WM_MOUSEWHEEL, _WM_MOUSEHWHEEL = 0x020A, 0x020E
 _BYTE_MASK = 0xFF
 _SCAN_SHIFT = 8
 _FLAGS_SHIFT = 16
+_WHEEL_DELTA = 120
+_WORD_MASK = 0xFFFF
+
+
+def _wheel_steps(aux: int) -> int:
+    """Convert a packed signed wheel delta to direction-preserving display steps.
+
+    Args:
+        aux: Posted mouse auxiliary data; its low word holds the signed delta.
+
+    Returns:
+        Zero for no movement. Otherwise, the magnitude is truncated to whole
+        120-unit notches with a minimum of one, then the original sign is applied.
+        This viewer policy deliberately displays each sub-notch event; it does
+        not accumulate deltas or model precise physical scrolling distance.
+
+    Windows permits deltas smaller than WHEEL_DELTA:
+    https://learn.microsoft.com/windows/win32/inputdev/wm-mousehwheel
+    """
+    delta = ctypes.c_short(aux & _WORD_MASK).value
+    if delta == 0:
+        return 0
+    magnitude = max(1, abs(delta) // _WHEEL_DELTA)
+    return magnitude if delta > 0 else -magnitude
 
 
 def _pack_keyboard(vk: int, scan_code: int, flags: int) -> int:
@@ -202,12 +228,11 @@ def create_hook(sink: EventSink) -> Hook | None:
             elif msg_id in (_WM_XBUTTONUP,):
                 name = "back" if aux == 1 else "forward" if aux == 2 else f"xbutton{aux}"
                 sink._emit_mouse(x, y, name, False)
-            elif msg_id == _WM_MOUSEWHEEL:
-                delta = ctypes.c_short(aux & 0xFFFF).value // 120
-                sink._emit_scroll(0, delta)
-            elif msg_id == _WM_MOUSEHWHEEL:
-                delta = ctypes.c_short(aux & 0xFFFF).value // 120
-                sink._emit_scroll(delta, 0)
+            elif msg_id in (_WM_MOUSEWHEEL, _WM_MOUSEHWHEEL):
+                delta = _wheel_steps(aux)
+                if delta:
+                    dx, dy = (delta, 0) if msg_id == _WM_MOUSEHWHEEL else (0, delta)
+                    sink._emit_scroll(dx, dy)
 
         def _process_message(self, wParam, lParam):
             msg_id = lParam & 0xFFFF
@@ -392,9 +417,9 @@ class _WinController:
 
     def scroll(self, dx: int = 0, dy: int = 0) -> None:
         if dy:
-            self._send_mouse(self._MOUSEEVENTF_WHEEL, dy * 120)
+            self._send_mouse(self._MOUSEEVENTF_WHEEL, dy * _WHEEL_DELTA)
         if dx:
-            self._send_mouse(self._MOUSEEVENTF_HWHEEL, dx * 120)
+            self._send_mouse(self._MOUSEEVENTF_HWHEEL, dx * _WHEEL_DELTA)
 
     def set_modifier(self, name: str, on: bool) -> None:
         self.press(name) if on else self.release(name)

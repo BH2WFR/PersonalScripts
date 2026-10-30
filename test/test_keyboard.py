@@ -7,6 +7,7 @@ Run: conda run -n base python -m unittest discover -s test -p "test_keyboard*.py
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import importlib
 import importlib.util
 import io
@@ -105,6 +106,139 @@ class KeyboardNamesTests(unittest.TestCase):
         self.assertEqual(WindowsScanCode.from_hook(0x1D, 0x81).value, 0xE01D)
         self.assertEqual(WindowsScanCode.from_hook(0x45, 0).prefix, ScanCodePrefix.NONE)
 
+    def test_high_function_keys_use_windows_scan_codes_not_vk_or_hid(self) -> None:
+        for number, value in zip(range(13, 25), (*range(0x64, 0x6F), 0x76)):
+            with self.subTest(number=number):
+                name = f"f{number}"
+                code = WindowsScanCode.from_value(value)
+                self.assertEqual(Keyboard.windows_scan_code(name), code)
+                self.assertEqual(Keyboard.windows_scan_name(code), name)
+                self.assertEqual(Keyboard.windows_virtual_key(name), number + 0x6F)
+                self.assertEqual(Keyboard.hid_usage_name(number + 0x5B), name)
+        self.assertEqual(Keyboard.windows_scan_name(WindowsScanCode(0x6F)), "scan(0x006F)")
+        self.assertEqual(Keyboard.windows_key_name(0x76), "f7")
+
+    def test_regional_key_names_and_scan_words(self) -> None:
+        cases = (
+            ("iso_extra", 0x0056, "non_us_backslash"),
+            ("jis_ro", 0x0073, "international1"),
+            ("jis_yen", 0x007D, "international3"),
+            ("katakana_hiragana", 0x0070, "kana"),
+            ("henkan", 0x0079, "convert"),
+            ("muhenkan", 0x007B, "nonconvert"),
+            ("hangeul", 0x0072, "hangul"),
+            ("hanja", 0x0071, "hanja"),
+            ("hangul_legacy", 0x00F2, "hangul_legacy"),
+            ("hanja_legacy", 0x00F1, "hanja_legacy"),
+            ("katakana", 0x0078, "katakana"),
+            ("hiragana", 0x0077, "hiragana"),
+            ("international6", 0x005C, "international6"),
+        )
+        for alias, value, name in cases:
+            with self.subTest(alias=alias):
+                code = WindowsScanCode.from_value(value)
+                self.assertEqual(Keyboard.windows_scan_code(alias), code)
+                self.assertEqual(Keyboard.windows_scan_name(code), name)
+                self.assertEqual(Keyboard.windows_scan_code(name), code)
+        self.assertEqual(Keyboard.windows_scan_code("right_alt"), WindowsScanCode.from_value(0xE038))
+        self.assertEqual(Keyboard.windows_scan_code("right_ctrl"), WindowsScanCode.from_value(0xE01D))
+        self.assertEqual(WindowsScanCode.from_hook(0xF2, 0).value, 0x00F2)
+
+    def test_shared_regional_positions_do_not_overwrite_default_names(self) -> None:
+        for alias, value, default in (
+            ("non_us_hash", 0x002B, "\\"),
+            ("hankaku_zenkaku", 0x0029, "`"),
+            ("eisu", 0x003A, "caps_lock"),
+            ("lang5", 0x0076, "f24"),
+        ):
+            with self.subTest(alias=alias):
+                code = WindowsScanCode.from_value(value)
+                self.assertEqual(Keyboard.windows_scan_code(alias), code)
+                self.assertEqual(Keyboard.windows_scan_name(code), default)
+        self.assertIsNone(Keyboard.windows_scan_code("oem_102"))
+        self.assertIsNone(Keyboard.windows_scan_code("kana_or_hangul"))
+        self.assertEqual(Keyboard.windows_scan_name(WindowsScanCode.from_value(0xE076)), "scan(0xE076)")
+
+    def test_ime_virtual_keys_require_context_to_disambiguate(self) -> None:
+        self.assertEqual(Keyboard.windows_key_name(0x15), "kana_or_hangul")
+        self.assertEqual(Keyboard.windows_key_name(0x19), "kanji_or_hanja")
+        for name, vk in (("kana", 0x15), ("hangul", 0x15), ("hangeul", 0x15),
+                         ("hanja", 0x19), ("kanji", 0x19), ("henkan", 0x1C),
+                         ("muhenkan", 0x1D), ("ime_on", 0x16), ("ime_off", 0x1A),
+                         ("ime_accept", 0x1E), ("ime_mode_change", 0x1F)):
+            with self.subTest(name=name):
+                self.assertEqual(Keyboard.windows_virtual_key(name), vk)
+        for vk, scan, name in ((0x15, 0x70, "kana"), (0x15, 0x72, "hangul"),
+                               (0x15, 0xF2, "hangul"), (0x19, 0x71, "hanja"),
+                               (0x19, 0xF1, "hanja")):
+            with self.subTest(vk=vk, scan=scan):
+                self.assertEqual(Keyboard.windows_key_name(vk, WindowsScanCode(scan)), name)
+        self.assertEqual(Keyboard.windows_key_name(0x15, WindowsScanCode(0x71)), "kana_or_hangul")
+        self.assertEqual(Keyboard.windows_key_name(0x87, WindowsScanCode(0x76)), "f24")
+
+    def test_oem_virtual_key_keeps_layout_printable_fallback(self) -> None:
+        self.assertEqual(Keyboard.windows_virtual_key("VK_OEM_102"), 0xE2)
+        with patch("utils.keyboard._windows_printable_name", return_value="<"):
+            self.assertEqual(Keyboard.windows_key_name(0xE2), "<")
+        with patch("utils.keyboard._windows_printable_name", return_value=None):
+            self.assertEqual(Keyboard.windows_key_name(0xE2), "oem_102")
+
+    def test_international_hid_usages_remain_distinct_from_scan_words(self) -> None:
+        for usage, name in (
+            (0x64, "non_us_backslash"), (0x85, "kp,"),
+            (0x87, "international1"), (0x88, "kana"), (0x89, "international3"),
+            (0x8A, "convert"), (0x8B, "nonconvert"), (0x8C, "international6"),
+            (0x8D, "international7"), (0x8E, "international8"), (0x8F, "international9"),
+            (0x90, "hangul"), (0x91, "hanja"), (0x92, "katakana"),
+            (0x93, "hiragana"), (0x94, "zenkaku_hankaku_usb"), (0x98, "lang9"),
+        ):
+            with self.subTest(usage=usage):
+                self.assertEqual(Keyboard.hid_usage_name(usage), name)
+        self.assertIsNone(Keyboard.windows_scan_code("international7"))
+        self.assertIsNone(Keyboard.windows_scan_code("lang9"))
+        self.assertNotEqual(Keyboard.hid_usage_name(0x73), Keyboard.windows_scan_name(WindowsScanCode(0x73)))
+
+    def test_extended_media_keys_and_keypad_extras(self) -> None:
+        for name, value in (
+            ("media_previous", 0xE010), ("media_next", 0xE019),
+            ("media_volume_mute", 0xE020), ("media_play_pause", 0xE022),
+            ("media_stop", 0xE024), ("media_volume_down", 0xE02E),
+            ("media_volume_up", 0xE030), ("browser_home", 0xE032),
+            ("browser_search", 0xE065), ("browser_favorites", 0xE066),
+            ("browser_refresh", 0xE067), ("browser_stop", 0xE068),
+            ("browser_forward", 0xE069), ("browser_back", 0xE06A),
+            ("launch_app1", 0xE06B), ("launch_app2", 0xE021),
+            ("launch_mail", 0xE06C), ("launch_media_select", 0xE06D),
+            ("power", 0xE05E), ("sleep", 0xE05F), ("wake", 0xE063),
+            ("kp=", 0x0059), ("kp,", 0x007E),
+        ):
+            with self.subTest(name=name):
+                code = WindowsScanCode.from_value(value)
+                self.assertEqual(Keyboard.windows_scan_code(name), code)
+                self.assertEqual(Keyboard.windows_scan_name(code), name)
+
+    def test_regional_tables_are_portable_without_native_api_calls(self) -> None:
+        with patch("utils.keyboard.sys.platform", "linux"):
+            self.assertEqual(Keyboard.windows_scan_code("henkan"), WindowsScanCode(0x79))
+            self.assertEqual(Keyboard.windows_scan_name(WindowsScanCode(0xF2)), "hangul_legacy")
+            self.assertEqual(Keyboard.windows_virtual_key("hangul"), 0x15)
+            self.assertEqual(Keyboard.windows_key_name(0x15, WindowsScanCode(0x70)), "kana")
+            self.assertEqual(Keyboard.windows_key_name(0xE2), "oem_102")
+            self.assertEqual(Keyboard.hid_usage_name(0x94), "zenkaku_hankaku_usb")
+
+    @unittest.skipUnless(sys.platform == "win32", "Requires the native Windows key mapper")
+    def test_function_scan_codes_against_native_windows(self) -> None:
+        # Read-only conversion: never installs hooks, switches layout or sends input.
+        function = ctypes.WinDLL("user32", use_last_error=True).MapVirtualKeyW
+        function.argtypes = [ctypes.c_uint, ctypes.c_uint]
+        function.restype = ctypes.c_uint
+        map_vsc_to_vk_ex = 3
+        for number in range(13, 25):
+            with self.subTest(number=number):
+                code = Keyboard.windows_scan_code(f"f{number}")
+                assert code is not None
+                self.assertEqual(function(code.value, map_vsc_to_vk_ex), number + 0x6F)
+
 
 class ViewerEventsTests(unittest.TestCase):
     """Synthetic native messages exercise the real dispatch and callback chain."""
@@ -141,6 +275,58 @@ class ViewerEventsTests(unittest.TestCase):
         windows._dispatch_keyboard(runtime, windows._pack_keyboard(0x0D, 0x1C, 0x81), windows._WM_KEYUP)
         self.assertFalse(callback.call_args.args[0].pressed)
         self.assertEqual(callback.call_args.args[0].raw_flags, 0x81)
+
+    def test_legacy_language_release_preserves_full_scan_byte(self) -> None:
+        callback = Mock()
+        runtime._on_key_cb = callback
+        packed = windows._pack_keyboard(0x15, 0xF2, 0x80)
+        windows._dispatch_keyboard(runtime, packed, windows._WM_KEYUP)
+        callback.assert_called_once()
+        event = callback.call_args.args[0]
+        self.assertEqual((event.name, event.raw_name, event.raw_vk), ("hangul", "hangul", 0x15))
+        self.assertEqual(event.scan_code.value, 0x00F2)
+        self.assertEqual(event.raw_flags, 0x80)
+        self.assertFalse(event.pressed)
+
+    def test_windows_wheel_steps_are_symmetric_and_keep_small_deltas(self) -> None:
+        for raw, expected in ((0, 0), (1, 1), (60, 1), (119, 1), (120, 1),
+                              (121, 1), (239, 1), (240, 2), (360, 3)):
+            for sign in (1, -1):
+                with self.subTest(raw=raw * sign):
+                    # Match the hook's 48-bit unsigned auxiliary representation.
+                    packed = (raw * sign) & 0xFFFFFFFFFFFF
+                    self.assertEqual(windows._wheel_steps(packed), expected * sign)
+
+    def test_windows_wheel_messages_reach_display_and_callback(self) -> None:
+        native = Mock()
+        # Build the real processor with fake API handles; never start a hook.
+        with patch.object(windows, "_OS", "win32"), \
+                patch.object(ctypes, "windll", native, create=True), \
+                patch.object(ctypes, "WINFUNCTYPE", return_value=ctypes.c_void_p, create=True):
+            hook = windows.create_hook(runtime)
+        assert hook is not None
+        callback = Mock()
+        runtime._on_mouse_cb = callback
+        for message in (windows._WM_MOUSEHWHEEL, windows._WM_MOUSEWHEEL):
+            for raw, steps in ((1, 1), (60, 1), (120, 1), (-1, -1), (-60, -1),
+                               (-120, -1), (240, 2), (-240, -2), (0, 0)):
+                with self.subTest(message=message, raw=raw):
+                    callback.reset_mock()
+                    runtime.ui._print_scroll.reset_mock()
+                    packed = message | ((raw & 0xFFFFFFFFFFFF) << 16)
+                    hook._process_message(0, ctypes.c_ssize_t(packed).value)
+                    if steps == 0:
+                        callback.assert_not_called()
+                        runtime.ui._print_scroll.assert_not_called()
+                        continue
+                    expected = (steps, 0) if message == windows._WM_MOUSEHWHEEL else (0, steps)
+                    runtime.ui._print_scroll.assert_called_once_with(*expected)
+                    callback.assert_called_once()
+                    event = callback.call_args.args[0]
+                    self.assertTrue(event.is_scroll)
+                    self.assertEqual((event.scroll_dx, event.scroll_dy), expected)
+        native.user32.SetWindowsHookExW.assert_not_called()
+        native.user32.SendInput.assert_not_called()
 
     def test_sided_modifiers_and_auto_repeat_do_not_lose_held_state(self) -> None:
         trigger = Mock()

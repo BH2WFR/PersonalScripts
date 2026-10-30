@@ -308,9 +308,10 @@ Canonical implementations live there; do not add implementations to the
 | Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |
 | DPI awareness (Windows) | `System.enable_dpi_awareness()` |
 | Normalize keyboard names | `Keyboard.normalize_name(name, collapse_modifiers=False) -> str`; keeps left/right identity by default, True folds modifiers for hotkey matching; empty input becomes `?` |
-| Windows key and scan-code lookup | `Keyboard.windows_key_name(vk, scan_code=None)`, `windows_virtual_key(name) -> int \| None`, `windows_scan_name(scan_code)`, `windows_scan_code(name) -> WindowsScanCode \| None`; scan lookup uses common PC set-1 US physical labels, retains E0/keypad distinctions, and does not infer registry support |
+| Windows key and scan-code lookup | `Keyboard.windows_key_name(vk, scan_code=None)`, `windows_virtual_key(name) -> int \| None`, `windows_scan_name(scan_code)`, `windows_scan_code(name) -> WindowsScanCode \| None`; PC set-1 US base labels plus F1-F24, ISO/JIS/Korean extras and media keys; retains E0/keypad and Korean *_legacy distinctions. Shared IME VKs return kana_or_hangul/kanji_or_hanja unless known scan pairs disambiguate them. Unknown scan names return None; labels do not imply registry support |
 | Scan-code representation | `WindowsScanCode(code, prefix=ScanCodePrefix.NONE)`; immutable byte plus NONE/E0/E1 prefix, `.value` is the encoded word, `from_value(word)` validates it, `from_hook(scan_code, flags)` preserves the hook's E0 flag without inferring E1 |
-| Other platform key codes | `Keyboard.macos_key_name(vk, chars=None)`, `macos_virtual_key(name) -> int \| None`, `macos_media_name(code) -> str \| None`, `hid_usage_name(usage)`, `x11_keysym_name(name)`; HID usages refer specifically to keyboard/keypad page 0x07 |
+| Keyboard selector catalog | `Keyboard.windows_scan_entries() -> tuple[tuple[str, WindowsScanCode], ...]`; immutable known physical labels and regional aliases sorted by code/name, no OS calls; multiple names may share a code, unknown words and Disable are not included |
+| Other platform key codes | `Keyboard.macos_key_name(vk, chars=None)`, `macos_virtual_key(name) -> int \| None`, `macos_media_name(code) -> str \| None`, `hid_usage_name(usage)`, `x11_keysym_name(name)`; HID usages refer specifically to keyboard/keypad page 0x07, including International1-9 and LANG1-9; they are not Windows scan words |
 | Find bash / pwsh / conda | `Environment.find_bash()`, `Environment.find_pwsh()`, `Environment.find_conda()` |
 | Discover a strict runtime and verify its version | `Environment.resolve_runtime(RuntimeKind, executable=..., environment=..., cwd=...) -> tuple[str, str]`; `runtime_candidates(kind, environment, cwd=...)` discovers paths without probes; relative PATH uses cwd, launch paths preserve symlinks |
 | Find a program using a child environment | `Environment.which(name, environment=..., cwd=...) -> str \| None`; explicit PATH/PATHEXT search relative to cwd, absolute result preserves symlinks; no options retains native shutil.which behavior |
@@ -943,6 +944,18 @@ not in the README.
 
 ## Directory layout
 
+`tools/windows/keyboard-remap.py` loads `keyboard-remap/` as
+`personal_keyboard_remap`; launcher discovery ignores internals and the compiler
+stages the alias. Models/backup parsing are pure; registry access is isolated
+behind `RegistryBackend`. UI edits are drafts, never immediate writes. Saving
+requires explicit review, a new backup, elevation, baseline comparisons and
+readback verification. `--read-only` disables all writes/elevation. Administrator
+handoff reopens a draft and never auto-applies. Capture is bounded to the visible
+focused dialog via native window messages, not a background/global hook. Unknown
+scan words remain intact; malformed registry data blocks editing. See the private
+README for capture limitations and the non-atomic conflict-check boundary.
+Run remapper tests with `-p "test_keyboard_remap.py"` (mock registry/offscreen Qt).
+
 `tools/others/keyboard-hook-viewer.py` loads the private `keyboard-hook-viewer/`
 package as `personal_keyboard_hook_viewer`. See its README for module ownership.
 Keep internals out of launcher/compiler lists; the compiler stages the import
@@ -950,6 +963,13 @@ alias. `utils/keyboard.py` owns key-name aliases and platform mappings; its
 private tables feed the public `Keyboard` helpers. Importing utils never loads
 Quartz/Xlib, installs hooks or changes the registry. Viewer backends receive an
 EventSink; runtime owns callback/hotkey state and ui owns terminal state.
+The internal `_SCAN_CODE_ALIASES` preserves regional names sharing a scan word:
+JIS zenkaku_hankaku/eisu use 0029/003A; USB lang5 uses 0076, also F24. Reverse
+scan lookup retains the default US label, so aliases need not round-trip by name.
+`_WIN_VK_ALIASES` and `_WIN_IME_SCAN_NAMES` keep shared IME VKs separate from
+physical identity. OEM_102 names a VK, not a fixed ISO/JIS scan position.
+See `utils/keyboard.py` module notes for source references and Korean legacy
+release-only caveats; never strip the high bit of F1/F2 language scan bytes.
 Run keyboard regression tests with `-p "test_keyboard*.py"`.
 
 `tools/document-processing/pdf-binarize.py` loads the private `pdf-binarize/`

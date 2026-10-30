@@ -64,6 +64,7 @@ ignore-list:
         - "research/matrix-viewer/"
         - "network/rclone-sync/"
         - "others/keyboard-hook-viewer/"
+        - "windows/keyboard-remap/"
         - "document-processing/pdf-binarize"
     platform-specific:
         # 规范：windows, linux, macos

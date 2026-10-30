@@ -27,6 +27,8 @@ Usage:
 Description:
   Monitor global keyboard and mouse events; input passes through unchanged.
   Windows displays scan codes and preserves sided keys and keypad Enter.
+  Windows scroll (dx, dy): right/up are positive; small nonzero deltas show
+  at least one integer step, not precise physical wheel distance.
   macOS can display the physical HID device identity when available.
 
 Options:
