@@ -4,6 +4,11 @@ Requirements: the existing viewer dependencies; no additional packages.
 Usage: constructed by app.run. Open and replace resets the session; Open appends one
 file and selects NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
 row/column ranges and headers. Dropping a file into a populated session appends.
+Numeric 3D arrays prompt for an axis to split into independent 2D matrices or
+skip that member. Skipping all incoming members retains the existing session.
+NPZ selection also offers a filename-prefix checkbox, including single-member
+archives. Short names retain full source tooltips. Tree columns resize manually
+and scroll horizontally; refreshes preserve widths, with the name widest by default.
 Scaling menus and View settings share view-wide ranges and XYZ multipliers.
 Auto scaling fits once; equal-axis presets reset only matched stretch alignments
 and reset matrix height for Z pairs. Numerical exports retain source coordinates.
@@ -97,7 +102,7 @@ from .complex_input import ComplexDataChoice, choose_complex_data
 from .data_conversion import ConversionOptions, run_conversion
 from .data_conversion_dialog import DataConversionDialog
 from .import_catalog import INSPECT_EXTENSIONS, ImportCatalog, ImportChoice, inspect_source
-from .import_dialog import ImportDialog
+from .import_dialog import ImportDialog, SplitArrayDialog
 from .export_dialog import ComplexExportChoice, choose_complex_export
 from .exporting import ExportFormat, ExportLayout, ExportSnapshot, ExportTarget
 from .excel_io import serialize_excel
@@ -124,6 +129,7 @@ SETTINGS: tuple[str, ...] = (
     "show_nonfinite", "highlight_clipped", "nonfinite_size",
 )
 PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size")
+MATRIX_COLUMN_WIDTHS: tuple[int, ...] = (320, 140, 60)
 
 
 @dataclass(frozen=True)
@@ -170,7 +176,7 @@ class WorkspaceWindow(ViewerWindow):
         self._laplace_dialog: LaplaceDialog | None = None
         self._merge_dialog: ComplexMergeDialog | None = None
         self._conversion_dialog: DataConversionDialog | None = None
-        self._import_dialog: ImportDialog | None = None
+        self._import_dialog: ImportDialog | SplitArrayDialog | None = None
         self._single_render_key: tuple[int, int] | None = None
         self._loading_channel_uid: int | None = None
         super().__init__(max_edge, initial_mode, initial_channel_axis)
@@ -291,9 +297,12 @@ class WorkspaceWindow(ViewerWindow):
         self.matrix_list.setIndentation(14)
         self.matrix_list.setToolTip("Single matrix: click a channel or single-channel matrix to show it. Multichannel matrices expand without changing visibility. Multiple matrices: click rows to edit and use checkboxes to combine channels. F2 renames the matrix.")
         self.matrix_list.header().setStretchLastSection(False)
-        self.matrix_list.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.matrix_list.setColumnWidth(1, 100)
-        self.matrix_list.setColumnWidth(2, 45)
+        self.matrix_list.header().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
+        self.matrix_list.header().setToolTip("Drag column dividers to resize. Scroll horizontally to see columns outside the panel.")
+        for column, width in enumerate(MATRIX_COLUMN_WIDTHS):
+            self.matrix_list.setColumnWidth(column, width)
+        self.matrix_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.matrix_list.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.matrix_list.itemClicked.connect(self._list_clicked)
         self.matrix_list.itemActivated.connect(self._list_activated)
         self.matrix_list.itemChanged.connect(self._list_checked)
@@ -1277,7 +1286,7 @@ class WorkspaceWindow(ViewerWindow):
 
     def _choose_import(self, catalog: ImportCatalog, number: int) -> None:
         """Select archive members/ranges before allocating their numeric arrays."""
-        if catalog.tabular or len(catalog.members) > 1:
+        if catalog.tabular or len(catalog.members) > 1 or catalog.path.suffix.lower() == ".npz":
             dialog = ImportDialog(catalog, self)
             self._import_dialog = dialog
             try:
@@ -1291,6 +1300,23 @@ class WorkspaceWindow(ViewerWindow):
             choices = (ImportChoice(member.key),) if not member.error else ()
         if self._closing or self._latest.get(JobKind.INSPECT) != number:
             return
+        resolved: list[ImportChoice] = []
+        for choice in choices:
+            member = next(member for member in catalog.members if member.key == choice.key)
+            if len(member.shape) != 3:
+                resolved.append(choice)
+                continue
+            split_dialog = SplitArrayDialog(catalog.path.name, member, self)
+            self._import_dialog = split_dialog
+            try:
+                if split_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+                    resolved.append(replace(choice, split_axis=split_dialog.axis()))
+            finally:
+                self._import_dialog = None
+                split_dialog.deleteLater()
+            if self._closing or self._latest.get(JobKind.INSPECT) != number:
+                return
+        choices = tuple(resolved)
         if not choices:
             self._cancel_opening()
             return
@@ -1325,6 +1351,8 @@ class WorkspaceWindow(ViewerWindow):
             with N > 3 offer XYZ. Images and other shapes retain their usual
             defaults. Complex arrays cannot supply XY/XYZ coordinates.
         """
+        if document.split_axis is not None:
+            return default_selection(document, ViewMode.MATRIX)
         try:
             selection = default_selection(document, mode, channel_axis)
         except ValueError:

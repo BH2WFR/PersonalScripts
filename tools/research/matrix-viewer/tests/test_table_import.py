@@ -69,7 +69,7 @@ class TableImportTests(TestCase):
         np.savez(path, selected=source, other=np.arange(7), objects=np.array([{}], dtype=object), cube=np.zeros((2, 2, 2)))
         inspected = catalog.inspect_source(path)
         self.assertEqual([member.shape for member in inspected.members], [(4, 5), (7,), (1,), (2, 2, 2)])
-        self.assertEqual([bool(member.error) for member in inspected.members], [False, False, True, True])
+        self.assertEqual([bool(member.error) for member in inspected.members], [False, False, True, False])
         with patch.object(workspace, "load_document", wraps=model.load_document) as loader:
             loaded = workspace.load_file(path, choices=(catalog.ImportChoice("selected"),))
         self.assertEqual(loader.call_count, 1)

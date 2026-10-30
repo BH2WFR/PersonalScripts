@@ -1,12 +1,15 @@
-"""Metadata-first selection for NPZ/MAT archives and ranged tabular input.
+"""Metadata-first selection for NPY/NPZ/MAT and ranged tabular input.
 
 Requirements: numpy, scipy/h5py for MAT, openpyxl for XLSX/XLSM and xlrd for XLS.
 Usage: inspect_source runs in a worker; only chosen members are then decoded.
+Numeric rank-3 arrays are selectable for explicit splitting along a chosen axis.
 """
 
 import csv
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
+from typing import BinaryIO
 from zipfile import ZipFile
 
 import numpy as np
@@ -17,7 +20,15 @@ from .excel_io import EXCEL_EXTENSIONS, PREVIEW_COLUMNS, PREVIEW_ROWS, inspect_e
 from .mat_loader import inspect_mat
 from .table_data import HeaderMode, TableRange
 
-INSPECT_EXTENSIONS = frozenset({".npz", ".mat", ".csv", ".txt", *EXCEL_EXTENSIONS})
+INSPECT_EXTENSIONS = frozenset({".npy", ".npz", ".mat", ".csv", ".txt", *EXCEL_EXTENSIONS})
+
+
+class SplitAxis(IntEnum):
+    """Zero-based source axis to remove when creating each 2D matrix."""
+
+    FIRST = 0
+    SECOND = 1
+    THIRD = 2
 
 
 @dataclass(frozen=True)
@@ -40,6 +51,8 @@ class ImportChoice:
     region: TableRange = TableRange()
     header: HeaderMode = HeaderMode.AUTO
     delimiter: str | None = None
+    split_axis: SplitAxis | None = None
+    include_file_prefix: bool = True
 
 
 @dataclass(frozen=True)
@@ -54,11 +67,33 @@ class ImportCatalog:
     preferred_key: str | None = None
 
 
+def _numpy_member(stream: BinaryIO, key: str | None, label: str) -> ImportMember:
+    """Read an NPY header, preserving shape/type even for unsupported members."""
+    shape: tuple[int, ...] = ()
+    kind = "unknown"
+    error = ""
+    try:
+        version = np.lib.format.read_magic(stream)
+        if version == (1, 0):
+            shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
+        elif version in ((2, 0), (3, 0)):
+            shape, _, dtype = np.lib.format.read_array_header_2_0(stream)
+        else:
+            raise ValueError(f"Unsupported NPY header version: {version}")
+        kind = str(dtype)
+        validate_shape(shape, label, allow_3d=True)
+        if dtype.kind not in NUMERIC_KINDS:
+            raise ValueError(f"Unsupported dtype: {dtype}; select a numeric array.")
+    except (ValueError, EOFError, TypeError) as exc:
+        error = str(exc)
+    return ImportMember(key, label, shape, kind, error)
+
+
 def inspect_source(path: Path, key: str | None = None) -> ImportCatalog:
     """Inspect dimensions/types and small table previews without decoding arrays.
 
     Args:
-        path: NPZ/MAT/XLSX/XLSM/XLS/CSV/TXT input.
+        path: NPY/NPZ/MAT/XLSX/XLSM/XLS/CSV/TXT input.
         key: Optional preferred archive member; unknown names are errors.
 
     Returns:
@@ -74,33 +109,20 @@ def inspect_source(path: Path, key: str | None = None) -> ImportCatalog:
     text = suffix in (".csv", ".txt")
     tabular = text or suffix in EXCEL_EXTENSIONS
     members: list[ImportMember] = []
-    if suffix == ".npz":
+    if suffix == ".npy":
+        with path.open("rb") as stream:
+            members = [_numpy_member(stream, None, path.name)]
+    elif suffix == ".npz":
         with ZipFile(path) as archive:
             for name in archive.namelist():
                 if name.endswith("/"):
                     continue
                 label = name[:-4] if name.endswith(".npy") else name
-                shape: tuple[int, ...] = ()
-                kind = "unknown"
-                error = ""
-                try:
-                    with archive.open(name) as stream:
-                        version = np.lib.format.read_magic(stream)
-                        if version == (1, 0):
-                            shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
-                        elif version in ((2, 0), (3, 0)):
-                            shape, _, dtype = np.lib.format.read_array_header_2_0(stream)
-                        else:
-                            raise ValueError(f"Unsupported NPY header version: {version}")
-                    kind = str(dtype)
-                    validate_shape(shape, label)
-                    if dtype.kind not in NUMERIC_KINDS:
-                        raise ValueError(f"Unsupported dtype: {dtype}; select a numeric array.")
-                except (ValueError, EOFError, TypeError) as exc:
-                    error = str(exc)
-                members.append(ImportMember(label, label, shape, kind, error))
+                with archive.open(name) as stream:
+                    members.append(_numpy_member(stream, label, label))
     elif suffix == ".mat":
-        members = [ImportMember(item.name, item.name, item.shape, item.kind, item.error) for item in inspect_mat(path)]
+        members = [ImportMember(item.name, item.name, item.shape, item.kind, item.error)
+                   for item in inspect_mat(path, allow_3d=True)]
     elif suffix in EXCEL_EXTENSIONS:
         members = [ImportMember(item.name, item.name, item.shape, "Worksheet", preview=item.preview)
                    for item in inspect_excel(path)]
@@ -123,7 +145,7 @@ def inspect_source(path: Path, key: str | None = None) -> ImportCatalog:
         raise ValueError(f"No matrices or worksheets were found in {path.name}.")
     if not any(not member.error for member in members):
         raise ValueError(f"No supported numeric matrices in {path.name}.\n" + "\n".join(f"{member.label}: {member.error}" for member in members))
-    if key is not None:
+    if key is not None and suffix != ".npy":
         selected = next((member for member in members if member.key == key), None)
         if selected is None:
             raise ValueError(f"Member {key!r} is unavailable in {path.name}.")

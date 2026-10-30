@@ -3,7 +3,7 @@
 Requirements: numpy, scipy and h5py. Usage: read_mat(path, optional_variable).
 Only the selected variable is read into memory. MATLAB row/column shapes,
 numeric precision and complex components are preserved. Containers, sparse
-arrays and arrays with more than two axes are rejected explicitly.
+arrays are rejected explicitly. Rank 3 is accepted only for explicit split import.
 """
 
 from dataclasses import dataclass
@@ -37,11 +37,12 @@ class MatMember:
     error: str = ""
 
 
-def inspect_mat(path: Path) -> tuple[MatMember, ...]:
+def inspect_mat(path: Path, *, allow_3d: bool = False) -> tuple[MatMember, ...]:
     """Read names/shapes/types without loading MATLAB variable arrays.
 
     Args:
         path: Legacy or v7.3 MAT file.
+        allow_3d: Offer rank-3 variables for explicit channel splitting.
 
     Returns:
         Metadata for all top-level user variables, including unsupported ones.
@@ -51,9 +52,9 @@ def inspect_mat(path: Path) -> tuple[MatMember, ...]:
     """
     if h5py.is_hdf5(path):
         with h5py.File(path, "r") as archive:
-            return _hdf_members(archive)
+            return _hdf_members(archive, allow_3d=allow_3d)
     metadata = cast(list[tuple[str, tuple[int, ...], str]], whosmat(str(path), appendmat=False))
-    return tuple(MatMember(name, shape, kind, _metadata_problem(name, shape, kind) or "")
+    return tuple(MatMember(name, shape, kind, _metadata_problem(name, shape, kind, allow_3d=allow_3d) or "")
                  for name, shape, kind in metadata)
 
 
@@ -85,14 +86,14 @@ def _choose_variable(problems: dict[str, str | None], key: str | None) -> str:
     raise ValueError(f"The MAT file contains no supported nonempty 1D/2D numeric arrays.\n{reasons}")
 
 
-def _metadata_problem(name: str, shape: tuple[int, ...], matlab_class: str) -> str | None:
+def _metadata_problem(name: str, shape: tuple[int, ...], matlab_class: str, *, allow_3d: bool = False) -> str | None:
     label = f"MAT variable {name!r}"
     if matlab_class not in MAT_DTYPES:
         return (f"{label}: unsupported MATLAB type {matlab_class!r}. "
                 "Only dense numeric/logical arrays are supported; "
                 "cell, struct, sparse, text and MATLAB objects are not supported.")
     try:
-        validate_shape(shape, label)
+        validate_shape(shape, label, allow_3d=allow_3d)
     except ValueError as exc:
         return str(exc)
     return None
@@ -105,7 +106,7 @@ def _matlab_class(node: h5py.Dataset | h5py.Group) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _hdf_problem(node: object, name: str) -> str | None:
+def _hdf_problem(node: object, name: str, *, allow_3d: bool = False) -> str | None:
     label = f"MAT variable {name!r}"
     if not isinstance(node, (h5py.Dataset, h5py.Group)):
         return f"{label}: missing or unreadable HDF5 data."
@@ -120,7 +121,7 @@ def _hdf_problem(node: object, name: str) -> str | None:
     if node.shape is None:
         return f"{label}: empty HDF5 dataset."
     shape = tuple(reversed(node.shape))
-    problem = _metadata_problem(name, shape, matlab_class or "missing MATLAB_class metadata")
+    problem = _metadata_problem(name, shape, matlab_class or "missing MATLAB_class metadata", allow_3d=allow_3d)
     if problem is not None:
         return problem
     dtype = np.dtype(node.dtype)
@@ -134,7 +135,7 @@ def _hdf_problem(node: object, name: str) -> str | None:
     return None
 
 
-def _hdf_members(archive: h5py.File) -> tuple[MatMember, ...]:
+def _hdf_members(archive: h5py.File, *, allow_3d: bool = False) -> tuple[MatMember, ...]:
     """Inspect local HDF5 nodes only; never follow external/soft links."""
     members: list[MatMember] = []
     for name in archive:
@@ -148,13 +149,13 @@ def _hdf_members(archive: h5py.File) -> tuple[MatMember, ...]:
         node = archive[name]
         shape = tuple(reversed(node.shape)) if isinstance(node, h5py.Dataset) and node.shape is not None else ()
         kind = _matlab_class(node) if isinstance(node, (h5py.Dataset, h5py.Group)) else "unknown"
-        members.append(MatMember(name, shape, kind, _hdf_problem(node, name) or ""))
+        members.append(MatMember(name, shape, kind, _hdf_problem(node, name, allow_3d=allow_3d) or ""))
     return tuple(members)
 
 
-def _read_hdf(path: Path, key: str | None) -> MatData:
+def _read_hdf(path: Path, key: str | None, *, allow_3d: bool = False) -> MatData:
     with h5py.File(path, "r") as archive:
-        problems = {item.name: item.error or None for item in _hdf_members(archive)}
+        problems = {item.name: item.error or None for item in _hdf_members(archive, allow_3d=allow_3d)}
         selected = _choose_variable(problems, key)
         dataset = archive[selected]
         if not isinstance(dataset, h5py.Dataset):
@@ -174,15 +175,16 @@ def _read_hdf(path: Path, key: str | None) -> MatData:
         # MATLAB's HDF5 dimension order is reversed relative to NumPy. Keep
         # singleton axes, especially 1xN/Nx1 vectors, for raw-data fidelity.
         values = values.transpose()
-        return MatData(validate_numeric_array(values, f"MAT variable {selected!r}"), tuple(problems), selected)
+        return MatData(validate_numeric_array(values, f"MAT variable {selected!r}", allow_3d=allow_3d), tuple(problems), selected)
 
 
-def read_mat(path: Path, key: str | None = None) -> MatData:
+def read_mat(path: Path, key: str | None = None, *, allow_3d: bool = False) -> MatData:
     """Load one supported variable from a legacy or HDF5-based MAT file.
 
     Args:
         path: Existing MATLAB MAT file, including v7.3.
         key: Top-level variable name; None selects the first supported array.
+        allow_3d: Accept rank 3 only when the caller will split it into matrices.
 
     Returns:
         Selected numeric data and names for the variable selector. Unsupported
@@ -196,16 +198,16 @@ def read_mat(path: Path, key: str | None = None) -> MatData:
         Reads file metadata and the selected variable; closes all file handles.
     """
     if h5py.is_hdf5(path):
-        return _read_hdf(path, key)
+        return _read_hdf(path, key, allow_3d=allow_3d)
     try:
         metadata = cast(list[tuple[str, tuple[int, ...], str]], whosmat(str(path), appendmat=False))
     except (ValueError, TypeError, IndexError, OSError, NotImplementedError) as exc:
         raise ValueError(f"Invalid, damaged or unsupported MAT file. MATLAB variable metadata could not be read.\n{exc}") from exc
-    problems = {name: _metadata_problem(name, shape, matlab_class) for name, shape, matlab_class in metadata}
+    problems = {name: _metadata_problem(name, shape, matlab_class, allow_3d=allow_3d) for name, shape, matlab_class in metadata}
     selected = _choose_variable(problems, key)
     decoded = cast(dict[str, object], loadmat(str(path), appendmat=False, variable_names=[selected],
                                             squeeze_me=False, mat_dtype=False))
-    values = validate_numeric_array(decoded.get(selected), f"MAT variable {selected!r}")
+    values = validate_numeric_array(decoded.get(selected), f"MAT variable {selected!r}", allow_3d=allow_3d)
     matlab_class = next(kind for name, _, kind in metadata if name == selected)
     if matlab_class == "logical":
         values = values.astype(np.bool_)

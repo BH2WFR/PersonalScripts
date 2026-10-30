@@ -2,11 +2,14 @@
 
 Requirements: PySide6. Usage: shown after background metadata inspection;
 the dialog performs no disk I/O and never materializes source arrays.
+NPZ imports choose whether display names include the source filename.
 """
+
+from dataclasses import replace
 
 from PySide6 import QtCore, QtWidgets
 
-from .import_catalog import ImportCatalog, ImportChoice
+from .import_catalog import ImportCatalog, ImportChoice, ImportMember, SplitAxis
 from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 from .table_data import HeaderMode, TableRange
 
@@ -35,6 +38,13 @@ class ImportDialog(QtWidgets.QDialog):
         source.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         source.setWordWrap(True)
         layout.addWidget(source)
+        self.include_file_prefix = QtWidgets.QCheckBox("Include NPZ filename in matrix names")
+        self.include_file_prefix.setChecked(True)
+        self.include_file_prefix.setVisible(catalog.path.suffix.lower() == ".npz")
+        self.include_file_prefix.setToolTip(
+            "Checked: archive.npz :: member. Unchecked: member only. "
+            "Applies to all selected matrices, including split channels. The full source stays in tooltips.")
+        layout.addWidget(self.include_file_prefix)
         bar = QtWidgets.QHBoxLayout()
         self.select_all = QtWidgets.QPushButton("Select all")
         self.select_none = QtWidgets.QPushButton("Select none")
@@ -56,6 +66,8 @@ class ImportDialog(QtWidgets.QDialog):
             rows = str(member.shape[0]) if member.shape else "—"
             columns = str(member.shape[1]) if len(member.shape) > 1 else "1" if member.shape else "—"
             status = f"Unsupported: {member.error}" if member.error else f"{member.kind}{' · 1D' if len(member.shape) == 1 else ''}"
+            if not member.error and len(member.shape) == 3:
+                status = f"{member.kind} · {member.shape} · split required"
             item = QtWidgets.QTreeWidgetItem([member.label, rows, columns, status])
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, index)
             item.setToolTip(3, status)
@@ -166,7 +178,8 @@ class ImportDialog(QtWidgets.QDialog):
     def choices(self) -> tuple[ImportChoice, ...]:
         """Return checked source snapshots with their individually stored ranges."""
         self._store_current()
-        return tuple(choice for index, choice in enumerate(self._choices)
+        prefix = self.catalog.path.suffix.lower() != ".npz" or self.include_file_prefix.isChecked()
+        return tuple(replace(choice, include_file_prefix=prefix) for index, choice in enumerate(self._choices)
                      if (item := self.members.topLevelItem(index)) is not None
                      and item.checkState(0) == QtCore.Qt.CheckState.Checked)
 
@@ -182,3 +195,51 @@ class ImportDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "Invalid input range", str(exc))
             return
         super().accept()
+
+
+class SplitArrayDialog(QtWidgets.QDialog):
+    """Choose the channel axis of a numeric 3D array, or skip that member.
+
+    Args:
+        source: Source filename for identification.
+        member: Metadata for one nonempty numeric rank-3 array.
+        parent: Owning workspace; no file access occurs in this dialog.
+
+    Acceptance exposes axis(); rejection, Escape and window close skip only
+    this member. The smallest dimension is suggested, preferring the last axis
+    on ties; the choice always requires explicit confirmation.
+    """
+
+    def __init__(self, source: str, member: ImportMember, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        if len(member.shape) != 3 or any(size <= 0 for size in member.shape):
+            raise ValueError("Channel splitting requires a nonempty 3D array.")
+        self.setWindowTitle("Open 3D array")
+        self.setModal(True)
+        layout = QtWidgets.QVBoxLayout(self)
+        label = QtWidgets.QLabel(f"{source}\n{member.label}\nShape: {member.shape} · {member.kind}")
+        label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        layout.addWidget(QtWidgets.QLabel("Choose a channel axis to split into separate 2D matrices."))
+        self.channel_axis = NoWheelComboBox()
+        for axis in SplitAxis:
+            rows, columns = tuple(size for index, size in enumerate(member.shape) if index != axis)
+            self.channel_axis.addItem(f"Axis {axis.value}: {member.shape[axis]} channels → {rows} × {columns} each", axis)
+        default = min(SplitAxis, key=lambda axis: (member.shape[axis], -axis.value))
+        self.channel_axis.setCurrentIndex(int(default))
+        layout.addWidget(self.channel_axis)
+        note = QtWidgets.QLabel("All channels on this axis will be opened. Original values and dtype are preserved. "
+                               "Axis and channel indices start at 0. Don't open skips only this array.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        buttons = QtWidgets.QDialogButtonBox()
+        self.split_button = buttons.addButton("Split and open", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
+        self.skip_button = buttons.addButton("Don't open", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def axis(self) -> SplitAxis:
+        """Return the chosen zero-based channel axis without decoding arrays."""
+        return SplitAxis(self.channel_axis.currentIndex())

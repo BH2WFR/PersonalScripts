@@ -4,7 +4,7 @@ Requirements: numpy and the viewer's data loaders. Usage: imported by the Qt
 workspace and renderers; this module has no GUI or polling dependencies.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -92,8 +92,13 @@ class MatrixEntry:
 
     @property
     def label(self) -> str:
-        """Return the session alias or the original file/member identity."""
-        return self.name or self.source_label
+        """Return an alias, optional short NPZ name, or full source identity."""
+        if self.name:
+            return self.name
+        document = self.document
+        if document.path.suffix.lower() == ".npz" and not document.include_file_prefix and document.key is not None:
+            return f"{document.key} [{self.instance}]" if self.instance > 1 else document.key
+        return self.source_label
 
     @property
     def source_label(self) -> str:
@@ -170,6 +175,7 @@ def load_file(path: Path, key: str | None = None, choices: tuple[ImportChoice, .
         key: Optional first member to select.
         choices: Explicit selected members/ranges; only these are read. A failed
             selected member rejects the batch instead of changing the workspace.
+            A split_axis expands one numeric 3D member into separate 2D views.
 
     Returns:
         Supported documents in stable member order, with the requested member first.
@@ -181,9 +187,27 @@ def load_file(path: Path, key: str | None = None, choices: tuple[ImportChoice, .
     if choices is not None:
         if not choices:
             raise ValueError("Select at least one matrix or worksheet.")
-        selected_documents: tuple[Document, ...] = tuple(
-            load_document(path, choice.key, region=choice.region,
-                          header=choice.header, delimiter=choice.delimiter) for choice in choices)
+        expanded: list[Document] = []
+        for choice in choices:
+            document = load_document(path, choice.key, region=choice.region,
+                                     header=choice.header, delimiter=choice.delimiter,
+                                     allow_3d=choice.split_axis is not None)
+            if path.suffix.lower() == ".npz":
+                document = replace(document, include_file_prefix=choice.include_file_prefix)
+            if choice.split_axis is None:
+                expanded.append(document)
+                continue
+            axis = choice.split_axis
+            if document.is_image or document.array.ndim != 3 or axis not in (0, 1, 2):
+                raise ValueError(f"{path.name} :: {choice.key}: channel splitting requires a numeric 3D array and axis 0, 1 or 2.")
+            # Moving the channel axis produces views, not one full array copy per
+            # channel. Each 2D view retains its source buffer after file closure.
+            for index, channel in enumerate(np.moveaxis(document.array, axis, 0)):
+                label = f"{document.key or path.stem} [axis {axis.value}, channel {index}]"
+                expanded.append(replace(document, array=channel, keys=(), key=label, split_axis=int(axis),
+                                        import_provenance=f"Split {document.key or path.name}, shape={document.array.shape}, "
+                                                          f"axis={axis.value}, channel={index} (zero-based)."))
+        selected_documents = tuple(expanded)
         for document in selected_documents:
             default_selection(document)
         return LoadedFile(selected_documents)

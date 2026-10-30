@@ -3,6 +3,7 @@
 Requirements: numpy, opencv-python, Pillow, scipy, h5py and openpyxl;
 xlrd for legacy XLS input.
 Usage: imported by the viewer; CPU preparation can run in a worker thread.
+Numeric rank 3 is accepted only on request for splitting before workspace use.
 Complex phase views ignore Z/value bounds while retaining spatial crops.
 Nonfinite complex source samples produce phase gaps, even when atan2 would
 otherwise return a finite angle; zero complex samples retain NumPy's zero angle.
@@ -143,6 +144,10 @@ class Document:
     complex_provenance: str = ""
     conversion_provenance: str = ""
     import_provenance: str = ""
+    # Explicit split imports initially open as matrices, even for 2/3-row slices.
+    split_axis: int | None = None
+    # Import display preference only; source path and archive key stay intact.
+    include_file_prefix: bool = True
 
     @property
     def is_complex(self) -> bool:
@@ -274,7 +279,8 @@ class Frame:
 
 
 def load_document(path: Path, key: str | None = None, *, region: TableRange = TableRange(),
-                  header: HeaderMode = HeaderMode.AUTO, delimiter: str | None = None) -> Document:
+                  header: HeaderMode = HeaderMode.AUTO, delimiter: str | None = None,
+                  allow_3d: bool = False) -> Document:
     """Read one array or image, preserving numeric precision and image channels.
 
     Args:
@@ -284,6 +290,7 @@ def load_document(path: Path, key: str | None = None, *, region: TableRange = Ta
         region: One-based inclusive original table range for Excel/CSV/TXT only.
         header: Table header treatment, applied after selecting the range.
         delimiter: CSV/TXT delimiter; None auto-detects.
+        allow_3d: Accept numeric rank 3 only for explicit splitting by load_file.
 
     Returns:
         Document containing numeric data, with RGB(A) image channel ordering.
@@ -296,7 +303,7 @@ def load_document(path: Path, key: str | None = None, *, region: TableRange = Ta
         Prints image loading, header and decoder diagnostics to the console.
     """
     try:
-        return _read_document(path, key, region, header, delimiter)
+        return _read_document(path, key, region, header, delimiter, allow_3d=allow_3d)
     except Exception as exc:
         if isinstance(exc, FileNotFoundError):
             reason = "The file does not exist or is no longer accessible."
@@ -316,7 +323,7 @@ def load_document(path: Path, key: str | None = None, *, region: TableRange = Ta
 
 
 def _read_document(path: Path, key: str | None, region: TableRange, header: HeaderMode,
-                   delimiter: str | None) -> Document:
+                   delimiter: str | None, *, allow_3d: bool = False) -> Document:
     """Decode one source; the public boundary adds file context to failures."""
     if path.is_dir():
         raise IsADirectoryError(str(path))
@@ -342,7 +349,7 @@ def _read_document(path: Path, key: str | None, region: TableRange, header: Head
                 problems: list[str] = []
                 for candidate in keys:
                     try:
-                        member = validate_numeric_array(archive[candidate], f"NPZ member {candidate!r}")
+                        member = validate_numeric_array(archive[candidate], f"NPZ member {candidate!r}", allow_3d=allow_3d)
                     except ValueError as exc:
                         problems.append(f"{candidate}: {exc}")
                         continue
@@ -358,7 +365,7 @@ def _read_document(path: Path, key: str | None, region: TableRange, header: Head
         array = np.load(path, allow_pickle=False, mmap_mode="r")
     elif suffix == ".mat":
         try:
-            mat = read_mat(path, key)
+            mat = read_mat(path, key, allow_3d=allow_3d)
         except (OSError, ValueError, TypeError, IndexError, NotImplementedError) as exc:
             raise ValueError(f"Cannot read this MATLAB MAT file.\n{exc}") from exc
         return Document(path, cast(Array, mat.values), mat.keys, mat.key)
@@ -433,7 +440,7 @@ def _read_document(path: Path, key: str | None, region: TableRange, header: Head
         raise ValueError(f"Unsupported file extension: {suffix}")
     label = f"NPZ member {key!r}" if suffix == ".npz" else "NPY array"
     try:
-        numeric = validate_numeric_array(array, label)
+        numeric = validate_numeric_array(array, label, allow_3d=allow_3d)
     except ValueError:
         # A retained exception traceback can otherwise keep a rejected NPY
         # mapping alive and lock the file on Windows until garbage collection.

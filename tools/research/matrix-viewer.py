@@ -27,8 +27,19 @@ Numeric files accept nonempty dense 1D/2D boolean, integer, real and complex
 arrays. MATLAB legacy/v7.3 files expose supported top-level variables like NPZ
 members in the matrix list. MATLAB row/column vectors default to
 signal mode without squeezing the stored source array.
+Numeric 3D arrays in NPY/NPZ/MAT prompt for a channel axis or Don't open.
+Splitting creates separate 2D matrices named with source member, axis and channel
+index (zero-based), preserving dtype and complex values. Metadata inspection
+precedes decoding; skipping one member retains the other selected members.
+The smallest dimension is suggested as the channel axis, preferring the last
+axis on ties. Skipping all incoming arrays retains the existing workspace.
 NPZ/MAT files with multiple members open a checkbox list with Select all/none
-and source dimensions. Only selected matrices are loaded. XLSX/XLSM/XLS worksheets
+and source dimensions. NPZ always shows this dialog, including single-member
+archives, with an Include NPZ filename in matrix names checkbox (on by default).
+Uncheck it for member-only display names; full source identity stays in tooltips.
+The matrix tree uses manually resizable columns and horizontal scrolling, with
+the name column widest initially; refreshing entries retains adjusted widths.
+Only selected matrices are loaded. XLSX/XLSM/XLS worksheets
 use the same list, with independent one-based row/column bounds and header mode.
 CSV/TXT also offer range/header/delimiter settings before numeric conversion.
 Excel reads cached formula results; missing XLSX/XLSM caches report the source
@@ -81,7 +92,7 @@ to open as XYZ point clouds or 2D matrices, including each qualifying archive me
 Cancel keeps the current session. Images and explicit --mode choices skip the
 prompt; complex arrays offer 2D only because XY/XYZ require real coordinates.
 Unsupported types (object, string, struct, cell, sparse), higher-dimensional
-arrays and unreadable files produce an error dialog with the file and reason.
+arrays above rank 3 and unreadable files produce an error dialog with the file and reason.
 The left-side matrix tree chooses a source array or archive member. Its children
 choose image channels/combinations, numeric channels or a complex array's
 real/imaginary part, phase (rad) or magnitude. Matrix names can be changed
@@ -398,7 +409,8 @@ def main() -> int:
             " another file adds it. Single matrix mode shows one channel; Multiple matrices mode overlays compatible data with"
             " separate colors, settings and a selectable alignment reference. Right-click matrices or plots for appearance, processing, "
             "fitting and export actions, grouped by purpose. Close / Close all release session data. View settings beside each plot groups styles, colors and markers. "
-            "Numeric files support dense 1D/2D boolean, integer, real and complex arrays. MAT supports legacy and v7.3 files. "
+            "Numeric files support dense 1D/2D boolean, integer, real and complex arrays; 3D NPY/NPZ/MAT arrays ask for a channel axis to split into 2D matrices or skip. MAT supports legacy and v7.3 files. "
+            "NPZ import offers optional filename prefixes. Matrix-list columns resize manually and scroll horizontally. "
             "NPZ/MAT/Excel files offer member/sheet selection; Excel and CSV/TXT imports allow ranges and header handling. "
             "Two-row/column arrays can open as XY signals, and three-row/column arrays as XYZ point clouds. Ambiguous shapes "
             "prompt for a choice. Unsupported data and unreadable files show an error dialog. "
