@@ -176,7 +176,7 @@ class WorkspaceMenus(QtCore.QObject):
         entry = window._entry()
         processing = menu.addMenu("Process active matrix")
         processing.menuAction().setToolTip(window._channel_label(entry) if entry else "No active matrix")
-        processing.setEnabled(entry is not None and window.matrix_box.isEnabled())
+        processing.setEnabled(entry is not None and not entry.document.is_text and window.matrix_box.isEnabled())
         processing.addActions([window.conversion_action, window.fourier_action, window.laplace_action])
         processing.addSeparator()
         processing.addAction(window.merge_action)
@@ -200,7 +200,7 @@ class WorkspaceMenus(QtCore.QObject):
         """Add numeric exports for the active entry, retaining scope choices."""
         window = self.window
         entry = window._entry()
-        ready = (entry is not None and entry.frame is not None and window._export_ready
+        ready = (entry is not None and not entry.document.is_text and entry.frame is not None and window._export_ready
                  and window.matrix_box.isEnabled() and not window._rebuild.isActive()
                  and not window._export_busy)
         menu.addSection("Active matrix")
@@ -220,7 +220,10 @@ class WorkspaceMenus(QtCore.QObject):
         window = self.window
         menu.addSection("Session")
         bundle = menu.addMenu("All matrices as…")
-        bundle.setEnabled(bool(window.entries) and window.matrix_box.isEnabled() and not window._export_busy)
+        bundle.setEnabled(bool(window.entries) and not any(entry.document.is_text for entry in window.entries)
+                          and window.matrix_box.isEnabled() and not window._export_busy)
+        if any(entry.document.is_text for entry in window.entries):
+            bundle.setToolTip("String arrays support Raw data viewing only. Close them before exporting the numeric session.")
         bundle.setToolTipsVisible(True)
         for format_ in BUNDLE_FORMATS:
             action = self._add(bundle, f"{format_.value.upper()}…", partial(window._save_all_matrices, format_))
@@ -252,11 +255,12 @@ class WorkspaceMenus(QtCore.QObject):
             if multiple and len(window._groups().get(entry.matrix_uid or entry.uid, [])) > 1:
                 self._add(display, "Hide whole matrix", partial(self._hide_matrix, entry))
             display.addSeparator()
-            self._add(display, "Channel color…", partial(window._choose_entry_color, entry.uid))
+            self._add(display, "Channel color…", partial(window._choose_entry_color, entry.uid), enabled=not entry.document.is_text)
             self._add(display, "Set as alignment reference", lambda: window.reference.setCurrentIndex(window.reference.findData(entry.uid)),
-                      enabled=multiple)
+                      enabled=multiple and not entry.document.is_text)
             display.addSeparator()
-            self._add(display, "Fit all views", window._fit_views, enabled=any(member.visible for member in window.entries))
+            self._add(display, "Fit all views", window._fit_views,
+                      enabled=any(member.visible and not member.document.is_text for member in window.entries))
             if multiple:
                 self._add(display, "Hide all", window._hide_all, enabled=bool(window.entries))
             menu.addSection("Data")

@@ -94,7 +94,7 @@ class TableImportTests(TestCase):
             numeric = next(item for item in inspected.members if item.key == "numeric")
             self.assertEqual(numeric.shape, (4, 5))
             self.assertFalse(numeric.error)
-            self.assertTrue(next(item for item in inspected.members if item.key == "words").error)
+            self.assertFalse(next(item for item in inspected.members if item.key == "words").error)
             loaded = workspace.load_file(path, choices=(catalog.ImportChoice("numeric"),))
             np.testing.assert_array_equal(loaded.documents[0].array, source)
 

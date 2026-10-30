@@ -68,6 +68,8 @@ class ImportDialog(QtWidgets.QDialog):
             status = f"Unsupported: {member.error}" if member.error else f"{member.kind}{' · 1D' if len(member.shape) == 1 else ''}"
             if not member.error and len(member.shape) == 3:
                 status = f"{member.kind} · {member.shape} · split required"
+            elif not member.error and (member.kind == "char" or member.kind.lstrip("<>=|").startswith(("U", "S"))):
+                status = f"{member.kind} · Raw data only"
             item = QtWidgets.QTreeWidgetItem([member.label, rows, columns, status])
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, index)
             item.setToolTip(3, status)

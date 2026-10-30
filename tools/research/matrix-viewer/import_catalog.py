@@ -14,7 +14,7 @@ from zipfile import ZipFile
 
 import numpy as np
 
-from .array_validation import NUMERIC_KINDS, validate_shape
+from .array_validation import NUMERIC_KINDS, STRING_KINDS, validate_shape
 from .csv_loader import detect_delimiter
 from .excel_io import EXCEL_EXTENSIONS, PREVIEW_COLUMNS, PREVIEW_ROWS, inspect_excel
 from .mat_loader import inspect_mat
@@ -81,8 +81,8 @@ def _numpy_member(stream: BinaryIO, key: str | None, label: str) -> ImportMember
         else:
             raise ValueError(f"Unsupported NPY header version: {version}")
         kind = str(dtype)
-        validate_shape(shape, label, allow_3d=True)
-        if dtype.kind not in NUMERIC_KINDS:
+        validate_shape(shape, label, allow_3d=dtype.kind in NUMERIC_KINDS)
+        if dtype.kind not in NUMERIC_KINDS | STRING_KINDS:
             raise ValueError(f"Unsupported dtype: {dtype}; select a numeric array.")
     except (ValueError, EOFError, TypeError) as exc:
         error = str(exc)

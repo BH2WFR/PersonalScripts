@@ -78,7 +78,7 @@ class ViewScaling(QtCore.QObject):
         if view == FigureView.IMAGE:
             return mode == ViewMode.MATRIX
         profile = window.overlay_profile if window._profile_uses_overlay else window.profile_view
-        if mode == ViewMode.POINTS:
+        if mode in (ViewMode.POINTS, ViewMode.RAW):
             return False
         if view == FigureView.DERIVATIVE:
             return profile.tabs.currentIndex() == 1 and profile.tabs.isTabEnabled(1)

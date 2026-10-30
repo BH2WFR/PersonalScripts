@@ -1,6 +1,8 @@
 """Virtual, read-only array spreadsheet with exact source-value formatting.
 
 8-bit integer image data optionally uses channel-ordered hexadecimal labels.
+String cells retain original storage and display left-aligned; byte strings use
+UTF-8 with invalid bytes escaped. Unicode surrogate code units are escaped too.
 A header dropdown browses workspace matrices by name without changing plot selection.
 The workspace context menu groups selection, navigation and table appearance;
 it never changes the active matrix or visibility when inspecting another table.
@@ -11,7 +13,7 @@ from typing import cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .data_model import Array, Frame, ImageMember, ImageSource
+from .data_model import Frame, ImageMember, ImageSource, SourceArray
 from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 
 MAX_COPY_CELLS = 1_000_000
@@ -31,7 +33,7 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
 
     def __init__(self, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
-        self.array: Array | None = None
+        self.array: SourceArray | None = None
         self.row_start = 0
         self.column_start = 0
         self.column_labels: tuple[str, ...] = ()
@@ -123,7 +125,8 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
         if not index.isValid() or self.array is None:
             return None
         if role == QtCore.Qt.ItemDataRole.TextAlignmentRole:
-            return int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            horizontal = QtCore.Qt.AlignmentFlag.AlignLeft if self.array.dtype.kind in "US" else QtCore.Qt.AlignmentFlag.AlignRight
+            return int(horizontal | QtCore.Qt.AlignmentFlag.AlignVCenter)
         if role in (QtCore.Qt.ItemDataRole.DisplayRole, QtCore.Qt.ItemDataRole.ToolTipRole):
             if self.hexadecimal:
                 # The unsigned/bool dtype guard makes item() return Python int/bool.
@@ -134,6 +137,10 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
                 scalar = cast(int, self.array.item(index.row(), index.column()))
                 return f"#{scalar:0{self._hex_digits}X}"
             value = self.array[index.row(), index.column()]
+            if self.array.dtype.kind == "S":
+                return cast(bytes, self.array.item(index.row(), index.column())).decode("utf-8", errors="backslashreplace")
+            if self.array.dtype.kind == "U":
+                return str(value).encode("utf-8", errors="backslashreplace").decode("utf-8")
             if self.array.ndim == 3:
                 return f"({', '.join(str(channel) for channel in value)})"
             return str(value)
@@ -301,6 +308,10 @@ class RawDataView(QtWidgets.QWidget):
                 "Ctrl+C copies the displayed cell text.")
         if self.model.hexadecimal:
             text = f"{text}\nHex: {self.model.hex_description}"
+        if array.dtype.kind in "US":
+            text = (f"{self.source_name or 'Raw string data'} | Shape: {array.shape} | Dtype: {array.dtype}\n"
+                    "String array · Raw data only. Ctrl+C copies cell text. "
+                    "Byte strings display as UTF-8; invalid bytes use \\xNN escapes.")
         self.note.setText(text)
 
     def _set_column_width(self, width: int) -> None:

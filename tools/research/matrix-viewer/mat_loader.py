@@ -3,7 +3,10 @@
 Requirements: numpy, scipy and h5py. Usage: read_mat(path, optional_variable).
 Only the selected variable is read into memory. MATLAB row/column shapes,
 numeric precision and complex components are preserved. Containers, sparse
-arrays are rejected explicitly. Rank 3 is accepted only for explicit split import.
+arrays are rejected explicitly. Numeric rank 3 is accepted only for explicit
+split import; nonempty 1D/2D MATLAB char arrays are exposed as raw-only strings.
+MATLAB string objects/cells remain unsupported. v7.3 char storage retains UTF-16
+code-unit positions; unpaired surrogate cells are escaped in the raw table.
 """
 
 from dataclasses import dataclass
@@ -15,7 +18,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.io import loadmat, whosmat
 
-from .array_validation import validate_numeric_array, validate_shape
+from .array_validation import validate_shape, validate_source_array
 
 MAT_DTYPES: dict[str, np.dtype[np.generic]] = {
     name: np.dtype(dtype) for name, dtype in (
@@ -88,12 +91,12 @@ def _choose_variable(problems: dict[str, str | None], key: str | None) -> str:
 
 def _metadata_problem(name: str, shape: tuple[int, ...], matlab_class: str, *, allow_3d: bool = False) -> str | None:
     label = f"MAT variable {name!r}"
-    if matlab_class not in MAT_DTYPES:
+    if matlab_class not in MAT_DTYPES and matlab_class != "char":
         return (f"{label}: unsupported MATLAB type {matlab_class!r}. "
                 "Only dense numeric/logical arrays are supported; "
                 "cell, struct, sparse, text and MATLAB objects are not supported.")
     try:
-        validate_shape(shape, label, allow_3d=allow_3d)
+        validate_shape(shape, label, allow_3d=allow_3d and matlab_class != "char")
     except ValueError as exc:
         return str(exc)
     return None
@@ -125,6 +128,8 @@ def _hdf_problem(node: object, name: str, *, allow_3d: bool = False) -> str | No
     if problem is not None:
         return problem
     dtype = np.dtype(node.dtype)
+    if matlab_class == "char":
+        return None if dtype.kind == "u" and dtype.itemsize == 2 else f"{label}: unsupported character storage {dtype}; expected UTF-16 code units."
     expected = MAT_DTYPES[matlab_class]
     if dtype.fields is not None:
         if (matlab_class not in ("single", "double") or dtype.names != ("real", "imag")
@@ -175,7 +180,9 @@ def _read_hdf(path: Path, key: str | None, *, allow_3d: bool = False) -> MatData
         # MATLAB's HDF5 dimension order is reversed relative to NumPy. Keep
         # singleton axes, especially 1xN/Nx1 vectors, for raw-data fidelity.
         values = values.transpose()
-        return MatData(validate_numeric_array(values, f"MAT variable {selected!r}", allow_3d=allow_3d), tuple(problems), selected)
+        if matlab_class == "char":
+            values = np.fromiter((chr(int(code)) for code in values.flat), dtype="U1", count=values.size).reshape(values.shape)
+        return MatData(validate_source_array(values, f"MAT variable {selected!r}", allow_3d=allow_3d), tuple(problems), selected)
 
 
 def read_mat(path: Path, key: str | None = None, *, allow_3d: bool = False) -> MatData:
@@ -206,8 +213,8 @@ def read_mat(path: Path, key: str | None = None, *, allow_3d: bool = False) -> M
     problems = {name: _metadata_problem(name, shape, matlab_class, allow_3d=allow_3d) for name, shape, matlab_class in metadata}
     selected = _choose_variable(problems, key)
     decoded = cast(dict[str, object], loadmat(str(path), appendmat=False, variable_names=[selected],
-                                            squeeze_me=False, mat_dtype=False))
-    values = validate_numeric_array(decoded.get(selected), f"MAT variable {selected!r}", allow_3d=allow_3d)
+                                            squeeze_me=False, mat_dtype=False, chars_as_strings=False))
+    values = validate_source_array(decoded.get(selected), f"MAT variable {selected!r}", allow_3d=allow_3d)
     matlab_class = next(kind for name, _, kind in metadata if name == selected)
     if matlab_class == "logical":
         values = values.astype(np.bool_)

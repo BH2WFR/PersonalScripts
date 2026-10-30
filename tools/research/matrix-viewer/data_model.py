@@ -4,6 +4,8 @@ Requirements: numpy, opencv-python, Pillow, scipy, h5py and openpyxl;
 xlrd for legacy XLS input.
 Usage: imported by the viewer; CPU preparation can run in a worker thread.
 Numeric rank 3 is accepted only on request for splitting before workspace use.
+Unicode/byte strings use raw-only frames with no numeric buffers or meshes.
+Document.numeric_array guards processing boundaries against string sources.
 Complex phase views ignore Z/value bounds while retaining spatial crops.
 Nonfinite complex source samples produce phase gaps, even when atan2 would
 otherwise return a finite angle; zero complex samples retain NumPy's zero angle.
@@ -26,7 +28,7 @@ from .image_metadata import ImageMetadata, read_image_metadata
 from .csv_loader import read_csv
 from .excel_io import EXCEL_EXTENSIONS, read_excel
 from .table_data import HeaderMode, TableRange
-from .array_validation import validate_numeric_array
+from .array_validation import STRING_KINDS, validate_numeric_array, validate_source_array
 from .mat_loader import read_mat
 from .coordinates import AxisCoordinates, AxisMap
 
@@ -39,6 +41,8 @@ type IntegerScalar = (np.int8 | np.int16 | np.int32 | np.int64 | np.longlong
 type RealScalar = np.bool_ | IntegerScalar | np.float16 | np.float32 | np.float64 | np.longdouble
 type ComplexScalar = np.complex64 | np.complex128 | np.clongdouble
 type Array = NDArray[RealScalar | ComplexScalar]
+type StringArray = NDArray[np.str_ | np.bytes_]
+type SourceArray = Array | StringArray
 type RealArray = NDArray[RealScalar]
 type ComplexArray = NDArray[ComplexScalar]
 type FloatArray = NDArray[np.float64]
@@ -111,6 +115,7 @@ class ViewMode(StrEnum):
     SIGNAL = "signal"
     XY = "xy"
     POINTS = "points"
+    RAW = "raw"
 
 
 class Component(StrEnum):
@@ -132,7 +137,7 @@ class Document:
     """
 
     path: Path
-    array: Array
+    array: SourceArray
     keys: tuple[str, ...] = ()
     key: str | None = None
     is_image: bool = False
@@ -148,6 +153,18 @@ class Document:
     split_axis: int | None = None
     # Import display preference only; source path and archive key stay intact.
     include_file_prefix: bool = True
+
+    @property
+    def is_text(self) -> bool:
+        """Identify fixed-width Unicode/byte strings without parsing their values."""
+        return self.array.dtype.kind in STRING_KINDS
+
+    @property
+    def numeric_array(self) -> Array:
+        """Return numeric source storage; text sources reject numeric operations."""
+        if self.is_text:
+            raise ValueError("String arrays support Raw data viewing only; numeric operations are unavailable.")
+        return cast(Array, self.array)
 
     @property
     def is_complex(self) -> bool:
@@ -260,12 +277,19 @@ class Frame:
     clip_outline: BoolArray | None = None
     x_start: int = 0
     y_start: int = 0
-    raw: Array | None = None
+    raw: SourceArray | None = None
     x_values: RealArray | None = None
     point_coordinates: RealArray | None = None
     x_grid: AxisCoordinates | None = None
     y_grid: AxisCoordinates | None = None
     xy: bool = False
+
+    @property
+    def numeric_raw(self) -> Array | None:
+        """Return numeric original cells, rejecting raw-only string frames."""
+        if self.raw is not None and self.raw.dtype.kind in STRING_KINDS:
+            raise ValueError("String arrays support Raw data viewing only; numeric operations are unavailable.")
+        return cast(Array | None, self.raw)
 
     @property
     def x_mapping(self) -> AxisMap:
@@ -349,7 +373,7 @@ def _read_document(path: Path, key: str | None, region: TableRange, header: Head
                 problems: list[str] = []
                 for candidate in keys:
                     try:
-                        member = validate_numeric_array(archive[candidate], f"NPZ member {candidate!r}", allow_3d=allow_3d)
+                        member = validate_source_array(archive[candidate], f"NPZ member {candidate!r}", allow_3d=allow_3d)
                     except ValueError as exc:
                         problems.append(f"{candidate}: {exc}")
                         continue
@@ -368,7 +392,7 @@ def _read_document(path: Path, key: str | None, region: TableRange, header: Head
             mat = read_mat(path, key, allow_3d=allow_3d)
         except (OSError, ValueError, TypeError, IndexError, NotImplementedError) as exc:
             raise ValueError(f"Cannot read this MATLAB MAT file.\n{exc}") from exc
-        return Document(path, cast(Array, mat.values), mat.keys, mat.key)
+        return Document(path, cast(SourceArray, mat.values), mat.keys, mat.key)
     elif suffix in EXCEL_EXTENSIONS:
         table, keys, selected = read_excel(path, key, region, header)
         validate_numeric_array(table.values, f"Worksheet {selected!r}")
@@ -440,14 +464,14 @@ def _read_document(path: Path, key: str | None, region: TableRange, header: Head
         raise ValueError(f"Unsupported file extension: {suffix}")
     label = f"NPZ member {key!r}" if suffix == ".npz" else "NPY array"
     try:
-        numeric = validate_numeric_array(array, label, allow_3d=allow_3d)
+        numeric = validate_source_array(array, label, allow_3d=allow_3d)
     except ValueError:
         # A retained exception traceback can otherwise keep a rejected NPY
         # mapping alive and lock the file on Windows until garbage collection.
         if isinstance(array, np.memmap) and isinstance(array.base, mmap):
             array.base.close()
         raise
-    return Document(path, cast(Array, numeric), keys, key, image)
+    return Document(path, cast(SourceArray, numeric), keys, key, image)
 
 
 def normalize_image_alpha(alpha: RealArray) -> FloatArray:
@@ -542,6 +566,10 @@ def default_selection(document: Document, mode: ViewMode | None = None,
     """
     shape = document.array.shape
     rank = len(shape)
+    if document.is_text:
+        return Selection(ViewMode.RAW, rank - 1, 0 if rank == 2 else None, None, 0, (0,) * rank)
+    if mode == ViewMode.RAW:
+        raise ValueError("Raw-only interpretation is reserved for string arrays.")
     if mode is not None and mode in (ViewMode.XY, ViewMode.POINTS):
         count = 2 if mode == ViewMode.XY else 3
         if rank != 2 or count not in shape or np.iscomplexobj(document.array):
@@ -606,7 +634,7 @@ def _extract_raw(document: Document, selection: Selection, crop: Crop) -> Array:
         for axis in range(rank)
     )
     remaining = sorted(axes)
-    data = document.array[indices].transpose(tuple(remaining.index(axis) for axis in axes))
+    data = document.numeric_array[indices].transpose(tuple(remaining.index(axis) for axis in axes))
     if selection.channel_axis is not None and selection.channel != -1:
         data = data[..., selection.channel]
     return data
@@ -738,6 +766,11 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
     Raises:
         ValueError: Invalid axis assignment, crop, filter interval or sampling size.
     """
+    if document.is_text:
+        # No numeric conversion, masks or meshes for raw-only string storage.
+        empty = np.empty(0, dtype=np.float64)
+        return Frame(empty, np.empty(0, dtype=np.bool_), None, (0.0, 1.0), None, False,
+                     empty, np.empty(0, dtype=np.int8), Limits(), raw=document.array)
     if max_edge < 0 or max_edge == 1:
         raise ValueError("Surface edge limit must be zero (full resolution) or at least 2.")
     if is_phase_view(document, selection):
@@ -758,7 +791,7 @@ def prepare_frame(document: Document, selection: Selection, limits: Limits,
         if (document.array.ndim != 2 or axis not in (0, 1) or document.array.shape[axis] != count
                 or np.iscomplexobj(document.array) or sorted(selection.coordinate_order) != list(range(count))):
             raise ValueError(f"Choose {count} distinct coordinate rows/columns for {selection.mode.value} mode.")
-        samples = document.array.T if axis == 0 else document.array
+        samples = document.numeric_array.T if axis == 0 else document.numeric_array
         raw = samples[_crop_slice(crop.x_start, crop.x_end, len(samples), "Sample"), :][:, selection.coordinate_order]
         coordinate_data = cast(RealArray, raw)
         scalar, rgb = coordinate_data[:, -1], None

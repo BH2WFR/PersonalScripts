@@ -141,9 +141,10 @@ class MatLoadingTests(unittest.TestCase):
         })
         with patch.object(mat_loader, "loadmat", wraps=mat_loader.loadmat) as reader:
             doc = model.load_document(path)
-            self.assertEqual(doc.key, "signal")
-            self.assertEqual(reader.call_args.kwargs["variable_names"], ["signal"])
-        for key, reason in (("text", "char"), ("cell", "cell"), ("structure", "struct"),
+            self.assertEqual(doc.key, "text")
+            self.assertTrue(doc.is_text)
+            self.assertEqual(reader.call_args.kwargs["variable_names"], ["text"])
+        for key, reason in (("cell", "cell"), ("structure", "struct"),
                             ("sparse", "sparse"), ("cube", "3D"), ("empty", "empty"), ("missing", "does not exist")):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, reason) as error:
                 model.load_document(path, key)
@@ -180,7 +181,7 @@ class MatLoadingTests(unittest.TestCase):
         path = self._hdf({"cube": np.ones((2, 3, 4))})
         with self.assertRaisesRegex(ValueError, "no supported.*1D/2D"):
             model.load_document(path)
-        rejected = (np.array(5), np.empty((0, 3)), np.ones((2, 3, 4)), np.array(["text"]),
+        rejected = (np.array(5), np.empty((0, 3)), np.ones((2, 3, 4)), np.full((2, 3, 4), "text"),
                     np.array([{"x": 1}], dtype=object), np.zeros(2, dtype=[("x", "f8")]))
         for index, array in enumerate(rejected):
             npy = self.folder / f"invalid-{index}.npy"

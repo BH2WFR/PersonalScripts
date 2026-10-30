@@ -158,6 +158,8 @@ def run_conversion(document: Document, selection: Selection, crop: Crop, limits:
         Prints source, formula, scope, finite counts and elapsed calculation time.
     """
     started = perf_counter()
+    if document.is_text:
+        raise ValueError("String arrays support Raw data viewing only; data conversion is unavailable.")
     full_complex = options.full_complex and document.is_complex
     if full_complex and options.apply_bounds:
         raise ValueError("Value bounds cannot be applied to full complex samples. Choose a real component.")
@@ -167,9 +169,10 @@ def run_conversion(document: Document, selection: Selection, crop: Crop, limits:
                           region, max_points=1)
     values: Array = frame.scalar
     if full_complex:
-        if frame.raw is None:
+        raw = frame.numeric_raw
+        if raw is None:
             raise ValueError("Full complex source samples are unavailable.")
-        values = frame.raw
+        values = raw
     elif options.apply_bounds:
         values = np.where(frame.valid, frame.display_scalar, np.nan)
     starts = ((frame.y_grid, frame.y_start), (frame.x_grid, frame.x_start)) if values.ndim == 2 else ((frame.x_grid, frame.x_start),)
@@ -193,7 +196,7 @@ def run_conversion(document: Document, selection: Selection, crop: Crop, limits:
     sample_count = converted.size
     mode = ViewMode.SIGNAL if converted.ndim == 1 else ViewMode.MATRIX
     if selection.mode in (ViewMode.XY, ViewMode.POINTS):
-        coordinates = frame.raw
+        coordinates = frame.numeric_raw
         if coordinates is None:
             raise ValueError("Source coordinates are unavailable.")
         count = 1 if selection.mode == ViewMode.XY else 2

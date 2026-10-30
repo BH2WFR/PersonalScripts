@@ -121,7 +121,7 @@ def prepare_export(document: Document, selection: Selection, frame: Frame,
     xy = False
     selected = frame
     all_channels = options.preserve_channels and options.target != ExportTarget.SLICE
-    source = document.image_source.pixels if all_channels and document.image_source is not None else document.array
+    source = document.image_source.pixels if all_channels and document.image_source is not None else document.numeric_array
     if options.target == ExportTarget.ORIGINAL:
         values = source.copy()
         parts.append("original")
@@ -155,9 +155,10 @@ def prepare_export(document: Document, selection: Selection, frame: Frame,
         elif options.preserve_complex and document.is_complex:
             if options.bound_values:
                 raise ValueError("Complex values have no ordered Z interval. Disable value bounds or export a display component.")
-            if selected.raw is None:
+            raw = selected.numeric_raw
+            if raw is None:
                 raise ValueError("No complex source values are available.")
-            values = selected.raw.copy()
+            values = raw.copy()
         elif selection.mode == ViewMode.POINTS:
             coordinates = selected.point_coordinates
             if coordinates is None:

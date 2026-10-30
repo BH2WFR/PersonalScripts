@@ -24,7 +24,15 @@ many test matrices; reuse them where appropriate. To avoid Git repository
 bloat, each matrix file should preferably be no larger than 20 KB.
 
 Numeric files accept nonempty dense 1D/2D boolean, integer, real and complex
-arrays. MATLAB legacy/v7.3 files expose supported top-level variables like NPZ
+arrays. NPY/NPZ Unicode/byte-string arrays and MATLAB char arrays of rank 1/2
+open in Raw data only, with source values and clipboard copying retained.
+Plots, derivatives, numeric processing and numeric export are disabled for text;
+numeric session bundling requires closing raw-only string entries first.
+Object/pickle arrays, MATLAB string objects/cells and rank-3 strings remain
+unsupported. Byte strings display as UTF-8 with invalid bytes escaped; MATLAB
+v7.3 char matrices retain UTF-16 code-unit positions. CSV/Excel retain numeric
+table validation rather than silently treating malformed numbers as text.
+MATLAB legacy/v7.3 files expose supported top-level variables like NPZ
 members in the matrix list. MATLAB row/column vectors default to
 signal mode without squeezing the stored source array.
 Numeric 3D arrays in NPY/NPZ/MAT prompt for a channel axis or Don't open.
@@ -91,7 +99,7 @@ before loading into the workspace; 3-by-N/N-by-3 arrays with N > 3 ask whether
 to open as XYZ point clouds or 2D matrices, including each qualifying archive member.
 Cancel keeps the current session. Images and explicit --mode choices skip the
 prompt; complex arrays offer 2D only because XY/XYZ require real coordinates.
-Unsupported types (object, string, struct, cell, sparse), higher-dimensional
+Unsupported types (object, struct, cell, sparse), higher-dimensional
 arrays above rank 3 and unreadable files produce an error dialog with the file and reason.
 The left-side matrix tree chooses a source array or archive member. Its children
 choose image channels/combinations, numeric channels or a complex array's
@@ -411,6 +419,7 @@ def main() -> int:
             "fitting and export actions, grouped by purpose. Close / Close all release session data. View settings beside each plot groups styles, colors and markers. "
             "Numeric files support dense 1D/2D boolean, integer, real and complex arrays; 3D NPY/NPZ/MAT arrays ask for a channel axis to split into 2D matrices or skip. MAT supports legacy and v7.3 files. "
             "NPZ import offers optional filename prefixes. Matrix-list columns resize manually and scroll horizontally. "
+            "1D/2D NPY/NPZ strings and MAT character arrays open in Raw data only; object arrays remain unsupported. "
             "NPZ/MAT/Excel files offer member/sheet selection; Excel and CSV/TXT imports allow ranges and header handling. "
             "Two-row/column arrays can open as XY signals, and three-row/column arrays as XYZ point clouds. Ambiguous shapes "
             "prompt for a choice. Unsupported data and unreadable files show an error dialog. "

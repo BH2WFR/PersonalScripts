@@ -751,16 +751,17 @@ class WorkspaceWindow(ViewerWindow):
                 if rebuild:
                     item.setExpanded(any(member.uid == self.active_uid for member in members))
             self.reference.setCurrentIndex(self.reference.findData(self.reference_uid))
-        self.alignment_box.setVisible(self._overlay())
+        self.alignment_box.setVisible(self._overlay() and not any(item.visible and item.document.is_text for item in self.entries))
         self.none_visible.setVisible(self.multiple_matrix_mode.isChecked())
         self.remove_matrix.setEnabled(bool(self.entries))
         self.remove_action.setEnabled(bool(self.entries))
         self.remove_all.setEnabled(bool(self.entries))
+        self.fit_views_button.setEnabled(any(item.visible and not item.document.is_text for item in self.entries))
         selected = self._entry()
         self.fourier_action.setEnabled(selected is not None and self._channel_loaded(selected)
-                                       and selected.selection.mode != ViewMode.POINTS)
-        self.merge_action.setEnabled(bool(self._merge_sources()))
-        self.conversion_action.setEnabled(selected is not None and self._channel_loaded(selected))
+                                       and selected.selection.mode not in (ViewMode.POINTS, ViewMode.RAW))
+        self.merge_action.setEnabled(selected is not None and not selected.document.is_text and bool(self._merge_sources()))
+        self.conversion_action.setEnabled(selected is not None and not selected.document.is_text and self._channel_loaded(selected))
         self.fourier_button.setEnabled(self.fourier_action.isEnabled() or self.merge_action.isEnabled()
                                        or self.conversion_action.isEnabled())
         self.laplace_action.setEnabled(selected is not None and self._channel_loaded(selected)
@@ -780,6 +781,8 @@ class WorkspaceWindow(ViewerWindow):
         summary = f"{document.array.shape} · {document.array.dtype} · {document.array.nbytes / 1024**2:,.3f} MiB"
         if document.is_complex:
             summary = f"Complex matrix · Display: {active_channel(entry).label}\n{summary}"
+        elif document.is_text:
+            summary = f"String array · Raw data only\n{summary}"
         source = document.image_source
         if source is not None:
             summary = f"{summary}\n{source.layout} · {source.metadata.depth}"
@@ -889,6 +892,9 @@ class WorkspaceWindow(ViewerWindow):
 
     def _compatible(self, entry: MatrixEntry) -> str | None:
         other = next((item for item in self.entries if item.visible and item.uid != entry.uid), None)
+        if entry.document.is_text and (other is None or other.document.is_text):
+            # Raw tables are selected individually; no axes are overlaid.
+            return None
         if other is not None and family(other.selection.mode) != family(entry.selection.mode):
             return (f"Cannot overlay {entry.label} ({entry.selection.mode.value}) with "
                     f"{other.label} ({other.selection.mode.value}).\nChange the selected matrix's interpretation or hide conflicting entries. "
@@ -1043,7 +1049,7 @@ class WorkspaceWindow(ViewerWindow):
     def _choose_fourier(self) -> None:
         self._store_entry()
         entry = self._entry()
-        if entry is None or not self._channel_loaded(entry) or entry.selection.mode == ViewMode.POINTS:
+        if entry is None or not self._channel_loaded(entry) or entry.selection.mode in (ViewMode.POINTS, ViewMode.RAW):
             return
         # Capture settings now; workers only receive these immutable values.
         document, selection, crop, limits, label = entry.document, entry.selection, entry.crop, entry.limits, entry.label
@@ -1105,7 +1111,7 @@ class WorkspaceWindow(ViewerWindow):
             channels: list[MergeInput] = []
             for entry in members:
                 channel = active_channel(entry)
-                if entry.selection.mode == ViewMode.POINTS or channel.image_key in (
+                if entry.selection.mode in (ViewMode.POINTS, ViewMode.RAW) or channel.image_key in (
                     ImageMember.RGB_COLOR, ImageMember.RGBA_COLOR, ImageMember.MONO_COLOR,
                 ):
                     continue
@@ -1138,7 +1144,7 @@ class WorkspaceWindow(ViewerWindow):
         """Capture the active channel and open pointwise conversion settings."""
         self._store_entry()
         entry = self._entry()
-        if entry is None or not self._channel_loaded(entry):
+        if entry is None or entry.document.is_text or not self._channel_loaded(entry):
             return
         document, selection, crop, limits = entry.document, entry.selection, entry.crop, entry.limits
         full_complex = False
@@ -1326,7 +1332,7 @@ class WorkspaceWindow(ViewerWindow):
     def _cancel_opening(self) -> None:
         """Restore the unchanged workspace after cancelling an import dialog."""
         self.matrix_box.setEnabled(True)
-        self.controls.setEnabled(self.document is not None)
+        self.controls.setEnabled(self.document is not None and not self.document.is_text)
         self._sync_source_selectors(self.frame_selection.component if self.frame_selection else Component.REAL)
         self._refresh_list()
         self._render_workspace()
@@ -1351,6 +1357,8 @@ class WorkspaceWindow(ViewerWindow):
             with N > 3 offer XYZ. Images and other shapes retain their usual
             defaults. Complex arrays cannot supply XY/XYZ coordinates.
         """
+        if document.is_text:
+            return default_selection(document)
         if document.split_axis is not None:
             return default_selection(document, ViewMode.MATRIX)
         try:
@@ -1723,6 +1731,13 @@ class WorkspaceWindow(ViewerWindow):
             if not any(entry.visible for entry in self.entries):
                 self._clear_views()
                 return
+            if any(entry.visible and entry.document.is_text for entry in self.entries):
+                self._clear_views()
+                super()._set_view_layout(ViewMode.RAW)
+                self.profile_controls.hide()
+                self.overlay_profile.hide()
+                self._sync_raw_view()
+                return
             if not overlay:
                 self._render_layers = ()
                 entry = next((member for member in self.entries if member.visible), None)
@@ -1960,6 +1975,12 @@ class WorkspaceWindow(ViewerWindow):
     def _sync_export_controls(self) -> None:
         if self._view_override is not None:
             return
+        if self.document is not None and self.document.is_text:
+            self.export_save.setEnabled(False)
+            self.export_box.setEnabled(False)
+            if hasattr(self, "figure_export_button"):
+                self.figure_export_button.setEnabled(False)
+            return
         if hasattr(self, "export_scope"):
             scopes = [ExportScope.SELECTED]
             if self._has_export_channels():
@@ -1978,7 +1999,7 @@ class WorkspaceWindow(ViewerWindow):
         if not hasattr(self, "export_scope"):
             return
         if hasattr(self, "figure_export_button"):
-            ready = any(entry.visible and entry.frame is not None for entry in self.entries)
+            ready = any(entry.visible and entry.frame is not None and not entry.document.is_text for entry in self.entries)
             self.figure_export_button.setEnabled(ready and not self._preparing and not self._rebuild.isActive())
         displayed = self.export_scope.currentData() == ExportScope.VISIBLE
         for field in (self.export_xy, self.export_z):
@@ -2042,6 +2063,8 @@ class WorkspaceWindow(ViewerWindow):
         """
         self._sync_export_controls()
         entry = self._entry()
+        if entry is None or entry.document.is_text:
+            return
         selected_target = target or ExportTarget(self.export_target.currentText())
         complex_choice: ComplexExportChoice | None = None
         if (entry is not None and entry.document.is_complex
@@ -2322,7 +2345,8 @@ class WorkspaceWindow(ViewerWindow):
             in the export worker. Uses existing overwrite checks and atomic save.
             No selection, source buffer or display setting is changed.
         """
-        if (not self.entries or self._export_busy or not self.matrix_box.isEnabled()
+        if (not self.entries or any(entry.document.is_text for entry in self.entries)
+                or self._export_busy or not self.matrix_box.isEnabled()
                 or format_ not in BUNDLE_FORMATS):
             return
         sources = tuple((members[0].label, members[0].document) for members in self._groups().values())

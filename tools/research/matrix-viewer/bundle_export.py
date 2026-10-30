@@ -45,7 +45,7 @@ def prepare_bundle(sources: tuple[tuple[str, Document], ...]) -> tuple[ExportSna
         image = document.image_source
         arrays: tuple[tuple[str, Array], ...]
         if image is None:
-            arrays = ((name, document.array),)
+            arrays = ((name, document.numeric_array),)
         elif image.pixels.ndim == 2:
             arrays = ((f"{name} / {image.channels[0].value}", image.pixels),)
         else:

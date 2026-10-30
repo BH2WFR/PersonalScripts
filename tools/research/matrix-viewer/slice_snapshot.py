@@ -55,7 +55,7 @@ def freeze_slice(document: Document, frame: Frame, values: RealArray, *, row: bo
         raise ValueError("The Slice trace does not match the current matrix crop.")
     copied_values: Array = values
     if preserve_complex:
-        raw = frame.raw
+        raw = frame.numeric_raw
         if not document.is_complex or raw is None or raw.dtype.kind != "c" or raw.shape != frame.scalar.shape:
             raise ValueError("The original complex values for this Slice are unavailable.")
         local = index - origin

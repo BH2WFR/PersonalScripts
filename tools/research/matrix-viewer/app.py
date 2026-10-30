@@ -364,6 +364,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.mode.addItem("1D signal", ViewMode.SIGNAL.value)
         self.mode.addItem("1D XY", ViewMode.XY.value)
         self.mode.addItem("3D point cloud", ViewMode.POINTS.value)
+        self.mode.addItem("Raw data only (strings)", ViewMode.RAW.value)
         self.mode.currentIndexChanged.connect(self._mode_changed)
         form.addRow("View as", self.mode)
         self.x_axis = NoWheelComboBox()
@@ -719,7 +720,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _sync_export_controls(self) -> None:
         """Offer slice and coordinate layouts only for compatible current data."""
         document, frame, selection = self.document, self.frame, self.frame_selection
-        if document is None or frame is None or selection is None:
+        if document is None or frame is None or selection is None or document.is_text:
             self.export_save.setEnabled(False)
             return
         matrix = selection.mode == ViewMode.MATRIX
@@ -1280,7 +1281,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.crop_x_end.setValue(saved_crop.x_end if saved_crop.x_end is not None else self.crop_x_end.maximum())
             self.crop_y_start.setValue(saved_crop.y_start)
             self.crop_y_end.setValue(saved_crop.y_end if saved_crop.y_end is not None else self.crop_y_end.maximum())
-        self.controls.setEnabled(True)
+        self.controls.setEnabled(not document.is_text)
         self._request_frame()
 
     def _sync_source_selectors(self, component: Component = Component.REAL) -> None:
@@ -1329,16 +1330,20 @@ class ViewerWindow(QtWidgets.QMainWindow):
         document = self.document
         if document is None:
             return
-        self.profile_view.set_derivative_enabled(selection.mode != ViewMode.POINTS)
+        self.profile_view.set_derivative_enabled(selection.mode not in (ViewMode.POINTS, ViewMode.RAW))
         self._updating = True
         self.mode.setCurrentIndex(self.mode.findData(selection.mode.value))
         mode_model = self.mode.model()
         if isinstance(mode_model, QtGui.QStandardItemModel):
+            for index in range(self.mode.count()):
+                item = mode_model.item(index)
+                if item is not None:
+                    item.setEnabled((self.mode.itemData(index) == ViewMode.RAW.value) == document.is_text)
             for mode, count in ((ViewMode.XY, 2), (ViewMode.POINTS, 3)):
                 item = mode_model.item(self.mode.findData(mode.value))
                 if item is not None:
                     item.setEnabled(document.array.ndim == 2 and count in document.array.shape
-                                    and not np.iscomplexobj(document.array))
+                                    and not np.iscomplexobj(document.array) and not document.is_text)
         for combo in (self.x_axis, self.y_axis, self.channel_axis):
             combo.clear()
         self.channel_axis.addItem("None", -1)
@@ -1498,6 +1503,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _selection(self) -> Selection:
         assert self.document is not None
+        if self.document.is_text:
+            return default_selection(self.document)
         mode = ViewMode(self.mode.currentData())
         if mode in (ViewMode.XY, ViewMode.POINTS):
             count = 2 if mode == ViewMode.XY else 3
@@ -1526,7 +1533,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _value_limits(self, selection: Selection) -> Limits:
         """Read current bounds, ignoring any stale settings for complex phase."""
-        if self.document is not None and is_phase_view(self.document, selection):
+        if self.document is not None and (self.document.is_text or is_phase_view(self.document, selection)):
             return Limits()
         return Limits(self._bound(self.filter_low), self._bound(self.filter_high),
                       FilterMode(self.filter_mode.currentText()))
@@ -1581,6 +1588,13 @@ class ViewerWindow(QtWidgets.QMainWindow):
         frame, selection = self.frame, self.frame_selection
         if frame is None or selection is None:
             return
+        if selection.mode == ViewMode.RAW:
+            self._set_view_layout(ViewMode.RAW)
+            self.profile_controls.hide()
+            self.profile_view.clear_selection()
+            self._sync_raw_view()
+            self._sync_frame_controls()
+            return
         matrix = selection.mode == ViewMode.MATRIX
         cloud = selection.mode == ViewMode.POINTS
         self._sync_frame_controls()
@@ -1610,6 +1624,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
         """Refresh settings/export availability without drawing a data view."""
         frame, selection = self.frame, self.frame_selection
         if frame is None or selection is None:
+            return
+        if selection.mode == ViewMode.RAW:
+            self._export_ready = False
+            self.export_box.setEnabled(False)
+            self.controls.setEnabled(False)
+            self.statusBar().showMessage("String array · Raw data only; plotting and numeric processing are unavailable.")
             return
         matrix = selection.mode == ViewMode.MATRIX
         cloud = selection.mode == ViewMode.POINTS
@@ -1676,19 +1696,20 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 self.profile_layout.setContentsMargins(0, CONTENT_MARGIN, 0, 0)
             self.tabs.setTabText(0, "1D plot" if signal else "2D image")
             self.tabs.setTabText(1, "1D Derivative" if signal else "3D point cloud" if cloud else "3D surface")
-            self.tabs.setTabVisible(0, not cloud)
-            self.tabs.setTabEnabled(0, not cloud)
-            self.tabs.setTabVisible(1, True)
-            self.tabs.setTabEnabled(1, True)
+            self.tabs.setTabVisible(0, not cloud and mode != ViewMode.RAW)
+            self.tabs.setTabEnabled(0, not cloud and mode != ViewMode.RAW)
+            self.tabs.setTabVisible(1, mode != ViewMode.RAW)
+            self.tabs.setTabEnabled(1, mode != ViewMode.RAW)
             if changed:
-                self.tabs.setCurrentIndex(self._matrix_tab if matrix else 1 if cloud else 0)
+                self.tabs.setCurrentIndex(2 if mode == ViewMode.RAW else self._matrix_tab if matrix else 1 if cloud else 0)
             if signal:
                 self._show_signal_tab()
-            self.profile_area.setVisible(not cloud)
+            self.profile_area.setVisible(not cloud and mode != ViewMode.RAW)
             if changed and matrix:
                 self.vertical.setSizes(self._matrix_split)
         self._layout_mode = mode
-        self.hint.setText(SIGNAL_HINT if signal else SURFACE_HINT if cloud else f"{SIGNAL_HINT} · {SURFACE_HINT}")
+        self.hint.setText("String array · Raw data only · Ctrl+C: copy selection" if mode == ViewMode.RAW else
+                          SIGNAL_HINT if signal else SURFACE_HINT if cloud else f"{SIGNAL_HINT} · {SURFACE_HINT}")
 
     def _show_signal_tab(self) -> None:
         """Move the shared profile/toolbar into the selected full-height page.
