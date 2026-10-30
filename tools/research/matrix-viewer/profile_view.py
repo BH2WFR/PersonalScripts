@@ -17,14 +17,20 @@ Current full-resolution traces are exposed read-only for independent slice copie
 The point-diameter control styles signal and cached derivative samples together;
 nonfinite and undefined-derivative annotations keep their separate marker sizes.
 Style definitions and labels come from render_style, shared with 2D/3D views.
-The compact toolbar keeps View settings and Fit curve. Its original appearance
-controls are hosted in the workspace dialog, shared with canvas menu actions.
+View settings and Fit curve occupy the tab-bar corner. A bold source label,
+legend and hover readings sit above the canvas. Range extrema flank the X-axis
+title below the canvas. Derivative explanations wrap beside their controls.
+An optional expanding Y guard retains range history across data changes and
+shares it with the overlay pane. Signal/derivative histories remain independent.
+It runs on normal range events, without polling, and is suspended for export
+layout reflows so exported figures cannot change the live accumulated bounds.
 
 Requirements: PySide6, pyqtgraph and numpy.
 Usage: embedded below matrix views or used alone for signal data.
 """
 
 from enum import IntEnum
+import math
 from dataclasses import dataclass, replace
 from collections.abc import Sequence
 from time import perf_counter
@@ -34,13 +40,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 from pyqtgraph.graphicsItems.PlotItem.PlotItem import PlotItem
 from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
-from pyqtgraph.graphicsItems.AxisItem import AxisItem
 
 from .data_model import (DEFAULT_CLIP_COLOR, FloatArray, ImageMember, Limits, RealArray, BoolArray,
                          apply_value_limits, format_sample, normalize_image_alpha)
 from .clipping import ClippedCurve, clip_curve
 from .derivatives import DerivativeResult, differentiate
-from .plot_support import compact_axis, graphics_scene, pyside_graphics_view
+from .plot_support import EndpointAxis, RangeNotes, compact_axis, graphics_scene, pyside_graphics_view
 from .profile_legend import ProfileLegend
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox
 from .value_markers import MarkerStyle, curve_markers
@@ -63,6 +68,7 @@ MONO_OUTLINE_COLOR = "#dce5f2"
 MONO_OUTLINE_WIDTH = 3
 ANNOTATION_Z_VALUE = 1
 MIN_PROFILE_PLOT_HEIGHT = 160
+PROFILE_TITLE_POINT_INCREMENT = 1.0
 
 
 def _channel_label(channel: ImageMember | None, alpha_weighted: bool) -> str:
@@ -110,8 +116,58 @@ class JumpMode(IntEnum):
     GAPS_ONLY = 3
 
 
+@dataclass
+class ExpandingYRange:
+    """Workspace history shared by ordinary and overlay views of one quantity."""
+
+    enabled: bool = False
+    bounds: tuple[float, float] | None = None
+
+
 class ProfileViewBox(ViewBox):
     """Pan freely; zoom X with the wheel, or XY with Ctrl/an equal-unit lock."""
+
+    def __init__(self) -> None:
+        self.y_range_lock = ExpandingYRange()
+        self._enforcing_y_lock = False
+        super().__init__()
+
+    def enableAutoRange(self, axis: int | str | None = None, enable: bool | float = True,
+                        x: bool | float | None = None, y: bool | float | None = None) -> None:
+        """Keep Y data fitting active while its expanding-range guard is enabled."""
+        super().enableAutoRange(axis=axis, enable=enable, x=x, y=y)
+        if self.y_range_lock.enabled and not self.signalsBlocked() and self.state["autoRange"][1] is False:
+            super().enableAutoRange(axis=ViewBox.YAxis, enable=True)
+
+    def setRange(self, rect: QtCore.QRectF | None = None,
+                 xRange: Sequence[float] | None = None, yRange: Sequence[float] | None = None,
+                 padding: float | None = None, update: bool = True, disableAutoRange: bool = True) -> None:
+        """Union fitted/manual Y bounds with history without adding padding twice.
+
+        History survives new samples, file switches, empty plots and fitting.
+        X keeps ordinary zoom behavior. Signal and derivative histories are
+        separate; no data calculation or timer is introduced by this guard.
+        """
+        super().setRange(rect=rect, xRange=xRange, yRange=yRange, padding=padding,
+                         update=update, disableAutoRange=disableAutoRange)
+        state = self.y_range_lock
+        # Figure export blocks signals while temporarily resizing/restoring the
+        # plot. Its layout must neither expand history nor force auto-fitting.
+        if not state.enabled or self._enforcing_y_lock or self.signalsBlocked():
+            return
+        self._enforcing_y_lock = True
+        try:
+            bounds = state.bounds
+            if self.childrenBounds()[1] is not None:
+                low, high = self.viewRange()[1]
+                if all(math.isfinite(value) for value in (low, high, high - low)) and low < high:
+                    bounds = (low, high) if bounds is None else (min(bounds[0], low), max(bounds[1], high))
+            if bounds is not None:
+                state.bounds = bounds
+                if tuple(self.viewRange()[1]) != bounds:
+                    super().setRange(yRange=bounds, padding=0, update=update, disableAutoRange=False)
+        finally:
+            self._enforcing_y_lock = False
 
     def childrenBounds(self, frac: Sequence[float] | None = None,
                        orthoRange: Sequence[Sequence[float] | None] = (None, None),
@@ -161,7 +217,7 @@ class ProfileViewBox(ViewBox):
         self.sigRangeChangedManually.emit([True, both])
 
 
-class ProfileValueAxis(AxisItem):
+class ProfileValueAxis(EndpointAxis):
     """Compact Y tick labels without rounding the plotted or exported data."""
 
     def tickStrings(self, values: list[float], scale: float, spacing: float) -> list[str]:
@@ -192,6 +248,7 @@ class CurvePane(QtWidgets.QWidget):
 
     def __init__(self, y_label: str, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.extrema_generation = 0
         self.view_box = ProfileViewBox()
         self.plot_item = PlotItem(viewBox=self.view_box, axisItems={"left": ProfileValueAxis("left")})
         self.plot = pg.PlotWidget(plotItem=self.plot_item)
@@ -201,6 +258,7 @@ class CurvePane(QtWidgets.QWidget):
         for name in ("bottom", "left"):
             compact_axis(self.plot_item.getAxis(name))
         self.plot_item.showGrid(x=True, y=True, alpha=0.2)
+        self.range_notes = RangeNotes(self.view_box, "Y", follow_y=True, footer=self.plot_item)
         self.view_box.setMouseMode(ViewBox.PanMode)
         self.curve = pg.PlotDataItem()
         self.plot_item.addItem(self.curve)
@@ -234,6 +292,7 @@ class CurvePane(QtWidgets.QWidget):
             point_size: Sample diameter in screen pixels.
         """
         y = np.where(valid, values, np.nan)
+        self.range_notes.show()
         ordered = x_values is None or bool(np.all(np.isfinite(x_values)) and np.all(x_values[1:] >= x_values[:-1]))
         curve = self.curve if channel is None else self.channel_curves[channel]
         outlined = self._dark and channel == ImageMember.MONO
@@ -271,8 +330,16 @@ class CurvePane(QtWidgets.QWidget):
     def clear_curves(self) -> None:
         """Clear all plotted data while retaining channel items and styling."""
         self.curve.clear()
+        self.invalidate_extrema()
+        self.range_notes.hide()
         for item in self.channel_curves.values():
             item.clear()
+
+    def invalidate_extrema(self) -> None:
+        """Drop data-extrema captions when samples or derivative inputs change."""
+        self.extrema_generation += 1
+        self.range_notes.data_extrema = None
+        self.range_notes.update()
 
     def set_theme(self, dark: bool) -> None:
         """Change only this plotting canvas and axes, leaving Qt widgets native.
@@ -281,6 +348,7 @@ class CurvePane(QtWidgets.QWidget):
             dark: True selects a dark plot background.
         """
         self._dark = dark
+        self.range_notes.set_theme(dark)
         self.plot.setBackground("#151b25" if dark else "#ffffff")
         monochrome = self.channel_curves.get(ImageMember.MONO)
         if monochrome is not None:
@@ -330,8 +398,14 @@ class ProfileView(QtWidgets.QWidget):
         self._derivative_timer.timeout.connect(self._ensure_derivative)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        bar = QtWidgets.QHBoxLayout()
+        self.info_bar = QtWidgets.QWidget()
+        bar = QtWidgets.QHBoxLayout(self.info_bar)
+        bar.setContentsMargins(2, 0, 2, 0)
         self.title = QtWidgets.QLabel("Signal / profile")
+        title_font = self.title.font()
+        title_font.setPointSizeF(QtGui.QFontInfo(title_font).pointSizeF() + PROFILE_TITLE_POINT_INCREMENT)
+        title_font.setBold(True)
+        self.title.setFont(title_font)
         self.title.setMinimumWidth(55)
         self.title.setMaximumWidth(170)
         self.title.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Preferred)
@@ -360,23 +434,29 @@ class ProfileView(QtWidgets.QWidget):
         self.settings_button = QtWidgets.QPushButton("View settings…")
         self.settings_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         self.settings_button.setToolTip("Signal / derivative style, colors and value markers.")
-        bar.addWidget(self.settings_button)
+        self.tab_actions = QtWidgets.QWidget()
+        actions_layout = QtWidgets.QHBoxLayout(self.tab_actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(2)
+        actions_layout.addWidget(self.settings_button)
+        self.extrema_button = QtWidgets.QPushButton("Calculate extrema")
+        actions_layout.addWidget(self.extrema_button)
         fit = QtWidgets.QPushButton("Fit curve")
         fit.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         fit.clicked.connect(self.reset_view)
-        bar.addWidget(fit)
+        actions_layout.addWidget(fit)
         self.readout = QtWidgets.QLabel("Move over the curve to inspect a sample")
         self.readout.setMinimumWidth(120)
-        self.readout.setMaximumWidth(250)
         self.readout.setFixedHeight(self.readout.fontMetrics().lineSpacing())
         self.readout.setWordWrap(False)
         self.readout.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         bar.addWidget(self.readout, 1)
-        layout.addLayout(bar)
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setCornerWidget(self.tab_actions, QtCore.Qt.Corner.TopRightCorner)
         self.signal_pane = CurvePane("Value (y)")
+        self._signal_layout = self.signal_pane.layout()
         self.tabs.addTab(self.signal_pane, "Signal")
         # Keep the signal canvas accessible to linked views and coordinate probes.
         self.view_box, self.plot_item = self.signal_pane.view_box, self.signal_pane.plot_item
@@ -394,6 +474,7 @@ class ProfileView(QtWidgets.QWidget):
         # ── derivative settings and lazy canvas ────────────
         page = QtWidgets.QWidget()
         derivative_layout = QtWidgets.QVBoxLayout(page)
+        self._derivative_layout = derivative_layout
         derivative_layout.setContentsMargins(0, 0, 0, 0)
         settings = QtWidgets.QHBoxLayout()
         self.jump_mode = NoWheelComboBox()
@@ -408,7 +489,6 @@ class ProfileView(QtWidgets.QWidget):
         self.jump_threshold.setKeyboardTracking(False)
         self.jump_threshold.setEnabled(False)
         settings.addWidget(self.jump_threshold)
-        settings.addStretch()
         derivative_layout.addLayout(settings)
         self.derivative_pane = CurvePane("dy / dx")
         self.undefined_markers = pg.ScatterPlotItem(
@@ -422,12 +502,23 @@ class ProfileView(QtWidgets.QWidget):
             "Red dots at y=0: undefined / omitted derivatives; not zero derivatives."
         )
         self.derivative_note.setWordWrap(True)
-        derivative_layout.addWidget(self.derivative_note)
+        self.derivative_note.setMinimumWidth(180)
+        self.derivative_note.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
+        settings.addWidget(self.derivative_note, 1)
         self.tabs.addTab(page, "Derivative")
+        self.tabs.currentChanged.connect(self._move_info_bar)
         self.tabs.currentChanged.connect(self._tab_changed)
         self.jump_mode.currentIndexChanged.connect(self._jump_mode_changed)
         self.jump_threshold.valueChanged.connect(self._invalidate_derivative)
         layout.addWidget(self.tabs)
+        self._move_info_bar()
+
+    def _move_info_bar(self) -> None:
+        """Keep shared source/legend/hover widgets below the active page's tabs."""
+        layout = self._derivative_layout if self.tabs.currentIndex() == 1 else self._signal_layout
+        if isinstance(layout, QtWidgets.QVBoxLayout):
+            layout.insertWidget(0, self.info_bar)
+            self.info_bar.show()
 
     def set_data(self, values: RealArray, valid: BoolArray, title: str,
                  reset: bool = False, *, x_start: int = 0,
@@ -491,6 +582,7 @@ class ProfileView(QtWidgets.QWidget):
                 self.derivative_pane.view_box.enableAutoRange()
             return
         self.values, self.valid = values, valid
+        self.signal_pane.invalidate_extrema()
         self.channel_values, self.channel_names = channel_values, channel_names
         self.alpha_weighted = alpha_weighted
         self.legend_bar.set_entries(tuple((_channel_label(channel, alpha_weighted), CHANNEL_COLORS[channel]) for channel in channel_names))
@@ -563,6 +655,7 @@ class ProfileView(QtWidgets.QWidget):
         """
         self._external_tabs = external
         self.tabs.tabBar().setVisible(not external)
+        self.tab_actions.setVisible(not external)
 
     def set_derivative_enabled(self, enabled: bool) -> None:
         """Enable derivative inspection only for ordered signal/profile modes.
@@ -840,8 +933,8 @@ class ProfileView(QtWidgets.QWidget):
         marker_count = sum(len(result.undefined_indices) for result in results.values())
         jump_count = sum(result.jump_count for result in results.values())
         self.derivative_note.setText(
-            f"Red dots at y=0: undefined / omitted, not zero. "
-            f"{marker_count:,} markers; {jump_count:,} suspected jumps. "
+            f"Red dots at y=0: undefined / omitted, not zero.\n"
+            f"{marker_count:,} markers; {jump_count:,} suspected jumps.\n"
             + ("Sorted by X with actual spacing; repeated X treated as gaps." if self.x_values is not None else "dx=1;")
             + (" Color/gray multiplied by alpha; A in source units; clipped samples omitted."
                if self.alpha_weighted else " Original values, clipped samples omitted.")

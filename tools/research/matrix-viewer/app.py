@@ -24,6 +24,7 @@ Value bounds share one input row and can be reverted independently of XY/color l
 Complex Phase disables Z/value-bound controls; X/Y cropping remains available.
 Fusion keeps native widget painting with 2 px layout padding/vertical gaps and
 4 px horizontal gaps; the main content margins are 6 px except 2 px at the top.
+Dialog outer left/right/bottom margins are 6 px; their top margin is preserved.
 Splitter handles are blue, turning amber on hover and orange while dragging.
 2D/3D matrices offer discrete points with independent pixel diameters. Their
 sampling shares Maximum grid edge; image pixels and signal data stay full size.
@@ -31,6 +32,9 @@ All spin boxes ignore wheel events, including focused controls and dialogs.
 The sidebar contains interpretation, cropping and sampling controls. Appearance
 panels are hosted by the workspace's View settings dialog; slice navigation
 and Fit commands remain beside the plots.
+An optional shared color-range lock only expands bounds as scalar matrices or
+channels are displayed. It never overwrites per-channel manual color settings;
+turning it off restores them. Image composites and solid overlays are excluded.
 
 Requirements: numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
 pyvista, pyvistaqt, vtk, scipy and h5py. Usage: run the matrix-viewer.py launcher.
@@ -74,6 +78,7 @@ DEFAULT_MATRIX_SPLIT: tuple[int, int] = (580, 290)
 ARRAY_SELECTOR_CHARACTERS = 12
 DISPLAY_SELECTOR_CHARACTERS = 18
 CONTENT_MARGIN = 2
+DIALOG_SIDE_MARGIN = 6
 VERTICAL_SPACING = 2
 HORIZONTAL_SPACING = 4
 SPLITTER_COLOR = "#2496ed"
@@ -87,7 +92,7 @@ LAYOUT_MARGIN_METRICS: frozenset[QtWidgets.QStyle.PixelMetric] = frozenset((
     QtWidgets.QStyle.PixelMetric.PM_LayoutBottomMargin,
 ))
 SIGNAL_HINT = "1D wheel: zoom X · Ctrl+wheel: zoom XY · Left drag: pan"
-SURFACE_HINT = "3D middle / Ctrl+left: orbit · Ctrl+middle: pan · Right / Alt+middle: roll"
+SURFACE_HINT = "3D middle / Ctrl+left: orbit · Ctrl+middle: pan · Right / Alt+left / Alt+middle: roll"
 FILE_FILTER = "Matrices and images (*.npy *.npz *.mat *.xlsx *.xlsm *.xls *.csv *.txt *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;Excel workbooks (*.xlsx *.xlsm *.xls);;MATLAB arrays (*.mat);;Text tables (*.csv *.txt);;All files (*)"
 
 
@@ -96,6 +101,19 @@ class _StyleOptionFields(Protocol):
 
     state: QtWidgets.QStyle.StateFlag
     rect: QtCore.QRect
+
+
+class DialogMargins(QtCore.QObject):
+    """Give every Qt dialog six-pixel side/bottom margins, retaining its top."""
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        """Apply outer dialog spacing once it is fully constructed and shown."""
+        if event.type() == QtCore.QEvent.Type.Show and isinstance(watched, QtWidgets.QDialog):
+            layout = watched.layout()
+            if layout is not None:
+                top = layout.contentsMargins().top()
+                layout.setContentsMargins(DIALOG_SIDE_MARGIN, top, DIALOG_SIDE_MARGIN, DIALOG_SIDE_MARGIN)
+        return False
 
 
 class CompactFusionStyle(QtWidgets.QProxyStyle):
@@ -109,6 +127,10 @@ class CompactFusionStyle(QtWidgets.QProxyStyle):
 
     def __init__(self) -> None:
         super().__init__("Fusion")
+        self._dialog_margins = DialogMargins(self)
+        application = QtWidgets.QApplication.instance()
+        if application is not None:
+            application.installEventFilter(self._dialog_margins)
 
     def pixelMetric(self, metric: QtWidgets.QStyle.PixelMetric,
                     option: QtWidgets.QStyleOption | None = None,
@@ -228,6 +250,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._reset_pending = True
         self._surface_dirty = True
         self._surface_reset = True
+        self._locked_color_limits: tuple[float, float] | None = None
         self._serial = 0
         self._latest: dict[JobKind, int] = {}
         self._jobs: dict[int, Job] = {}
@@ -527,6 +550,13 @@ class ViewerWindow(QtWidgets.QMainWindow):
         display.addRow("Color maximum", self.color_high)
         for entry in (self.color_low, self.color_high):
             entry.editingFinished.connect(self._presentation_changed)
+        self.color_range_lock = QtWidgets.QCheckBox("Lock color range (2D / 3D, expand only)")
+        self.color_range_lock.setToolTip(
+            "Shared by 2D/3D across matrix/channel switches. Minimum can only decrease; maximum can only increase. "
+            "Turn off to restore each channel's own bounds; turn on again to start a new range. "
+            "Original image colors and solid-color overlays do not contribute.")
+        self.color_range_lock.toggled.connect(self._color_range_lock_changed)
+        display.addRow(self.color_range_lock)
         self.theme = NoWheelComboBox()
         self.theme.addItems(["Dark", "Light"])
         self.theme.setCurrentIndex(1)
@@ -1584,6 +1614,29 @@ class ViewerWindow(QtWidgets.QMainWindow):
             raise ValueError("Color minimum must be less than color maximum.")
         return lower, upper
 
+    def _color_range_lock_changed(self, _enabled: bool) -> None:
+        """Start/end a shared color-range session without editing channel settings."""
+        self._locked_color_limits = None
+        self._presentation_changed()
+
+    def _display_color_levels(self, automatic: tuple[float, float]) -> tuple[float, float]:
+        """Expand the locked range only when rendering a finite scalar view.
+
+        Validation uses _color_levels separately, so unread/hidden matrices and
+        failed preparations cannot pollute the shared range. The lock never
+        writes per-channel manual bounds or changes source/cropped samples.
+        """
+        levels = self._color_levels(automatic)
+        if not self.color_range_lock.isChecked() or self.frame is None or self.frame.composite:
+            return levels
+        if not np.any(self.frame.valid):
+            return self._locked_color_limits or levels
+        if self._locked_color_limits is not None:
+            levels = (min(levels[0], self._locked_color_limits[0]),
+                      max(levels[1], self._locked_color_limits[1]))
+        self._locked_color_limits = levels
+        return levels
+
     def _show_frame(self, reset: bool) -> None:
         frame, selection = self.frame, self.frame_selection
         if frame is None or selection is None:
@@ -1738,7 +1791,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         for control in (self.colormap, self.color_low, self.color_high):
             control.setEnabled(not self.frame.composite)
         try:
-            levels = self._color_levels(self.frame.limits)
+            levels = self._display_color_levels(self.frame.limits)
         except ValueError as exc:
             self.statusBar().showMessage(f"Invalid setting: {exc}")
             return
@@ -1796,7 +1849,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if self._surface_dirty:
             try:
                 self.surface_view.set_frame(self.frame, self.colormap.currentText(),
-                                            self._color_levels(self.frame.limits), self.height_scale.value(),
+                                            self._display_color_levels(self.frame.limits), self.height_scale.value(),
                                             self._surface_reset, self.point_size.value(),
                                             highlight_clipped=self.highlight_clipped.isChecked(),
                                             style=SurfaceStyle(self.surface_style.currentText()))

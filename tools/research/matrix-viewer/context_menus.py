@@ -7,19 +7,22 @@ The 3D menu offers equal XYZ data-unit scaling for all visible layers.
 Image, signal and derivative menus independently toggle equal X:Y unit scaling.
 The matrix's signal menu can add visible slices as independent in-memory matrices.
 The tree menu also packages every source matrix, checked or hidden, in one archive.
-2D/3D Appearance menus reuse active-channel rendering, diameter, colormap,
-overlay color/opacity and clipping-color controls. Hidden editing targets are
+2D/3D Appearance menus contain rendering and marker controls; the sibling
+Color / color range menu groups colormaps, scalar bounds, overlay colors,
+opacity, slice/clipping colors and plot background. Hidden editing targets are
 disabled here to avoid changing an unseen matrix from a displayed plot. Plot
 background remains global. Numeric menu editors ignore the wheel and synchronize
 with their original controls; signal/derivative menus share the 1D point size.
 Every canvas also opens the centralized View settings dialog on its own page.
-Quick style/color actions consistently live in Appearance submenus.
+1D quick style/color actions remain together in Appearance.
 Scaling groups manual ranges/multipliers, one-shot fitting and equal-unit
 presets. Camera orientation remains separate; neither menu computes derivatives.
 Plot menus group view, appearance, slice, processing and export commands in a
 fixed order. Tree menus group file, selection/display, data and close actions.
 Raw menus offer selection/navigation/table controls without activating a matrix.
 Menu captions omit source names; full matrix identity stays in tooltips/UI headers.
+Matrix properties are available for tree, raw and plot targets; overlays offer
+a source/channel submenu. Statistics are never calculated by opening a menu.
 """
 
 from collections.abc import Callable
@@ -37,6 +40,7 @@ from .qt_widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
 from .raw_view import DEFAULT_COLUMN_WIDTH
 from .workspace import MatrixEntry
 from .view_scaling import Axis, EqualAxes, FINE_ZOOM_STEP, ZOOM_STEP
+from .matrix_properties import MatrixPropertiesDialog, capture_view_properties
 
 if TYPE_CHECKING:
     from .workspace_window import WorkspaceWindow
@@ -181,6 +185,31 @@ class WorkspaceMenus(QtCore.QObject):
         processing.addSeparator()
         processing.addAction(window.merge_action)
 
+    def _show_properties(self, entry: MatrixEntry) -> None:
+        """Inspect a snapshot of the chosen channel without activating it."""
+        window = self.window
+        settings = dict(window._read_settings() if entry is window._entry() else entry.settings)
+        settings.update({"shared_color_lock": window.color_range_lock.isChecked(),
+                         "shared_locked_color_range": str(window._locked_color_limits),
+                         "signal_y_lock": window.scaling.y_range_lock,
+                         "geometry_z_lock": window.surface_view.z_range_lock,
+                         "geometry_z_range": str(window.surface_view.effective_z_range),
+                         "scene_xyz_scale": str(window.surface_view.canvas.axis_scale)})
+        dialog = MatrixPropertiesDialog(entry, settings, window, view=capture_view_properties(window, entry))
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.exec()
+
+    def _properties(self, menu: QtWidgets.QMenu, entries: tuple[MatrixEntry, ...]) -> None:
+        """Provide a direct entry or select among the matrices actually shown."""
+        if len(entries) <= 1:
+            self._add(menu, "Matrix properties…",
+                      partial(self._show_properties, entries[0]) if entries else lambda: None,
+                      enabled=bool(entries))
+        else:
+            submenu = menu.addMenu("Matrix properties")
+            for entry in entries:
+                self._add(submenu, self.window._channel_label(entry), partial(self._show_properties, entry))
+
     def _export(self, target: ExportTarget, *, channel: bool = False) -> None:
         self.window._open_export_dialog(target, channel=channel)
 
@@ -245,6 +274,7 @@ class WorkspaceMenus(QtCore.QObject):
         self._file_actions(menu)
         if entry is not None:
             menu.addSection("Selected matrix")
+            self._properties(menu, (entry,))
             self._add(menu, "Rename…", window._rename_selected)
             self._add(menu, "Copy source path", lambda: QtWidgets.QApplication.clipboard().setText(str(entry.document.path)))
             display = menu.addMenu("Display")
@@ -331,6 +361,8 @@ class WorkspaceMenus(QtCore.QObject):
         selection = raw.table.selectionModel()
         selected = selection is not None and selection.hasSelection()
         menu = QtWidgets.QMenu(self.window)
+        self._properties(menu, tuple(entry for entry in self.window.entries
+                                    if entry.frame is not None and entry.frame is raw.frame))
         menu.addSection("Selection")
         menu.addAction(raw.copy_action)
         self._add(menu, "Select all", raw.table.selectAll, enabled=ready)
@@ -372,22 +404,49 @@ class WorkspaceMenus(QtCore.QObject):
         appearance = menu.addMenu("Appearance")
         appearance.setEnabled(editable)
         appearance.setToolTipsVisible(True)
-        appearance.menuAction().setToolTip("Select a visible matrix/channel to edit its appearance. Background applies to all plots.")
+        appearance.menuAction().setToolTip("Select a visible matrix/channel to edit its rendering style and markers.")
         is_image = view == FigureView.IMAGE
         self._combo_menu(appearance, "Rendering style", window.image_style if is_image else window.surface_style)
         self._number_menu(appearance, "Point size", window.image_point_size if is_image else window.point_size)
+        return appearance
+
+    def _matrix_colors(self, menu: QtWidgets.QMenu, view: FigureView, editable: bool) -> None:
+        """Group 2D/3D color controls one level below the canvas context menu."""
+        window = self.window
+        active = window._entry()
+        colors = menu.addMenu("Color / color range")
+        colors.setEnabled(editable)
+        colors.setToolTipsVisible(True)
+        colors.menuAction().setToolTip("Colors of the active channel; color range is shared by 2D/3D. Background applies to all plots.")
+        colors.addSection("Scalar colors")
         overlay = window._overlay()
         scalar = active is not None and active.frame is not None and not active.frame.composite
-        self._combo_menu(appearance, "Color map", window.colormap, not overlay and scalar)
-        color = self._add(appearance, "Solid color…", window._choose_layer_color, enabled=overlay)
+        self._combo_menu(colors, "Color map", window.colormap, not overlay and scalar)
+        self._add(colors, "Color range…", partial(window.scaling.show_for, view),
+                  enabled=window.scaling.color_available())
+        self._add(colors, "Lock color range (2D / 3D, expand only)", window.color_range_lock.toggle,
+                  enabled=window.scaling.color_available(), checked=window.color_range_lock.isChecked())
+        colors.addSection("Overlay")
+        color = self._add(colors, "Solid color…", window._choose_layer_color, enabled=overlay)
         color.setToolTip("Per-channel solid color used for overlaid matrices.")
-        self._number_menu(appearance, "Opacity", window.layer_opacity, overlay)
-        appearance.addSeparator()
-        self._combo_menu(appearance, "Plot background (all views)", window.theme)
-        return appearance
+        self._number_menu(colors, "Opacity", window.layer_opacity, overlay)
+        colors.addSection("Annotations")
+        self._add(colors, "Clipping color…", window.clip_color_button.click,
+                  enabled=window.clip_color_button.isEnabled())
+        if window._layout_mode == ViewMode.MATRIX:
+            is_image = view == FigureView.IMAGE
+            self._add(colors, "2D slice color…" if is_image else "3D slice color…",
+                      window._choose_profile_color_2d if is_image else window._choose_profile_color_3d)
+        colors.addSeparator()
+        self._combo_menu(colors, "Plot background (all views)", window.theme)
 
     def _projection(self) -> None:
         self.window.parallel.toggle()
+
+    def _camera_view(self, callback: Callable[[], None]) -> None:
+        """Choose an orientation and refit using any explicit geometry range."""
+        callback()
+        self.window.surface_view.fit_camera()
 
     def _scaling(self, menu: QtWidgets.QMenu, view: FigureView) -> None:
         """Use the same per-axis controls and presets as the scaling dialog."""
@@ -396,6 +455,13 @@ class WorkspaceMenus(QtCore.QObject):
         scale.setEnabled(controller.available(view))
         self._add(scale, "Manual scaling…", partial(controller.show_for, view))
         self._add(scale, "Apply auto scaling", partial(controller.apply_auto, view))
+        if view in (FigureView.SIGNAL, FigureView.DERIVATIVE):
+            self._add(scale, "Lock Y range (expand only)",
+                      partial(controller.set_y_range_lock, not controller.y_range_lock), checked=controller.y_range_lock)
+        elif view == FigureView.SURFACE:
+            self._add(scale, "Lock Z range (expand only)",
+                      partial(controller.set_z_range_lock, not self.window.surface_view.z_range_lock),
+                      checked=self.window.surface_view.z_range_lock)
         scale.addSeparator()
         if view == FigureView.SURFACE:
             for preset in EqualAxes:
@@ -448,13 +514,14 @@ class WorkspaceMenus(QtCore.QObject):
             canvas = window.surface_view.canvas
             for text, callback in (("Isometric", canvas.view_isometric), ("XY / top", canvas.view_xy),
                                    ("XZ / front", canvas.view_xz), ("YZ / side", canvas.view_yz)):
-                self._add(camera, text, callback)
+                self._add(camera, text, partial(self._camera_view, callback))
             camera.addSeparator()
             self._add(camera, "Parallel projection", self._projection, checked=bool(canvas.camera.GetParallelProjection()))
 
         # Appearance edits the active channel; navigation applies to the view.
         if view in (FigureView.IMAGE, FigureView.SURFACE):
             appearance = self._matrix_appearance(menu, view, ready)
+            self._matrix_colors(menu, view, appearance_ready)
         else:
             appearance = menu.addMenu("Appearance")
             appearance.setEnabled(appearance_ready)
@@ -476,8 +543,9 @@ class WorkspaceMenus(QtCore.QObject):
                           checked=window.show_nonfinite.isChecked())
             self._add(markers, "Highlight clipped values", window.highlight_clipped.toggle,
                       enabled=window.highlight_clipped.isEnabled(), checked=window.highlight_clipped.isChecked())
-            self._add(markers, "Clipping color…", window.clip_color_button.click,
-                      enabled=window.clip_color_button.isEnabled())
+            if view == FigureView.SIGNAL:
+                self._add(markers, "Clipping color…", window.clip_color_button.click,
+                          enabled=window.clip_color_button.isEnabled())
         appearance.addSeparator()
         self._add(appearance, "View settings…", partial(window.view_settings.show_for, view), enabled=appearance_ready)
 
@@ -490,12 +558,10 @@ class WorkspaceMenus(QtCore.QObject):
             slice_menu.addSeparator()
             if view == FigureView.SURFACE:
                 self._combo_menu(slice_menu, "3D slice style", window.profile_style)
-                self._add(slice_menu, "3D slice color…", window._choose_profile_color_3d)
-            elif view == FigureView.IMAGE:
-                self._add(slice_menu, "2D slice color…", window._choose_profile_color_2d)
-            else:
+            elif view in (FigureView.SIGNAL, FigureView.DERIVATIVE):
                 self._add(slice_menu, "Auto Y on slice change",
-                          partial(window._set_profile_auto_y, not window._profile_auto_y), checked=window._profile_auto_y)
+                          partial(window._set_profile_auto_y, not window._profile_auto_y), checked=window._profile_auto_y,
+                          enabled=not window.scaling.y_range_lock)
             if view == FigureView.SIGNAL:
                 slice_menu.addSeparator()
                 freeze = self._add(slice_menu, "Add visible slices to matrices", window._add_slice_matrices,
@@ -504,6 +570,7 @@ class WorkspaceMenus(QtCore.QObject):
 
         menu.addSection("Data")
         self._processing(menu)
+        self._properties(menu, tuple(entry for entry in window.entries if entry.visible and entry.frame is not None))
         editable = active is not None and window.controls.isEnabled() and window.matrix_box.isEnabled()
         limits = menu.addMenu("Reset data limits")
         limits.setEnabled(editable)

@@ -9,6 +9,8 @@ outlines can be hidden independently of actual value clamping.
 Discrete points reuse the sampled grid used by 3D, with screen-pixel diameters
 and original scalar/image colors. Overlay layers keep their own style/size.
 Nonfinite annotations remain filled pixels; clipped points use the clip color.
+Color bounds share a compact top information strip with the cursor readout.
+Calculated data extrema sit beside the X-axis title, also in exported figures.
 """
 
 import math
@@ -21,7 +23,7 @@ from pyqtgraph.graphicsItems.PlotItem.PlotItem import PlotItem
 from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
 
 from .data_model import DEFAULT_CLIP_COLOR, ColorArray, Frame, format_sample
-from .plot_support import compact_axis, graphics_scene, pyside_graphics_view
+from .plot_support import AxisFooterLabel, EndpointAxis, RangeLabel, compact_axis, graphics_scene, pyside_graphics_view
 from .workspace import RenderLayer
 from .value_markers import MarkerStyle, nonfinite_mask
 from .coordinates import AxisMap
@@ -52,6 +54,8 @@ class ImageView(QtWidgets.QWidget):
         self._point_size = DEFAULT_POINT_SIZE
         self._cmap = "viridis"
         self._levels = (0.0, 1.0)
+        self.extrema_generation = 0
+        self._extrema_key: tuple[int, ...] = ()
         self.clip_color = QtGui.QColor(DEFAULT_CLIP_COLOR)
         self.marker_style = MarkerStyle()
         layout = QtWidgets.QVBoxLayout(self)
@@ -60,7 +64,11 @@ class ImageView(QtWidgets.QWidget):
         self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.readout.setWordWrap(True)
-        layout.addWidget(self.readout)
+        header = QtWidgets.QHBoxLayout()
+        self.color_range_label = RangeLabel("Color range")
+        header.addWidget(self.color_range_label)
+        header.addWidget(self.readout, 1)
+        layout.addLayout(header)
         self.graphics = pg.GraphicsLayoutWidget()
         self.graphics.ci.layout.setContentsMargins(*(PLOT_CONTENT_MARGIN,) * 4)
         native_view = pyside_graphics_view(self.graphics)
@@ -70,6 +78,8 @@ class ImageView(QtWidgets.QWidget):
         layout.addWidget(native_view)
         self.view_box = ViewBox()
         self.plot = PlotItem(viewBox=self.view_box)
+        self.extrema_label = AxisFooterLabel(self.plot)
+        self.extrema_label.hide()
         self.graphics.ci.addItem(self.plot)
         self.plot.setLabel("bottom", "Column (x)")
         self.plot.setLabel("left", "Row (y)")
@@ -89,6 +99,11 @@ class ImageView(QtWidgets.QWidget):
         self.plot.addItem(self.clip_overlay)
         self.bar = pg.ColorBarItem(values=(0, 1), colorMap=pg.colormap.get("viridis"), interactive=False)
         self.bar.setImageItem(self.item, insert_in=self.plot)
+        self.color_axis = EndpointAxis("right")
+        self.bar.setAxisItems({"right": self.color_axis})
+        self.bar.axis = self.color_axis
+        self.color_axis.unlinkFromView()
+        self.color_axis.setRange(*self.bar.values)
         # ColorBarItem otherwise reserves 45 px even for one-digit labels.
         self.bar.axis.setWidth(None)
         compact_axis(self.bar.axis)
@@ -113,6 +128,7 @@ class ImageView(QtWidgets.QWidget):
             Updates the image, colorbar and cursor label.
         """
         self._clear_layers()
+        self._invalidate_extrema((id(frame),))
         self._style, self._point_size, self._cmap, self._levels = style, point_size, cmap, levels
         self.item.setVisible(style == ImageStyle.IMAGE)
         self.points.setVisible(style == ImageStyle.POINTS)
@@ -126,6 +142,7 @@ class ImageView(QtWidgets.QWidget):
                           w * frame.x_mapping.scale, h * frame.y_mapping.scale)
         self._update_clip_overlay()
         self.bar.setVisible(not frame.composite)
+        self.color_range_label.set_limits(None if frame.composite else levels)
         if frame.composite:
             # setOpts supports clearing the LUT; setLookupTable's annotation omits None.
             # Override any initial deferred colorbar levels after setImage, so
@@ -146,6 +163,14 @@ class ImageView(QtWidgets.QWidget):
         self._layer_points.clear()
         self._layer_keys.clear()
         self._layers = ()
+
+    def _invalidate_extrema(self, key: tuple[int, ...]) -> None:
+        """Clear manually calculated data bounds only when source data changes."""
+        if key != self._extrema_key:
+            self._extrema_key = key
+            self.extrema_generation += 1
+            self.extrema_label.clear()
+            self.extrema_label.hide()
 
     def _axis_labels(self, frame: Frame) -> None:
         independent = bool(frame.x_grid and frame.x_grid.symbol == "ω"
@@ -181,6 +206,7 @@ class ImageView(QtWidgets.QWidget):
             reset: Fit all aligned extents when True.
         """
         self.frame = None
+        self._invalidate_extrema(tuple(id(layer.frame) for layer in layers))
         self._layers = layers
         if layers:
             self._axis_labels(layers[0].frame)
@@ -190,6 +216,7 @@ class ImageView(QtWidgets.QWidget):
         self._point_key = ()
         self.clip_overlay.hide()
         self.bar.hide()
+        self.color_range_label.set_limits(None)
         wanted = {layer.uid for layer in layers}
         for uid in tuple(self._layer_items):
             if uid not in wanted:
@@ -420,6 +447,8 @@ class ImageView(QtWidgets.QWidget):
             axis = self.plot.getAxis(name)
             axis.setPen("#adb9cb" if dark else "#465368")
             axis.setTextPen("#dce5f2" if dark else "#263247")
+        self.bar.axis.setPen("#adb9cb" if dark else "#465368")
+        self.bar.axis.setTextPen("#dce5f2" if dark else "#263247")
 
     def _hover(self, position: QtCore.QPointF) -> None:
         if self._layers:

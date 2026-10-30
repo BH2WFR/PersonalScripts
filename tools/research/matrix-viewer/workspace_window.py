@@ -8,7 +8,8 @@ Numeric 3D arrays prompt for an axis to split into independent 2D matrices or
 skip that member. Skipping all incoming members retains the existing session.
 NPZ selection also offers a filename-prefix checkbox, including single-member
 archives. Short names retain full source tooltips. Tree columns resize manually
-and scroll horizontally; refreshes preserve widths, with the name widest by default.
+and scroll horizontally; refreshes preserve widths. Each completed import batch
+fits the name column once, leaving subsequent manual resizing intact.
 Scaling menus and View settings share view-wide ranges and XYZ multipliers.
 Auto scaling fits once; equal-axis presets reset only matched stretch alignments
 and reset matrix height for Z pairs. Numerical exports retain source coordinates.
@@ -112,6 +113,7 @@ from .exporting import ExportFormat, ExportLayout, ExportSnapshot, ExportTarget
 from .excel_io import serialize_excel
 from .figure_dialog import FigureExportDialog
 from .figure_export import FigureSource, FigureView, figure_stem, plot_source, surface_source
+from .view_extrema import ViewExtrema
 from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox
 from .profile_view import CHANNEL_COLORS, JumpMode
@@ -170,6 +172,7 @@ class WorkspaceWindow(ViewerWindow):
         self._rendering = False
         self._append_pending = False
         self._pending_files: deque[tuple[Path, str | None, ViewMode | None, int | None]] = deque()
+        self._name_fit_pending = False
         self._opening_modes: dict[tuple[int, int, bool], ViewMode] = {}
         self._split_choices: dict[tuple[SplitAxis, int], bool] = {}
         self._workspace_ready = False
@@ -211,7 +214,19 @@ class WorkspaceWindow(ViewerWindow):
         self.view_settings = ViewSettingsDialog(self)
         self.view_settings_button = QtWidgets.QPushButton("View settings…")
         self.view_settings_button.clicked.connect(self.view_settings.show_current)
-        self.tabs.setCornerWidget(self.view_settings_button, QtCore.Qt.Corner.TopRightCorner)
+        self.profile_fit_button = QtWidgets.QPushButton("Fit curve")
+        self.profile_fit_button.clicked.connect(
+            lambda: (self.overlay_profile if self._profile_uses_overlay else self.profile_view).reset_view())
+        tab_actions = QtWidgets.QWidget()
+        tab_actions_layout = QtWidgets.QHBoxLayout(tab_actions)
+        tab_actions_layout.setContentsMargins(0, 0, 0, 0)
+        tab_actions_layout.setSpacing(2)
+        tab_actions_layout.addWidget(self.view_settings_button)
+        self.extrema_button = QtWidgets.QPushButton("Calculate extrema")
+        tab_actions_layout.addWidget(self.extrema_button)
+        tab_actions_layout.addWidget(self.profile_fit_button)
+        self.tabs.setCornerWidget(tab_actions, QtCore.Qt.Corner.TopRightCorner)
+        self.view_extrema = ViewExtrema(self)
         self.tabs.currentChanged.connect(self.view_settings.refresh)
         for profile in (self.profile_view, self.overlay_profile):
             profile.settings_button.clicked.connect(self.view_settings.show_profile)
@@ -1250,7 +1265,15 @@ class WorkspaceWindow(ViewerWindow):
 
     def _open_next_path(self) -> None:
         """Append the next queued file after the preceding import has finished."""
-        if self._closing or not self._pending_files:
+        if self._closing:
+            return
+        if not self._pending_files:
+            if self._name_fit_pending:
+                self._name_fit_pending = False
+                self.matrix_list.resizeColumnToContents(0)
+                self.matrix_list.setColumnWidth(0, max(self.matrix_list.columnWidth(column)
+                                                       for column in range(self.matrix_list.columnCount())))
+                self.matrix_list.horizontalScrollBar().setValue(0)
             return
         path, key, mode, channel_axis = self._pending_files.popleft()
         self._initial_mode, self._initial_channel_axis = mode, channel_axis
@@ -1515,6 +1538,7 @@ class WorkspaceWindow(ViewerWindow):
         self.reference_uid = (self.reference_uid or self.entries[0].uid) if multiple else added[0].uid
         self._initial_mode = None
         self._initial_channel_axis = None
+        self._name_fit_pending = True
         self._activate(added[0], reset_selection=not self._append_pending)
         if problems:
             QtWidgets.QMessageBox.warning(self, "Some matrices were not displayed", "\n\n".join(problems))
@@ -2281,13 +2305,17 @@ class WorkspaceWindow(ViewerWindow):
         # This is a one-off UI event flush, not a polling timer.
         QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         if view == FigureView.IMAGE:
-            return plot_source(view, self.image_view.plot, pyside_graphics_view(self.image_view.graphics),
-                               title, stem, legend)
+            source = plot_source(view, self.image_view.plot, pyside_graphics_view(self.image_view.graphics),
+                                 title, stem, legend)
+            return replace(source, top_caption=self.image_view.color_range_label.text())
         if view == FigureView.SURFACE:
             if self._surface_dirty:
                 raise RuntimeError("The 3D scene is not ready. Open the 3D tab and check its rendering status.")
-            return surface_source(self.surface_view.canvas, title, stem, legend,
-                                  f"Uses the current 3D mesh / point sampling. {self.surface_view.resolution.text()}")
+            source = surface_source(self.surface_view.canvas, title, stem, legend,
+                                    f"Uses the current 3D mesh / point sampling. {self.surface_view.resolution.text()}")
+            return replace(source, top_caption=self.surface_view.color_range_label.text(),
+                           bottom_caption=" | ".join(text for text in (
+                               self.surface_view.extrema_label.text(), self.surface_view.z_range_label.text()) if text))
         pane = profile.derivative_pane if view == FigureView.DERIVATIVE else profile.signal_pane
         if len(names) == 1:
             title = f"{title} / {profile.title.text()}" if mode == ViewMode.MATRIX else title

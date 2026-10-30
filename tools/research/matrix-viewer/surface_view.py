@@ -12,6 +12,16 @@ bounds, slice markers and overlay alignment; source values are unchanged.
 Scene axis multipliers are a separate display transform shared by meshes,
 clipping caps and slice markers. Picking and tick ranges undo that transform;
 per-matrix height/alignment remains independent and numeric exports are untouched.
+Optional view-wide Z bounds clip only rendering and set the axis/camera box.
+They use displayed height/alignment coordinates before scene multipliers, are
+independent of scalar color bounds, and survive geometry and slice updates.
+Rounded XYZ ticks run across their axes; precise color/Z ranges use compact Qt
+information strips above/below the scene, with the normal application font.
+Optional endpoint-inclusive Z/color ticks survive scene rebuilds, default off.
+An independent expand-only Z range lock accumulates the geometry box across
+matrices, overlays and height changes. Turning it off restores manual/auto Z
+bounds; scalar color locking remains shared by 2D/3D and entirely separate.
+Alt+left, Alt+middle and right drag all roll the camera.
 """
 
 import math
@@ -23,10 +33,13 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker
 from vtkmodules.vtkCommonMath import vtkMatrix4x4
+from vtkmodules.vtkCommonDataModel import vtkPlane
+from vtkmodules.vtkCommonCore import vtkDoubleArray
 
 from .data_model import DEFAULT_CLIP_COLOR, ColorArray, FilterMode, FloatArray, Frame, format_sample
 from .workspace import RenderLayer, profile_series
 from .render_style import DEFAULT_POINT_SIZE, SurfaceStyle
+from .plot_support import RangeLabel
 
 HOVER_INTERVAL_MS = 35
 ROTATION_DEGREES_PER_PIXEL = 0.45
@@ -71,6 +84,7 @@ class SurfaceCanvas(QtInteractor):
     """
 
     coordinate_changed = QtCore.Signal(str)
+    fit_requested = QtCore.Signal()
 
     def __init__(self, parent: QtWidgets.QWidget) -> None:
         super().__init__(parent=parent, auto_update=False, multi_samples=0)
@@ -101,7 +115,8 @@ class SurfaceCanvas(QtInteractor):
         self._hover_timer.stop()
         modifiers = event.modifiers()
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
-            self._action = (Gesture.ORBIT if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
+            self._action = (Gesture.ROLL if modifiers & QtCore.Qt.KeyboardModifier.AltModifier else
+                            Gesture.ORBIT if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
                             else Gesture.PAN)
         elif event.button() == QtCore.Qt.MouseButton.RightButton:
             self._action = Gesture.ROLL
@@ -182,7 +197,7 @@ class SurfaceCanvas(QtInteractor):
             event: Native key press. F resets the camera; other keys propagate.
         """
         if event.key() == QtCore.Qt.Key.Key_F:
-            self.reset_camera()
+            self.fit_requested.emit()
             event.accept()
         else:
             event.ignore()
@@ -300,6 +315,13 @@ class SurfaceView(QtWidgets.QWidget):
         super().__init__(parent)
         self.dark = True
         self.z_scale = 1.0
+        self.z_view_range: tuple[float, float] | None = None
+        self.z_range_lock = False
+        self._locked_z_range: tuple[float, float] | None = None
+        self.endpoint_ticks = False
+        self._color_limits: tuple[float, float] | None = None
+        self.extrema_generation = 0
+        self._extrema_key: tuple[int, ...] = ()
         self._by_row = True
         self._index: int | None = 0
         self.profile_color = DEFAULT_PROFILE_COLOR
@@ -321,13 +343,28 @@ class SurfaceView(QtWidgets.QWidget):
         self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.readout.setWordWrap(True)
-        layout.addWidget(self.readout)
+        header = QtWidgets.QHBoxLayout()
+        self.color_range_label = RangeLabel("Color range")
+        header.addWidget(self.color_range_label)
+        header.addWidget(self.readout, 1)
+        layout.addLayout(header)
         self.canvas = SurfaceCanvas(self)
         self.canvas.coordinate_changed.connect(self.readout.setText)
+        self.canvas.fit_requested.connect(self.fit_camera)
         layout.addWidget(self.canvas)
         self.resolution = QtWidgets.QLabel("3D preview: no data")
         self.resolution.setWordWrap(True)
-        layout.addWidget(self.resolution)
+        footer = QtWidgets.QHBoxLayout()
+        self.z_range_label = RangeLabel("Z range")
+        self.z_range_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        footer.addWidget(self.resolution, 1)
+        self.extrema_label = QtWidgets.QLabel()
+        self.extrema_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.extrema_label.hide()
+        footer.addWidget(self.extrema_label)
+        footer.addSpacing(8)
+        footer.addWidget(self.z_range_label)
+        layout.addLayout(footer)
 
     def set_frame(self, frame: Frame, cmap: str, levels: tuple[float, float],
                   z_scale: float, reset: bool, point_size: float = DEFAULT_POINT_SIZE, *,
@@ -348,12 +385,16 @@ class SurfaceView(QtWidgets.QWidget):
         surface = frame.surface
         if surface is None:
             return
+        self._invalidate_extrema((id(frame),))
         camera = self.canvas.camera_position
         self._layers = ()
         self._layer_signature = ()
         self._layer_profiles.clear()
         self.canvas.layers.clear()
         self.canvas.clear()
+        self.z_range_label.set_limits(None)
+        self._color_limits = None if frame.composite else levels
+        self.color_range_label.set_limits(self._color_limits)
         self._surface_actor = None
         self._profile_actor = None
         self._clip_actors.clear()
@@ -387,6 +428,8 @@ class SurfaceView(QtWidgets.QWidget):
                 actor.SetScale(1, 1, z_scale)
                 self._surface_actor = actor
                 self.canvas.picker.AddPickList(actor)
+                if surface.colors is None:
+                    self.canvas.scalar_bar.SetVerticalTitleSeparation(12)
             for cap in caps:
                 colored = SOURCE_COLOR_FIELD in cap.point_data
                 if colored and highlight_clipped:
@@ -412,7 +455,7 @@ class SurfaceView(QtWidgets.QWidget):
             self._update_axes()
             if reset:
                 self.canvas.view_isometric()
-                self.canvas.reset_camera()
+                self.fit_camera()
             else:
                 self.canvas.camera_position = camera
         self._render_profile()
@@ -429,6 +472,7 @@ class SurfaceView(QtWidgets.QWidget):
             layers: Compatible snapshots; XYZ alignment only affects actors.
             reset: Fit all geometry instead of retaining the shared camera.
         """
+        self._invalidate_extrema(tuple(id(layer.frame) for layer in layers))
         signature = tuple(layer.signature for layer in layers)
         if signature == self._layer_signature and layers:
             if reset:
@@ -439,6 +483,9 @@ class SurfaceView(QtWidgets.QWidget):
         reset = reset or (self._surface_actor is None and not self.canvas.layers)
         camera = self.canvas.camera_position
         self.canvas.clear()
+        self.z_range_label.set_limits(None)
+        self._color_limits = None
+        self.color_range_label.set_limits(None)
         self.canvas.picker.InitializePickList()
         self.canvas.layers.clear()
         self._layer_profiles.clear()
@@ -478,7 +525,7 @@ class SurfaceView(QtWidgets.QWidget):
             self._update_axes()
             if reset:
                 self.canvas.view_isometric()
-                self.canvas.reset_camera()
+                self.fit_camera()
             else:
                 self.canvas.camera_position = camera
         self.readout.setText("Move over a surface to inspect its matrix and original value")
@@ -764,8 +811,20 @@ class SurfaceView(QtWidgets.QWidget):
         axes = self.canvas.renderer.cube_axes_actor
         if axes is None:
             return
-        bounds = axes.bounds
         sx, sy, sz = self.canvas.axis_scale
+        if self.z_range_lock:
+            candidate = self.z_view_range or (axes.bounds[4] / sz, axes.bounds[5] / sz)
+            if all(math.isfinite(value) for value in candidate) and candidate[0] <= candidate[1]:
+                previous = self._locked_z_range
+                self._locked_z_range = (candidate if previous is None else
+                                        (min(previous[0], candidate[0]), max(previous[1], candidate[1])))
+        limits = self.effective_z_range
+        self._apply_z_clipping()
+        if limits is not None:
+            bounds = axes.bounds
+            axes.bounds = (bounds[0], bounds[1], bounds[2], bounds[3],
+                           limits[0] * sz, limits[1] * sz)
+        bounds = axes.bounds
         axes.x_axis_range = (bounds[0] / sx, bounds[1] / sx)
         axes.y_axis_range = (bounds[2] / sy, bounds[3] / sy)
         lower, upper = bounds[4] / sz, bounds[5] / sz
@@ -780,13 +839,115 @@ class SurfaceView(QtWidgets.QWidget):
                  "Z" if frame is not None and frame.point_coordinates is not None and self.z_scale == 1
                  else "Scaled height")
         axes.SetLabelScaling(False, 0, 0, 0)
-        # VTK may replace its native format during an earlier camera render.
-        # Restore the custom-label format before regenerating the scaled ticks.
+        # Bounds updates regenerate PyVista's X/Y labels and scaled Z range.
+        # Z switches to VTK's native rounded ticks below.
         axes.x_label_format = AXIS_LABEL_FORMAT
         axes.y_label_format = AXIS_LABEL_FORMAT
         axes.z_label_format = AXIS_LABEL_FORMAT
         axes.z_axis_range = (lower / multiplier, upper / multiplier)
         axes.z_title = f"{title} (x 10^{exponent})" if exponent else title
+        # PyVista otherwise supplies evenly spaced strings, often with awkward
+        # decimals. Let VTK choose rounded ticks; turn Z labels across the axis
+        # so adjacent labels do not run into one another along its length.
+        axes.SetUse2DMode(False)
+        for axis in range(3):
+            axes.GetLabelTextProperty(axis).SetOrientation(90)
+        if not self.endpoint_ticks:
+            axes.SetAxisLabels(2, None)
+            axes.SetZLabelFormat("%.4g")
+        self._update_color_ticks()
+        self._update_range_notes(lower, upper)
+
+    def set_endpoint_ticks(self, enabled: bool) -> None:
+        """Toggle explicit Z/color endpoints without changing ranges or camera."""
+        self.endpoint_ticks = enabled
+        self._update_axes()
+        self.canvas.render()
+
+    def _update_color_ticks(self) -> None:
+        """Use endpoint-inclusive color ticks only when explicitly requested."""
+        for bar in self.canvas.scalar_bars.values():
+            enabled = self.endpoint_ticks and self._color_limits is not None
+            bar.SetUseCustomLabels(enabled)
+            bar.SetLabelFormat("%.8g" if enabled else "%.3g")
+            if enabled and self._color_limits is not None:
+                labels = vtkDoubleArray()
+                for value in np.linspace(*self._color_limits, 5):
+                    labels.InsertNextValue(float(value))
+                bar.SetCustomLabels(labels)
+
+    def _update_range_notes(self, lower: float, upper: float) -> None:
+        """Keep precise ranges outside the scene, independent of VTK font scaling."""
+        self.color_range_label.set_limits(self._color_limits)
+        self.z_range_label.set_limits((lower, upper))
+
+    def _invalidate_extrema(self, key: tuple[int, ...]) -> None:
+        """Invalidate source-value statistics without scanning geometry or arrays."""
+        if key != self._extrema_key:
+            self._extrema_key = key
+            self.extrema_generation += 1
+            self.extrema_label.clear()
+            self.extrema_label.hide()
+
+    def _apply_z_clipping(self) -> None:
+        """Clip mapper output in world coordinates; actor input arrays stay intact."""
+        planes: list[vtkPlane] = []
+        limits = self.effective_z_range
+        if limits is not None and limits[0] < limits[1]:
+            for value, normal in zip(limits, (1.0, -1.0)):
+                plane = vtkPlane()
+                plane.SetOrigin(0, 0, value * self.canvas.axis_scale[2])
+                plane.SetNormal(0, 0, normal)
+                planes.append(plane)
+        for actor in (self._surface_actor, self._profile_actor, *self._clip_actors,
+                      *(actor for actor, _layer in self.canvas.layers), *self._layer_profiles):
+            if actor is not None and (mapper := actor.GetMapper()) is not None:
+                mapper.RemoveAllClippingPlanes()
+                for plane in planes:
+                    mapper.AddClippingPlane(plane)
+
+    @property
+    def effective_z_range(self) -> tuple[float, float] | None:
+        """Current full-unit Z override, with lock history taking precedence."""
+        return self._locked_z_range if self.z_range_lock and self._locked_z_range is not None else self.z_view_range
+
+    def set_z_range_lock(self, enabled: bool) -> None:
+        """Start/end expand-only geometry bounds independently of scalar colors.
+
+        History uses height/alignment coordinates before scene multipliers and
+        survives matrix, overlay and slice rebuilds. Unlock restores the saved
+        manual Z range (or automatic bounds); toggling on starts fresh history.
+        """
+        if enabled == self.z_range_lock:
+            return
+        self.z_range_lock = enabled
+        self._locked_z_range = None
+        self.fit_camera()
+
+    def set_z_view_range(self, limits: tuple[float, float] | None) -> None:
+        """Set exact displayed Z bounds, or restore automatic bounds with None.
+
+        Bounds use full displayed Z coordinates after height/alignment but before
+        scene axis multipliers. All meshes, points and slice markers are clipped
+        for display only. Color levels and numerical exports are unchanged.
+        Raises ValueError for reversed, empty, nonfinite or overflowing ranges.
+        """
+        if limits is not None:
+            low, high = limits
+            scale = self.canvas.axis_scale[2]
+            if low >= high or not all(math.isfinite(value) for value in
+                                     (low, high, high - low, low * scale, high * scale, (high - low) * scale)):
+                raise ValueError("Geometry Z range needs finite Minimum < Maximum values within the scene scale.")
+        self.z_view_range = limits
+        self.fit_camera()
+
+    def fit_camera(self) -> None:
+        """Fit the current camera direction to the geometry display box."""
+        self._update_axes()
+        axes = self.canvas.renderer.cube_axes_actor
+        bounds = axes.bounds if axes is not None and self.effective_z_range is not None else None
+        self.canvas.reset_camera(bounds=bounds, render=False)
+        self.canvas.render()
 
     def _apply_axis_scale(self) -> None:
         """Compose scene stretching after each actor's height and alignment."""
@@ -815,6 +976,10 @@ class SurfaceView(QtWidgets.QWidget):
         """
         if any(not math.isfinite(value) or not MIN_AXIS_SCALE <= value <= MAX_AXIS_SCALE for value in values):
             raise ValueError(f"Axis multipliers must be between {MIN_AXIS_SCALE:g} and {MAX_AXIS_SCALE:g}.")
+        limits = self.effective_z_range
+        if limits is not None and not all(math.isfinite(value * values[2])
+                for value in (*limits, limits[1] - limits[0])):
+            raise ValueError("Z multiplier overflows the manual geometry range.")
         previous = self.canvas.axis_scale
         camera = self.canvas.camera
         focus, position = camera.GetFocalPoint(), camera.GetPosition()
@@ -824,7 +989,7 @@ class SurfaceView(QtWidgets.QWidget):
         camera.SetFocalPoint(*(focus[axis] + shift[axis] for axis in range(3)))
         camera.SetPosition(*(position[axis] + shift[axis] for axis in range(3)))
         if fit:
-            self.canvas.reset_camera()
+            self.fit_camera()
         self.canvas.reset_camera_clipping_range()
         self.canvas.render()
 
@@ -850,7 +1015,7 @@ class SurfaceView(QtWidgets.QWidget):
     def reset_view(self) -> None:
         """Restore an isometric camera fitted to the current surface."""
         self.canvas.view_isometric()
-        self.canvas.reset_camera()
+        self.fit_camera()
 
     def set_theme(self, dark: bool) -> None:
         """Change the 3D background; mesh labels refresh on the next frame.

@@ -71,12 +71,18 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         self.derivative_grid.toggled.connect(lambda enabled: self._grid(True, enabled))
         self.auto_y = QtWidgets.QCheckBox("Auto Y on slice change")
         self.auto_y.toggled.connect(window._set_profile_auto_y)
-        for checkbox in (self.signal_grid, self.derivative_grid, self.auto_y):
+        self.y_lock = QtWidgets.QCheckBox("Lock Y range (expand only)")
+        self.y_lock.setToolTip("Shared across slices and 1D matrices. Signal and derivative have separate histories. Overrides Auto Y until unlocked.")
+        self.y_lock.toggled.connect(window.scaling.set_y_range_lock)
+        for checkbox in (self.signal_grid, self.derivative_grid, self.y_lock, self.auto_y):
             axes_layout.addWidget(checkbox)
         self.scaling_buttons: dict[FigureView, QtWidgets.QPushButton] = {}
         self._page("1D", self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)
         self._page("2D", self._scaling_group(FigureView.IMAGE), window.image_controls)
-        self._page("3D", self._scaling_group(FigureView.SURFACE), window.surface_controls, window.slice_appearance)
+        self.z_lock = QtWidgets.QCheckBox("Lock Z range (expand only)")
+        self.z_lock.setToolTip("3D geometry only; independent of the shared 2D/3D color range lock.")
+        self.z_lock.toggled.connect(window.scaling.set_z_range_lock)
+        self._page("3D", self._scaling_group(FigureView.SURFACE), self.z_lock, window.surface_controls, window.slice_appearance)
         self._page("Colors", window.display_box, window.overlay_appearance)
         self._page("Markers", window.marker_controls)
         layout.addWidget(window.background_controls)
@@ -131,6 +137,7 @@ class ViewSettingsDialog(QtWidgets.QDialog):
                 authoritative, so this signal argument is deliberately unused.
         """
         window = self.workspace
+        window.profile_fit_button.setVisible(window._layout_mode == ViewMode.SIGNAL and window.tabs.currentIndex() in (0, 1))
         entry = window._entry()
         ready = self._ready()
         mode = entry.selection.mode if entry is not None else None
@@ -147,6 +154,11 @@ class ViewSettingsDialog(QtWidgets.QDialog):
                 checkbox.setChecked(bool(pane.plot_item.getAxis("bottom").grid))
         with QtCore.QSignalBlocker(self.auto_y):
             self.auto_y.setChecked(window._profile_auto_y)
+        with QtCore.QSignalBlocker(self.y_lock):
+            self.y_lock.setChecked(window.scaling.y_range_lock)
+        self.auto_y.setEnabled(not window.scaling.y_range_lock)
+        with QtCore.QSignalBlocker(self.z_lock):
+            self.z_lock.setChecked(window.surface_view.z_range_lock)
         self.auto_y.setVisible(matrix)
         for page in AppearancePage:
             available = (mode != ViewMode.POINTS if page == AppearancePage.SIGNAL else

@@ -4,6 +4,7 @@ Requirements: existing PySide6, pyqtgraph, PyVista, NumPy and Pillow packages.
 Usage: FigureExportDialog supplies a live source and options on the Qt thread.
 Qt plots paint at output resolution (SVG retains paths/text; images are embedded).
 VTK captures the current camera at higher resolution using its existing mesh.
+2D/3D range captions are painted outside the plot with the application font.
 """
 
 from collections.abc import Callable
@@ -89,6 +90,8 @@ class FigureSource:
     vector: bool = True
     note: str = ""
     svg: Callable[[QtCore.QSize, bool], bytes] | None = None
+    top_caption: str = ""
+    bottom_caption: str = ""
 
 
 def figure_stem(name: str, view: FigureView) -> str:
@@ -290,6 +293,11 @@ def surface_source(canvas: SurfaceCanvas, title: str, stem: str,
                         foreground, paint, title, stem, legend, vector=False, note=note)
 
 
+def _caption_height(text: str) -> float:
+    """Reserve one normal UI-font line only when a range caption is present."""
+    return QtGui.QFontMetricsF(QtWidgets.QApplication.font()).height() + HEADER_GAP if text else 0.0
+
+
 def _layout(source: FigureSource, options: FigureOptions) -> tuple[QtGui.QTextDocument, QtCore.QSizeF, QtCore.QRectF]:
     if source.size.width() <= 0 or source.size.height() <= 0:
         raise ValueError("The selected plot has no drawable area.")
@@ -311,15 +319,18 @@ def _layout(source: FigureSource, options: FigureOptions) -> tuple[QtGui.QTextDo
         sections.append(" &nbsp; ".join(entries))
     document.setHtml(f'<div style="color:{source.foreground.name()}">' + "<br>".join(sections) + "</div>")
     header_height = document.size().height() + HEADER_GAP if sections else 0
+    top_height = _caption_height(source.top_caption)
+    bottom_height = _caption_height(source.bottom_caption)
     logical_width = source.size.width() + 2 * FIGURE_MARGIN
     plot_height = (source.size.height() if options.height is None else
-                   options.height * logical_width / options.width - header_height - 2 * FIGURE_MARGIN)
+                   options.height * logical_width / options.width - header_height
+                   - top_height - bottom_height - 2 * FIGURE_MARGIN)
     if plot_height <= 0:
         raise ValueError("Image height leaves no room for the plot. Increase height or reduce the title / legend.")
-    rect = QtCore.QRectF(FIGURE_MARGIN, FIGURE_MARGIN + header_height,
+    rect = QtCore.QRectF(FIGURE_MARGIN, FIGURE_MARGIN + header_height + top_height,
                         source.size.width(), plot_height)
     return document, QtCore.QSizeF(logical_width,
-                                  rect.bottom() + FIGURE_MARGIN), rect
+                                  rect.bottom() + bottom_height + FIGURE_MARGIN), rect
 
 
 def figure_size(source: FigureSource, options: FigureOptions) -> QtCore.QSize:
@@ -353,6 +364,18 @@ def _paint_figure(painter: QtGui.QPainter, source: FigureSource, options: Figure
     painter.save()
     try:
         painter.scale(scale, scale)
+        painter.setFont(QtWidgets.QApplication.font())
+        painter.setPen(source.foreground)
+        if source.top_caption:
+            caption = QtCore.QRectF(rect.left(), rect.top() - _caption_height(source.top_caption),
+                                   rect.width(), _caption_height(source.top_caption) - HEADER_GAP)
+            painter.drawText(caption, QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter,
+                             source.top_caption)
+        if source.bottom_caption:
+            caption = QtCore.QRectF(rect.left(), rect.bottom() + HEADER_GAP, rect.width(),
+                                   _caption_height(source.bottom_caption) - HEADER_GAP)
+            painter.drawText(caption, QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter,
+                             source.bottom_caption)
         painter.translate(FIGURE_MARGIN, FIGURE_MARGIN)
         document.drawContents(painter)
     finally:

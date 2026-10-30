@@ -11,6 +11,8 @@ Nonfinite complex source samples produce phase gaps, even when atan2 would
 otherwise return a finite angle; zero complex samples retain NumPy's zero angle.
 Sampled grids retain every valid vertex, even isolated vertices that cannot form
 a surface cell. 2D and 3D point renderers share these original sample positions.
+Data-extrema scans are explicit viewer actions; frame preparation computes only
+the finite bounds required by rendering and does not collect infinity counts.
 """
 
 from dataclasses import dataclass, replace

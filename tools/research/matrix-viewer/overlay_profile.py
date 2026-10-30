@@ -4,8 +4,8 @@ Requirements: numpy, PySide6 and pyqtgraph. Usage: embedded in the workspace;
 uses the ordinary profile's controls, zoom behavior and compact numeric axes.
 Each layer keeps independent nonfinite colors and clipping emphasis.
 Sample diameters belong to each layer and also style its cached derivative.
-Hover readouts reserve two lines for the matrix name and source coordinates;
-full readings remain in the tooltip without resizing the plot during hovering.
+Hover readouts use one header line for source coordinates and an elided matrix
+name; full readings remain in the tooltip without resizing the plot.
 """
 
 from time import perf_counter
@@ -34,10 +34,9 @@ class OverlayProfile(ProfileView):
         self._drawn: list[tuple[object, ...] | None] = [None, None]
         self._items: list[list[pg.PlotDataItem]] = [[], []]
         super().__init__()
-        self.readout.setFixedHeight(2 * self.readout.fontMetrics().lineSpacing())
         self.appearance_form.setRowVisible(self.color_button, False)
         self.title.setText("Overlay")
-        self.derivative_note.setText("Derivatives use original X coordinates; red dots mark undefined samples.")
+        self.derivative_note.setText("Derivatives use original X coordinates.\nRed dots mark undefined samples.")
         self.jump_mode.setToolTip("Derivative settings for the selected matrix only.")
         self.jump_threshold.setToolTip("Jump threshold for the selected matrix only.")
         self.point_size.setToolTip("Signal/slice and derivative point size for the selected matrix/channel.")
@@ -50,6 +49,9 @@ class OverlayProfile(ProfileView):
             series: Original samples and their display-only alignment.
             reset: Fit the currently visible curve canvas.
         """
+        if tuple(item.key for item in series) != tuple(item.key for item in self._series):
+            self.signal_pane.invalidate_extrema()
+            self.derivative_pane.invalidate_extrema()
         self._series = series
         self.title.setText("Overlay")
         self.legend_bar.set_entries(tuple((item.label, item.layer.color) for item in series))
@@ -59,6 +61,8 @@ class OverlayProfile(ProfileView):
         active = {item.key for item in series}
         self._cache = {key: value for key, value in self._cache.items() if key in active}
         self._draw_signal()
+        self.signal_pane.range_notes.setVisible(bool(series))
+        self.derivative_pane.range_notes.setVisible(bool(series))
         if self.isVisible() and self.tabs.currentIndex() == 1:
             self._derivative_timer.start()
         if reset:
@@ -228,8 +232,9 @@ class OverlayProfile(ProfileView):
         if nearest is None:
             self.readout.setText(labels[0])
         else:
-            name = self.readout.fontMetrics().elidedText(nearest[1], QtCore.Qt.TextElideMode.ElideMiddle, self.readout.width())
-            self.readout.setText(f"{name}\n{nearest[2]}")
+            name_width = max(30, self.readout.width() - self.readout.fontMetrics().horizontalAdvance(nearest[2]) - 18)
+            name = self.readout.fontMetrics().elidedText(nearest[1], QtCore.Qt.TextElideMode.ElideMiddle, name_width)
+            self.readout.setText(f"{name} | {nearest[2]}")
         self.readout.setToolTip("\n".join(labels))
 
     def _hover(self, position: QtCore.QPointF) -> None:
