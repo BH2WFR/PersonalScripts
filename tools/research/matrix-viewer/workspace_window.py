@@ -4,6 +4,9 @@ Requirements: the existing viewer dependencies; no additional packages.
 Usage: constructed by app.run. Open and replace resets the session; Open appends one
 file and selects NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
 row/column ranges and headers. Dropping a file into a populated session appends.
+Multi-file drops use the same sequential queue as command-line batches. Duplicate
+source paths/members prompt to open another instance, replace a chosen instance,
+or skip. Replacement commits only after loading and interpretation succeed.
 Numeric 3D arrays prompt for an axis to split into independent 2D matrices or
 skip that member. Skipping all incoming members retains the existing session.
 NPZ selection also offers a filename-prefix checkbox, including single-member
@@ -21,6 +24,9 @@ import (including queued files). 2D rules match coordinate axis/length and
 real/complex type; 3D rules match chosen axis/length, with the latest rule first.
 New explicit opens reset all rules; member/range selection remains per file.
 Single-matrix mode is the default: clicking a channel clears other selections.
+The default-on Keep view for same shape option carries flat-view ranges and the
+complete 3D camera across equally shaped interpreted sources, including lazy
+loads. It does not copy per-channel rendering/crop settings. Other shapes refit.
 Multiple-matrix mode permits compatible checkbox selections to overlay.
 Hide controls are exposed only in multiple mode. Auto Y on slice change is
 enabled by default; disabling it fixes both signal and derivative Y ranges.
@@ -34,6 +40,9 @@ channel, including mixed point/surface overlays. Grid sampling is shared by
 Multichannel matrices are noncheckable expandable groups; single-channel matrices
 are checkable leaves without a child row. In multiple mode, row clicks only edit.
 Removal only releases session entries.
+Ctrl/Shift row selection independently chooses image-merge candidates; visibility
+checkboxes still control plots. RGB/RGBA/MA composition creates an ImageSource
+with per-channel ranges/gains and preview, preserving native/fusion subchannels.
 The 1D slice context menu can add every visible curve as an independent signal,
 including RGB(A) traces and overlay slices. Copies keep crop, axis coordinates,
 alpha weighting and value-bound settings. They are added unchecked so the 2D
@@ -65,7 +74,8 @@ worker; view settings, bounds and crops are excluded. Images split native channe
 complex arrays stay intact in NPZ/MAT and use paired real/imag sheets in XLSX.
 Multichannel sources offer Export channel, retaining just the selected component.
 Whole image/numeric-channel exports preserve source channels; PNG/BMP normalize
-one real 2D matrix to 8-bit grayscale, independently of plot image exports.
+one real 2D matrix to grayscale. PNG also preserves RGB/RGBA/MA uint8 pixels,
+independently of plot image exports.
 Native context menus reuse processing/export controls. Tree right-click chooses
 an editing target without altering visibility; canvas clicks open menus while
 right drags retain the existing 3D camera gesture.
@@ -80,12 +90,14 @@ from collections import deque
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from enum import Enum, auto
 from functools import partial
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
+from vtkmodules.vtkRenderingCore import vtkCamera
 
 from .app import DEFAULT_MAX_EDGE, FILE_FILTER, JobKind, ViewerWindow
 from .coordinates import AxisMap
@@ -103,6 +115,7 @@ from .laplace import LaplaceDirection, LaplaceOptions, run_laplace
 from .laplace_dialog import LaplaceDialog
 from .complex_merge import MergeInput, MergeMatrix, MergeMode, PhaseUnit, run_merge
 from .complex_merge_dialog import ComplexMergeDialog
+from .image_merge_dialog import ImageMergeDialog
 from .complex_input import ComplexDataChoice, choose_complex_data
 from .data_conversion import ConversionOptions, run_conversion
 from .data_conversion_dialog import DataConversionDialog
@@ -136,6 +149,24 @@ SETTINGS: tuple[str, ...] = (
 )
 PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size")
 MATRIX_COLUMN_WIDTHS: tuple[int, ...] = (320, 140, 60)
+
+
+class DuplicateChoice(Enum):
+    """Explicit decisions for an already loaded source matrix."""
+
+    NEW = auto()
+    REPLACE = auto()
+    SKIP = auto()
+
+
+@dataclass(frozen=True)
+class SwitchViewState:
+    """Presentation-only snapshot retained until a replacement frame is ready."""
+
+    ranges: tuple[tuple[tuple[float, float], tuple[float, float]], ...]
+    camera: vtkCamera
+    derivative_ready: bool
+    surface_ready: bool
 
 
 @dataclass(frozen=True)
@@ -184,9 +215,12 @@ class WorkspaceWindow(ViewerWindow):
         self._fourier_dialog: FourierDialog | None = None
         self._laplace_dialog: LaplaceDialog | None = None
         self._merge_dialog: ComplexMergeDialog | None = None
+        self._image_merge_dialog: ImageMergeDialog | None = None
         self._conversion_dialog: DataConversionDialog | None = None
         self._import_dialog: ImportDialog | SplitArrayDialog | None = None
         self._single_render_key: tuple[int, int] | None = None
+        self._last_single_view: tuple[int, ViewMode, tuple[int, ...]] | None = None
+        self._switch_view: tuple[int, SwitchViewState] | None = None
         self._loading_channel_uid: int | None = None
         super().__init__(max_edge, initial_mode, initial_channel_axis)
         self.overlay_profile = OverlayProfile()
@@ -279,6 +313,9 @@ class WorkspaceWindow(ViewerWindow):
         self.merge_action = transform_menu.addAction("Complex matrix merge…")
         self.merge_action.setEnabled(False)
         self.merge_action.triggered.connect(self._choose_complex_merge)
+        self.image_merge_action = transform_menu.addAction("Image merge (selected rows)…")
+        self.image_merge_action.setEnabled(False)
+        self.image_merge_action.triggered.connect(self._choose_image_merge)
         self.fourier_button.setMenu(transform_menu)
         bar.addWidget(self.fourier_button)
         bar.addWidget(self.single_matrix_mode)
@@ -307,13 +344,19 @@ class WorkspaceWindow(ViewerWindow):
         assert old_bar is not None
         old_bar.removeWidget(self.fit_views_button)
         actions.addWidget(self.fit_views_button)
+        self.keep_same_shape_view = QtGui.QAction("Keep view for same shape", self)
+        self.keep_same_shape_view.setCheckable(True)
+        self.keep_same_shape_view.setChecked(True)
+        self.keep_same_shape_view.setToolTip(
+            "In Single matrix mode, keep pan, zoom and the 3D camera when switching "
+            "between channels/matrices with the same interpreted shape. Different shapes are fitted automatically.")
         self.file_bar.hide()
         layout.addLayout(actions)
         self.matrix_list = ChannelTree()
         self.matrix_list.setColumnCount(3)
         self.matrix_list.setHeaderLabels(["Matrix / channel", "Shape · type", "Color"])
         self.matrix_list.setRootIsDecorated(True)
-        self.matrix_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.matrix_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.matrix_list.setMinimumHeight(90)
         self.matrix_list.setIndentation(14)
         self.matrix_list.setToolTip("Single matrix: click a channel or single-channel matrix to show it. Multichannel matrices expand without changing visibility. Multiple matrices: click rows to edit and use checkboxes to combine channels. F2 renames the matrix.")
@@ -328,6 +371,8 @@ class WorkspaceWindow(ViewerWindow):
         self.matrix_list.itemActivated.connect(self._list_activated)
         self.matrix_list.itemChanged.connect(self._list_checked)
         self.matrix_list.itemDoubleClicked.connect(self._list_color)
+        self.matrix_list.itemSelectionChanged.connect(self._sync_image_merge_action)
+        self.matrix_list.setToolTip(f"{self.matrix_list.toolTip()}\nCtrl/Shift-click rows to select image-merge candidates without changing plotted channels.")
         layout.addWidget(self.matrix_list)
         self.rename_shortcut = QtGui.QShortcut(QtGui.QKeySequence("F2"), self.matrix_list)
         self.rename_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -436,6 +481,9 @@ class WorkspaceWindow(ViewerWindow):
         """Switch selection policy, retaining at most one checked channel in single mode."""
         if not self._workspace_ready:
             return
+        self.keep_same_shape_view.setEnabled(not multiple)
+        self._switch_view = None
+        self._last_single_view = None
         self._store_entry()
         self.add_overlay.setText("Open…")
         if not multiple:
@@ -635,7 +683,56 @@ class WorkspaceWindow(ViewerWindow):
         self.height_scale.setEnabled(not self.auto_height.isChecked())
         self.height_slider.setEnabled(not self.auto_height.isChecked())
 
+    @staticmethod
+    def _view_shape(entry: MatrixEntry) -> tuple[ViewMode, tuple[int, ...]]:
+        """Compare interpreted dimensions, excluding channels and spatial crops."""
+        selection = entry.selection
+        shape = entry.document.array.shape
+        if entry.document.image_source is not None:
+            return ViewMode.MATRIX, tuple(entry.document.image_source.pixels.shape[:2])
+        if selection.mode in (ViewMode.XY, ViewMode.POINTS):
+            assert selection.coordinate_axis is not None
+            return family(selection.mode), (shape[1 - selection.coordinate_axis],)
+        axes = (selection.y_axis, selection.x_axis) if selection.mode == ViewMode.MATRIX else (selection.x_axis,)
+        return family(selection.mode), tuple(shape[axis] for axis in axes if axis is not None)
+
+    def _capture_switch_view(self, entry: MatrixEntry) -> None:
+        """Capture once before activation, including asynchronous image channels."""
+        if self._switch_view is not None and self._switch_view[0] == entry.uid:
+            return
+        pending = self._switch_view
+        self._switch_view = None
+        previous = self._last_single_view
+        if (not entry.visible or self.multiple_matrix_mode.isChecked() or not self.keep_same_shape_view.isChecked()
+                or previous is None or (previous[0] == entry.uid and pending is None)
+                or previous[1:] != self._view_shape(entry)
+                or entry.selection.mode == ViewMode.RAW):
+            return
+        if pending is not None:
+            self._switch_view = (entry.uid, pending[1])
+            return
+        boxes = (self.image_view.view_box, self.profile_view.view_box, self.profile_view.derivative_pane.view_box)
+        ranges = tuple(((float(x[0]), float(x[1])), (float(y[0]), float(y[1])))
+                       for box in boxes for x, y in (box.viewRange(),))
+        camera = vtkCamera()
+        camera.DeepCopy(self.surface_view.canvas.camera)
+        self._switch_view = (entry.uid, SwitchViewState(ranges, camera, not self.profile_view._derivative_reset,
+                                                       not self._surface_reset))
+
+    def _restore_switch_view(self, state: SwitchViewState) -> None:
+        """Restore visible ranges without computing hidden derivatives or meshes."""
+        boxes = (self.image_view.view_box, self.profile_view.view_box, self.profile_view.derivative_pane.view_box)
+        for box, (x, y) in zip(boxes, state.ranges):
+            box.setRange(xRange=x, yRange=y, padding=0)
+        self.profile_view._derivative_reset = not state.derivative_ready
+        if state.surface_ready:
+            self.surface_view.canvas.camera.DeepCopy(state.camera)
+            self.surface_view.canvas.reset_camera_clipping_range()
+            self.surface_view.canvas.render()
+            self._surface_reset = False
+
     def _activate(self, entry: MatrixEntry, *, reset_selection: bool = False) -> None:
+        self._capture_switch_view(entry)
         self._store_entry()
         selected_profile = self._profile_selected
         previous = self._entry()
@@ -661,7 +758,7 @@ class WorkspaceWindow(ViewerWindow):
         self._restoring = True
         try:
             super()._document_loaded(entry.document)
-            if not entry.visible:
+            if not entry.visible or self._switch_view is not None:
                 self._reset_pending = False
             self._configure_selection(entry.selection)
             self._profile_selected = True if reset_selection else selected_profile
@@ -675,13 +772,18 @@ class WorkspaceWindow(ViewerWindow):
             self._restoring = False
         self._refresh_list()
         if entry.frame is not None:
-            self._show_frame(False)
+            self._show_frame(self._reset_pending)
+            self._reset_pending = False
         else:
             self._request_frame()
             self._render_workspace(reset=entry.visible)
         self._prepare_missing()
 
     def _refresh_list(self) -> None:
+        # Row selection is an independent processing input, not plot visibility.
+        selected_keys = {(int(item.data(0, QtCore.Qt.ItemDataRole.UserRole)), item.parent() is None)
+                         for item in self.matrix_list.selectedItems()}
+        preserve_selection = len(selected_keys) > 1
         for members in tuple(self._groups().values()):
             self._expand_channels(next((item for item in members if item.uid == self.active_uid), members[0]))
         groups = self._groups()
@@ -768,10 +870,18 @@ class WorkspaceWindow(ViewerWindow):
                     swatch.setToolTip(f"Change color — {self._channel_label(member)}")
                     self.reference.addItem(self._channel_label(member), member.uid)
                     if chosen:
-                        self.matrix_list.setCurrentItem(child)
+                        if preserve_selection:
+                            self.matrix_list.setCurrentItem(child, 0, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate)
+                        else:
+                            self.matrix_list.setCurrentItem(child)
                 if rebuild:
                     item.setExpanded(any(member.uid == self.active_uid for member in members))
             self.reference.setCurrentIndex(self.reference.findData(self.reference_uid))
+            if preserve_selection:
+                iterator = QtWidgets.QTreeWidgetItemIterator(self.matrix_list)
+                while (node := iterator.value()) is not None:
+                    node.setSelected((int(node.data(0, QtCore.Qt.ItemDataRole.UserRole)), node.parent() is None) in selected_keys)
+                    iterator += 1
         self.alignment_box.setVisible(self._overlay() and not any(item.visible and item.document.is_text for item in self.entries))
         self.none_visible.setVisible(self.multiple_matrix_mode.isChecked())
         self.remove_matrix.setEnabled(bool(self.entries))
@@ -789,6 +899,7 @@ class WorkspaceWindow(ViewerWindow):
             and not selected.document.is_image and (selected.selection.mode in (ViewMode.SIGNAL, ViewMode.XY)
                 or (selected.selection.mode == ViewMode.MATRIX and np.iscomplexobj(selected.document.array))))
         self._update_matrix_info()
+        self._sync_image_merge_action()
 
         self._sync_raw_view()
 
@@ -862,7 +973,7 @@ class WorkspaceWindow(ViewerWindow):
         self._set_color_icon(self.layer_color, QtGui.QColor(entry.color))
 
     def _list_clicked(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
-        if column == 2 or self.matrix_list.checkbox_click:
+        if column == 2 or self.matrix_list.checkbox_click or self.matrix_list.selection_gesture:
             return
         self._list_activated(item, column)
 
@@ -1038,6 +1149,8 @@ class WorkspaceWindow(ViewerWindow):
             self._remove_all()
 
     def _remove_all(self) -> None:
+        self._switch_view = None
+        self._last_single_view = None
         self._pending_files.clear()
         self._opening_modes = {}
         self._split_choices = {}
@@ -1059,8 +1172,8 @@ class WorkspaceWindow(ViewerWindow):
         self._clear_views()
         self.statusBar().showMessage("All matrices closed.")
 
-    def _open_dropped_path(self, path: Path) -> None:
-        self.open_path(path, append=bool(self.entries))
+    def _open_dropped_paths(self, paths: tuple[Path, ...]) -> None:
+        self.open_paths(paths, append=bool(self.entries))
 
     def _choose_overlay(self) -> None:
         start = str(self.document.path.parent) if self.document else ""
@@ -1144,6 +1257,46 @@ class WorkspaceWindow(ViewerWindow):
                 matrices.append(MergeMatrix(members[0].label, tuple(channels)))
         return tuple(matrices)
 
+    def _image_merge_sources(self) -> tuple[MergeInput, ...]:
+        """Offer selected numeric channels in tree order, independent of active row."""
+        selected: dict[int, MatrixEntry] = {}
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.matrix_list)
+        while (item := iterator.value()) is not None:
+            parent = item.parent()
+            chosen = item.isSelected() or (parent is not None and parent.isSelected())
+            if chosen and item.childCount() == 0 and (entry := self._tree_entry(item)) is not None:
+                selected[entry.uid] = entry
+            iterator += 1
+        sources: list[MergeInput] = []
+        for entry in selected.values():
+            channel = active_channel(entry)
+            if entry.selection.mode != ViewMode.MATRIX or entry.document.is_text or channel.image_key in (
+                ImageMember.RGB_COLOR, ImageMember.RGBA_COLOR, ImageMember.MONO_COLOR,
+            ):
+                continue
+            sources.append(MergeInput(entry.document, entry.selection, self._channel_label(entry),
+                                      channel.image_key, channel.label))
+        return tuple(sources)
+
+    def _sync_image_merge_action(self) -> None:
+        self.image_merge_action.setEnabled(bool(self._image_merge_sources()) and self.matrix_box.isEnabled())
+        if self.image_merge_action.isEnabled():
+            self.fourier_button.setEnabled(True)
+
+    def _choose_image_merge(self) -> None:
+        """Compose only explicitly selected tree candidates, never all open files."""
+        self._store_entry()
+        sources = self._image_merge_sources()
+        if not sources:
+            QtWidgets.QMessageBox.information(self, "Image merge", "Ctrl/Shift-select numeric 2D matrices or channels in the matrix tree first.")
+            return
+        dialog = ImageMergeDialog(sources, self)
+        self._image_merge_dialog = dialog
+        dialog.generated.connect(partial(self._transform_done, kind=JobKind.IMAGE_MERGE))
+        dialog.exec()
+        self._image_merge_dialog = None
+        dialog.deleteLater()
+
     def _choose_complex_merge(self) -> None:
         self._store_entry()
         matrices = self._merge_sources()
@@ -1197,7 +1350,9 @@ class WorkspaceWindow(ViewerWindow):
         self._conversion_dialog = None
         dialog.deleteLater()
 
-    def _operation_dialog(self, kind: JobKind) -> FourierDialog | LaplaceDialog | ComplexMergeDialog | DataConversionDialog | None:
+    def _operation_dialog(self, kind: JobKind) -> FourierDialog | LaplaceDialog | ComplexMergeDialog | ImageMergeDialog | DataConversionDialog | None:
+        if kind == JobKind.IMAGE_MERGE:
+            return self._image_merge_dialog
         if kind == JobKind.DATA_CONVERSION:
             return self._conversion_dialog
         if kind == JobKind.COMPLEX_MERGE:
@@ -1208,6 +1363,7 @@ class WorkspaceWindow(ViewerWindow):
         """Add a completed result and ask whether to display it exclusively."""
         dialog = self._operation_dialog(kind)
         operation = ("Data conversion" if kind == JobKind.DATA_CONVERSION else
+                     "Image merge" if kind == JobKind.IMAGE_MERGE else
                      "Complex matrix merge" if kind == JobKind.COMPLEX_MERGE else
                      "Laplace transform" if kind == JobKind.LAPLACE else "Fourier transform")
         if dialog is not None:
@@ -1243,12 +1399,13 @@ class WorkspaceWindow(ViewerWindow):
         self.reference_uid = entry.uid
         self._activate(entry, reset_selection=True)
 
-    def open_paths(self, paths: Sequence[Path], key: str | None = None) -> None:
-        """Load command-line files sequentially into a single workspace.
+    def open_paths(self, paths: Sequence[Path], key: str | None = None, *, append: bool = False) -> None:
+        """Load dropped/command-line files sequentially into a single workspace.
 
         Args:
             paths: Files in argument order; an empty sequence starts no load.
             key: Initial archive member or image channel applied to each file.
+            append: Keep existing matrices before loading the first file.
 
         Side effects:
             Starts asynchronous loading and queues the remaining files. Initial
@@ -1259,9 +1416,54 @@ class WorkspaceWindow(ViewerWindow):
         self._pending_files.clear()
         if not paths:
             return
+        self._opening_modes = {}
+        self._split_choices = {}
         mode, channel_axis = self._initial_mode, self._initial_channel_axis
-        self.open_path(paths[0], key)
         self._pending_files.extend((path, key, mode, channel_axis) for path in paths[1:])
+        self._start_open_path(paths[0], key, append=append)
+
+    def _duplicate_entries(self, document: Document) -> list[MatrixEntry]:
+        """Find source groups by resolved path and member, independent of aliases."""
+        path = document.path.resolve()
+        key = None if document.is_image else document.key
+        return [members[0] for members in self._groups().values()
+                if members[0].document.path.resolve() == path
+                and members[0].document.transform is None and members[0].document.laplace is None
+                and not members[0].document.complex_provenance and not members[0].document.conversion_provenance
+                and not members[0].document.import_provenance.startswith("Slice snapshot:")
+                and (None if members[0].document.is_image else members[0].document.key) == key]
+
+    def _choose_duplicate(self, document: Document, matches: list[MatrixEntry]) -> tuple[DuplicateChoice, MatrixEntry | None]:
+        """Warn before reimporting; closing the dialog skips only this matrix."""
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Matrix already open")
+        dialog.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        name = document.path.name if document.is_image or document.key is None else f"{document.path.name} :: {document.key}"
+        dialog.setText(f"{name} is already open.")
+        dialog.setInformativeText(f"{document.path}\n\nOpen another instance, replace an existing matrix, or skip this matrix. Source files are unchanged.")
+        target = NoWheelComboBox()
+        for entry in matches:
+            target.addItem(entry.label)
+        if len(matches) > 1:
+            layout = dialog.layout()
+            if isinstance(layout, QtWidgets.QGridLayout):
+                row = layout.rowCount()
+                layout.addWidget(QtWidgets.QLabel("Matrix to replace:"), row, 0, 1, 2)
+                layout.addWidget(target, row + 1, 0, 1, layout.columnCount())
+        new_button = dialog.addButton("Open as new matrix", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        replace_button = dialog.addButton("Replace", QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+        skip_button = dialog.addButton("Do not open", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(skip_button)
+        dialog.setEscapeButton(skip_button)
+        dialog.exec()
+        chosen = dialog.clickedButton()
+        replacement = matches[max(0, target.currentIndex())]
+        result = ((DuplicateChoice.NEW, None) if chosen is new_button else
+                  (DuplicateChoice.REPLACE, replacement) if chosen is replace_button else (DuplicateChoice.SKIP, None))
+        target.deleteLater()
+        dialog.deleteLater()
+        return result
 
     def _open_next_path(self) -> None:
         """Append the next queued file after the preceding import has finished."""
@@ -1498,8 +1700,20 @@ class WorkspaceWindow(ViewerWindow):
                 QtWidgets.QMessageBox.warning(self, "Cannot prepare overlays", "\n".join(problems))
             return
         loaded = cast(LoadedFile, result)
-        selections: list[tuple[Document, Selection]] = []
+        selections: list[tuple[Document, Selection, MatrixEntry | None]] = []
+        keep_existing = self._append_pending
         for document in loaded.documents:
+            replacement: MatrixEntry | None = None
+            matches = self._duplicate_entries(document)
+            if matches:
+                choice, replacement = self._choose_duplicate(document, matches)
+                if self._closing or self._latest.get(kind) != number:
+                    return
+                # A duplicate decision applies to this source, not the whole
+                # workspace, even when invoked through Open and replace.
+                keep_existing = True
+                if choice == DuplicateChoice.SKIP:
+                    continue
             selection = self._opening_selection(document, self._initial_mode if not selections else None,
                                                  self._initial_channel_axis if not selections else None)
             # A modal dialog runs Qt events; discard choices for superseded loads.
@@ -1508,7 +1722,13 @@ class WorkspaceWindow(ViewerWindow):
             if selection is None:
                 self._cancel_opening()
                 return
-            selections.append((document, selection))
+            selections.append((document, selection, replacement))
+        if not selections:
+            self._cancel_opening()
+            if loaded.errors:
+                QtWidgets.QMessageBox.warning(self, "Some matrices were not displayed", "\n\n".join(loaded.errors))
+            return
+        self._append_pending = keep_existing
         self.matrix_box.setEnabled(True)
         if not self._append_pending:
             self.entries.clear()
@@ -1519,7 +1739,16 @@ class WorkspaceWindow(ViewerWindow):
                 previous.visible = False
         added: list[MatrixEntry] = []
         problems = list(loaded.errors)
-        for document, selection in selections:
+        for document, selection, replacement in selections:
+            insertion = len(self.entries)
+            removed: set[int] = set()
+            if replacement is not None:
+                group = replacement.matrix_uid or replacement.uid
+                removed = {member.uid for member in self.entries if (member.matrix_uid or member.uid) == group}
+                insertion = next((index for index, member in enumerate(self.entries) if member.uid in removed), insertion)
+                self.entries[:] = [member for member in self.entries if member.uid not in removed]
+                if self.active_uid in removed:
+                    self.active_uid = None
             self._uid += 1
             entry = MatrixEntry(self._uid, document, selection, self._default_color(self._uid, document.key if document.is_image else None),
                                 visible=multiple or not added,
@@ -1528,11 +1757,15 @@ class WorkspaceWindow(ViewerWindow):
                           if item.document.path.name == document.path.name
                           and (item.document.key if not item.document.is_image else None) == (document.key if not document.is_image else None)]
             entry.instance = max(duplicates, default=0) + 1
+            if replacement is not None:
+                entry.name, entry.instance, entry.color = replacement.name, replacement.instance, replacement.color
+                if self.reference_uid in removed:
+                    self.reference_uid = entry.uid
             problem = self._compatible(entry) if multiple else None
             if problem:
                 entry.visible = False
                 problems.append(problem)
-            self.entries.append(entry)
+            self.entries.insert(insertion, entry)
             self._expand_channels(entry)
             added.append(entry)
         self.reference_uid = (self.reference_uid or self.entries[0].uid) if multiple else added[0].uid
@@ -1708,6 +1941,8 @@ class WorkspaceWindow(ViewerWindow):
             self.raw_view.set_source_name(self._channel_label(entry))
 
     def _clear_views(self) -> None:
+        if self._switch_view is None:
+            self._last_single_view = None
         self._render_layers = ()
         self._single_render_key = None
         self._surface_dirty = True
@@ -1792,6 +2027,7 @@ class WorkspaceWindow(ViewerWindow):
             self.profile_view.setVisible(not overlay)
             self.overlay_profile.setVisible(overlay)
             if not any(entry.visible for entry in self.entries):
+                self._switch_view = None
                 self._clear_views()
                 return
             if any(entry.visible and entry.document.is_text for entry in self.entries):
@@ -1807,6 +2043,11 @@ class WorkspaceWindow(ViewerWindow):
                 if entry is not None and entry.frame is not None:
                     key = (entry.uid, id(entry.frame))
                     if self._single_render_key != key or reset:
+                        retained = self._switch_view[1] if self._switch_view is not None and self._switch_view[0] == entry.uid else None
+                        if retained is not None:
+                            reset = self._reset_pending = False
+                            if retained.surface_ready:
+                                self._surface_reset = False
                         self._painting_active = True
                         try:
                             with self._single_view_context():
@@ -1814,6 +2055,10 @@ class WorkspaceWindow(ViewerWindow):
                         finally:
                             self._painting_active = False
                         self._single_render_key = key
+                        self._last_single_view = (entry.uid, *self._view_shape(entry))
+                        if retained is not None:
+                            self._restore_switch_view(retained)
+                            self._switch_view = None
                     if entry.selection.mode in (ViewMode.SIGNAL, ViewMode.XY):
                         self.profile_view.title.setText(self._channel_label(entry))
                         self.profile_view.title.setToolTip(self._channel_label(entry))
@@ -1854,7 +2099,7 @@ class WorkspaceWindow(ViewerWindow):
             else:
                 self.overlay_profile.clear_selection()
             if mode != ViewMode.SIGNAL and self.tabs.currentIndex() == 1:
-                self.surface_view.set_layers(layers, reset)
+                self.surface_view.set_layers(layers, reset, reference_uid=self.reference_uid)
                 self._surface_dirty = False
                 if mode == ViewMode.MATRIX:
                     self.surface_view.set_layer_profiles(self.profile_direction.currentIndex() == 0,

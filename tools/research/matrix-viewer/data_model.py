@@ -89,6 +89,20 @@ class ImageSource:
     metadata: ImageMetadata
 
     @property
+    def keys(self) -> tuple[str, ...]:
+        """List native and derived channels for loaded or generated images."""
+        members = tuple(channel.value for channel in self.channels)
+        if ImageMember.RED in self.channels:
+            members += (ImageMember.RGB_GRAY.value,)
+        if ImageMember.ALPHA in self.channels:
+            members += (ImageMember.RGBA_GRAY.value,)
+        if ImageMember.RED in self.channels:
+            members += (ImageMember.RGB_COLOR.value,)
+        if ImageMember.ALPHA in self.channels:
+            members += (ImageMember.RGBA_COLOR.value,)
+        return members + (ImageMember.MONO_COLOR.value,)
+
+    @property
     def layout(self) -> str:
         """Return the decoded channel layout, independently of the file mode."""
         if ImageMember.MONO in self.channels:
@@ -438,16 +452,7 @@ def _read_document(path: Path, key: str | None, region: TableRange, header: Head
         else:
             raise ValueError(f"Unsupported decoded image layout: {array.shape}")
         source = ImageSource(cast(RealArray, array), channels, metadata)
-        members = tuple(channel.value for channel in channels)
-        if ImageMember.RED in channels:
-            members += (ImageMember.RGB_GRAY.value,)
-        if ImageMember.ALPHA in channels:
-            members += (ImageMember.RGBA_GRAY.value,)
-        if ImageMember.RED in channels:
-            members += (ImageMember.RGB_COLOR.value,)
-        if ImageMember.ALPHA in channels:
-            members += (ImageMember.RGBA_COLOR.value,)
-        members += (ImageMember.MONO_COLOR.value,)
+        members = source.keys
         document = Document(path, cast(Array, array), members, is_image=True, image_source=source)
         document = select_image_member(document, key or (
             ImageMember.RGB_GRAY.value if ImageMember.RED in channels else ImageMember.MONO.value))

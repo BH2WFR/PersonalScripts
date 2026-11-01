@@ -3,6 +3,7 @@
 Requirements: existing PySide6 and viewer rendering dependencies.
 Usage: WorkspaceWindow supplies available views and a source-preparation callback.
 Preview updates are debounced single-shot events, not background polling.
+The shared ImagePreview provides pan/zoom without changing exported dimensions.
 """
 
 from collections.abc import Callable
@@ -11,36 +12,12 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
+from .image_preview import ImagePreview
 from .figure_export import (FigureFormat, FigureOptions, FigureSource, FigureView,
                             figure_size, render_figure, save_figure)
 
 PREVIEW_WIDTH = 1000
 PREVIEW_DELAY_MS = 180
-CHECKER_SIZE = 12
-
-
-class FigurePreview(QtWidgets.QWidget):
-    """Fit a rendered image onto a checkerboard so transparent areas are visible."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.image = QtGui.QImage()
-        self.setMinimumSize(380, 260)
-
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        """Paint the cached preview; resizing never reruns the scientific renderer."""
-        painter = QtGui.QPainter(self)
-        for y in range(0, self.height(), CHECKER_SIZE):
-            for x in range(0, self.width(), CHECKER_SIZE):
-                color = "#ededed" if (x // CHECKER_SIZE + y // CHECKER_SIZE) % 2 else "#ffffff"
-                painter.fillRect(x, y, CHECKER_SIZE, CHECKER_SIZE, QtGui.QColor(color))
-        if not self.image.isNull():
-            size = self.image.size().scaled(self.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
-            target = QtCore.QRect((self.width() - size.width()) // 2, (self.height() - size.height()) // 2,
-                                 size.width(), size.height())
-            painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
-            painter.drawImage(target, self.image)
-        painter.end()
 
 
 class FigureExportDialog(QtWidgets.QDialog):
@@ -131,7 +108,8 @@ class FigureExportDialog(QtWidgets.QDialog):
         self.source_note.setWordWrap(True)
         form.addRow(self.source_note)
         body.addWidget(settings)
-        self.preview = FigurePreview()
+        self.preview = ImagePreview()
+        self.preview.setMinimumSize(380, 260)
         body.addWidget(self.preview, 1)
         self.status = QtWidgets.QLabel("Preparing preview…")
         self.status.setWordWrap(True)
@@ -177,8 +155,7 @@ class FigureExportDialog(QtWidgets.QDialog):
         self._preview_timer.stop()
         self.save_button.setEnabled(False)
         self.source = None
-        self.preview.image = QtGui.QImage()
-        self.preview.update()
+        self.preview.set_image(QtGui.QImage())
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             self.source = self.prepare(FigureView(self.view_selector.currentData()))
@@ -231,13 +208,11 @@ class FigureExportDialog(QtWidgets.QDialog):
             self.dimensions.setText(f"Output: {size.width():,} × {size.height():,} px\n"
                                     f"Print: {size.width() / options.dpi * 2.54:.2f} × "
                                     f"{size.height() / options.dpi * 2.54:.2f} cm at {options.dpi} DPI")
-            self.preview.image = render_figure(source, options, preview_width=PREVIEW_WIDTH)
-            self.preview.update()
-            self.status.setText("Preview fitted to this panel. The saved image uses the output size above.")
+            self.preview.set_image(render_figure(source, options, preview_width=PREVIEW_WIDTH))
+            self.status.setText("Drag to pan; wheel to zoom; double-click to fit. Saved dimensions follow the settings above.")
             self.save_button.setEnabled(True)
         except (ValueError, RuntimeError, TypeError, MemoryError) as exc:
-            self.preview.image = QtGui.QImage()
-            self.preview.update()
+            self.preview.set_image(QtGui.QImage())
             self.status.setText(f"Cannot render preview: {exc}")
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()

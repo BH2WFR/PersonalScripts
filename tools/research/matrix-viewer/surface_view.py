@@ -6,17 +6,23 @@ Single and overlaid slice markers use the shared 3D selection color.
 Clipping caps retain their geometry when optional highlight coloring is off.
 Point rendering uses sampled source vertices without interpolated mesh edges;
 its pixel size applies to matrices and XYZ clouds, including overlay layers.
-Z tick labels use an explicit power-of-ten suffix on the axis title for small
-or large ranges. Labels follow displayed geometry after height scaling, value
-bounds, slice markers and overlay alignment; source values are unchanged.
+Z tick labels show source Value, undoing both height and scene scaling. Small
+or large ranges use an explicit power-of-ten suffix. Overlays use the alignment
+reference's value coordinates (first visible layer if the reference is hidden).
 Scene axis multipliers are a separate display transform shared by meshes,
 clipping caps and slice markers. Picking and tick ranges undo that transform;
 per-matrix height/alignment remains independent and numeric exports are untouched.
+The default-on XY scene lock keeps X/Y multipliers equal; either axis's scale
+edits/reset apply to both, while Z remains independent. Unlock allows stretching.
 Optional view-wide Z bounds clip only rendering and set the axis/camera box.
 They use displayed height/alignment coordinates before scene multipliers, are
 independent of scalar color bounds, and survive geometry and slice updates.
 Rounded XYZ ticks run across their axes; precise color/Z ranges use compact Qt
 information strips above/below the scene, with the normal application font.
+Tick density follows scaled axis lengths: compressed axes use fewer labels at
+correct source coordinates; long axes keep VTK's rounded automatic steps.
+Short automatic Z axes round the annotation box outward to 1/2/5-decade steps,
+including on initial loading. Manual/locked Z boxes retain their exact bounds.
 Optional endpoint-inclusive Z/color ticks survive scene rebuilds, default off.
 An independent expand-only Z range lock accumulates the geometry box across
 matrices, overlays and height changes. Turning it off restores manual/auto Z
@@ -34,9 +40,10 @@ from pyvistaqt import QtInteractor
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker
 from vtkmodules.vtkCommonMath import vtkMatrix4x4
 from vtkmodules.vtkCommonDataModel import vtkPlane
-from vtkmodules.vtkCommonCore import vtkDoubleArray
+from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkStringArray
 
 from .data_model import DEFAULT_CLIP_COLOR, ColorArray, FilterMode, FloatArray, Frame, format_sample
+from .coordinates import AxisMap
 from .workspace import RenderLayer, profile_series
 from .render_style import DEFAULT_POINT_SIZE, SurfaceStyle
 from .plot_support import RangeLabel
@@ -56,6 +63,46 @@ Z_SCIENTIFIC_MAX = 10_000.0
 MIN_LABEL_EXPONENT = -308
 MIN_AXIS_SCALE = 1e-12
 MAX_AXIS_SCALE = 1e12
+FULL_AXIS_TICK_BUDGET = 8
+
+
+def _rounded_axis_ticks(lower: float, upper: float, count: int) -> tuple[float, ...]:
+    """Cover a finite range with at most four evenly spaced, rounded labels.
+
+    Annotation bounds may expand, but data and clipping bounds never change.
+    Two-label budgets use rounded endpoints; other budgets use 1/2/5 steps.
+    Empty output leaves extreme/unrepresentable ranges to VTK's automatic path.
+    """
+    span = upper - lower
+    if not math.isfinite(span) or span <= 0:
+        return ()
+    desired = span / (count - 1)
+    decade = 10.0 ** math.floor(math.log10(desired)) if desired > 0 else 0.0
+    if not decade:
+        return ()
+    for _ in range(4):
+        for factor in (1.0, 2.0, 5.0):
+            step = factor * decade
+            if (step < desired and not math.isclose(step, desired, rel_tol=1e-12)) or not math.isfinite(step) or step == 0:
+                continue
+            if not all(math.isfinite(value / step) for value in (lower, upper)):
+                return ()
+            endpoints: list[float] = []
+            for value in (lower / step, upper / step):
+                nearest = round(value)
+                endpoints.append(float(nearest) if abs(value - nearest) <= 8 * math.ulp(value) else value)
+            first, last = math.floor(endpoints[0]), math.ceil(endpoints[1])
+            if last <= first:
+                return ()
+            if count == 2:
+                values = (first * step, last * step)
+            elif last - first + 1 <= count:
+                values = tuple((first + index) * step for index in range(last - first + 1))
+            else:
+                continue
+            return values if all(math.isfinite(value) for value in values) else ()
+        decade *= 10
+    return ()
 
 
 class ProfileStyle(StrEnum):
@@ -315,6 +362,7 @@ class SurfaceView(QtWidgets.QWidget):
         super().__init__(parent)
         self.dark = True
         self.z_scale = 1.0
+        self.equal_xy_locked = True
         self.z_view_range: tuple[float, float] | None = None
         self.z_range_lock = False
         self._locked_z_range: tuple[float, float] | None = None
@@ -335,6 +383,7 @@ class SurfaceView(QtWidgets.QWidget):
         self.clip_color = DEFAULT_CLIP_COLOR
         self.highlight_clipped = True
         self._layers: tuple[RenderLayer, ...] = ()
+        self._z_reference_uid: int | None = None
         self._layer_signature: tuple[tuple[object, ...], ...] = ()
         self._layer_profiles: list[vtkActor] = []
         layout = QtWidgets.QVBoxLayout(self)
@@ -355,7 +404,7 @@ class SurfaceView(QtWidgets.QWidget):
         self.resolution = QtWidgets.QLabel("3D preview: no data")
         self.resolution.setWordWrap(True)
         footer = QtWidgets.QHBoxLayout()
-        self.z_range_label = RangeLabel("Z range")
+        self.z_range_label = RangeLabel("Value range")
         self.z_range_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         footer.addWidget(self.resolution, 1)
         self.extrema_label = QtWidgets.QLabel()
@@ -386,7 +435,7 @@ class SurfaceView(QtWidgets.QWidget):
         if surface is None:
             return
         self._invalidate_extrema((id(frame),))
-        camera = self.canvas.camera_position
+        camera = self.canvas.camera.copy()
         self._layers = ()
         self._layer_signature = ()
         self._layer_profiles.clear()
@@ -449,7 +498,7 @@ class SurfaceView(QtWidgets.QWidget):
             cloud = frame.point_coordinates is not None
             self.canvas.show_grid(xtitle=frame.x_grid.label() if frame.x_grid else "X" if cloud else "Column (x)",
                                   ytitle=frame.y_grid.label("Y") if frame.y_grid else "Y" if cloud else "Row (y)",
-                                  ztitle="Z" if cloud and z_scale == 1 else "Scaled height",
+                                  ztitle="Value",
                                   color="#adb9cb" if self.dark else "#465368", font_size=10,
                                   fmt=AXIS_LABEL_FORMAT, render=False)
             self._update_axes()
@@ -457,7 +506,7 @@ class SurfaceView(QtWidgets.QWidget):
                 self.canvas.view_isometric()
                 self.fit_camera()
             else:
-                self.canvas.camera_position = camera
+                self.canvas.camera.DeepCopy(camera)
         self._render_profile()
         self._update_resolution()
         if not len(surface.points):
@@ -465,16 +514,20 @@ class SurfaceView(QtWidgets.QWidget):
         self.canvas.reset_camera_clipping_range()
         self.canvas.render()
 
-    def set_layers(self, layers: tuple[RenderLayer, ...], reset: bool = False) -> None:
+    def set_layers(self, layers: tuple[RenderLayer, ...], reset: bool = False, *, reference_uid: int | None = None) -> None:
         """Render aligned surfaces/clouds in independent solid colors.
 
         Args:
             layers: Compatible snapshots; XYZ alignment only affects actors.
             reset: Fit all geometry instead of retaining the shared camera.
+            reference_uid: Visible alignment reference supplying Z value units;
+                defaults to the first visible layer when absent or hidden.
         """
         self._invalidate_extrema(tuple(id(layer.frame) for layer in layers))
         signature = tuple(layer.signature for layer in layers)
-        if signature == self._layer_signature and layers:
+        same_reference = self._z_reference_uid == reference_uid
+        self._z_reference_uid = reference_uid
+        if signature == self._layer_signature and layers and same_reference:
             if reset:
                 self.reset_view()
             return
@@ -519,7 +572,7 @@ class SurfaceView(QtWidgets.QWidget):
         if self.canvas.layers:
             first_frame = self.canvas.layers[0][1].frame
             self.canvas.show_grid(xtitle=first_frame.x_grid.label() if first_frame.x_grid else "Display X",
-                                  ytitle=first_frame.y_grid.label("Y") if first_frame.y_grid else "Display Y", ztitle="Display Z",
+                                  ytitle=first_frame.y_grid.label("Y") if first_frame.y_grid else "Display Y", ztitle="Value",
                                   color="#adb9cb" if self.dark else "#465368", font_size=10,
                                   fmt=AXIS_LABEL_FORMAT, render=False)
             self._update_axes()
@@ -797,10 +850,23 @@ class SurfaceView(QtWidgets.QWidget):
         self._update_resolution()
         self.canvas.render()
 
+    @property
+    def value_z_mapping(self) -> AxisMap:
+        """Map the Z axis's source values to geometry before scene stretching.
+
+        Independently aligned overlays cannot share every layer's source scale.
+        The visible alignment reference defines the common annotation units.
+        Geometry clipping remains explicitly in height/alignment coordinates.
+        """
+        if self._layers:
+            layer = next((item for item in self._layers if item.uid == self._z_reference_uid), self._layers[0])
+            return layer.z_mapping
+        return AxisMap(self.z_scale)
+
     def _update_axes(self) -> None:
         """Refresh geometry bounds and keep Z tick magnitudes explicit.
 
-        Only the axis annotation range is divided by the displayed multiplier;
+        Axis annotations undo height/alignment and the scientific multiplier;
         actor coordinates, camera proportions and source samples stay intact.
         Recompute after geometry changes because PyVista resets annotation
         ranges when bounds are updated. Disable VTK's additional automatic
@@ -827,22 +893,30 @@ class SurfaceView(QtWidgets.QWidget):
         bounds = axes.bounds
         axes.x_axis_range = (bounds[0] / sx, bounds[1] / sx)
         axes.y_axis_range = (bounds[2] / sy, bounds[3] / sy)
-        lower, upper = bounds[4] / sz, bounds[5] / sz
+        mapping = self.value_z_mapping
+        lower, upper = mapping.inverse(bounds[4] / sz), mapping.inverse(bounds[5] / sz)
         if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
             return
         peak = max(abs(lower), abs(upper))
         exponent = (max(MIN_LABEL_EXPONENT, math.floor(math.log10(peak)))
                     if peak and (peak < Z_SCIENTIFIC_MIN or peak >= Z_SCIENTIFIC_MAX) else 0)
         multiplier = 10.0 ** exponent
-        frame = self.canvas.frame
-        title = ("Display Z" if self._layers else
-                 "Z" if frame is not None and frame.point_coordinates is not None and self.z_scale == 1
-                 else "Scaled height")
+        title = "Value"
+        reference = next((item for item in self._layers if item.uid == self._z_reference_uid),
+                         self._layers[0] if self._layers else None)
+        self.z_range_label.setToolTip(
+            f"Z values use the alignment reference: {reference.label}" if reference is not None
+            else "Source values before height and XYZ scaling.")
         axes.SetLabelScaling(False, 0, 0, 0)
         # Bounds updates regenerate PyVista's X/Y labels and scaled Z range.
-        # Z switches to VTK's native rounded ticks below.
+        # X/Y always use native rounded ticks; optional endpoint labels apply
+        # only to Z/color. This preserves fractional coordinates when needed.
         axes.x_label_format = AXIS_LABEL_FORMAT
         axes.y_label_format = AXIS_LABEL_FORMAT
+        axes.SetAxisLabels(0, None)
+        axes.SetAxisLabels(1, None)
+        axes.SetXLabelFormat("%.4g")
+        axes.SetYLabelFormat("%.4g")
         axes.z_label_format = AXIS_LABEL_FORMAT
         axes.z_axis_range = (lower / multiplier, upper / multiplier)
         axes.z_title = f"{title} (x 10^{exponent})" if exponent else title
@@ -855,8 +929,67 @@ class SurfaceView(QtWidgets.QWidget):
         if not self.endpoint_ticks:
             axes.SetAxisLabels(2, None)
             axes.SetZLabelFormat("%.4g")
+        self._space_axis_labels()
         self._update_color_ticks()
         self._update_range_notes(lower, upper)
+
+    def _space_axis_labels(self) -> None:
+        """Thin labels on short scaled axes without changing coordinate ranges.
+
+        VTK's automatic step depends only on the numeric range. On compressed
+        axes use two to four evenly spaced labels instead; the longest axes
+        retain its rounded automatic ticks. Keeping the custom count below five
+        makes VTK place these labels at exactly uniform positions across the
+        original range. Automatic Z boxes round outward to nice tick values;
+        manual/locked Z boxes use native ticks unless endpoint ticks are enabled.
+        Integer X/Y endpoints prefer integer intermediate labels.
+        Endpoint-inclusive Z remains explicit, including when the axis is long.
+        """
+        axes = self.canvas.renderer.cube_axes_actor
+        if axes is None:
+            return
+        bounds = axes.bounds
+        lengths = tuple(max(0.0, bounds[2 * axis + 1] - bounds[2 * axis]) for axis in range(3))
+        longest = max(lengths)
+        if not math.isfinite(longest) or longest <= 0:
+            return
+        ranges = (axes.GetXAxisRange(), axes.GetYAxisRange(), axes.GetZAxisRange())
+        for axis, (length, limits) in enumerate(zip(lengths, ranges)):
+            lower, upper = limits
+            count = max(2, math.ceil(FULL_AXIS_TICK_BUDGET * length / longest))
+            if count >= 5 and not (axis == 2 and self.endpoint_ticks):
+                continue
+            if not all(math.isfinite(value) for value in (lower, upper, upper - lower)) or upper <= lower:
+                continue
+            count = min(count, 4)
+            if axis == 2 and not self.endpoint_ticks:
+                if self.effective_z_range is not None:
+                    continue
+                values = _rounded_axis_ticks(lower, upper, count)
+                if not values:
+                    continue
+                # Expand only the annotation box, mapping label units (including
+                # the explicit Z exponent) back to stretched world coordinates.
+                scale = length / (upper - lower)
+                z_low = bounds[4] + (values[0] - lower) * scale
+                z_high = bounds[5] + (values[-1] - upper) * scale
+                if not all(math.isfinite(value) for value in (z_low, z_high)):
+                    continue
+                axes.SetBounds(*bounds[:4], z_low, z_high)
+                axes.SetZAxisRange(values[0], values[-1])
+                labels = vtkStringArray()
+                for value in values:
+                    labels.InsertNextValue(f"{value:.4g}")
+                axes.SetAxisLabels(axis, labels)
+                continue
+            if float(lower).is_integer() and float(upper).is_integer():
+                while count > 2 and (upper - lower) % (count - 1):
+                    count -= 1
+            labels = vtkStringArray()
+            for index in range(count):
+                value = lower + (upper - lower) * index / (count - 1)
+                labels.InsertNextValue(f"{value:.4g}")
+            axes.SetAxisLabels(axis, labels)
 
     def set_endpoint_ticks(self, enabled: bool) -> None:
         """Toggle explicit Z/color endpoints without changing ranges or camera."""
@@ -945,7 +1078,7 @@ class SurfaceView(QtWidgets.QWidget):
         """Fit the current camera direction to the geometry display box."""
         self._update_axes()
         axes = self.canvas.renderer.cube_axes_actor
-        bounds = axes.bounds if axes is not None and self.effective_z_range is not None else None
+        bounds = axes.bounds if axes is not None else None
         self.canvas.reset_camera(bounds=bounds, render=False)
         self.canvas.render()
 
@@ -959,12 +1092,30 @@ class SurfaceView(QtWidgets.QWidget):
             if actor is not None:
                 actor.SetUserMatrix(matrix)
 
+    def set_equal_xy_locked(self, enabled: bool) -> None:
+        """Lock scene X/Y units together, using the current X scale on enabling.
+
+        Args:
+            enabled: True matches Y to X immediately; False retains both current
+                scales and permits subsequent independent edits. Z is unchanged.
+
+        Side effects:
+            Updates geometry and the camera focal point without resetting its
+            direction. Source arrays and per-layer alignment are unaffected.
+        """
+        self.equal_xy_locked = enabled
+        if enabled:
+            x, _y, z = self.canvas.axis_scale
+            self.set_axis_scale((x, x, z))
+
     def set_axis_scale(self, values: tuple[float, float, float], *, fit: bool = False) -> None:
         """Stretch each scene axis without changing samples or actor-local data.
 
         Args:
             values: Positive X/Y/Z multipliers in [1e-12, 1e12]. Applied after
                 per-matrix height and alignment to every visible layer/marker.
+                With XY locked, an isolated Y edit drives X; otherwise X drives
+                Y. The scaling editor mirrors text edits so the last edit wins.
             fit: Fit the camera after applying; otherwise keep its distance
                 and orientation, moving its focus with the stretched scene.
 
@@ -981,6 +1132,9 @@ class SurfaceView(QtWidgets.QWidget):
                 for value in (*limits, limits[1] - limits[0])):
             raise ValueError("Z multiplier overflows the manual geometry range.")
         previous = self.canvas.axis_scale
+        if self.equal_xy_locked:
+            xy = values[1] if values[0] == previous[0] and values[1] != previous[1] else values[0]
+            values = (xy, xy, values[2])
         camera = self.canvas.camera
         focus, position = camera.GetFocalPoint(), camera.GetPosition()
         shift = tuple(focus[axis] * (values[axis] / previous[axis] - 1) for axis in range(3))

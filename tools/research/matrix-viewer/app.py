@@ -9,6 +9,7 @@ Slice-index changes automatically fit Y by default; the profile context menu
 can disable this to retain Y scale. Manual Fit commands still fit data.
 The workspace selects source entries and retains their image channels or complex
 components independently. The base window also supports ordinary single views.
+Drag/drop forwards every local URL as one batch to the workspace import queue.
 Raw-table synchronization is separate from plot selection for workspace browsing.
 The workspace Fourier dialog creates complex FFT/IFFT entries with physical
 coordinates shared by plots, surface picking, profiles and exports.
@@ -16,7 +17,8 @@ The Transform menu also provides 1D Laplace planes (sigma/omega) and inverse
 contour reconstruction, retaining sampling metadata in the current session.
 Pointwise dB, angle, logarithm and affine conversions create separate matrices.
 The modal Export dialog saves originals, processed results or slices as numeric
-files, or real 2D matrices as normalized 8-bit PNG/BMP. Export settings stay
+files, real 2D matrices as normalized PNG/BMP, or uint8 RGB/RGBA/MA images as
+PNG with stored channel values (including alpha). Export settings stay
 outside the left sidebar; save workers report their status inside the dialog.
 Workspace bundles reuse the save-file dialog and atomic writer; NPZ is offered
 by the workspace bundle menu, not by the single-array export format selector.
@@ -189,6 +191,7 @@ class JobKind(StrEnum):
     FOURIER = "fourier"
     LAPLACE = "laplace"
     COMPLEX_MERGE = "complex_merge"
+    IMAGE_MERGE = "image_merge"
     DATA_CONVERSION = "data_conversion"
 
 
@@ -820,10 +823,17 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if format_ == ExportFormat.XLSX:
             hint = f"{hint}\n1D arrays become columns. Large integers and NaN/Inf use numeric text to preserve values."
         if image_format:
-            supported = matrix and target != ExportTarget.SLICE and len(shape) == 2 and not keep_complex and self.export_layout.currentText() == ExportLayout.ARRAY
-            hint = f"{hint}\nPNG/BMP: 8-bit grayscale, finite min/max normalized to 0/255 after crop/bounds. Constant values and NaN/Inf are black. One source cell per pixel; no axes or colormap."
+            color_image = (all_channels and document.image_source is not None
+                           and document.image_source.pixels.dtype == np.uint8
+                           and len(shape) == 3 and shape[-1] in (2, 3, 4))
+            supported = matrix and target != ExportTarget.SLICE and (len(shape) == 2 or color_image) and not keep_complex and self.export_layout.currentText() == ExportLayout.ARRAY
+            if color_image:
+                supported = supported and (format_ == ExportFormat.PNG or shape[-1] == 3)
+                hint = f"{hint}\n8-bit image pixels retain their channel values; PNG preserves alpha. No normalization. Use Original matrix (or disable value bounds) for exact colors."
+            else:
+                hint = f"{hint}\nPNG/BMP: 8-bit grayscale, finite min/max normalized to 0/255 after crop/bounds. Constant values and NaN/Inf are black. One source cell per pixel; no axes or colormap."
             if not supported:
-                hint = f"{hint}\nRequires a real 2D array in Array layout. Select a scalar channel for multichannel/complex data. For plots or overlays, use Export figure."
+                hint = f"{hint}\nRequires a real 2D array or uint8 image in Array layout. Use PNG for alpha. For plots or overlays, use Export figure."
         self.export_hint.setText(hint)
         self.export_save.setEnabled(supported and not self._export_busy
                                     and (target != ExportTarget.SLICE or self._profile_selected))
@@ -2012,28 +2022,31 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self._schedule_frame()
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
-        """Accept a local numeric/image file dragged into the window.
+        """Accept a batch containing supported local numeric/image files.
 
         Args:
             event: Native Qt drag-enter event.
         """
         urls = event.mimeData().urls()
-        if urls and urls[0].isLocalFile() and Path(urls[0].toLocalFile()).suffix.lower() in IMAGE_EXTENSIONS | TEXT_EXTENSIONS | EXCEL_EXTENSIONS | {".npy", ".npz", ".mat"}:
+        if any(url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in
+               IMAGE_EXTENSIONS | TEXT_EXTENSIONS | EXCEL_EXTENSIONS | {".npy", ".npz", ".mat"} for url in urls):
             event.acceptProposedAction()
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:
-        """Open the first local file from a drop asynchronously.
+        """Pass every local file in a drop to the asynchronous import queue.
 
         Args:
             event: Native Qt drop event.
         """
         urls = event.mimeData().urls()
-        if urls and urls[0].isLocalFile():
-            self._open_dropped_path(Path(urls[0].toLocalFile()))
+        paths = tuple(Path(url.toLocalFile()) for url in urls if url.isLocalFile())
+        if paths:
+            self._open_dropped_paths(paths)
             event.acceptProposedAction()
 
-    def _open_dropped_path(self, path: Path) -> None:
-        self.open_path(path)
+    def _open_dropped_paths(self, paths: tuple[Path, ...]) -> None:
+        """Open one source in the base window; workspaces override batch loading."""
+        self.open_path(paths[0])
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Stop preparation and release VTK before closing the Qt window.

@@ -1,6 +1,7 @@
 """Native Qt channel tree distinguishing checkbox clicks from row activation.
 
 Requirements: PySide6. Usage: embedded by WorkspaceWindow. No custom widget theme.
+Ctrl/Shift row selection forms processing candidates independently of visibility.
 """
 
 from typing import Protocol, cast
@@ -20,6 +21,7 @@ class ChannelTree(QtWidgets.QTreeWidget):
     """Expose whether the current mouse click targeted a native check indicator."""
 
     checkbox_click: bool = False
+    selection_gesture: bool = False
 
     def check_rect(self, item: QtWidgets.QTreeWidgetItem) -> QtCore.QRect:
         """Return the native checkbox rectangle, or an empty rectangle for groups."""
@@ -35,6 +37,8 @@ class ChannelTree(QtWidgets.QTreeWidget):
         return self.style().subElementRect(QtWidgets.QStyle.SubElement.SE_ItemViewItemCheckIndicator, option, self)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        self.selection_gesture = bool(event.modifiers() & (
+            QtCore.Qt.KeyboardModifier.ControlModifier | QtCore.Qt.KeyboardModifier.ShiftModifier))
         if event.button() == QtCore.Qt.MouseButton.RightButton:
             # The context menu selects its editing target without activating
             # single-mode visibility or toggling a checkbox under the pointer.

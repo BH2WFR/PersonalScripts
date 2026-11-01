@@ -9,6 +9,8 @@ single-axis edits release the XY lock and manual Y edits disable slice Auto Y.
 Equal-axis presets match coordinate units, not axis spans, and remain editable.
 Axis menus offer coarse/fine zoom and reset only the selected axis: fit its
 displayed data in flat views, or restore its scene multiplier to 1 in 3D.
+3D defaults to a persistent XY unit lock: X/Y zoom, reset and manual edits act
+on both axes together until unlocked; Z remains independent.
 Opening menus/dialogs never computes an unopened derivative or prepares meshes.
 Scalar 2D/3D views share per-channel color bounds, exposed here alongside spatial
 scaling. Blank color bounds use the data range; manual bounds never crop data.
@@ -160,9 +162,11 @@ class ViewScaling(QtCore.QObject):
         return profile.derivative_pane.view_box if view == FigureView.DERIVATIVE else profile.signal_pane.view_box
 
     def equal_xy(self, view: FigureView, enabled: bool) -> None:
-        """Set the persistent flat-view unit lock, shared across overlay modes."""
+        """Set a persistent flat/3D unit lock, shared across overlay modes."""
         window = self.window
-        if view == FigureView.IMAGE:
+        if view == FigureView.SURFACE:
+            window.surface_view.set_equal_xy_locked(enabled)
+        elif view == FigureView.IMAGE:
             window.image_view.set_equal_xy(enabled)
         else:
             for profile in (window.profile_view, window.overlay_profile):
@@ -391,7 +395,8 @@ class ScalingDialog(QtWidgets.QDialog):
                 grid.addWidget(field, row, column, 1, 2 if spatial else 1)
             for column, text, factor in ((3, "×2", ZOOM_STEP), (4, "÷2", 1 / ZOOM_STEP)):
                 button = QtWidgets.QPushButton(text)
-                button.setToolTip(f"{axis.name} axis only; enlarge" if factor > 1 else f"{axis.name} axis only; shrink")
+                button.setToolTip(f"Scale {axis.name}; X/Y move together while the 3D XY lock is on." if spatial
+                                  else f"{axis.name} axis only; enlarge" if factor > 1 else f"{axis.name} axis only; shrink")
                 button.clicked.connect(partial(self._zoom, axis, factor))
                 grid.addWidget(button, row, column)
         apply = QtWidgets.QPushButton("Apply multipliers" if spatial else "Apply ranges")
@@ -412,7 +417,10 @@ class ScalingDialog(QtWidgets.QDialog):
                 button.clicked.connect(partial(self._equal, preset))
                 presets.addWidget(button)
         self.equal_lock = QtWidgets.QCheckBox("Lock X:Y = 1:1 (data units)")
-        self.equal_lock.setVisible(not spatial)
+        if spatial:
+            self.equal_lock.setToolTip("Lock scene X/Y scales together. Enabling matches Y to X; Z and per-matrix overlay alignment stay independent.")
+            for axis in (Axis.X, Axis.Y):
+                self.fields[axis][0].textEdited.connect(partial(self._mirror_xy_text, axis))
         self.equal_lock.toggled.connect(self._lock)
         layout.addWidget(self.equal_lock)
         self.geometry_box = QtWidgets.QGroupBox("Geometry Z range (all visible layers)")
@@ -528,6 +536,8 @@ class ScalingDialog(QtWidgets.QDialog):
         self._refresh_color_lock()
         if self.view == FigureView.SURFACE:
             surface = self.controller.window.surface_view
+            with QtCore.QSignalBlocker(self.equal_lock):
+                self.equal_lock.setChecked(surface.equal_xy_locked)
             with QtCore.QSignalBlocker(self.z_lock):
                 self.z_lock.setChecked(surface.z_range_lock)
             limits = surface.z_view_range
@@ -626,6 +636,12 @@ class ScalingDialog(QtWidgets.QDialog):
     def _lock(self, enabled: bool) -> None:
         self.controller.equal_xy(self.view, enabled)
         self._refresh()
+
+    def _mirror_xy_text(self, axis: Axis, text: str) -> None:
+        """Keep pending X/Y text consistent while the 3D scene lock is enabled."""
+        if self.controller.window.surface_view.equal_xy_locked:
+            other = Axis.Y if axis == Axis.X else Axis.X
+            self.fields[other][0].setText(text)
 
     def _apply(self) -> None:
         try:

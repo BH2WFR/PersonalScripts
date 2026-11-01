@@ -33,7 +33,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import ViewMode
 from .bundle_export import BUNDLE_FORMATS
-from .exporting import ExportTarget
+from .exporting import ExportFormat, ExportTarget
 from .figure_export import FigureView
 from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
@@ -216,6 +216,12 @@ class WorkspaceMenus(QtCore.QObject):
     def _export_settings(self) -> None:
         self.window._open_export_dialog()
 
+    def _export_image_png(self) -> None:
+        """Open the normal exporter with native image channels and PNG selected."""
+        window = self.window
+        window.export_format.setCurrentIndex(window.export_format.findData(ExportFormat.PNG))
+        window._open_export_dialog(ExportTarget.ORIGINAL)
+
     def _hide_matrix(self, entry: MatrixEntry) -> None:
         for member in self.window._groups().get(entry.matrix_uid or entry.uid, []):
             member.visible = False
@@ -233,6 +239,9 @@ class WorkspaceMenus(QtCore.QObject):
                  and window.matrix_box.isEnabled() and not window._rebuild.isActive()
                  and not window._export_busy)
         menu.addSection("Active matrix")
+        if entry is not None and entry.document.image_source is not None:
+            self._add(menu, "Image as PNG…", self._export_image_png,
+                      enabled=ready and entry.document.image_source.pixels.dtype.name == "uint8")
         self._add(menu, "Matrix…", partial(self._export, ExportTarget.RESULT), enabled=ready)
         if window._has_export_channels():
             self._add(menu, "Current channel…", partial(self._export, ExportTarget.RESULT, channel=True), enabled=ready)
@@ -272,6 +281,8 @@ class WorkspaceMenus(QtCore.QObject):
         multiple = window.multiple_matrix_mode.isChecked()
         menu.addSection("File")
         self._file_actions(menu)
+        menu.addSection("View")
+        menu.addAction(window.keep_same_shape_view)
         if entry is not None:
             menu.addSection("Selected matrix")
             self._properties(menu, (entry,))
@@ -295,6 +306,7 @@ class WorkspaceMenus(QtCore.QObject):
                 self._add(display, "Hide all", window._hide_all, enabled=bool(window.entries))
             menu.addSection("Data")
             self._processing(menu)
+        menu.addAction(window.image_merge_action)
         export = menu.addMenu("Export")
         if entry is not None:
             self._data_exports(export)
@@ -459,6 +471,8 @@ class WorkspaceMenus(QtCore.QObject):
             self._add(scale, "Lock Y range (expand only)",
                       partial(controller.set_y_range_lock, not controller.y_range_lock), checked=controller.y_range_lock)
         elif view == FigureView.SURFACE:
+            locked = self.window.surface_view.equal_xy_locked
+            self._add(scale, "Lock X:Y = 1:1", partial(controller.equal_xy, view, not locked), checked=locked)
             self._add(scale, "Lock Z range (expand only)",
                       partial(controller.set_z_range_lock, not self.window.surface_view.z_range_lock),
                       checked=self.window.surface_view.z_range_lock)
@@ -479,7 +493,7 @@ class WorkspaceMenus(QtCore.QObject):
             self._add(axis_menu, "Shrink ÷2", partial(controller.zoom_from_menu, view, axis, 1 / ZOOM_STEP))
             axis_menu.addSeparator()
             reset = self._add(axis_menu, "Reset", partial(controller.reset_from_menu, view, axis))
-            reset.setToolTip("Restore this scene axis multiplier to 1; keep other axes and matrix heights."
+            reset.setToolTip("Restore this scene axis multiplier to 1; locked X/Y reset together. Keep matrix heights."
                              if view == FigureView.SURFACE else
                              "Fit this axis to displayed data once; keep the other axis range.")
 
@@ -504,6 +518,7 @@ class WorkspaceMenus(QtCore.QObject):
                  window.surface_view.reset_view if view == FigureView.SURFACE else pane.view_box.enableAutoRange)
         self._add(menu, "Fit this view", reset, enabled=ready)
         self._add(menu, "Fit all views", window._fit_views, enabled=ready)
+        menu.addAction(window.keep_same_shape_view)
         active = window._entry()
         appearance_ready = (ready and active is not None and active.visible and active.frame is not None
                             and window.controls.isEnabled())

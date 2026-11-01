@@ -1,4 +1,7 @@
-"""Prepare full-resolution arrays, numeric files and normalized grayscale images.
+"""Prepare full-resolution arrays, numeric files and grayscale/color images.
+
+PNG preserves RGB/RGBA/MA uint8 channel values without per-channel normalization.
+Scalar matrices retain normalized grayscale output; BMP supports RGB only.
 
 Requirements: numpy, scipy, Pillow and openpyxl (already used by the viewer).
 Usage: imported by app; functions never modify source arrays or open dialogs.
@@ -274,7 +277,14 @@ def serialize_array(values: Array, format_: ExportFormat) -> bytes:
     if format_ == ExportFormat.XLSX:
         return serialize_excel((("matrix", values),))
     if format_ in (ExportFormat.PNG, ExportFormat.BMP):
-        pixels = normalized_grayscale(values)
+        if values.ndim == 3 and values.shape[-1] in (2, 3, 4):
+            if values.dtype != np.uint8:
+                raise ValueError("Color PNG/BMP requires uint8 pixels. Disable value bounds or export the original image.")
+            if format_ == ExportFormat.BMP and values.shape[-1] != 3:
+                raise ValueError("Use PNG to preserve monochrome-alpha or RGBA channels.")
+            pixels = values
+        else:
+            pixels = normalized_grayscale(values)
         buffer = BytesIO()
         Image.fromarray(pixels).save(buffer, format=format_.value.upper())
         return buffer.getvalue()
