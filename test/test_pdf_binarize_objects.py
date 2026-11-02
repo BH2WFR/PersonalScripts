@@ -296,22 +296,25 @@ class ObjectPipelineTests(unittest.TestCase):
         for listing in (discovered, compiler.find_py_scripts(str(ROOT / "tools"))):
             paths = [path.replace("\\", "/") for path in listing]
             self.assertIn("document-processing/pdf-binarize.py", paths)
-            self.assertFalse(any(path.startswith("document-processing/pdf-binarize/") for path in paths))
-        entry = str(ROOT / "tools/document-processing/pdf-binarize.py")
+            self.assertIn("document-processing/pdf-binarize-old.py", paths)
+            self.assertFalse(any(path.startswith("document-processing/pdf-tools/") for path in paths))
         stages: list[Path] = []
 
         def staged(command: list[str], *, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
             stage = Path(env["PYTHONPATH"].split(os.pathsep)[0])
             stages.append(stage)
-            self.assertTrue((stage / "personal_pdf_binarize/objects.py").is_file())
-            self.assertTrue((stage / "personal_pdf_binarize/regions.py").is_file())
-            self.assertTrue(any("personal_pdf_binarize" in part for part in command))
+            self.assertTrue((stage / "personal_pdf_tools/binarize/objects.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/binarize/regions.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/common/navigation.py").is_file())
+            self.assertTrue(any("personal_pdf_tools" in part for part in command))
             return subprocess.CompletedProcess(command, 0)
 
-        for tool in ("nuitka", "pyinstaller"):
-            with patch.object(compiler.subprocess, "run", side_effect=staged):
-                result = compiler._run_compiler(["compiler", entry], entry, str(self.folder), tool)
-                self.assertEqual(result.returncode, 0)
+        for filename in ("pdf-binarize.py", "pdf-binarize-old.py"):
+            entry = str(ROOT / "tools/document-processing" / filename)
+            for tool in ("nuitka", "pyinstaller"):
+                with patch.object(compiler.subprocess, "run", side_effect=staged):
+                    result = compiler._run_compiler(["compiler", entry], entry, str(self.folder), tool)
+                    self.assertEqual(result.returncode, 0)
         self.assertTrue(all(not path.exists() for path in stages))
 
 

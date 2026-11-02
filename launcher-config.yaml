@@ -65,7 +65,7 @@ ignore-list:
         - "network/rclone-sync/"
         - "others/keyboard-hook-viewer/"
         - "windows/keyboard-remap/"
-        - "document-processing/pdf-binarize"
+        - "document-processing/pdf-tools/"
     platform-specific:
         # 规范：windows, linux, macos
         windows:

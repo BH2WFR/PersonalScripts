@@ -105,8 +105,10 @@ def _binarize_pdf(
         workers: Parallel page encoders, from 1 to MAX_WORKERS. Defaults to
             DEFAULT_WORKERS; 1 uses serial encoding. PDF assembly is serial.
         skip_pages: Selection parsed by Input.parse_index_ranges, or None to
-            prompt after opening the PDF. Empty/default skips nothing. Skipped
-            pages retain their original contents and position in the output.
+            prompt after opening the PDF. The prompt defaults to physical pages
+            1,2 (1 for a single-page PDF); enter none to process every page.
+            An explicit empty string skips nothing. Skipped pages retain their
+            original contents and position in the output.
         processing: Thresholding mode and optional sharpening; shared with preview.
 
     Raises:
@@ -129,10 +131,23 @@ def _binarize_pdf(
         overrides = _prepare_region_files(input_path, output_path, page_count, processing.regions)
         records: dict[int, tuple[regions._Region, ...]] = {}
         annotations: dict[int, bytes] = {}
-        selection = (
-            Input.input_index_ranges("PDF pages to skip binarizing (Enter = none)", item_count=page_count)
-            if skip_pages is None else Input.parse_index_ranges(skip_pages, item_count=page_count)
-        )
+        if skip_pages is None:
+            default_skip = ",".join(str(page) for page in DEFAULT_SKIP_PAGES if page <= page_count)
+            while True:
+                choice = Menu.select(
+                    [MenuOption([default_skip], "Keep cover pages unchanged", default_skip),
+                     MenuOption(["none"], "Process every page", "")],
+                    prompt="Physical PDF pages to skip (e.g. 1-3,5,-1; -1 = last)",
+                    default_key=default_skip, required=True, accept_custom_string=True,
+                    separator=False,
+                )
+                try:
+                    selection = Input.parse_index_ranges(str(choice), item_count=page_count)
+                    break
+                except ValueError as exc:
+                    print(f"{FLRed}{exc}{CRst}")
+        else:
+            selection = Input.parse_index_ranges(skip_pages, item_count=page_count)
         skipped = set(selection or ())
         objects._isolate_skipped(reader, skipped)
         render_pages = [index for index in range(page_count) if index not in skipped]

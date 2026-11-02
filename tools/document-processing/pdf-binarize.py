@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""Interactively compress PDF images while retaining native page objects.
+"""Open the PDF binarizer desktop application.
 
 Images use fixed/Sauvola thresholding, optional denoising and separate illustration
 crops. The binary background uses CCITT Group 4; crops support keep, gray8,
 gray2/4 and color2/4. Optional vector conversion maps non-white paint to black.
 Text, OCR, links, annotations, geometry and bookmark destinations are retained.
-Run without arguments; preview, skip pages and output settings are interactive.
-See pdf-binarize/README.md for processing details and supported PDF constructs.
+Drag in a PDF or open a JSON project. Assign reusable profiles to physical pages,
+preview originals/results, and export beside the source. All pages start with
+default; Ctrl/Shift-select pages to apply a profile together. Completed previews
+are cached for immediate revisits; original views skip the navigation delay.
+The former terminal interface is pdf-binarize-old.py.
+The viewer supports auto-fit on page turns, editable zoom, focused page keys and
+optional red region outlines that stay out of exported PDFs.
+On Windows, start without administrator rights to accept Explorer file drops;
+Open PDF also works when launched by an elevated terminal/editor.
+See pdf-tools/README.md for processing, project and navigation details.
 
 Requirements:
-    - pip: PyMuPDF>=1.28, Pillow with libtiff, numpy, opencv-python, tqdm, pypdf.
+    - pip: PySide6, PyMuPDF>=1.28, Pillow with libtiff, numpy, opencv-python,
+      tqdm, pypdf>=6.
 
 Usage:
     conda run -n base python tools/document-processing/pdf-binarize.py
@@ -29,11 +38,15 @@ if not IS_FROZEN:
     sys.path.insert(0, str(PROJECT_ROOT))
 from utils import *
 
-PACKAGE_NAME = "personal_pdf_binarize"
+PACKAGE_NAME = "personal_pdf_tools"
+WORKER_ARGUMENT = "--pdf-tools-worker"
 
 
-def load_app() -> ModuleType:
+def load_app(module: str = "binarize.app") -> ModuleType:
     """Load the private application once, using its valid Python package alias.
+
+    Args:
+        module: Relative module inside the private PDF tools package.
 
     Returns:
         The application module. Frozen builds import the staged package directly.
@@ -45,7 +58,7 @@ def load_app() -> ModuleType:
         Registers source packages in sys.modules; performs no disk scan or sync.
     """
     if PACKAGE_NAME not in sys.modules and not IS_FROZEN:
-        package_dir = SCRIPT_DIR / "pdf-binarize"
+        package_dir = SCRIPT_DIR / "pdf-tools"
         spec = importlib.util.spec_from_file_location(
             PACKAGE_NAME, package_dir / "__init__.py",
             submodule_search_locations=[str(package_dir)],
@@ -59,18 +72,20 @@ def load_app() -> ModuleType:
         except BaseException:
             sys.modules.pop(PACKAGE_NAME, None)
             raise
-    return importlib.import_module(f"{PACKAGE_NAME}.app")
+    return importlib.import_module(f"{PACKAGE_NAME}.{module}")
 
 
 def main() -> int:
-    """Run the interactive PDF workflow and return its exit status."""
+    """Start the desktop app or its private worker, returning an exit status."""
     try:
+        if WORKER_ARGUMENT in sys.argv:
+            return cast(Callable[[], int], load_app("binarize.worker").main)()
         application = load_app()
     except ImportError as exc:
         print(f"{FLRed}Missing PDF/image dependency: {exc.name}{CRst}")
-        print(f"{FGray}Install: pip install PyMuPDF Pillow numpy opencv-python tqdm pypdf{CRst}")
+        print(f"{FGray}Install: pip install PySide6 PyMuPDF Pillow numpy opencv-python tqdm pypdf{CRst}")
         return 1
-    return cast(Callable[[], int], application.main)()
+    return cast(Callable[[Path], int], application.main)(Path(__file__).resolve())
 
 
 if __name__ == "__main__":

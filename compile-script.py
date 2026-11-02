@@ -7,7 +7,7 @@ Usage:
 Lists all Python scripts in the project, lets you choose one by number,
 then compiles it with Nuitka or PyInstaller. Output goes to BUILD/ with
 directory structure preserved (e.g. BUILD/link-create_nuitka/).
-The rclone-sync, pdf-binarize, keyboard-remap and keyboard-hook-viewer packages are excluded from script
+The rclone-sync, pdf-tools, keyboard-remap and keyboard-hook-viewer packages are excluded from script
 selection and staged under their Python import names when compiling their entries.
 """
 
@@ -41,7 +41,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-binarize", "keyboard-hook-viewer", "keyboard-remap"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-binarize", "pdf-tools", "keyboard-hook-viewer", "keyboard-remap"}
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -203,7 +203,8 @@ def _run_compiler(
     packages = {"keyboard-hook-viewer.py": ("keyboard-hook-viewer", "personal_keyboard_hook_viewer"),
                 "keyboard-remap.py": ("keyboard-remap", "personal_keyboard_remap"),
                 "rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
-                "pdf-binarize.py": ("pdf-binarize", "personal_pdf_binarize")}
+                "pdf-binarize.py": ("pdf-tools", "personal_pdf_tools"),
+                "pdf-binarize-old.py": ("pdf-tools", "personal_pdf_tools")}
     package = packages.get(os.path.basename(script_path))
     if package is None:
         return subprocess.run(cmd, check=False)
@@ -215,9 +216,13 @@ def _run_compiler(
         package_dest = os.path.join(staging, import_name)
         os.makedirs(package_dest)
         # Only implementation modules are needed; tests/docs/configs stay outside.
-        for filename in os.listdir(package_src):
-            if filename.endswith(".py"):
-                shutil.copy2(os.path.join(package_src, filename), os.path.join(package_dest, filename))
+        for directory_path, subdirectories, filenames in os.walk(package_src):
+            subdirectories[:] = [name for name in subdirectories if name not in ("__pycache__", "tests", "test")]
+            destination = os.path.join(package_dest, os.path.relpath(directory_path, package_src))
+            os.makedirs(destination, exist_ok=True)
+            for filename in filenames:
+                if filename.endswith(".py"):
+                    shutil.copy2(os.path.join(directory_path, filename), os.path.join(destination, filename))
         environment = dict(os.environ)
         environment["PYTHONPATH"] = os.pathsep.join(
             part for part in (staging, environment.get("PYTHONPATH", "")) if part

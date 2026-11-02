@@ -972,10 +972,29 @@ See `utils/keyboard.py` module notes for source references and Korean legacy
 release-only caveats; never strip the high bit of F1/F2 language scan bytes.
 Run keyboard regression tests with `-p "test_keyboard*.py"`.
 
-`tools/document-processing/pdf-binarize.py` loads the private `pdf-binarize/`
-package as `personal_pdf_binarize`. See its README for module ownership. Keep
-internals out of launcher/compiler lists; the compiler stages the import alias.
-This tool is interactive-only. Run its tests with `-p "test_pdf_binarize*.py"`.
+`tools/document-processing/pdf-binarize.py` starts the PySide6/Fusion GUI;
+`pdf-binarize-old.py` retains the terminal menus. Both use `pdf-tools/`, imported
+as `personal_pdf_tools`. See its README for module ownership. Common viewer,
+navigation and single-request QProcess components live in `common/`; binarizer
+models/UI/worker and shared image engines live in `binarize/`. All MuPDF calls run
+in the worker's main thread for the GUI. File actions stay above the left profiles;
+one separated right toolbar combines page jumps, zoom and original view. Windows
+administrator launches explain Explorer's drop restriction instead of bypassing it.
+One 300 ms timer coalesces uncached processed-page navigation; originals skip the
+delay. Decoded previews live in a GUI cache capped at 512 MiB and 100 physical pages,
+with one latest result per original/processed view and configuration-checked reuse.
+Pages supports Ctrl/Shift batch selection; selecting a profile applies to the
+selection. New sessions assign every page to default; existing projects retain
+their saved assignments. Modifier-click selection never starts rendering;
+busy jobs reject concurrent requests. Profiles use stable IDs and complete settings,
+with revision-checked preview replies. Plain originals render directly from a
+retained read-only input; RGB previews cross one bounded shared-memory slot owned
+by the GUI. Region outlines are viewer overlays, never PDF content. Viewer-only
+page keys, auto-fit and zoom stay in the shared viewer component. Profiles retain
+per-page assignments and fixed default/no-processing entries. Projects are
+validated before adoption. Internals stay out of launcher/compiler lists; both
+entries stage the package recursively. Run `-p "test_pdf_binarize*.py"` for engine,
+project, offscreen GUI, real worker and packaging-staging checks.
 
 `tools/network/rclone-sync.py` is a thin entry for the private
 `tools/network/rclone-sync/` package, loaded as `personal_rclone_sync`.

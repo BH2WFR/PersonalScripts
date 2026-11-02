@@ -220,7 +220,8 @@
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-font-replace.py` | **保持文字位置的交互式 PDF 字体替换工具**：同一 PDF 可添加多条字体替换规则，独立筛选字号、页面和原文字颜色，设置替换后的颜色，并保留常规、粗体和斜体样式及其他文档内容。支持从 PDF 页面查找字体和文字颜色、按名称或本地化别名搜索系统字体、指定字体文件、子集或完整字体嵌入，以及按规则清理不再使用的原字体嵌入。 | **Python 库**：`PyMuPDF`、`fonttools`、`tqdm` |
-| `tools/document-processing/pdf-binarize.py` | **交互式 PDF 图片压缩工具**：<br />按图片元素二值化，支持插图保护、灰度或彩色位深压缩、灰底文字清理及去噪。保留原生文字、OCR、链接、批注及书签，可选矢量颜色黑白化、跳过页面及单页预览。 | **Python 库**：`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
+| `tools/document-processing/pdf-binarize.py` | **PDF 压缩桌面工具**：<br />提供紧凑工作区，支持拖入 PDF、带缓存的原图与结果预览（可显示识别框）、页面与书签导航、多选页面应用 Profile 及 JSON 工程。按图片元素压缩，支持插图保护、位深转换及清理，保留原生文字、OCR、链接、批注和书签。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
+| `tools/document-processing/pdf-binarize-old.py` | **终端版 PDF 二值化工具**：保留原有交互菜单，与桌面版共用处理算法。支持跳页、单页预览及可选的插图保护。 | **Python 库**：`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
 | `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据，也可处理仅有 PDF/A 标识的无保护文件。若没有需要移除的内容，则警告并提供重新打开或退出选项。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 书籍目录注入工具**：<br />将目录截图逐页发送给**视觉 LLM（如 Qwen3-VL）生成指定格式的 JSON**（含页码/层级/编号/标题），再直接逐页连续粘贴到脚本中；脚本会按输入顺序合并后将目录写入 PDF 文件。支持自定义起始书页页码，一个 PDF 页面可对应 1、2 或 4 个连续书页，并可选择生成正文和目录的页码标签。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-page-tag.py` | **交互式 PDF 页码标签编辑器**：按页码范围添加带前缀的连续编号，或清空全部、部分标签，保留书签和页面内容。可在内存中反复编辑，按需另存副本，然后继续编辑或退出。 | **Python 库**：`PyMuPDF` |

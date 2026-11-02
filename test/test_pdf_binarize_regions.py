@@ -395,7 +395,7 @@ class ScanRegionsTests(unittest.TestCase):
             patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
             patch.object(app.Input, "resolve_output_path", return_value=str(target)),
             patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-            patch("builtins.input", side_effect=["n", "n", "y", "", "", "n", "n", "3", ""]),
+            patch("builtins.input", side_effect=["n", "n", "y", "", "", "n", "n", "3", "none"]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(app.main(), 0)

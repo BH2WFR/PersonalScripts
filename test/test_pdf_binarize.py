@@ -21,14 +21,14 @@ import pymupdf
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "tools/document-processing/pdf-binarize.py"
+SCRIPT = ROOT / "tools/document-processing/pdf-binarize-old.py"
 SPEC = importlib.util.spec_from_file_location("pdf_binarize", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 entry = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = entry
 SPEC.loader.exec_module(entry)
 app = entry.load_app()
-from personal_pdf_binarize import objects, raster, workflow
+from personal_pdf_tools.binarize import objects, raster, workflow
 
 
 
@@ -293,15 +293,15 @@ class PdfBinarizeTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
         self.assert_no_temporary_files()
 
-    def test_skip_prompt_retries_and_blank_means_none(self) -> None:
+    def test_skip_prompt_retries_and_blank_keeps_covers(self) -> None:
         with patch("builtins.input", side_effect=["4", ""]) as prompt:
             self.convert(skip_pages=None)
         self.assertEqual(prompt.call_count, 2)
         with pymupdf.open(self.output) as result:
-            self.assertTrue(all(page.get_images()[0][4] == 1 for page in result))
+            self.assertEqual([page.get_images()[0][4] for page in result], [8, 8, 1])
 
     def test_interactive_skip_selection_preserves_original_pages(self) -> None:
-        for number, selection in enumerate(("1-2,-1", "-1,-2", "")):
+        for number, selection in enumerate(("1-2,-1", "-1,-2", "", "none")):
             target = self.folder / f"interactive-skip-{number}.pdf"
             with (
                 self.subTest(selection=selection),
@@ -312,7 +312,8 @@ class PdfBinarizeTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(app.main(), 0)
-            skipped = app.Input.parse_index_ranges(selection, item_count=3)
+            effective_selection = "" if selection == "none" else (selection or "1,2")
+            skipped = app.Input.parse_index_ranges(effective_selection, item_count=3)
             with pymupdf.open(target) as result:
                 for index in range(3):
                     self.assertEqual(result[index].get_images()[0][4], 8 if index in skipped else 1)
