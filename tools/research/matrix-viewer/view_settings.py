@@ -138,11 +138,16 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         """
         window = self.workspace
         window.profile_fit_button.setVisible(window._layout_mode == ViewMode.SIGNAL and window.tabs.currentIndex() in (0, 1))
+        window.extrema_button.setVisible(window.tabs.currentWidget() is not window.raw_view)
+        window.tab_actions_separator.setVisible(window.tabs.currentWidget() is not window.raw_view)
+        window.color_lock_button.setVisible(window._layout_mode in (ViewMode.MATRIX, ViewMode.POINTS)
+                                            and window.tabs.currentIndex() in (0, 1))
         entry = window._entry()
         ready = self._ready()
         mode = entry.selection.mode if entry is not None else None
         matrix = mode == ViewMode.MATRIX
         spatial = mode in (ViewMode.MATRIX, ViewMode.POINTS)
+        window.color_lock_button.setEnabled(ready and spatial)
         overlay = window._overlay()
         for view, button in self.scaling_buttons.items():
             button.setEnabled(window.scaling.available(view))

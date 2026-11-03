@@ -30,6 +30,8 @@ Dialog outer left/right/bottom margins are 6 px; their top margin is preserved.
 Splitter handles are blue, turning amber on hover and orange while dragging.
 2D/3D matrices offer discrete points with independent pixel diameters. Their
 sampling shares Maximum grid edge; image pixels and signal data stay full size.
+Grid sampling presets offer all samples, 512 and 1024. Newly opened matrices
+start without a selected slice; the index field stays blank until selection.
 All spin boxes ignore wheel events, including focused controls and dialogs.
 The sidebar contains interpretation, cropping and sampling controls. Appearance
 panels are hosted by the workspace's View settings dialog; slice navigation
@@ -64,7 +66,7 @@ from .exporting import (ExportFormat, ExportLayout, ExportOptions, ExportTarget,
 from .image_view import ImageView
 from .profile_view import ProfileView
 from .raw_view import RawDataView
-from .qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
+from .qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, OptionalIndexSpinBox
 from .render_style import DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle, MIN_POINT_SIZE, MAX_POINT_SIZE
 from .surface_view import (DEFAULT_PROFILE_COLOR, DEFAULT_PROFILE_LIFT,
                            DEFAULT_SECTION_OPACITY, ProfileStyle, SurfaceView)
@@ -258,7 +260,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._latest: dict[JobKind, int] = {}
         self._jobs: dict[int, Job] = {}
         self._slice_spins: dict[int, QtWidgets.QSpinBox] = {}
-        self._profile_selected = True
+        self._profile_selected = False
         self._profile_auto_y = True
         self._layout_mode: ViewMode | None = None
         self._export_busy = False
@@ -589,8 +591,24 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.max_edge.setSpecialValueText("Full resolution")
         self.max_edge.setValue(max_edge)
         self.max_edge.setKeyboardTracking(False)
+        self.max_edge.setToolTip("Maximum samples along the longer grid edge; the shorter edge follows its aspect ratio.\n"
+                                 "0 / All samples keeps every pixel. Source data and slice samples are unchanged.")
         self.max_edge.valueChanged.connect(self._schedule_frame)
-        sampling.addRow("Maximum grid edge", self.max_edge)
+        self.grid_sampling_controls = QtWidgets.QWidget()
+        edge_row = QtWidgets.QHBoxLayout(self.grid_sampling_controls)
+        edge_row.setContentsMargins(0, 0, 0, 0)
+        edge_row.setSpacing(2)
+        edge_row.addWidget(self.max_edge, 1)
+        self.grid_sampling_presets = QtWidgets.QToolButton()
+        self.grid_sampling_presets.setText("Presets")
+        self.grid_sampling_presets.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        presets = QtWidgets.QMenu(self.grid_sampling_presets)
+        for name, edge in (("All samples", 0), ("512", 512), ("1024", 1024)):
+            action = presets.addAction(name)
+            action.triggered.connect(lambda _checked=False, value=edge: self.max_edge.setValue(value))
+        self.grid_sampling_presets.setMenu(presets)
+        edge_row.addWidget(self.grid_sampling_presets)
+        sampling.addRow("Maximum grid edge", self.grid_sampling_controls)
         self.max_points = NoWheelSpinBox()
         self.max_points.setRange(0, MAX_QT_INDEX)
         self.max_points.setSpecialValueText("All points")
@@ -902,17 +920,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.profile_direction = NoWheelComboBox()
         self.profile_direction.addItems(["Row", "Column"])
         self.profile_direction.currentIndexChanged.connect(self._profile_direction_changed)
-        self.profile_index = NoWheelSpinBox()
+        self.profile_index = OptionalIndexSpinBox()
         self.profile_index.setKeyboardTracking(False)
         self.profile_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.profile_index.valueChanged.connect(self.profile_slider.setValue)
         self.profile_slider.valueChanged.connect(self.profile_index.setValue)
         self.profile_index.valueChanged.connect(self._profile_index_changed)
+        self.profile_index.selection_requested.connect(self._profile_index_changed)
+        self.profile_slider.sliderReleased.connect(self._profile_slider_released)
         selector.addWidget(QtWidgets.QLabel("Profile"))
         selector.addWidget(self.profile_direction)
         selector.addWidget(self.profile_index)
         selector.addWidget(self.profile_slider, 1)
-        self.profile_toggle = QtWidgets.QPushButton("Clear selection")
+        self.profile_toggle = QtWidgets.QPushButton("Select current")
         self.profile_toggle.clicked.connect(self._toggle_profile_selection)
         selector.addWidget(self.profile_toggle)
         layout.addLayout(selector)
@@ -992,6 +1012,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._set_profile_auto_y(self._profile_auto_y)
         self._profile_selected = True
         self._update_profile()
+
+    def _profile_slider_released(self) -> None:
+        """Allow selecting the retained slider index even without moving it."""
+        if not self._profile_selected:
+            self._profile_index_changed()
+
+    def _sync_profile_selector(self) -> None:
+        """Keep the index blank whenever no slice is selected."""
+        self.profile_index.set_empty(not self._profile_selected)
+        self.profile_toggle.setText("Clear selection" if self._profile_selected else "Select current")
 
     def _set_profile_auto_y(self, enabled: bool) -> None:
         """Choose whether slice movements refit Y; X zoom is unaffected."""
@@ -1269,7 +1299,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
                       and document.image_source is previous.image_source)
         saved_crop, saved_selected = self._crop, self._profile_selected
         self.document = document
-        self._profile_selected = saved_selected if same_image else True
+        self._profile_selected = saved_selected if same_image else False
         self.frame = None
         self.frame_selection = None
         self._reset_pending = True
@@ -1533,7 +1563,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
                                           and self.display_channel.currentData() == Component.MAGNITUDE_DB)
         self.surface_controls.setVisible(not signal)
         self.sampling_controls.setVisible(not signal)
-        self.sampling_form.setRowVisible(self.max_edge, mode == ViewMode.MATRIX)
+        self.sampling_form.setRowVisible(self.grid_sampling_controls, mode == ViewMode.MATRIX)
         self.sampling_form.setRowVisible(self.max_points, mode == ViewMode.POINTS)
         self.sampling_hint.setText(
             "Grid size limits 2D points and 3D sampling. Set 0 for all samples. Image pixels, profiles and numeric exports retain full resolution."
@@ -1893,12 +1923,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._update_profile()
 
     def _update_profile(self) -> None:
+        self._sync_profile_selector()
         frame = self.frame
         self._sync_export_controls()
         if frame is None or frame.scalar.ndim != 2:
             return
         row = self.profile_direction.currentIndex() == 0
-        self.profile_toggle.setText("Clear selection" if self._profile_selected else "Select current")
         if not self._profile_selected:
             self.profile_view.clear_selection()
             self.image_view.set_profile(row, None)

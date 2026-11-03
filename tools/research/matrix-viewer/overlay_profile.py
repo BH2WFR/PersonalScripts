@@ -6,6 +6,7 @@ Each layer keeps independent nonfinite colors and clipping emphasis.
 Sample diameters belong to each layer and also style its cached derivative.
 Hover readouts use one header line for source coordinates and an elided matrix
 name; full readings remain in the tooltip without resizing the plot.
+Derivative omission/jump totals share the header; explanations stay in tooltips.
 """
 
 from time import perf_counter
@@ -36,8 +37,7 @@ class OverlayProfile(ProfileView):
         super().__init__()
         self.appearance_form.setRowVisible(self.color_button, False)
         self.title.setText("Overlay")
-        self.derivative_note.setText("Derivatives use original X coordinates.\nRed dots mark undefined samples.")
-        self.jump_mode.setToolTip("Derivative settings for the selected matrix only.")
+        self.jump_mode.setToolTip(f"{self.jump_mode.toolTip()}\nSettings apply to the selected matrix only.")
         self.jump_threshold.setToolTip("Jump threshold for the selected matrix only.")
         self.point_size.setToolTip("Signal/slice and derivative point size for the selected matrix/channel.")
         self.point_size.valueChanged.connect(lambda _size: self.settings_changed.emit())
@@ -52,6 +52,8 @@ class OverlayProfile(ProfileView):
         if tuple(item.key for item in series) != tuple(item.key for item in self._series):
             self.signal_pane.invalidate_extrema()
             self.derivative_pane.invalidate_extrema()
+            self.derivative_note.setText("Not calculated" if series else "No selection")
+            self.derivative_note.setToolTip("")
         self._series = series
         self.title.setText("Overlay")
         self.legend_bar.set_entries(tuple((item.label, item.layer.color) for item in series))
@@ -193,6 +195,9 @@ class OverlayProfile(ProfileView):
             markers.append(x[result.undefined_indices])
         points = np.concatenate(markers) if markers else np.empty(0)
         self.undefined_markers.setData(points, np.zeros(len(points)))
+        self._set_derivative_summary(len(points), sum(self._cache[series.key].jump_count for series in self._series),
+            "Each curve uses its original X coordinates and its own jump threshold. "
+            "Clipped samples are omitted; display alignment does not affect differentiation.")
         self._drawn[1] = signature
 
     def _axis_label(self) -> str:

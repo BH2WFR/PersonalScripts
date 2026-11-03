@@ -21,8 +21,10 @@ Rounded XYZ ticks run across their axes; precise color/Z ranges use compact Qt
 information strips above/below the scene, with the normal application font.
 Tick density follows scaled axis lengths: compressed axes use fewer labels at
 correct source coordinates; long axes keep VTK's rounded automatic steps.
-Short automatic Z axes round the annotation box outward to 1/2/5-decade steps,
-including on initial loading. Manual/locked Z boxes retain their exact bounds.
+Automatic Z axes round the annotation box with a fixed four-tick budget, so
+scene scaling cannot change its source-value extent. Strongly compressed Z axes
+omit intermediate labels; enlarged axes use denser native rounded ticks.
+Manual/locked Z boxes retain their exact bounds.
 Optional endpoint-inclusive Z/color ticks survive scene rebuilds, default off.
 An independent expand-only Z range lock accumulates the geometry box across
 matrices, overlays and height changes. Turning it off restores manual/auto Z
@@ -64,6 +66,8 @@ MIN_LABEL_EXPONENT = -308
 MIN_AXIS_SCALE = 1e-12
 MAX_AXIS_SCALE = 1e12
 FULL_AXIS_TICK_BUDGET = 8
+AUTO_Z_TICK_BUDGET = 4
+COMPRESSED_Z_AXIS_RATIO = 0.1
 
 
 def _rounded_axis_ticks(lower: float, upper: float, count: int) -> tuple[float, ...]:
@@ -940,7 +944,8 @@ class SurfaceView(QtWidgets.QWidget):
         axes use two to four evenly spaced labels instead; the longest axes
         retain its rounded automatic ticks. Keeping the custom count below five
         makes VTK place these labels at exactly uniform positions across the
-        original range. Automatic Z boxes round outward to nice tick values;
+        original range. Automatic Z boxes round with a scale-independent budget;
+        above one tenth of the longest axis they retain intermediate labels.
         manual/locked Z boxes use native ticks unless endpoint ticks are enabled.
         Integer X/Y endpoints prefer integer intermediate labels.
         Endpoint-inclusive Z remains explicit, including when the axis is long.
@@ -957,15 +962,14 @@ class SurfaceView(QtWidgets.QWidget):
         for axis, (length, limits) in enumerate(zip(lengths, ranges)):
             lower, upper = limits
             count = max(2, math.ceil(FULL_AXIS_TICK_BUDGET * length / longest))
-            if count >= 5 and not (axis == 2 and self.endpoint_ticks):
-                continue
             if not all(math.isfinite(value) for value in (lower, upper, upper - lower)) or upper <= lower:
                 continue
-            count = min(count, 4)
             if axis == 2 and not self.endpoint_ticks:
                 if self.effective_z_range is not None:
                     continue
-                values = _rounded_axis_ticks(lower, upper, count)
+                # Tick density must not feed back into the annotation bounds:
+                # changing Z scale should stretch the same box, not re-round it.
+                values = _rounded_axis_ticks(lower, upper, AUTO_Z_TICK_BUDGET)
                 if not values:
                     continue
                 # Expand only the annotation box, mapping label units (including
@@ -977,11 +981,19 @@ class SurfaceView(QtWidgets.QWidget):
                     continue
                 axes.SetBounds(*bounds[:4], z_low, z_high)
                 axes.SetZAxisRange(values[0], values[-1])
+                if count >= 5:
+                    axes.SetAxisLabels(axis, None)
+                    continue
+                if length / longest < COMPRESSED_Z_AXIS_RATIO:
+                    values = (values[0], values[-1])
                 labels = vtkStringArray()
                 for value in values:
                     labels.InsertNextValue(f"{value:.4g}")
                 axes.SetAxisLabels(axis, labels)
                 continue
+            if count >= 5 and not (axis == 2 and self.endpoint_ticks):
+                continue
+            count = min(count, 4)
             if float(lower).is_integer() and float(upper).is_integer():
                 while count > 2 and (upper - lower) % (count - 1):
                     count -= 1

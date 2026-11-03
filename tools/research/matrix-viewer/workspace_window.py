@@ -128,7 +128,7 @@ from .figure_dialog import FigureExportDialog
 from .figure_export import FigureSource, FigureView, figure_stem, plot_source, surface_source
 from .view_extrema import ViewExtrema
 from .plot_support import pyside_graphics_view
-from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox
+from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .profile_view import CHANNEL_COLORS, JumpMode
 from .render_style import DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
 from .surface_view import ProfileStyle
@@ -255,10 +255,19 @@ class WorkspaceWindow(ViewerWindow):
         tab_actions_layout = QtWidgets.QHBoxLayout(tab_actions)
         tab_actions_layout.setContentsMargins(0, 0, 0, 0)
         tab_actions_layout.setSpacing(2)
-        tab_actions_layout.addWidget(self.view_settings_button)
         self.extrema_button = QtWidgets.QPushButton("Calculate extrema")
         tab_actions_layout.addWidget(self.extrema_button)
+        self.tab_actions_separator = VerticalSeparator()
+        tab_actions_layout.addWidget(self.tab_actions_separator)
+        self.color_lock_button = QtWidgets.QPushButton("Lock color range")
+        self.color_lock_button.setCheckable(True)
+        self.color_lock_button.setChecked(self.color_range_lock.isChecked())
+        self.color_lock_button.setToolTip(self.color_range_lock.toolTip())
+        self.color_lock_button.toggled.connect(self.color_range_lock.setChecked)
+        self.color_range_lock.toggled.connect(self.color_lock_button.setChecked)
+        tab_actions_layout.addWidget(self.color_lock_button)
         tab_actions_layout.addWidget(self.profile_fit_button)
+        tab_actions_layout.addWidget(self.view_settings_button)
         self.tabs.setCornerWidget(tab_actions, QtCore.Qt.Corner.TopRightCorner)
         self.view_extrema = ViewExtrema(self)
         self.tabs.currentChanged.connect(self.view_settings.refresh)
@@ -662,7 +671,7 @@ class WorkspaceWindow(ViewerWindow):
                 profile.jump_threshold.setValue(float(entry.settings.get("jump_threshold", 1.0)))
                 profile.style_selector.setCurrentIndex(int(entry.settings.get("curve_style", 0)))
                 profile.point_size.setValue(float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE)))
-                profile.jump_threshold.setEnabled(profile.jump_mode.currentIndex() == JumpMode.CUSTOM)
+                profile.sync_jump_controls()
             if profile is self.profile_view and previous_jump != (profile.jump_mode.currentIndex(), profile.jump_threshold.value()):
                 profile._invalidate_derivative()
         self._clip_color = QtGui.QColor(str(entry.settings.get("clip_color", "#ff0000")))
@@ -761,7 +770,7 @@ class WorkspaceWindow(ViewerWindow):
             if not entry.visible or self._switch_view is not None:
                 self._reset_pending = False
             self._configure_selection(entry.selection)
-            self._profile_selected = True if reset_selection else selected_profile
+            self._profile_selected = False if reset_selection else selected_profile
             self._restore_settings(entry, restore_views=entry.visible or self._overlay())
             self._crop = entry.crop
             self.frame, self.frame_selection = entry.frame, entry.selection
@@ -2137,6 +2146,7 @@ class WorkspaceWindow(ViewerWindow):
         self._update_profile()
 
     def _update_profile(self) -> None:
+        self._sync_profile_selector()
         if not self._overlay():
             with self._single_view_context():
                 entry = self._entry()
@@ -2146,7 +2156,6 @@ class WorkspaceWindow(ViewerWindow):
         if self._restoring or self._painting_active:
             return
         row, position = self.profile_direction.currentIndex() == 0, self._profile_position()
-        self.profile_toggle.setText("Clear selection" if self._profile_selected else "Select current")
         series = tuple(item for layer in self._render_layers
                        if self._profile_selected and (item := profile_series(layer, row, position)) is not None)
         self.overlay_profile.set_series(series)

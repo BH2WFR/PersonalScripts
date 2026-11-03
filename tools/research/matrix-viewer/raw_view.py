@@ -14,7 +14,7 @@ from typing import cast
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import Frame, ImageMember, ImageSource, SourceArray
-from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
+from .qt_widgets import NoWheelComboBox, NoWheelSpinBox, VerticalSeparator
 
 MAX_COPY_CELLS = 1_000_000
 DEFAULT_COLUMN_WIDTH = 48
@@ -210,10 +210,7 @@ class RawDataView(QtWidgets.QWidget):
         copy = QtWidgets.QPushButton("Copy selection")
         copy.clicked.connect(self._copy)
         bar.addWidget(copy)
-        separator = QtWidgets.QFrame()
-        separator.setFrameShape(QtWidgets.QFrame.Shape.VLine)
-        separator.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
-        bar.addWidget(separator)
+        bar.addWidget(VerticalSeparator())
         bar.addWidget(QtWidgets.QLabel("Column width"))
         self.column_width = NoWheelSpinBox()
         self.column_width.setRange(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)

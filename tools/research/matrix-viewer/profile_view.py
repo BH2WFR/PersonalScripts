@@ -19,7 +19,8 @@ nonfinite and undefined-derivative annotations keep their separate marker sizes.
 Style definitions and labels come from render_style, shared with 2D/3D views.
 View settings and Fit curve occupy the tab-bar corner. A bold source label,
 legend and hover readings sit above the canvas. Range extrema flank the X-axis
-title below the canvas. Derivative explanations wrap beside their controls.
+title below the canvas. Compact derivative controls and counts share the source
+header; detailed explanations are tooltips and inactive thresholds are hidden.
 An optional expanding Y guard retains range history across data changes and
 shares it with the overlay pane. Signal/derivative histories remain independent.
 It runs on normal range events, without polling, and is suspended for export
@@ -47,7 +48,7 @@ from .clipping import ClippedCurve, clip_curve
 from .derivatives import DerivativeResult, differentiate
 from .plot_support import EndpointAxis, RangeNotes, compact_axis, graphics_scene, pyside_graphics_view
 from .profile_legend import ProfileLegend
-from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox
+from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .value_markers import MarkerStyle, curve_markers
 from .render_style import DEFAULT_POINT_SIZE, MIN_POINT_SIZE, MAX_POINT_SIZE, CurveStyle
 
@@ -69,6 +70,7 @@ MONO_OUTLINE_WIDTH = 3
 ANNOTATION_Z_VALUE = 1
 MIN_PROFILE_PLOT_HEIGHT = 160
 PROFILE_TITLE_POINT_INCREMENT = 1.0
+DERIVATIVE_CONTROL_VERTICAL_PADDING = 4
 
 
 def _channel_label(channel: ImageMember | None, alpha_weighted: bool) -> str:
@@ -438,13 +440,14 @@ class ProfileView(QtWidgets.QWidget):
         actions_layout = QtWidgets.QHBoxLayout(self.tab_actions)
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(2)
-        actions_layout.addWidget(self.settings_button)
         self.extrema_button = QtWidgets.QPushButton("Calculate extrema")
         actions_layout.addWidget(self.extrema_button)
+        actions_layout.addWidget(VerticalSeparator())
         fit = QtWidgets.QPushButton("Fit curve")
         fit.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         fit.clicked.connect(self.reset_view)
         actions_layout.addWidget(fit)
+        actions_layout.addWidget(self.settings_button)
         self.readout = QtWidgets.QLabel("Move over the curve to inspect a sample")
         self.readout.setMinimumWidth(120)
         self.readout.setFixedHeight(self.readout.fontMetrics().lineSpacing())
@@ -476,20 +479,34 @@ class ProfileView(QtWidgets.QWidget):
         derivative_layout = QtWidgets.QVBoxLayout(page)
         self._derivative_layout = derivative_layout
         derivative_layout.setContentsMargins(0, 0, 0, 0)
-        settings = QtWidgets.QHBoxLayout()
+        self.derivative_controls = QtWidgets.QWidget()
+        settings = QtWidgets.QHBoxLayout(self.derivative_controls)
+        settings.setContentsMargins(0, 0, 0, 0)
+        settings.setSpacing(3)
         self.jump_mode = NoWheelComboBox()
         self.jump_mode.addItems(["Phase (radians)", "Phase (degrees)", "Custom threshold", "Gaps only"])
         self.jump_mode.setCurrentIndex(JumpMode.GAPS_ONLY)
+        self.jump_mode.setToolTip(
+            "Gaps only: no jump threshold; exclude invalid samples and repeated X.\n"
+            "Phase (radians): omit neighboring pairs with |Δy| > π.\n"
+            "Phase (degrees): omit neighboring pairs with |Δy| > 180.\n"
+            "Custom threshold: use the entered |Δy| limit.\n"
+            "Thresholds flag suspected jumps; no phase unwrapping is performed.")
         settings.addWidget(self.jump_mode)
-        settings.addWidget(QtWidgets.QLabel("Jump |Δy| >"))
+        self.jump_threshold_label = QtWidgets.QLabel("Jump |Δy| >")
+        settings.addWidget(self.jump_threshold_label)
         self.jump_threshold = NoWheelDoubleSpinBox()
         self.jump_threshold.setDecimals(9)
         self.jump_threshold.setRange(1e-9, 1e100)
         self.jump_threshold.setValue(1.0)
         self.jump_threshold.setKeyboardTracking(False)
         self.jump_threshold.setEnabled(False)
+        control_height = self.jump_mode.fontMetrics().height() + DERIVATIVE_CONTROL_VERTICAL_PADDING
+        for control in (self.jump_mode, self.jump_threshold):
+            control.setFixedHeight(control_height)
         settings.addWidget(self.jump_threshold)
-        derivative_layout.addLayout(settings)
+        self.sync_jump_controls()
+        bar.insertWidget(1, self.derivative_controls)
         self.derivative_pane = CurvePane("dy / dx")
         self.undefined_markers = pg.ScatterPlotItem(
             pen=None, brush=UNDEFINED_COLOR, size=8, symbol="o",
@@ -498,13 +515,13 @@ class ProfileView(QtWidgets.QWidget):
         self.derivative_pane.plot_item.addItem(self.undefined_markers)
         graphics_scene(self.derivative_pane.native_view).sigMouseMoved.connect(self._hover_derivative)
         derivative_layout.addWidget(self.derivative_pane)
-        self.derivative_note = QtWidgets.QLabel(
-            "Red dots at y=0: undefined / omitted derivatives; not zero derivatives."
-        )
-        self.derivative_note.setWordWrap(True)
-        self.derivative_note.setMinimumWidth(180)
-        self.derivative_note.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
-        settings.addWidget(self.derivative_note, 1)
+        self.derivative_note = QtWidgets.QLabel("Not calculated")
+        self.derivative_note.setWordWrap(False)
+        self.derivative_note.setFixedHeight(self.derivative_note.fontMetrics().lineSpacing())
+        self.derivative_note.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        bar.insertWidget(1, self.derivative_note)
+        self.derivative_separator = VerticalSeparator()
+        bar.insertWidget(1, self.derivative_separator)
         self.tabs.addTab(page, "Derivative")
         self.tabs.currentChanged.connect(self._move_info_bar)
         self.tabs.currentChanged.connect(self._tab_changed)
@@ -516,6 +533,9 @@ class ProfileView(QtWidgets.QWidget):
     def _move_info_bar(self) -> None:
         """Keep shared source/legend/hover widgets below the active page's tabs."""
         layout = self._derivative_layout if self.tabs.currentIndex() == 1 else self._signal_layout
+        self.derivative_controls.setVisible(self.tabs.currentIndex() == 1)
+        self.derivative_separator.setVisible(self.tabs.currentIndex() == 1)
+        self.derivative_note.setVisible(self.tabs.currentIndex() == 1)
         if isinstance(layout, QtWidgets.QVBoxLayout):
             layout.insertWidget(0, self.info_bar)
             self.info_bar.show()
@@ -862,9 +882,16 @@ class ProfileView(QtWidgets.QWidget):
         self.clip_color = color
         self._redraw()
 
+    def sync_jump_controls(self) -> None:
+        """Refresh threshold visibility/editability without triggering computation."""
+        mode = JumpMode(self.jump_mode.currentIndex())
+        self.jump_threshold_label.setVisible(mode != JumpMode.GAPS_ONLY)
+        self.jump_threshold.setVisible(mode != JumpMode.GAPS_ONLY)
+        self.jump_threshold.setEnabled(mode == JumpMode.CUSTOM)
+
     def _jump_mode_changed(self) -> None:
         mode = JumpMode(self.jump_mode.currentIndex())
-        self.jump_threshold.setEnabled(mode == JumpMode.CUSTOM)
+        self.sync_jump_controls()
         with QtCore.QSignalBlocker(self.jump_threshold):
             if mode == JumpMode.RADIANS:
                 self.jump_threshold.setValue(float(np.pi))
@@ -875,6 +902,8 @@ class ProfileView(QtWidgets.QWidget):
     def _invalidate_derivative(self) -> None:
         self.derivative_result = None
         self.derivative_results.clear()
+        self.derivative_note.setText("Not calculated")
+        self.derivative_note.setToolTip("")
         self._derivative_dirty = True
         self.derivative_pane.clear_curves()
         self.undefined_markers.clear()
@@ -932,10 +961,8 @@ class ProfileView(QtWidgets.QWidget):
         self._redraw_derivative()
         marker_count = sum(len(result.undefined_indices) for result in results.values())
         jump_count = sum(result.jump_count for result in results.values())
-        self.derivative_note.setText(
-            f"Red dots at y=0: undefined / omitted, not zero.\n"
-            f"{marker_count:,} markers; {jump_count:,} suspected jumps.\n"
-            + ("Sorted by X with actual spacing; repeated X treated as gaps." if self.x_values is not None else "dx=1;")
+        self._set_derivative_summary(marker_count, jump_count,
+            ("Sorted by X with actual spacing; repeated X treated as gaps." if self.x_values is not None else "dx=1;")
             + (" Color/gray multiplied by alpha; A in source units; clipped samples omitted."
                if self.alpha_weighted else " Original values, clipped samples omitted.")
             + (" Each channel is differentiated independently; markers can overlap." if self.channel_names else "")
@@ -943,6 +970,14 @@ class ProfileView(QtWidgets.QWidget):
         if self._derivative_reset:
             self.derivative_pane.view_box.enableAutoRange()
             self._derivative_reset = False
+
+    def _set_derivative_summary(self, marker_count: int, jump_count: int, detail: str) -> None:
+        """Show concise counts beside the source, keeping explanations in a tooltip."""
+        self.derivative_note.setText(f"Omitted: {marker_count:,} · Jumps: {jump_count:,}")
+        self.derivative_note.setToolTip(
+            "Red dots at y=0 mark undefined / omitted derivatives, not zero derivatives.\n"
+            "Jumps counts rejected neighboring pairs; omitted points can overlap across channels.\n"
+            f"{detail}")
 
     def _choose_color(self) -> None:
         chosen = QtWidgets.QColorDialog.getColor(self.color, self, "Curve color")
