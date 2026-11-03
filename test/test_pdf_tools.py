@@ -35,9 +35,9 @@ def load_script(name: str) -> ModuleType:
     return module
 
 
-bookmarks = load_script("pdf-bookmarks-add")
+bookmarks = load_script("pdf-bookmarks-add").load_app("bookmarks.model")
+bookmark_worker = load_script("pdf-bookmarks-add").load_app("bookmarks.worker")
 decrypt = load_script("pdf-decrypt")
-tags = load_script("pdf-page-tag")
 compress = load_script("pdf-compress")
 
 
@@ -400,18 +400,16 @@ class PdfToolsTests(unittest.TestCase):
             self.assertTrue(self.source.exists())
 
     def write_bookmarks(self, append: bool) -> None:
-        """Exercise bookmark insertion with missing levels and invalid page targets."""
-        mapping = bookmarks._PageMapping(2, bookmarks._BookPagesPerPdf.SINGLE, bookmarks._FirstPdfPageCount.ONE)
-        entries = [
-            {"page": -1, "level": 3, "title": "前言"},
-            {"page": 1, "level": 1, "title": "Chapter"},
-            {"page": 2, "level": 2, "title": "Child"},
-            {"page": 99, "level": 1, "title": "Out of range"},
-        ]
-        mode = bookmarks._BookmarkWriteMode.APPEND if append else bookmarks._BookmarkWriteMode.REPLACE
-        with pymupdf.open(self.source) as document, contextlib.redirect_stdout(io.StringIO()):
-            bookmarks._write_bookmarks(document, entries, mapping, 1, mode)
-            Pdf.save_new(document, self.output)
+        """Exercise the GUI's export engine with original actions and custom destinations."""
+        with Pdf.open_document(self.source, interactive=False) as (document, _):
+            project = bookmarks.BookSession(self.source, document.page_count, Pdf.read_page_labels(document))
+            if append:
+                project.bookmarks = [bookmarks.Bookmark(title, page, level, original_xref=dest["xref"])
+                                     for level, title, page, dest in document.get_toc(False)]
+        project.bookmarks.extend([bookmarks.Bookmark("Cover", 1), bookmarks.Bookmark("Table of Contents", 1),
+                                  bookmarks.Bookmark("前言", 1), bookmarks.Bookmark("Chapter", 2),
+                                  bookmarks.Bookmark("Child", 3, 2)])
+        bookmark_worker.export_project(project, self.output)
 
     def test_append_keeps_original_destinations_styles_and_collapse(self) -> None:
         self.write_bookmarks(append=True)
@@ -434,135 +432,6 @@ class PdfToolsTests(unittest.TestCase):
             self.assertEqual(result.get_toc(), [[1, "Cover", 1], [1, "Table of Contents", 1],
                                                 [1, "前言", 1], [1, "Chapter", 2], [2, "Child", 3]])
 
-    def test_bookmark_cli_authenticates_and_saves(self) -> None:
-        self.make_source("secret")
-        mapping = bookmarks._PageMapping(3, bookmarks._BookPagesPerPdf.SINGLE, bookmarks._FirstPdfPageCount.ONE)
-        original = self.source.read_bytes()
-        for mode in ("a", "r"):
-            for answer in ("", "y", "n"):
-                self.output = self.folder / f"labels-{mode}-{answer or 'default'}.pdf"
-                replies = [mode, answer] + ([""] if answer != "n" else [])
-                with (
-                    self.subTest(mode=mode, answer=answer),
-                    patch.object(sys, "argv", [str(bookmarks.__file__), str(self.source), "-o", str(self.output)]),
-                    patch.object(Input, "resolve_output_path", return_value=str(self.output)),
-                    patch.object(Input, "input_password", return_value="secret"),
-                    patch.object(bookmarks, "_select_page_mapping", return_value=mapping),
-                    patch.object(bookmarks, "_select_toc_pdf_page", return_value=2),
-                    patch.object(bookmarks, "_read_bookmark_pages", return_value=[{"page": 2, "level": 1, "title": "New"}]),
-                    patch("builtins.input", side_effect=replies),
-                    contextlib.redirect_stdout(io.StringIO()),
-                ):
-                    self.assertEqual(bookmarks.main(), 0)
-                with pymupdf.open(self.output) as result:
-                    self.assertFalse(result.is_encrypted)
-                    self.assertEqual(result.get_toc()[-1], [1, "New", 4])
-                    expected = ["Old-5", "Old-6", "Old-7", "Old-8"] if answer == "n" else ["Old-5", "C1", "1", "2"]
-                    self.assertEqual([page.get_label() for page in result], expected)
-        self.assertEqual(self.source.read_bytes(), original)
-
-    def run_tag_editor(self, replies: list[str], outputs: list[Path]) -> int:
-        """Run the real menu with scripted input and repository-local output paths."""
-        with (
-            patch.object(sys, "argv", [str(tags.__file__), str(self.source)]),
-            patch.object(Input, "resolve_output_path", side_effect=[str(path) for path in outputs]),
-            patch("builtins.input", side_effect=replies),
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            return tags.main()
-
-    def test_tag_editor_repeated_edits_and_saves_preserve_pdf(self) -> None:
-        self.make_source("secret")
-        original = self.source.read_bytes()
-        second = self.folder / "second.pdf"
-        with pymupdf.open(self.source) as source:
-            source.authenticate("secret")
-            before_toc = source.get_toc(False)
-            for entry in before_toc:
-                entry[3].pop("xref", None)
-            before_pixels = [page.get_pixmap().samples for page in source]
-        replies = [
-            "a", "2", "3", "10", "A-",
-            "a", "3", "3", "7", "B",
-            "s",
-            "p", "1,2-3,-1",
-            "a", "-1", "", "", "C",
-            "w",
-        ]
-        with patch.object(Input, "input_password", return_value="secret"):
-            self.assertEqual(self.run_tag_editor(replies, [self.output, second]), 0)
-        for path, expected in ((self.output, ["Old-5", "A-10", "B7", "Old-8"]),
-                               (second, ["", "", "", "C1"])):
-            with pymupdf.open(path) as result:
-                self.assertFalse(result.is_encrypted)
-                self.assertEqual(Pdf.read_page_labels(result), expected)
-                self.assert_structure(result)
-                after_toc = result.get_toc(False)
-                for entry in after_toc:
-                    entry[3].pop("xref", None)
-                self.assertEqual(after_toc, before_toc)
-                root = result.get_outline_xrefs()[0]
-                self.assertIn("/FitH 72", result.xref_get_key(root, "Dest")[1])
-                self.assertEqual(result.xref_get_key(root, "Count"), ("int", "-1"))
-                self.assertEqual([page.get_pixmap().samples for page in result], before_pixels)
-        self.assertEqual(self.source.read_bytes(), original)
-
-    def test_tag_editor_exit_discards_only_pending_changes(self) -> None:
-        original = self.source.read_bytes()
-        self.assertEqual(self.run_tag_editor(["c", "q"], []), 0)
-        self.assertFalse(self.output.exists())
-        self.assertEqual(self.run_tag_editor(["a", "1", "", "", "C", "s", "c", "q"], [self.output]), 0)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["C1", "C2", "C3", "C4"])
-        self.assertEqual(self.source.read_bytes(), original)
-
-    def test_tag_editor_clear_all_then_add_signed_sequence(self) -> None:
-        self.assertEqual(self.run_tag_editor(["c", "w"], [self.output]), 0)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["", "", "", ""])
-        second = self.folder / "signed.pdf"
-        self.assertEqual(self.run_tag_editor(["c", "a", "2", "", "-1", "", "w"], [second]), 0)
-        with pymupdf.open(second) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["", "-1", "0", "1"])
-
-    def test_tag_editor_validates_ranges_and_required_start(self) -> None:
-        replies = [
-            "a", "", "0", "99", "3", "2", "-1", "", "",
-            "p", "0", "99", "1,-1",
-            "p", "",
-            "w",
-        ]
-        self.assertEqual(self.run_tag_editor(replies, [self.output]), 0)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["", "Old-6", "1", ""])
-
-    def test_tag_editor_save_failure_keeps_edits_for_retry(self) -> None:
-        real_save = Pdf.save_new
-        fail_next = True
-
-        def fail_once(document: pymupdf.Document, output_path: str | Path, *, compact: bool = True) -> None:
-            nonlocal fail_next
-            if fail_next:
-                fail_next = False
-                raise OSError("Simulated write failure")
-            real_save(document, output_path, compact=compact)
-
-        with patch.object(Pdf, "save_new", side_effect=fail_once):
-            self.assertEqual(self.run_tag_editor(["c", "w", "w"], [self.output, self.output]), 0)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["", "", "", ""])
-
-    def test_tag_editor_existing_output_is_protected_and_retryable(self) -> None:
-        self.output.write_bytes(b"existing content")
-        second = self.folder / "retry.pdf"
-        original = self.source.read_bytes()
-        self.assertEqual(self.run_tag_editor(["c", "w", "w", "w"],
-                                             [self.source, self.output, second]), 0)
-        self.assertEqual(self.output.read_bytes(), b"existing content")
-        self.assertEqual(self.source.read_bytes(), original)
-        with pymupdf.open(second) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["", "", "", ""])
-
     def test_label_helpers_preserve_literal_text_and_validate_length(self) -> None:
         labels = ["", "A-(1)", r"目录\\2", "-1"]
         with pymupdf.open(self.source) as document:
@@ -574,16 +443,6 @@ class PdfToolsTests(unittest.TestCase):
             Pdf.save_new(document, self.output)
         with pymupdf.open(self.output) as result:
             self.assertEqual(Pdf.read_page_labels(result), labels)
-
-    def test_tag_editor_keeps_unselected_physical_numbers_without_rules(self) -> None:
-        unlabelled = self.folder / "unlabelled.pdf"
-        with pymupdf.open(self.source) as document:
-            document.set_page_labels([])
-            Pdf.save_new(document, unlabelled)
-        self.source = unlabelled
-        self.assertEqual(self.run_tag_editor(["p", "2-3", "w"], [self.output]), 0)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["1", "", "", "4"])
 
     def test_label_reader_handles_number_tree_styles_and_indirect_rules(self) -> None:
         with pymupdf.open(self.source) as document:
@@ -599,98 +458,6 @@ class PdfToolsTests(unittest.TestCase):
             Pdf.save_new(document, self.output)
         with pymupdf.open(self.output) as result:
             self.assertEqual(Pdf.read_page_labels(result), ["ix", "", "A-AA", "A-BB"])
-
-    def test_reset_labels_preserves_front_matter(self) -> None:
-        mapping = bookmarks._PageMapping(4, bookmarks._BookPagesPerPdf.SINGLE, bookmarks._FirstPdfPageCount.ONE)
-        with pymupdf.open(self.source) as document:
-            before_toc = document.get_toc()
-            bookmarks._reset_page_labels(document, mapping, 2, 2)
-            Pdf.save_new(document, self.output)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(Pdf.read_page_labels(result), ["Old-5", "C1", "Old-7", "1"])
-            self.assertEqual(result.get_toc(), before_toc)
-            self.assert_structure(result)
-
-    def test_multi_page_labels_match_book_mapping(self) -> None:
-        for count, first_count, expected in (
-            (2, 1, ["Old-5", "C1", "1", "2-3"]),
-            (2, 2, ["Old-5", "C1", "1-2", "3-4"]),
-            (4, 2, ["Old-5", "C1", "1-2", "3-6"]),
-            (4, 4, ["Old-5", "C1", "1-4", "5-8"]),
-        ):
-            mapping = bookmarks._PageMapping(3, bookmarks._BookPagesPerPdf(count), bookmarks._FirstPdfPageCount(first_count))
-            with self.subTest(count=count, first_count=first_count), pymupdf.open(self.source) as document:
-                bookmarks._reset_page_labels(document, mapping, 2, 2)
-                self.assertEqual([page.get_label() for page in document], expected)
-                for index in range(4):
-                    for book_page in mapping.book_pages(index):
-                        self.assertEqual(mapping.pdf_index(book_page), index)
-
-    def test_preserve_unlabelled_front_matter_and_reject_invalid_anchor(self) -> None:
-        mapping = bookmarks._PageMapping(4, bookmarks._BookPagesPerPdf.SINGLE, bookmarks._FirstPdfPageCount.ONE)
-        with pymupdf.open(self.source) as document:
-            document.set_page_labels([])
-            bookmarks._reset_page_labels(document, mapping, 2, 2)
-            self.assertEqual([page.get_label() for page in document], ["1", "C1", "3", "1"])
-            original = document.get_page_labels()
-            invalid = bookmarks._PageMapping(9, bookmarks._BookPagesPerPdf.SINGLE, bookmarks._FirstPdfPageCount.ONE)
-            with self.assertRaises(ValueError):
-                bookmarks._reset_page_labels(document, invalid, 2, 3)
-            self.assertEqual(document.get_page_labels(), original)
-
-    def test_page_layout_mapping_and_empty_input(self) -> None:
-        for count in (1, 2, 4):
-            layout = bookmarks._BookPagesPerPdf(count)
-            mapping = bookmarks._PageMapping(3, layout, bookmarks._FirstPdfPageCount.ONE)
-            self.assertEqual(mapping.pdf_index(1), 2)
-            self.assertEqual(mapping.pdf_index(2), 3)
-            self.assertEqual(mapping.pdf_index(-1), 1 if count == 1 else 2)
-            for value in ("", "null", "[]", '""'):
-                self.assertEqual(bookmarks._parse_bookmark_page(value, mapping), [])
-
-    def test_first_book_page_prompt_default_and_validation(self) -> None:
-        for replies, expected in ((["1", "17", "20"], 20), (["1", "17", ""], 1),
-                                  (["1", "17", "0", "20"], 20)):
-            output = io.StringIO()
-            with self.subTest(replies=replies), patch("builtins.input", side_effect=replies) as prompt:
-                with contextlib.redirect_stdout(output):
-                    mapping = bookmarks._select_page_mapping()
-            self.assertEqual(mapping.page_offset, 17)
-            self.assertEqual(mapping.first_book_page, expected)
-            self.assertEqual(mapping.pdf_index(expected), 16)
-            self.assertIn(f"{expected}", output.getvalue())
-            self.assertIn("PDF page containing the first book page", prompt.call_args_list[1].args[0])
-            self.assertIn("page number of the first book page", prompt.call_args_list[2].args[0])
-
-    def test_pdf_page_17_matches_book_page_20_in_bookmarks_and_labels(self) -> None:
-        mapping = bookmarks._PageMapping(17, bookmarks._BookPagesPerPdf.SINGLE,
-                                         bookmarks._FirstPdfPageCount.ONE, first_book_page=20)
-        with pymupdf.open() as document, contextlib.redirect_stdout(io.StringIO()):
-            for _ in range(22):
-                document.new_page()
-            entries = [{"page": page, "level": 1, "title": f"Book {page}"} for page in (19, 20, 21)]
-            bookmarks._write_bookmarks(document, entries, mapping, 1, bookmarks._BookmarkWriteMode.REPLACE)
-            bookmarks._reset_page_labels(document, mapping, 1, 16)
-            Pdf.save_new(document, self.output)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(result.get_toc()[-3:], [[1, "Book 19", 16], [1, "Book 20", 17], [1, "Book 21", 18]])
-            self.assertEqual(Pdf.read_page_labels(result)[15:], ["C16", "20", "21", "22", "23", "24", "25"])
-
-    def test_custom_first_book_page_multi_up_labels_and_inverse_mapping(self) -> None:
-        for count, first_count, expected in (
-            (2, 1, ["20", "21-22"]), (2, 2, ["20-21", "22-23"]),
-            (4, 1, ["20", "21-24"]), (4, 2, ["20-21", "22-25"]),
-            (4, 3, ["20-22", "23-26"]), (4, 4, ["20-23", "24-27"]),
-        ):
-            mapping = bookmarks._PageMapping(3, bookmarks._BookPagesPerPdf(count),
-                                             bookmarks._FirstPdfPageCount(first_count), first_book_page=20)
-            with self.subTest(count=count, first_count=first_count), pymupdf.open(self.source) as document:
-                bookmarks._reset_page_labels(document, mapping, 2, 2)
-                self.assertEqual(Pdf.read_page_labels(document), ["Old-5", "C1", *expected])
-                for index in range(-20, 10):
-                    for book_page in mapping.book_pages(index):
-                        self.assertNotEqual(book_page, 0)
-                        self.assertEqual(mapping.pdf_index(book_page), index)
 
 
 if __name__ == "__main__":

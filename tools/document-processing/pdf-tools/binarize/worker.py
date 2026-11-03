@@ -6,12 +6,9 @@ Processed previews use fresh page extracts; originals render the retained source
 directly. Exports reopen the untouched input. GUI pixels use a shared-memory slot.
 """
 
-import base64
 from contextlib import ExitStack, closing, redirect_stdout
 from dataclasses import replace
 import json
-import math
-from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 import sys
 import tempfile
@@ -22,6 +19,7 @@ import pymupdf
 
 from utils import *
 from ..common.protocol import Json, MAX_PREVIEW_PIXELS
+from ..common.pixel_transfer import preview_reply
 from . import objects, regions, workflow
 from .project import Config, Project, SKIP_ID, mapping, text_value
 from .settings import _Processing
@@ -85,33 +83,11 @@ def _preview(project: Project, password: str, source: pymupdf.Document, raw: boo
             documents.enter_context(document)
             if not original:
                 page = document[0]
-        scale = min(DISPLAY_DPI / 72, math.sqrt(MAX_DISPLAY_PIXELS / max(1, page.rect.get_area())))
-        # MuPDF rounds both dimensions up; keep that rounding inside the slot.
-        while math.ceil(page.rect.width * scale) * math.ceil(page.rect.height * scale) > MAX_DISPLAY_PIXELS:
-            scale = min((math.ceil(page.rect.width * scale) - 1) / page.rect.width,
-                        (math.ceil(page.rect.height * scale) - 1) / page.rect.height)
-        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+        pixmap = Pdf.render_page(page, dpi=DISPLAY_DPI, max_pixels=MAX_DISPLAY_PIXELS)
         return {"kind": "preview", "page": project.current_page, "width": pixmap.width, "height": pixmap.height,
                 "regions": [list(box.rect) for box in boxes],
                 "regions_available": not original or project.show_regions}, (
                     pixmap.samples if raw else pixmap.pil_tobytes(format="PNG", compress_level=1))
-
-
-def _preview_reply(metadata: dict[str, Json], pixels: bytes, request: dict[str, Json]) -> dict[str, Json]:
-    """Publish rendered pixels through the caller's slot or the small-test PNG path."""
-    response = {**metadata, "revision": request.get("revision")}
-    if name := request.get("pixel_buffer"):
-        memory = SharedMemory(name=text_value(name, "Preview buffer"), track=False)
-        try:
-            if len(pixels) > memory.size:
-                raise ValueError("Preview buffer is too small.")
-            memory.buf[:len(pixels)] = pixels
-        finally:
-            memory.close()
-        response["pixel_buffer"] = name
-    else:
-        response["png"] = base64.b64encode(pixels).decode("ascii")
-    return response
 
 
 def _publish(staged: Path, output: Path, cancel: Path | None) -> None:
@@ -261,7 +237,7 @@ class Worker:
                 raise ValueError("The PDF page count no longer matches the project.")
             raw = bool(request.get("pixel_buffer"))
             result, pixels = _preview(project, password, document, raw)
-            return _preview_reply(result, pixels, request)
+            return preview_reply(result, pixels, request)
         if operation not in ("export", "export-page"):
             raise ValueError(f"Unknown operation: {operation}")
         output = Path(text_value(request.get("output"), "Output PDF"))

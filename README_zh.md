@@ -145,7 +145,7 @@
 
 ### 项目结构
 
-核心工具包：`utils/` — 将控制台、运行环境、系统、路径及交互职责拆分为独立类，并由 `utils/__init__.py` 统一导出公共工具。
+核心工具包：`utils/` — 提供控制台、运行环境、系统、路径、交互、PDF 和大模型 API 公共功能，由 `utils/__init__.py` 统一导出，PDF 与 GUI 依赖按需加载。
 
 - **所有工具脚本**都在 **`./tools/` 目录**中，如 `./tools/network`、`./tools/research`、`./tools/windows` 等；
 
@@ -221,10 +221,8 @@
 | `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-font-replace.py` | **保持文字位置的交互式 PDF 字体替换工具**：同一 PDF 可添加多条字体替换规则，独立筛选字号、页面和原文字颜色，设置替换后的颜色，并保留常规、粗体和斜体样式及其他文档内容。支持从 PDF 页面查找字体和文字颜色、按名称或本地化别名搜索系统字体、指定字体文件、子集或完整字体嵌入，以及按规则清理不再使用的原字体嵌入。 | **Python 库**：`PyMuPDF`、`fonttools`、`tqdm` |
 | `tools/document-processing/pdf-binarize.py` | **PDF 压缩桌面工具**：<br />提供紧凑工作区，支持拖入 PDF、带缓存的原图与结果预览（可显示识别框）、页面与书签导航、多选页面应用 Profile 及 JSON 工程。按图片元素压缩，支持插图保护、位深转换及清理，保留原生文字、OCR、链接、批注和书签。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
-| `tools/document-processing/pdf-binarize-old.py` | **终端版 PDF 二值化工具**：保留原有交互菜单，与桌面版共用处理算法。支持跳页、单页预览及可选的插图保护。 | **Python 库**：`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
 | `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据，也可处理仅有 PDF/A 标识的无保护文件。若没有需要移除的内容，则警告并提供重新打开或退出选项。 | **Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 书籍目录注入工具**：<br />将目录截图逐页发送给**视觉 LLM（如 Qwen3-VL）生成指定格式的 JSON**（含页码/层级/编号/标题），再直接逐页连续粘贴到脚本中；脚本会按输入顺序合并后将目录写入 PDF 文件。支持自定义起始书页页码，一个 PDF 页面可对应 1、2 或 4 个连续书页，并可选择生成正文和目录的页码标签。 | **Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-page-tag.py` | **交互式 PDF 页码标签编辑器**：按页码范围添加带前缀的连续编号，或清空全部、部分标签，保留书签和页面内容。可在内存中反复编辑，按需另存副本，然后继续编辑或退出。 | **Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-bookmarks-add.py` | **PDF 目录识别与书签编辑 GUI**：框选、旋转目录图片后通过预设或自定义 API 逐页识别，可追溯单页问题、补充信息后重试，并显示受支持服务的 API 余额。支持缓存翻页和 YAML、书签树、页码标签编辑，保留页面内容并导出新 PDF，无需工程文件。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
 | `tools/document-processing/pdf-split-pages.py` | **扫描版 PDF 页面切分工具**：支持左右或上下切分、两种输出顺序、自定义切分位置及忽略页码范围，保留扫描图像清晰度，无需临时图片。重新映射书签和普通链接，移除包括忽略页在内的全部页码标签，并警告无法确定所属半页的书签跳转。 | **Python 库**：`PyMuPDF`、`tqdm` |
 | `tools/document-processing/document-screenshot.py` | **针对加密文档的自动截图抓取工具**：<br />基于模拟 PgDn 翻页 + 鼠标点击自动翻页，并通过自动截图来获取内容，适用于**全自动抓取并保存被 DRM 保护或位于加密 USB 存储设备中的 PDF** 文件内容。<br /><br />建议使用高分辨率屏幕，并将屏幕方向改为纵向，然后调整文档页面的显示范围（不超出屏幕范围并能充分利用屏幕空间）后，再用本脚本自动截图抓取。<br />macOS 中还需要额外授予相应的屏幕录制权限。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />**Python 库**：`mss`、`pynput`、`Pillow` |
 ### 视频下载

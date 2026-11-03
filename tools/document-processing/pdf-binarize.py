@@ -9,7 +9,6 @@ Drag in a PDF or open a JSON project. Assign reusable profiles to physical pages
 preview originals/results, and export beside the source. All pages start with
 default; Ctrl/Shift-select pages to apply a profile together. Completed previews
 are cached for immediate revisits; original views skip the navigation delay.
-The former terminal interface is pdf-binarize-old.py.
 The viewer supports auto-fit on page turns, editable zoom, focused page keys and
 optional red region outlines that stay out of exported PDFs.
 On Windows, start without administrator rights to accept Explorer file drops;

@@ -5,16 +5,14 @@ settings; detected boxes and processed pixels require matching configuration.
 The owning window clears the cache when adopting another PDF/project.
 """
 
-from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtGui import QPixmap
 
 from .project import Config, Project, SKIP_ID
+from ..common.page_cache import CACHE_BYTES, CACHE_PAGES, PageCache, pixmap_bytes
 
-CACHE_BYTES = 512 * 1024 * 1024
-CACHE_PAGES = 100
 type Rectangle = tuple[float, float, float, float]
 
 
@@ -56,7 +54,7 @@ class PreviewFrame:
     @property
     def size(self) -> int:
         """Estimated pixel storage in bytes, including 32-bit scanline alignment."""
-        return ((self.pixmap.width() * self.pixmap.depth() + 31) // 32) * 4 * self.pixmap.height()
+        return pixmap_bytes(self.pixmap)
 
 
 class PreviewCache:
@@ -73,17 +71,21 @@ class PreviewCache:
     def __init__(self, max_bytes: int = CACHE_BYTES, max_pages: int = CACHE_PAGES) -> None:
         self.max_bytes = max_bytes
         self.max_pages = max_pages
-        self.size = 0
-        self._pages: OrderedDict[int, dict[bool, PreviewFrame]] = OrderedDict()
+        self._store = PageCache[dict[bool, PreviewFrame]](
+            lambda views: sum(frame.size for frame in views.values()), max_bytes, max_pages)
+
+    @property
+    def size(self) -> int:
+        """Return the current retained pixel storage in bytes."""
+        return self._store.size
 
     def clear(self) -> None:
         """Release every cached page when the document session ends or changes."""
-        self._pages.clear()
-        self.size = 0
+        self._store.clear()
 
     def get(self, state: PreviewState) -> PreviewFrame | None:
         """Return compatible pixels immediately, or None when rendering is required."""
-        frame = self._pages.get(state.page, {}).get(state.original)
+        frame = (self._store.get(state.page) or {}).get(state.original)
         if frame is None:
             return None
         if not state.original and (frame.state.config != state.config
@@ -91,23 +93,12 @@ class PreviewCache:
             return None
         if state.show_regions and not frame.matches_regions(state):
             return None
-        self._pages.move_to_end(state.page)
         return frame
 
     def put(self, frame: PreviewFrame) -> None:
         """Replace this page's same-view result and enforce memory/page bounds."""
         page, original = frame.state.page, frame.state.original
-        views = self._pages.setdefault(page, {})
-        previous = views.pop(original, None)
-        if previous is not None:
-            self.size -= previous.size
-        if frame.size <= self.max_bytes and self.max_pages > 0:
-            views[original] = frame
-            self.size += frame.size
-        if not views:
-            del self._pages[page]
-        else:
-            self._pages.move_to_end(page)
-        while self._pages and (self.size > self.max_bytes or len(self._pages) > self.max_pages):
-            _, removed = self._pages.popitem(last=False)
-            self.size -= sum(item.size for item in removed.values())
+        views = dict(self._store.get(page) or {})
+        views[original] = frame
+        self._store.max_bytes, self._store.max_pages = self.max_bytes, self.max_pages
+        self._store.put(page, views)

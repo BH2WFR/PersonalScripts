@@ -1,12 +1,29 @@
 # PDF desktop tools
 
+`../pdf-bookmarks-add.py` opens the TOC recognition, bookmark editor and page-label
+GUI, including its Page labels tab. See [bookmarks/README.md](bookmarks/README.md)
+for the workflow, API testing, recognition queue and export behavior. This tool
+keeps drafts in memory and saves only PDFs; it has no project files. It requires PySide6, PyMuPDF
+and PyYAML. Shared optional crop and editable-tree widgets live in `common/`;
+the binarizer retains its read-only navigator.
+
+Both GUIs reuse bounded page-cache storage and shared-memory RGB transport;
+bookmark previews retain one latest rotation per page within 512 MiB / 100 pages.
+`utils.Pdf` owns bounded RGB rendering and generic bookmark/page-label operations.
+`utils.Llm` owns model settings, presets, payloads and a lazily created Qt API client;
+the bookmark package retains only its TOC prompt and book-context construction.
+They also share focus-scoped PgUp/Left/Up and PgDn/Right/Down page shortcuts.
+Clicking the viewer gives it keyboard focus, including while drawing a TOC crop;
+keys in text and settings editors retain their normal editing behavior.
+
+The remaining sections describe PDF Binarize.
+
 Run `../pdf-binarize.py` without arguments to open the PySide6/Fusion desktop
-application. The terminal interface remains available through
-`../pdf-binarize-old.py`. Both use the same image and PDF-object algorithms.
+application.
 
 Dependencies: PySide6, PyMuPDF >= 1.28, pypdf >= 6, Pillow with libtiff, numpy,
 opencv-python and tqdm, already declared in the repository requirements.
-The legacy entry does not import Qt. See `binarize/README.md` for image algorithms,
+See `binarize/README.md` for image algorithms,
 supported PDF constructs, crop codecs and region JSON semantics.
 
 ## Layout and navigation
@@ -142,8 +159,7 @@ a sidecar error explicitly reports the already saved PDF.
 | `binarize/panel.py` | Extensible settings field table and commit rules |
 | `binarize/project.py` | Pure configuration/profile model and JSON persistence |
 | `binarize/worker.py` | PDF inspection, clean previews and profile-aware export |
-| `binarize/cli.py` | Preserved terminal menus |
-| `binarize/workflow.py` | Legacy conversion/preview orchestration and shared review output |
+| `binarize/workflow.py` | Conversion/preview orchestration and shared review output |
 | `binarize/settings.py` | Canonical processing defaults and validation |
 | `binarize/objects.py` | Content streams, image objects, vector paint and resource isolation |
 | `binarize/raster.py`, `binarize/regions.py` | Image algorithms, segmentation and encoding |

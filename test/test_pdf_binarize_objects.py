@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 import pymupdf
 
-from test_pdf_binarize import ROOT, app, objects, raster, workflow
+from test_pdf_binarize import ROOT, engine_settings, objects, raster, workflow
 from test_rclone_integration import compiler, launcher, utility
 
 
@@ -42,7 +42,7 @@ class ObjectPipelineTests(unittest.TestCase):
     def convert(self, vectors: bool = False, skip: str = "", workers: int = 2) -> None:
         with contextlib.redirect_stdout(io.StringIO()):
             workflow._binarize_pdf(self.source, self.target, 144, 180, workers, skip,
-                                  processing=app._Processing(vectors=vectors))
+                                  processing=engine_settings._Processing(vectors=vectors))
 
     def make_mixed(self) -> None:
         with pymupdf.open() as document:
@@ -280,9 +280,9 @@ class ObjectPipelineTests(unittest.TestCase):
             stream = page.get_contents()[-1]
             document.update_stream(stream, b"q /Half gs " + document.xref_stream(stream) + b" Q")
             before = page.get_pixmap().samples
-            settings = app._Processing(regions=app.regions._Settings(enabled=True))
+            settings = engine_settings._Processing(regions=engine_settings.regions._Settings(enabled=True))
             with contextlib.closing(objects._Engine(document, 72, 180, settings, 1)) as engine:
-                engine.page(0, (app.regions._Region((0, 0, 1, 1), codec=app.regions._Codec.FLATE),))
+                engine.page(0, (engine_settings.regions._Region((0, 0, 1, 1), codec=engine_settings.regions._Codec.FLATE),))
             after = document.reload_page(page).get_pixmap().samples
             self.assertLessEqual(np.abs(np.frombuffer(before, dtype=np.uint8).astype(int) -
                                        np.frombuffer(after, dtype=np.uint8).astype(int)).max(), 1)
@@ -296,7 +296,9 @@ class ObjectPipelineTests(unittest.TestCase):
         for listing in (discovered, compiler.find_py_scripts(str(ROOT / "tools"))):
             paths = [path.replace("\\", "/") for path in listing]
             self.assertIn("document-processing/pdf-binarize.py", paths)
-            self.assertIn("document-processing/pdf-binarize-old.py", paths)
+            self.assertNotIn("document-processing/pdf-binarize-old.py", paths)
+            self.assertIn("document-processing/pdf-bookmarks-add.py", paths)
+            self.assertNotIn("document-processing/pdf-page-tag.py", paths)
             self.assertFalse(any(path.startswith("document-processing/pdf-tools/") for path in paths))
         stages: list[Path] = []
 
@@ -306,10 +308,12 @@ class ObjectPipelineTests(unittest.TestCase):
             self.assertTrue((stage / "personal_pdf_tools/binarize/objects.py").is_file())
             self.assertTrue((stage / "personal_pdf_tools/binarize/regions.py").is_file())
             self.assertTrue((stage / "personal_pdf_tools/common/navigation.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/bookmarks/app.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/bookmarks/worker.py").is_file())
             self.assertTrue(any("personal_pdf_tools" in part for part in command))
             return subprocess.CompletedProcess(command, 0)
 
-        for filename in ("pdf-binarize.py", "pdf-binarize-old.py"):
+        for filename in ("pdf-binarize.py", "pdf-bookmarks-add.py"):
             entry = str(ROOT / "tools/document-processing" / filename)
             for tool in ("nuitka", "pyinstaller"):
                 with patch.object(compiler.subprocess, "run", side_effect=staged):

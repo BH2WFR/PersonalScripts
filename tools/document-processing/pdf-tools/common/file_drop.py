@@ -12,17 +12,19 @@ class FileDropFilter(QtCore.QObject):
         window: Owning top-level tool window; dialogs are deliberately excluded.
         open_path: Callback invoked for one accepted file drop.
         enabled: Predicate that prevents file changes during a running PDF task.
+        suffixes: Accepted filename suffixes; defaults to PDF and project JSON.
 
     Installs an application event filter owned by window. Text-only drag/drop
     remains available to editors; file URLs cannot accidentally become profile names.
     """
 
     def __init__(self, window: QtWidgets.QWidget, open_path: Callable[[Path], None],
-                 enabled: Callable[[], bool]) -> None:
+                 enabled: Callable[[], bool], *, suffixes: tuple[str, ...] = (".pdf", ".json")) -> None:
         super().__init__(window)
         self.window = window
         self.open_path = open_path
         self.enabled = enabled
+        self.suffixes = suffixes
         application = QtWidgets.QApplication.instance()
         if application is None:
             raise RuntimeError("File drops require a QApplication.")
@@ -37,7 +39,7 @@ class FileDropFilter(QtCore.QObject):
             return False
         urls = event.mimeData().urls()
         if (not self.enabled() or len(urls) != 1 or not urls[0].isLocalFile() or
-                Path(urls[0].toLocalFile()).suffix.lower() not in (".pdf", ".json")):
+                Path(urls[0].toLocalFile()).suffix.lower() not in self.suffixes):
             event.ignore()
             return True
         event.acceptProposedAction()

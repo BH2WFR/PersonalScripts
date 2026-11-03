@@ -20,6 +20,7 @@ class PageViewer(QtWidgets.QGraphicsView):
 
     Signals:
         zoomChanged: Current image-to-view percentage after fitting or zooming.
+        pageStepRequested: Previous (-1) or next (+1) page from focused page keys.
     """
 
     zoomChanged = QtCore.Signal(float)
@@ -48,6 +49,7 @@ class PageViewer(QtWidgets.QGraphicsView):
         self.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
         self.setMinimumSize(180, 180)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setToolTip("Click the page to focus. PgUp / Left / Up: previous page; PgDn / Right / Down: next page.")
 
     def set_image(self, png: bytes, token: object) -> None:
         """Show encoded PNG bytes; retain zoom/position when comparing the same page."""

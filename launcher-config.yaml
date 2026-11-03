@@ -95,6 +95,8 @@ ignore-list:
             - "others/script-to-app.py"
             - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
+            - "document-processing/pdf-binarize.py"
+            - "document-processing/pdf-bookmarks-add.py"
             - "research/matrix-viewer.py"
         wayland:
             - "others/keyboard-hook-viewer.py"

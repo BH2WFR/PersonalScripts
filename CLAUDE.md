@@ -297,6 +297,19 @@ Canonical implementations live there; do not add implementations to the
 | Detect PDF/A identification | `Pdf.has_pdfa_identification(document) -> bool`; read-only check for XMP identification elements/attributes, independent of encryption; namespace declarations alone do not count; malformed PDF/A XMP raises ValueError; does not validate PDF/A conformance |
 | Save a new ordinary PDF | `Pdf.save_new(document, output_path, compact=True) -> None`; always removes encryption and PDF/A identification from XMP, including for unencrypted input, while retaining other metadata; exclusive output creation, removes its partial output on failure, drops unused objects; use `compact=False` for continued editing/repeated saves to preserve live object references; PyMuPDF is imported lazily in `utils/pdf.py` |
 | Read effective PDF page labels | `Pdf.read_page_labels(document) -> list[str]`; preserves blank labels, falls back to physical page numbers when no label rules exist |
+| Render a bounded PDF preview | `Pdf.render_page(page, dpi=200, rotation=0, max_pixels=12_000_000, annotations=True) -> Pixmap`; opaque RGB, extra clockwise rotation, integer rounding kept inside pixel budget; no Qt or file writes |
+| Read editable bookmarks | `Pdf.read_bookmarks(document) -> list[PdfBookmark]`; depth-first title/one-based page/level/original_xref; non-page actions retain nonpositive targets |
+| Append a bookmark | `Pdf.append_bookmark(document, title, page_index, parent=None) -> int`; zero-based page, optional parent outline xref; preserves existing entries and returns new xref |
+| Replace or clear bookmarks | `Pdf.write_bookmarks(document, bookmarks) -> None`; validates hierarchy/targets before mutation; [] clears; retained same-document xrefs preserve style/collapse and unchanged destinations/actions; does not save |
+| Number or clear selected labels | `Pdf.number_page_labels(labels, indexes, first=1, prefix="")`, `Pdf.clear_page_labels(labels, indexes)`; mutate label lists only, indexes are zero-based; apply with write_page_labels |
+| Generate body/TOC labels | `Pdf.generate_page_labels(labels, body_pdf, body_book, toc_pages, toc_prefix="C")`; one-based physical mapping, positive printed body number; TOC takes precedence, other front matter remains |
+| Shared LLM settings and presets | `LlmSettings(base_url=..., model=..., temperature=.1, max_tokens=8192, timeout_seconds=180)`; no secrets; `Llm.PRESETS` contains named editable endpoints; helpers use stdlib only |
+| Validate/resolve LLM endpoints | `Llm.validate_settings(settings, require_model=True)`, `Llm.completion_url(base)`, `Llm.models_url(base, page=1)`; reject credentials/query/fragment in base URLs; same-host Alibaba catalog pagination and SiliconFlow chat filter |
+| Construct chat/image requests | `Llm.chat_request(settings, messages, max_tokens=None)`, `Llm.image_content(image, mime_type="image/jpeg", detail="high")`; caller owns context; official DeepSeek body disables thinking; no I/O |
+| Construct a vision API probe | `Llm.vision_test_request(settings)`; generated 48x48 red PNG and 32 output tokens, no user content or image-library dependency |
+| Parse LLM responses/catalogs | `Llm.parse_completion(data) -> LlmResponse(text, prompt_tokens, finish_reason)` retains partial text; `Llm.parse_models(data) -> (ids, total_or_none)` validates compatible/native formats |
+| Query API account balances | `Llm.balance_url(base)` resolves same-origin official DeepSeek/Kimi China/OpenRouter routes; unsupported bases raise NotImplementedError. `Llm.parse_balance(base,data) -> list[tuple[str,str]]` returns currency/finite decimal amount pairs; OpenRouter subtracts usage from credits and requires a management key; no guessed proxy routes or key-quota substitution |
+| Create an asynchronous LLM client | `Llm.create_qt_client(parent=None)` lazily loads PySide6; send(settings,key,body), fetch_models(settings,key), fetch_balance(settings,key), cancel(reason); completed(text,tokens,error) / modelsCompleted(ids,error) / balanceCompleted(pairs,error); one active request per client, bounded pagination/size/timeout, key redaction, no automatic retry; balance timeout capped at 30 seconds |
 | Discover installed font files | `Font.system_font_paths() -> list[Path]`; sorted unique absolute TTF/OTF/TTC/OTC paths from Windows registry/directories, macOS directories, or Linux fontconfig/directories; `Font.FILE_SUFFIXES` contains supported suffixes |
 | Read font names and styles | `Font.read_faces(path: Path) -> list[FontFace]`; collection order, canonical name, family, all readable aliases, full_names/family_names classified by name-table role and language, and `FontStyle` regular/bold/italic/bold-italic; imports fonttools lazily |
 | Build a font catalog | `Font.read_catalog(paths: Sequence[Path], show_progress=False) -> list[FontFace]`; sorts by family/style/name, skips unreadable files with an aggregate warning; True shows a tqdm bar on interactive stderr; fonttools and tqdm are imported lazily |
@@ -502,6 +515,28 @@ message. If neither encryption/protection nor PDF/A identification is present,
 it warns and offers another input or exit before requesting an output path.
 Page-label helpers decode the PDF number tree and encode literal prefixes through
 PyMuPDF's PDF-string encoder, preserving Unicode, escapes, and blank labels.
+`PdfBookmark` is independent of GUI/session state. Its original_xref belongs to
+one open PDF and becomes stale after compact saving; reread rows after reopening.
+Bookmark replacement validates first, retains original PDF actions/styles, and
+recalculates visible descendants bottom-up. Label-edit helpers mutate plain lists.
+Both PDF GUI workers share `Pdf.render_page` for bounded RGB display rendering.
+
+`utils/llm.py` owns generic settings, provider presets, URL/payload construction and
+response parsing. `utils/_llm_qt.py` is a private, lazy transport adapter; callers
+use the factory, never import it via the utility facade. Ordinary `from utils import *`
+does not load Qt, PyMuPDF, Pillow or any PDF tool package. Prompt/history logic
+belongs to callers; bookmarks keeps it in `bookmarks/recognition.py`. No utility
+imports application code or saves API keys. Run `test_llm.py` for headless utility
+checks and `test_pdf_utils.py` for standalone PDF operations; GUI loopback tests
+exercise the same shared transport.
+
+The bookmarks GUI uses a separate single-request Llm client for account balances
+so navigation and the serial recognition queue remain responsive. Balance refresh
+runs on credential editingFinished, explicit Refresh, and completion of a test or
+TOC queue; no periodic polling. Endpoint/key changes cancel and invalidate old
+results. An optional in-memory balance-only key supports OpenRouter management
+credentials; it never enters a model request or session export. Unsupported
+providers show a reason instead of zero or an unrelated key limit.
 
 `Environment._conda_environment_name` is the internal metadata classifier shared
 by current-process identity and external Python probes. Scripts use the public
@@ -972,9 +1007,8 @@ See `utils/keyboard.py` module notes for source references and Korean legacy
 release-only caveats; never strip the high bit of F1/F2 language scan bytes.
 Run keyboard regression tests with `-p "test_keyboard*.py"`.
 
-`tools/document-processing/pdf-binarize.py` starts the PySide6/Fusion GUI;
-`pdf-binarize-old.py` retains the terminal menus. Both use `pdf-tools/`, imported
-as `personal_pdf_tools`. See its README for module ownership. Common viewer,
+`tools/document-processing/pdf-binarize.py` starts the PySide6/Fusion GUI and uses
+`pdf-tools/`, imported as `personal_pdf_tools`. See its README for module ownership. Common viewer,
 navigation and single-request QProcess components live in `common/`; binarizer
 models/UI/worker and shared image engines live in `binarize/`. All MuPDF calls run
 in the worker's main thread for the GUI. File actions stay above the left profiles;
@@ -992,9 +1026,49 @@ retained read-only input; RGB previews cross one bounded shared-memory slot owne
 by the GUI. Region outlines are viewer overlays, never PDF content. Viewer-only
 page keys, auto-fit and zoom stay in the shared viewer component. Profiles retain
 per-page assignments and fixed default/no-processing entries. Projects are
-validated before adoption. Internals stay out of launcher/compiler lists; both
-entries stage the package recursively. Run `-p "test_pdf_binarize*.py"` for engine,
+validated before adoption. Internals stay out of launcher/compiler lists;
+the entry stages the package recursively. Run `-p "test_pdf_binarize*.py"` for engine,
 project, offscreen GUI, real worker and packaging-staging checks.
+
+`pdf-bookmarks-add.py` is the GUI-only entry for `pdf-tools/bookmarks/`, including
+the page-label tab. The separate page-tag entry, CLI editors and multi-up mapping
+are removed. See `bookmarks/README.md` for module ownership.
+Recognition has one normalized crop per rotated book page, one serial PDF worker
+and one cancellable Qt HTTP request. Only Run/Retry sends images. Context is earlier
+accepted text from the current book; retries replace entries by source TOC page.
+TOC responses accept entries/errors envelopes and legacy YAML lists. Model issues
+and null targets cannot replace accepted entries; failed drafts block export.
+Page-specific requirements plus previous diagnostics accompany explicit retries.
+Bounded request/reply histories stay in TocPage memory and are omitted from worker
+payloads; images and API keys are excluded. The queue advances only after the
+current request completes, including after a page reports a recoverable problem.
+Preserve raw YAML/comments separately from the authoritative editable outline.
+BookSession, credentials and recognition drafts stay in memory; this tool has no
+project-file persistence. Only export writes a PDF; close/open can defer until an
+explicitly requested export succeeds. API Test sends a generated color square,
+never book content, and shares the cancellable single-request client.
+Model discovery uses that same client with GETs and separate completion signals;
+provider presets remain editable, and official Alibaba catalogs use bounded serial
+pagination. No PDF content accompanies model-list requests. TOC/body page fields
+can copy the current physical page; TOC marking remains explicit. Export keeps page objects and
+original outline actions/styles where targets are unchanged, using `Pdf.save_new`.
+Generic API code is `utils.Llm`; `recognition.py` contains only the TOC prompt and
+book-specific context. `utils.Pdf` owns bookmark/label edits and bounded rendering;
+worker modules only coordinate sessions and transport. Do not restore duplicate
+API, outline or label modules in the private tool package.
+Common crop/tree editing is opt-in; Binarize's navigator remains read-only.
+New bookmarks use the current page. Ctrl/right-click selects without navigation;
+outdent offers preserved reading order or moving after the former parent's subtree.
+Shared `common/page_cache.py` owns per-page LRU budgets, and
+`common/pixel_transfer.py` publishes worker RGB data to the existing PreviewBuffer.
+Bookmarks retain one rotation per page; Binarize retains its configuration-aware
+original/processed views. Both obey 512 MiB / 100-page cache limits.
+Both PDF GUIs reuse focus-scoped page shortcuts from `common/viewer.py`;
+crop editing also focuses the viewer on mouse press. Future viewers should reuse
+this component rather than duplicate keyboard handling.
+Both GUI entries stage the same private package for builds. Run
+`-p "test_pdf_bookmarks_gui.py"` for offscreen GUI/loopback API tests and
+`-p "test_pdf_tools.py"` for retained structure/authentication/export checks.
 
 `tools/network/rclone-sync.py` is a thin entry for the private
 `tools/network/rclone-sync/` package, loaded as `personal_rclone_sync`.
@@ -1031,7 +1105,9 @@ API facade from the entry. Run rclone tests with `-p "test_rclone*.py"`.
 │   ├── environment.py      # Runtime environment and executable discovery
 │   ├── system.py           # OS integration, privilege, and macOS permissions
 │   ├── paths.py            # Path placeholder and environment expansion
-│   ├── pdf.py              # Lazy PyMuPDF authentication and safe new-file output
+│   ├── pdf.py              # Lazy PDF auth, bookmarks, labels, rendering and safe output
+│   ├── llm.py              # Shared model settings, presets, requests and parsing
+│   ├── _llm_qt.py          # Lazy Qt API transport, created through Llm
 │   ├── font.py             # Installed font discovery, localized names, and style matching
 │   ├── keyboard.py         # Key names, platform key codes and Windows scan codes
 │   ├── input.py            # Input

@@ -21,13 +21,14 @@ import pymupdf
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "tools/document-processing/pdf-binarize-old.py"
+SCRIPT = ROOT / "tools/document-processing/pdf-binarize.py"
 SPEC = importlib.util.spec_from_file_location("pdf_binarize", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 entry = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = entry
 SPEC.loader.exec_module(entry)
-app = entry.load_app()
+engine_settings = entry.load_app("binarize.settings")
+from utils import *
 from personal_pdf_tools.binarize import objects, raster, workflow
 
 
@@ -66,7 +67,7 @@ def page_image(document: pymupdf.Document, index: int) -> Image.Image:
 
 @unittest.skipUnless(features.check("libtiff"), "Pillow libtiff required")
 class PdfBinarizeTests(unittest.TestCase):
-    """Exercise actual rendering and encoding, plus failure and menu boundaries."""
+    """Exercise actual rendering and encoding, plus failure and settings boundaries."""
 
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory(prefix="binary-pdf-", dir=ROOT / "tmp")
@@ -122,7 +123,7 @@ class PdfBinarizeTests(unittest.TestCase):
 
     def test_permission_only_encryption_needs_no_password(self) -> None:
         make_source(self.source, password="")
-        with patch.object(app.Input, "input_password") as prompt:
+        with patch.object(Input, "input_password") as prompt:
             self.convert()
             prompt.assert_not_called()
         with pymupdf.open(self.output) as result:
@@ -133,14 +134,14 @@ class PdfBinarizeTests(unittest.TestCase):
 
     def test_password_retry_and_aes(self) -> None:
         make_source(self.source, password="test-open", aes=True)
-        with patch.object(app.Input, "input_password", side_effect=["wrong", "test-open"]) as prompt:
+        with patch.object(Input, "input_password", side_effect=["wrong", "test-open"]) as prompt:
             self.convert()
             self.assertEqual(prompt.call_count, 2)
         self.assert_no_temporary_files()
 
     def test_cancel_password_leaves_no_output(self) -> None:
         make_source(self.source, password="test-open")
-        with patch.object(app.Input, "input_password", return_value=""):
+        with patch.object(Input, "input_password", return_value=""):
             with self.assertRaisesRegex(ValueError, "cancelled"):
                 self.convert()
         self.assertFalse(self.output.exists())
@@ -150,7 +151,7 @@ class PdfBinarizeTests(unittest.TestCase):
         make_source(self.source, password="test-open")
         for error in (RuntimeError("render failed"), KeyboardInterrupt()):
             with self.subTest(error=type(error).__name__):
-                with patch.object(app.Input, "input_password", return_value="test-open"):
+                with patch.object(Input, "input_password", return_value="test-open"):
                     with patch.object(objects, "_render_image", side_effect=error):
                         with self.assertRaises(type(error)):
                             self.convert()
@@ -177,19 +178,6 @@ class PdfBinarizeTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "libtiff"):
                     self.convert()
             render.assert_not_called()
-
-    def test_interactive_defaults(self) -> None:
-        with (
-            patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
-            patch.object(app.Input, "resolve_output_path", return_value=str(self.output)),
-            patch("builtins.input", return_value=""),
-            patch.object(app, "_binarize_pdf") as convert,
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            self.output.write_bytes(b"test output")
-            self.assertEqual(app.main(), 0)
-            self.assertEqual(convert.call_args.args[2:], (300, 180, app.DEFAULT_WORKERS, None))
-            self.assertFalse(convert.call_args.kwargs["processing"].sharpen)
 
     def test_parallel_and_serial_outputs_match(self) -> None:
         self.convert(workers=1)
@@ -222,7 +210,7 @@ class PdfBinarizeTests(unittest.TestCase):
 
         with pymupdf.open() as writer:
             with (
-                patch.object(app.Pdf, "save_new", side_effect=slow_write),
+                patch.object(Pdf, "save_new", side_effect=slow_write),
                 patch.object(workflow, "PROGRESS_INTERVAL_SECONDS", 0.01),
                 contextlib.redirect_stdout(output),
                 self.assertRaisesRegex(OSError, "write failed"),
@@ -300,24 +288,6 @@ class PdfBinarizeTests(unittest.TestCase):
         with pymupdf.open(self.output) as result:
             self.assertEqual([page.get_images()[0][4] for page in result], [8, 8, 1])
 
-    def test_interactive_skip_selection_preserves_original_pages(self) -> None:
-        for number, selection in enumerate(("1-2,-1", "-1,-2", "", "none")):
-            target = self.folder / f"interactive-skip-{number}.pdf"
-            with (
-                self.subTest(selection=selection),
-                patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
-                patch.object(app.Input, "resolve_output_path", return_value=str(target)),
-                patch.object(app, "_configure", return_value=(72, 180, app.DEFAULT_PROCESSING)),
-                patch("builtins.input", side_effect=["", "", "", "", "", "3", selection]),
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                self.assertEqual(app.main(), 0)
-            effective_selection = "" if selection == "none" else (selection or "1,2")
-            skipped = app.Input.parse_index_ranges(effective_selection, item_count=3)
-            with pymupdf.open(target) as result:
-                for index in range(3):
-                    self.assertEqual(result[index].get_images()[0][4], 8 if index in skipped else 1)
-
     def test_skipped_links_forms_custom_metadata_and_rendered_pixels(self) -> None:
         enriched = self.folder / "enriched.pdf"
         with pymupdf.open(self.source) as document:
@@ -390,18 +360,18 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_sharpening_is_off_by_default_and_can_retain_a_faint_stroke(self) -> None:
         with Image.new("L", (21, 21), 255) as gray:
             ImageDraw.Draw(gray).line((10, 2, 10, 18), fill=190)
-            with raster._threshold_image(gray, 180, app.DEFAULT_PROCESSING) as result:
+            with raster._threshold_image(gray, 180, engine_settings.DEFAULT_PROCESSING) as result:
                 self.assertEqual(set(result.convert("L").tobytes()), {255})
-            with raster._threshold_image(gray, 180, app._Processing(sharpen=True)) as result:
+            with raster._threshold_image(gray, 180, engine_settings._Processing(sharpen=True)) as result:
                 self.assertEqual(result.getpixel((10, 10)), 0)
                 self.assertEqual(result.getpixel((0, 0)), 255)
             self.assertEqual(gray.getpixel((10, 10)), 190)
 
     def test_preview_matches_full_conversion_and_renders_only_one_page(self) -> None:
         original = self.source.read_bytes()
-        for mode in app._BinarizeMode:
+        for mode in engine_settings._BinarizeMode:
             for sharpen, upscale in ((False, 1), (True, 1), (False, 2), (True, 2)):
-                processing = app._Processing(mode=mode, sharpen=sharpen, upscale=upscale,
+                processing = engine_settings._Processing(mode=mode, sharpen=sharpen, upscale=upscale,
                                              levels=upscale > 1, black_point=110, white_point=250)
                 full = self.folder / f"full-{mode}-{sharpen}-{upscale}.pdf"
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -430,7 +400,7 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_preview_password_failure_and_existing_output_protection(self) -> None:
         make_source(self.source, password="secret", aes=True)
         original = self.source.read_bytes()
-        with patch.object(app.Input, "input_password", return_value="secret"), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(Input, "input_password", return_value="secret"), contextlib.redirect_stdout(io.StringIO()):
             workflow._preview_pdf(self.source, self.output, -1, 72, 180)
             for output in (self.source, self.output):
                 with self.assertRaises(FileExistsError):
@@ -448,61 +418,14 @@ class PdfBinarizeTests(unittest.TestCase):
         self.assertEqual(self.source.read_bytes(), original)
         self.assert_no_temporary_files()
 
-    def test_interactive_preview_reconfigure_preview_then_convert(self) -> None:
-        preview_one = self.folder / "fixed-preview.pdf"
-        preview_two = self.folder / "sauvola-preview.pdf"
-        replies = [
-            "",  # vector colors unchanged
-            "", "72", "", "", "", "",  # fixed, 72 DPI, threshold 180, levels off, 1x, sharpening off
-            "", "", "", "",  # illustrations off, denoise off, cleanup off, advanced settings unchanged
-            "1", "2",
-            "2", "", "s", "", "30", "31", "", "y", "110", "100", "250", "2", "y", "0.7", "50",
-            "", "", "", "",
-            "1", "2", "3", "1,-1",
-        ]
-        with (
-            patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
-            patch.object(app.Input, "resolve_output_path", side_effect=[str(preview_one), str(preview_two), str(self.output)]),
-            patch.object(app.System, "open_with_default_app") as viewer,
-            patch("builtins.input", side_effect=replies),
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            self.assertEqual(app.main(), 0)
-            self.assertEqual(viewer.call_count, 2)
-        with pymupdf.open(preview_two) as preview, pymupdf.open(self.output) as complete:
-            self.assertEqual(page_image(preview, 0).tobytes(), page_image(complete, 1).tobytes())
-            self.assertEqual(complete[0].get_images()[0][4], 8)
-            self.assertEqual(complete[2].get_images()[0][4], 8)
-        with pymupdf.open(preview_one) as result:
-            self.assertEqual(len(result), 1)
-
-    def test_interactive_preview_can_disable_viewer_and_quit(self) -> None:
-        processing = app._Processing(mode=app._BinarizeMode.SAUVOLA, sharpen=True,
-                                     levels=True, black_point=110, white_point=250, upscale=2)
-        with (
-            patch.object(app.Input, "resolve_input_path", return_value=str(self.source)),
-            patch.object(app.Input, "resolve_output_path", return_value=str(self.output)),
-            patch.object(app, "_configure", return_value=(72, 180, processing)),
-            patch.object(app.System, "open_with_default_app") as viewer,
-            patch("builtins.input", side_effect=["", "", "", "", "y", "1", "n", "n", "n", "n", "1", "-1", "0"]),
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            self.assertEqual(app.main(), 0)
-            viewer.assert_not_called()
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(len(result), 1)
-            self.assertEqual(result[0].get_images()[0][4], 1)
-            self.assertEqual(result[0].rect, pymupdf.Rect(0, 0, 144, 288))
-            self.assertEqual(page_image(result, 0).size, (288, 576))
-
     def test_invalid_processing_is_rejected_before_rendering(self) -> None:
         invalid = [
-            app._Processing(window=30), app._Processing(window=1),
-            app._Processing(k=float("nan")), app._Processing(k=0),
-            app._Processing(sharpen_radius=0), app._Processing(sharpen_percent=0),
-            app._Processing(black_point=-1), app._Processing(black_point=255),
-            app._Processing(white_point=0), app._Processing(white_point=256),
-            app._Processing(upscale=0), app._Processing(upscale=5),
+            engine_settings._Processing(window=30), engine_settings._Processing(window=1),
+            engine_settings._Processing(k=float("nan")), engine_settings._Processing(k=0),
+            engine_settings._Processing(sharpen_radius=0), engine_settings._Processing(sharpen_percent=0),
+            engine_settings._Processing(black_point=-1), engine_settings._Processing(black_point=255),
+            engine_settings._Processing(white_point=0), engine_settings._Processing(white_point=256),
+            engine_settings._Processing(upscale=0), engine_settings._Processing(upscale=5),
         ]
         with patch.object(objects, "_render_image") as render:
             for processing in invalid:
@@ -512,7 +435,7 @@ class PdfBinarizeTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_sauvola_serial_parallel_results_match(self) -> None:
-        processing = app._Processing(mode=app._BinarizeMode.SAUVOLA, sharpen=True,
+        processing = engine_settings._Processing(mode=engine_settings._BinarizeMode.SAUVOLA, sharpen=True,
                                      levels=True, black_point=110, white_point=250, upscale=2)
         second = self.folder / "parallel.pdf"
         with contextlib.redirect_stdout(io.StringIO()):
@@ -525,16 +448,16 @@ class PdfBinarizeTests(unittest.TestCase):
     def test_levels_mapping_identity_disabled_and_source_preservation(self) -> None:
         with Image.frombytes("L", (256, 1), bytes(range(256))) as gray:
             original = gray.tobytes()
-            for mode in app._BinarizeMode:
-                with raster._threshold_image(gray, 128, app._Processing(mode=mode)) as baseline:
+            for mode in engine_settings._BinarizeMode:
+                with raster._threshold_image(gray, 128, engine_settings._Processing(mode=mode)) as baseline:
                     for processing in (
-                        app._Processing(mode=mode, levels=True),
-                        app._Processing(mode=mode, levels=False, black_point=110, white_point=250),
+                        engine_settings._Processing(mode=mode, levels=True),
+                        engine_settings._Processing(mode=mode, levels=False, black_point=110, white_point=250),
                     ):
                         with raster._threshold_image(gray, 128, processing) as result:
                             self.assertEqual(result.tobytes(), baseline.tobytes())
             # Linear 110..250 levels cross fixed threshold 128 at source value 180.
-            with raster._threshold_image(gray, 128, app._Processing(
+            with raster._threshold_image(gray, 128, engine_settings._Processing(
                 levels=True, black_point=110, white_point=250,
             )) as result:
                 self.assertEqual(result.convert("L").tobytes(), bytes([0] * 180 + [255] * 76))
@@ -544,24 +467,17 @@ class PdfBinarizeTests(unittest.TestCase):
         for scale in (1, 2, 3, 4):
             with self.subTest(scale=scale):
                 encoded = raster._encode_page(Image.new("L", (144, 72), 255), 72, 180,
-                                           app._Processing(upscale=scale))
+                                           engine_settings._Processing(upscale=scale))
                 with pymupdf.open(stream=encoded, filetype="pdf") as result:
                     self.assertEqual(result[0].rect, pymupdf.Rect(0, 0, 144, 72))
                     self.assertEqual(page_image(result, 0).size, (144 * scale, 72 * scale))
-
-    def test_configure_retains_new_settings_on_enter(self) -> None:
-        settings = app._Processing(mode=app._BinarizeMode.SAUVOLA, levels=True,
-                                   black_point=110, white_point=250, upscale=2,
-                                   sharpen=True, sharpen_radius=0.7, sharpen_percent=50)
-        with patch("builtins.input", return_value=""), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(app._configure(144, 180, settings), (144, 180, settings))
 
     def test_equal_or_reversed_levels_fail_before_rendering(self) -> None:
         with patch.object(objects, "_render_image") as render:
             for black, white in ((110, 110), (250, 110)):
                 with self.subTest(black=black, white=white), self.assertRaises(ValueError):
                     workflow._preview_pdf(self.source, self.output, 1, 72, 180,
-                                     app._Processing(levels=True, black_point=black, white_point=white))
+                                     engine_settings._Processing(levels=True, black_point=black, white_point=white))
             render.assert_not_called()
         self.assertFalse(self.output.exists())
 

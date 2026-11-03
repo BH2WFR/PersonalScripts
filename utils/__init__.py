@@ -28,7 +28,8 @@ from .input import Input
 from .cursor import Cursor
 from .menu_option import MenuOption
 from .menu import Menu
-from .pdf import Pdf
+from .pdf import Pdf, PdfBookmark
+from .llm import Llm, LlmResponse, LlmSettings
 from .font import Font, FontFace, FontStyle
 from .keyboard import Keyboard, ScanCodePrefix, WindowsScanCode
 
@@ -50,6 +51,7 @@ __all__ = [
     "CEraseDisplayAllScroll", "CEraseLine", "CEraseLineToEnd",
     "CEraseLineToStart", "CmdCheck", "Console", "Environment", "LinuxGui",
     "System", "Paths", "Input", "Cursor", "MenuOption", "Menu", "RuntimeKind", "PythonEnvironment", "Pdf",
-    "Font", "FontFace", "FontStyle", "DiskInfo", "DiskScan",
+    "Font", "FontFace", "FontStyle", "DiskInfo", "DiskScan", "PdfBookmark",
+    "Llm", "LlmResponse", "LlmSettings",
     "Keyboard", "ScanCodePrefix", "WindowsScanCode",
 ]

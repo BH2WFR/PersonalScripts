@@ -32,40 +32,11 @@ DEFAULT_WHITE_POINT = GRAY_LEVELS - 1
 DEFAULT_UPSCALE = 1
 MAX_UPSCALE = 4
 _RegionSettings = regions._Settings
-_PROFILE_LABELS: dict[regions._Profile, str] = {
-    regions._Profile.TEXT_FIRST: "Text first - fewer protected illustrations",
-    regions._Profile.BALANCED: "Balanced protection",
-    regions._Profile.IMAGE_FIRST: "Image first - more protected illustrations",
-}
-_IMAGE_MODE_LABELS: dict[regions._Mode, str] = {
-    regions._Mode.KEEP: "Keep original colors / grayscale",
-    regions._Mode.GRAY2: "2-bit grayscale (4 gray levels)",
-    regions._Mode.GRAY4: "4-bit grayscale (16 gray levels)",
-    regions._Mode.GRAY8: "8-bit grayscale (256 gray levels; remove color only)",
-    regions._Mode.COLOR2: "2-bit color (4 palette colors)",
-    regions._Mode.COLOR4: "4-bit color (16 palette colors)",
-}
-_CODEC_LABELS: dict[regions._Codec, str] = {
-    regions._Codec.JPEG: "JPEG - smaller files, lossy",
-    regions._Codec.FLATE: "Flate - lossless",
-}
-_DITHER_LABELS: dict[regions._Dither, str] = {
-    regions._Dither.NONE: "No dithering - usually smaller files",
-    regions._Dither.ORDERED: "Ordered dithering - regular dot pattern",
-    regions._Dither.DIFFUSION: "Error diffusion - smoother tones, may increase size",
-}
 
 
 class _BinarizeMode(enum.StrEnum):
     FIXED = "fixed"
     SAUVOLA = "sauvola"
-
-
-class _Action(enum.StrEnum):
-    PREVIEW = "preview"
-    SETTINGS = "settings"
-    CONVERT = "convert"
-    QUIT = "quit"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -87,16 +58,6 @@ class _Processing:
 
 
 DEFAULT_PROCESSING = _Processing()
-
-
-@dataclasses.dataclass(frozen=True)
-class _OutputOptions:
-    """Interactive session choices, separate from per-page image settings."""
-
-    workers: int = DEFAULT_WORKERS
-    open_preview: bool = True
-    export_regions: bool = False
-    annotate_regions: bool = False
 
 
 def _validate_settings(dpi: int, threshold: int, workers: int, processing: _Processing) -> None:

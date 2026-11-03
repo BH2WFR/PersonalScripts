@@ -1,8 +1,9 @@
 # PDF binarizer internals
 
-The shared engine is used by `../../pdf-binarize.py` (GUI) and
-`../../pdf-binarize-old.py` (terminal). It is imported as
-`personal_pdf_tools.binarize`; the launcher/compiler only list the entries.
+The engine is used by the `../../pdf-binarize.py` GUI. It is imported as
+`personal_pdf_tools.binarize`; the launcher/compiler only list the entry.
+Preview rendering uses the shared `utils.Pdf.render_page` RGB/pixel-budget helper;
+image segmentation and binary encoding remain binarizer-specific.
 Dependencies: PyMuPDF >= 1.28, pypdf >= 6, Pillow with libtiff, numpy,
 opencv-python and tqdm. They are declared in the root `requirements.txt`.
 
@@ -10,7 +11,6 @@ opencv-python and tqdm. They are declared in the root `requirements.txt`.
 
 | Module | Responsibility |
 | --- | --- |
-| `cli.py` | Preserved terminal setup and preview/settings/convert menu |
 | `app.py`, `panel.py` | Desktop window and grouped profile controls |
 | `project.py`, `worker.py` | JSON projects and isolated profile-aware processing |
 | `settings.py` | Immutable settings, defaults and validation |
@@ -44,7 +44,7 @@ size/settings share the encoded result; differing page region overrides do not.
 MuPDF stays on the main thread. A bounded worker queue owns independent Pillow
 images; cancellation closes all images and waits for encoders before cleanup.
 
-The vector-color menu defaults to **off**. When on, solid strokes/fills become
+The vector-color setting defaults to **off**. When on, solid strokes/fills become
 black unless their color is white; their geometry stays vector. Source colors
 are restored before any following text. Tiling patterns are processed recursively,
 retaining their text and vector paths. Gradients and shading patterns are rendered
@@ -52,14 +52,11 @@ as separate 1-bit paint images with alpha masks at base DPI, without rasterizing
 the surrounding page. Transparency/blending remain PDF graphics-state effects;
 black paint may therefore appear gray when the source specifies partial opacity.
 
-The terminal preview uses the same object pipeline and extracts one physical page. It retains
+The preview uses the same object pipeline and extracts one physical page. It retains
 that page's text and annotations; destinations outside the extracted page and the
 whole-document outline cannot be included in a one-page preview. Full conversion
-retains them. Negative physical page numbers count from the end; terminal skip selections
-accept `1-3,5,-1`. After choosing full conversion and its output path, press Enter
-to keep physical pages `1,2` unchanged (only `1` for a single-page PDF), or enter
-`none` to process every page. Other page selections override this cover default.
-An explicit empty `skip_pages` string in internal calls still skips nothing.
+retains them. Assign the no-processing profile to pages that should remain unchanged;
+new GUI sessions process all pages by default, including covers.
 
 ## Image settings
 
@@ -86,7 +83,7 @@ palette colors). Dithering and contrast enhancement are optional and default off
 
 ## Optional review files
 
-Advanced terminal output settings control workers, automatic preview opening and review
+The GUI Output tab controls workers, automatic preview opening and optional review
 files. Region JSON is bound to the source SHA-256 and page count. Rectangles use
 normalized displayed-page coordinates, origin top-left, x right/y down. A listed
 page overrides detection, `[]` means no boxes, and missing pages use automatic
