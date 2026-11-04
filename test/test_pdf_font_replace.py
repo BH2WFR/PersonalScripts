@@ -26,6 +26,7 @@ assert spec and spec.loader
 app = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = app
 spec.loader.exec_module(app)
+app = app.load_app("font_replace.engine")
 
 
 def make_font(path: Path, *, bold: bool = False, italic: bool = False, cff: bool = False,
@@ -203,20 +204,6 @@ class FontReplaceTests(unittest.TestCase):
                     after = [(char[0], char[2]) for span in after_page.get_texttrace() for char in span["chars"]]
                     self.assertEqual(before, after)
 
-    def test_interactive_add_rule_then_start_saves_once(self) -> None:
-        with patch.object(sys, "argv", [str(app.__file__), str(self.source), "-o", str(self.output)]), \
-                patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.ALL, "F", app._Embedding.SUBSET, False, False, False,
-                                                        "P", ["2"], app._SourceColorMode.ALL, "F", app._Embedding.FULL, True, False, True]), \
-                patch.object(Input, "input_real_ranges", return_value=None), \
-                patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (), (0, 1), ()]), \
-                patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.REGULAR].path)), \
-                patch.object(Pdf, "save_new", wraps=Pdf.save_new) as save, \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(app.main(), 0)
-        self.assertEqual(save.call_count, 1)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual({span["font"] for page in result for span in page.get_texttrace()}, {"Fixture-Regular"})
-
     def test_color_restores_graphics_and_preserves_text_show_state(self) -> None:
         colors = (b"", b".4 g .7 G", b"0 .5 .7 rg .8 .2 .1 RG",
                   b"1 0 .5 0 k 0 1 .5 0 K",
@@ -256,7 +243,35 @@ class FontReplaceTests(unittest.TestCase):
                                      [{k: v for k, v in item.items() if k != "seqno"} for item in result[0].get_drawings()])
                     self.assertEqual(document[1].get_texttrace(), result[1].get_texttrace())
 
-    def test_source_color_discovery_and_multiselection(self) -> None:
+    def test_color_only_preserves_show_operators_and_following_graphics(self) -> None:
+        with Pdf.open_document(self.source) as (document, _):
+            content = (b".4 g .7 G BT /helv 12 Tf 2 Tr 15 TL 1 0 0 1 30 250 Tm "
+                       b"(A) Tj [(B) -30 (C)] TJ (D) ' 2 1 (E F) \" "
+                       b"/tiro 12 Tf (Keep) Tj ET 20 20 30 30 re B")
+            stream = app._object(document, "<< >>", content)
+            document.xref_set_key(document[0].xref, "Contents", f"{stream} 0 R")
+            before = document[0].get_texttrace()
+            drawings = document[0].get_drawings()
+            rule = app._Rule({"Helvetica"}, (), (1,), {}, app._Embedding.SUBSET,
+                             color=(1, 0, 0), color_only=True)
+            engine = app._Engine(document, (rule,))
+            engine.run([0])
+            self.assertEqual(engine.recolored_runs, 4)
+            self.assertFalse(engine.replacements)
+            after = document.reload_page(document[0]).get_texttrace()
+            for render_type in (0, 1):
+                originals = [(span, char) for span in before if span["type"] == render_type for char in span["chars"]]
+                changed_chars = [(span, char) for span in after if span["type"] == render_type for char in span["chars"]]
+                self.assertEqual(len(originals), len(changed_chars))
+                for (original, first), (changed, second) in zip(originals, changed_chars):
+                    self.assertEqual(changed["color"], (1, 0, 0) if original["font"] == "Helvetica" else original["color"])
+                    self.assertEqual(first, second)
+                    for key in ("font", "size", "dir", "opacity", "type"):
+                        self.assertEqual(original[key], changed[key])
+            self.assertEqual([{key: value for key, value in row.items() if key != "seqno"} for row in drawings],
+                             [{key: value for key, value in row.items() if key != "seqno"} for row in document[0].get_drawings()])
+
+    def test_source_color_discovery(self) -> None:
         with Pdf.open_document(self.source) as (document, _):
             page = document[0]
             page.insert_text((30, 180), "Red", color=(1, 0, 0))
@@ -266,31 +281,6 @@ class FontReplaceTests(unittest.TestCase):
             xref_count = document.xref_length()
             self.assertEqual(app._pdf_colors(document, (0,)), [0, 0xFF0000])
             self.assertEqual(app._pdf_colors(document, (1,)), [0])
-            with patch.object(Menu, "select", side_effect=[app._SourceColorMode.PAGES, ["1-2"]]), \
-                    patch.object(Input, "input_index_ranges", return_value=(0,)), \
-                    contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(app._select_source_colors(document), frozenset((0, 0xFF0000)))
-            self.assertEqual(page.read_contents(), before)
-            self.assertEqual(document.xref_length(), xref_count)
-
-    def test_source_color_empty_pages_back_manual_and_exit(self) -> None:
-        with Pdf.open_document(self.source) as (document, _):
-            document.new_page()
-            scenarios = [
-                ([app._SourceColorMode.PAGES, app._SourceColorMode.ALL], [(2,)], [], None),
-                ([app._SourceColorMode.PAGES, ["R"], app._SourceColorMode.MANUAL], [(0,)], ["#F00"], frozenset((0xFF0000,))),
-                ([app._SourceColorMode.MANUAL, app._SourceColorMode.MANUAL, app._SourceColorMode.ALL], [], ["bad", ""], None),
-            ]
-            for menus, pages, values, expected in scenarios:
-                with self.subTest(menus=menus), patch.object(Menu, "select", side_effect=menus), \
-                        patch.object(Input, "input_index_ranges", side_effect=pages), \
-                        patch.object(Input, "prompt", side_effect=values), contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(app._select_source_colors(document), expected)
-            with patch.object(Menu, "select", side_effect=[app._SourceColorMode.PAGES, ["E"]]), \
-                    patch.object(Input, "input_index_ranges", return_value=(0,)), \
-                    contextlib.redirect_stdout(io.StringIO()), self.assertRaises(KeyboardInterrupt):
-                app._select_source_colors(document)
-
     def test_source_color_combines_with_font_size_pages_and_rule_priority(self) -> None:
         with Pdf.open_document(self.source) as (document, _):
             page = document[0]
@@ -352,19 +342,6 @@ class FontReplaceTests(unittest.TestCase):
             self.assertEqual([span["font"] for span in result[0].get_texttrace()],
                              ["Fixture-Regular", "Fixture-Regular", "Helvetica", "Helvetica"])
 
-    def test_interactive_source_color_from_pages(self) -> None:
-        with patch.object(sys, "argv", [str(app.__file__), str(self.source), "-o", str(self.output)]), \
-                patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.PAGES, ["1"], "F",
-                                                        app._Embedding.SUBSET, False, False, True]), \
-                patch.object(Input, "input_real_ranges", return_value=None), \
-                patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (0,), (1,)]), \
-                patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.REGULAR].path)), \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(app.main(), 0)
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(result[0].get_texttrace()[0]["font"], "Fixture-Regular")
-            self.assertEqual(result[1].get_texttrace()[0]["font"], "Helvetica")
-
     def test_source_color_limits_required_styles_and_can_match_nothing(self) -> None:
         with Pdf.open_document(self.source) as (document, _):
             document[0].insert_text((30, 180), "Red bold", fontname="hebo", color=(1, 0, 0))
@@ -401,22 +378,6 @@ class FontReplaceTests(unittest.TestCase):
             self.assertEqual(after[1]["chars"], before[1]["chars"])
             self.assertEqual([{k: v for k, v in item.items() if k != "seqno"} for item in drawings],
                              [{k: v for k, v in item.items() if k != "seqno"} for item in result[0].get_drawings()])
-
-    def test_interactive_color_retries_invalid_input(self) -> None:
-        with patch.object(sys, "argv", [str(app.__file__), str(self.source), "-o", str(self.output)]), \
-                patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.ALL, "F", app._Embedding.SUBSET,
-                                                        False, True, True]), \
-                patch.object(Input, "prompt", side_effect=["256, 0, 0", "#FF0000"]) as prompt, \
-                patch.object(Input, "input_real_ranges", return_value=None), \
-                patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (1,)]), \
-                patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.REGULAR].path)), \
-                contextlib.redirect_stdout(io.StringIO()) as messages:
-            self.assertEqual(app.main(), 0)
-        self.assertEqual(prompt.call_count, 2)
-        self.assertIn("Invalid color", messages.getvalue())
-        with pymupdf.open(self.output) as result:
-            self.assertEqual(result[0].get_texttrace()[0]["color"], (1, 0, 0))
-            self.assertEqual(result[1].get_texttrace()[0]["color"], (0, 0, 0))
 
     def test_color_in_form_restores_inherited_pattern(self) -> None:
         with Pdf.open_document(self.source) as (document, _):
@@ -485,6 +446,8 @@ class FontReplaceTests(unittest.TestCase):
             [app._Rule(names, (), (1,), self.faces, app._Embedding.SUBSET, True)],
             [app._Rule(names, ((12, 12),), (), self.faces, app._Embedding.SUBSET, True),
              app._Rule(names, ((18, 18),), (), self.faces, app._Embedding.SUBSET, False)],
+            [app._Rule(names, ((12, 12),), (), {}, app._Embedding.SUBSET, color=(1, 0, 0), color_only=True),
+             app._Rule(names, (), (), self.faces, app._Embedding.SUBSET, True)],
         ]
         for index, rules in enumerate(scenarios):
             with self.subTest(scenario=index):
@@ -618,17 +581,6 @@ class FontReplaceTests(unittest.TestCase):
             self.convert({"Helvetica"})
         self.assertFalse(self.output.exists())
 
-    def test_missing_style_prompts_or_exits_without_substitution(self) -> None:
-        regular = {FontStyle.REGULAR: self.faces[FontStyle.REGULAR]}
-        with patch.object(Menu, "select", return_value=False), \
-                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(KeyboardInterrupt):
-            app._complete_styles(regular, {FontStyle.BOLD})
-        with patch.object(Menu, "select", return_value=True), \
-                patch.object(Input, "resolve_input_path", return_value=str(self.faces[FontStyle.BOLD].path)), \
-                contextlib.redirect_stdout(io.StringIO()):
-            app._complete_styles(regular, {FontStyle.BOLD})
-        self.assertEqual(regular[FontStyle.BOLD].style, FontStyle.BOLD)
-
     def test_readonly_font_list_excludes_image_only_pages(self) -> None:
         with pymupdf.open(self.source) as document:
             page = document.new_page()
@@ -743,78 +695,15 @@ class FontReplaceTests(unittest.TestCase):
         result = Font.family_faces(base, [remote, nearby, unrelated, alternative])
         self.assertEqual(result, {FontStyle.REGULAR: base, FontStyle.BOLD: nearby})
 
-    def test_fontless_page_retries_then_selects_or_exits(self) -> None:
-        with pymupdf.open(self.source) as document:
-            document.new_page()
-            for retry in (True, False):
-                menus = ["P", retry, ["1"]] if retry else ["P", retry]
-                with patch.object(Menu, "select", side_effect=menus), \
-                        patch.object(Input, "input_index_ranges", side_effect=[(2,), (0,)]), \
-                        patch.object(Input, "prompt", return_value="1"), \
-                        contextlib.redirect_stdout(io.StringIO()) as output:
-                    if retry:
-                        self.assertEqual(app._select_source_fonts(document), {"Helvetica"})
-                    else:
-                        with self.assertRaises(KeyboardInterrupt):
-                            app._select_source_fonts(document)
-                self.assertIn("no text fonts", output.getvalue())
-
     def test_inline_images_fail_without_publication(self) -> None:
         with self.assertRaisesRegex(ValueError, "Inline-image"):
             list(app._tokens(b"q BI /W 1 /H 1 ID xxx EI Q"))
-
-    def test_source_font_menu_ranges_retry_exit_and_gray_actions(self) -> None:
-        cases = [(["P", "1-2"], {"Helvetica", "Times-Roman"}, 1),
-                 (["P", "1,2"], {"Helvetica", "Times-Roman"}, 1),
-                 (["P", "1,r", "1"], {"Helvetica"}, 1),
-                 (["P", "r", "2"], {"Times-Roman"}, 2),
-                 (["P", "99", "1"], {"Helvetica"}, 1),
-                 (["P", "e"], None, 1)]
-        with pymupdf.open(self.source) as document:
-            for answers, expected, page_prompts in cases:
-                with self.subTest(answers=answers), \
-                        patch("builtins.input", side_effect=answers), \
-                        patch.object(Input, "input_index_ranges", return_value=(0,)) as pages, \
-                        contextlib.redirect_stdout(io.StringIO()) as output:
-                    if expected is None:
-                        with self.assertRaises(KeyboardInterrupt):
-                            app._select_source_fonts(document)
-                    else:
-                        self.assertEqual(app._select_source_fonts(document), expected)
-                self.assertEqual(pages.call_count, page_prompts)
-                self.assertIn(f"{FGray}R{FGray}]{CRst} {FGray}Select pages/search again{CRst}", output.getvalue())
-                self.assertIn(f"{FGray}E{FGray}]{CRst} {FGray}Exit{CRst}", output.getvalue())
 
     def test_lexer_decodes_literals_and_skips_fake_operators(self) -> None:
         tokens = list(app._tokens(b"% fake /font 9 Tf\n[(A\\(B\\)\\040C) -20 <4142>] TJ"))
         self.assertEqual(app._string_bytes(tokens[0].children[0].raw), b"A(B) C")
         self.assertEqual(app._string_bytes(tokens[0].children[2].raw), b"AB")
 
-    def test_interactive_replacement_with_optional_path_arguments(self) -> None:
-        for supplied_paths in (True, False):
-            with self.subTest(supplied_paths=supplied_paths):
-                output = self.folder / f"interactive-{supplied_paths}.pdf"
-                arguments = [str(app.__file__)]
-                target = str(self.faces[FontStyle.REGULAR].path)
-                input_paths = [target] if supplied_paths else [str(self.source), target]
-                if supplied_paths:
-                    arguments.extend([str(self.source), "-o", str(output)])
-                with patch.object(sys, "argv", arguments), \
-                        patch.object(Menu, "select", side_effect=["P", ["1"], app._SourceColorMode.ALL, "F", app._Embedding.SUBSET, False, False, True]), \
-                        patch.object(Input, "prompt", return_value="1"), \
-                        patch.object(Input, "input_real_ranges", return_value=((12, 12),)), \
-                        patch.object(Input, "input_index_ranges", side_effect=[(0, 1), (1,)]), \
-                        patch.object(Input, "resolve_input_path", side_effect=input_paths) as input_path, \
-                        patch.object(Input, "resolve_output_path", return_value=str(output)) as output_path, \
-                        contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(app.main(), 0)
-                self.assertEqual(input_path.call_count, len(input_paths))
-                self.assertEqual(output_path.call_count, 0 if supplied_paths else 1)
-                with pymupdf.open(output) as document:
-                    fonts = {(span["font"], span["size"]) for span in document[0].get_texttrace()}
-                    self.assertIn(("Fixture-Regular", 12), fonts)
-                    self.assertIn(("Helvetica", 18), fonts)
-                    self.assertNotIn("Fixture-Regular", {span["font"] for span in document[1].get_texttrace()})
 
 
 if __name__ == "__main__":

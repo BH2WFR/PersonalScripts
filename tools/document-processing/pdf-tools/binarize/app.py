@@ -17,13 +17,16 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from utils import *
 from ..common.jobs import JobRunner
 from ..common.file_drop import FileDropFilter
+from ..common.file_actions import choose_pdf_output
+from ..common.tooltips import TooltipFilter
 from ..common.navigation import NavigationPane
+from ..common.pdf_images import ImageElement
 from ..common.protocol import Json
 from ..common.preview_buffer import PreviewBuffer
 from ..common.viewer import MAX_SCALE, MIN_SCALE, PageViewer, ViewMode
 from .panel import SettingsPanel
 from .preview_cache import PreviewCache, PreviewFrame, PreviewState, Rectangle
-from .project import BUILTIN_IDS, SKIP_ID, Config, Project
+from .project import BUILTIN_IDS, DEFAULT_ID, SKIP_ID, Config, Project
 from .settings import MAX_WORKERS
 
 PREVIEW_DELAY_MS = 300
@@ -40,6 +43,16 @@ class Operation(StrEnum):
     PREVIEW = "preview"
     EXPORT = "export"
     EXPORT_PAGE = "export-page"
+
+
+class ProfileTree(QtWidgets.QTreeWidget):
+    """Two-column profile list; right-click actions do not assign a profile."""
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.RightButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class BinarizeWindow(QtWidgets.QMainWindow):
@@ -95,6 +108,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(980, 600)
         self.setAcceptDrops(True)
         self._build()
+        self.tooltips = TooltipFilter(self)
         self.file_drops = FileDropFilter(self, self.open_path, lambda: not self.runner.busy)
         self._refresh_enabled()
 
@@ -128,6 +142,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.open_project_button = self._button("Open project", self._choose_project, compact=True)
         self.save_project_button = self._button("Save", self._save_project, compact=True)
         self.save_as_button = self._button("Save as...", lambda: self._save_project(True), compact=True)
+        self.close_pdf_button = self._button("Close", self._close_pdf, compact=True)
         self.open_pdf_button.setToolTip(ADMIN_DROP_HINT if self._elevated else "Open a PDF or drop one anywhere in this window")
         self.save_project_button.setToolTip("Save project")
         for button in (self.open_pdf_button, self.open_project_button):
@@ -135,34 +150,31 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.file_toolbar.addSeparator()
         for button in (self.save_project_button, self.save_as_button):
             self.file_toolbar.addWidget(button)
+        self.file_toolbar.addSeparator()
+        self.file_toolbar.addWidget(self.close_pdf_button)
         left_layout.addWidget(self.file_toolbar)
         self.profiles_box = QtWidgets.QGroupBox("Profiles")
         profile_layout = QtWidgets.QVBoxLayout(self.profiles_box)
         profile_layout.setContentsMargins(6, 6, 6, 6)
         profile_layout.setSpacing(4)
-        self.profile_list = QtWidgets.QListWidget()
+        self.profile_list = ProfileTree()
+        self.profile_list.setHeaderLabels(["Profile", "Pages"])
+        self.profile_list.setRootIsDecorated(False)
+        self.profile_list.setUniformRowHeights(True)
+        self.profile_list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.profile_list.customContextMenuRequested.connect(self._profile_menu)
         self._resize_profile_list()
         self.profile_list.currentItemChanged.connect(self._profile_selected)
         # Clicking the already-current profile must also apply it to a selection.
-        self.profile_list.itemClicked.connect(lambda item: self._profile_selected(item, None))
-        profile_layout.addWidget(self.profile_list)
+        self.profile_list.itemClicked.connect(lambda item, column: self._profile_selected(item, None))
         profile_actions = QtWidgets.QHBoxLayout()
-        self.profile_name = QtWidgets.QLineEdit()
-        self.profile_name.setPlaceholderText("New profile name")
         self.add_profile_button = self._button("Add copy", self._add_profile)
-        self.rename_profile_button = self._button("Rename", self._rename_profile)
-        self.delete_profile_button = self._button("Delete", self._delete_profile)
-        profile_actions.addWidget(self.profile_name, 1)
+        self.apply_profile_button = self._button("Apply to pages…", self._apply_profile_pages)
         profile_actions.addWidget(self.add_profile_button)
+        profile_actions.addWidget(self.apply_profile_button)
+        profile_actions.addStretch()
         profile_layout.addLayout(profile_actions)
-        second_row = QtWidgets.QHBoxLayout()
-        second_row.addWidget(self.rename_profile_button)
-        second_row.addWidget(self.delete_profile_button)
-        second_row.addStretch()
-        profile_layout.addLayout(second_row)
-        self.profile_usage = QtWidgets.QLabel()
-        self.profile_usage.hide()
-        profile_layout.addWidget(self.profile_usage)
+        profile_layout.addWidget(self.profile_list)
         left_layout.addWidget(self.profiles_box)
         self.settings = SettingsPanel()
         self.settings.configChanged.connect(self._settings_changed)
@@ -237,6 +249,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         content.addWidget(self.viewer)
         self.navigation = NavigationPane()
         self.navigation.pageRequested.connect(lambda index: self.go_page(index, preserve_selection=True))
+        self.navigation.imageSelected.connect(self.viewer.set_image_highlight)
         self.navigation.pages.itemSelectionChanged.connect(self._selection_summary)
         content.addWidget(self.navigation)
         content.setStretchFactor(0, 1)
@@ -263,14 +276,18 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         splitter.setSizes([390, 1050])
 
     def _resize_profile_list(self) -> None:
-        """Use only the occupied rows, scrolling once the compact list is full."""
+        """Double the former list height, bounded to four through twelve rows."""
         row_height = max(self.profile_list.sizeHintForRow(0), self.profile_list.fontMetrics().height() + 4)
-        rows = min(PROFILE_VISIBLE_ROWS, max(2, self.profile_list.count()))
-        self.profile_list.setFixedHeight(rows * row_height + 2 * self.profile_list.frameWidth())
+        rows = 2 * min(PROFILE_VISIBLE_ROWS, max(2, self.profile_list.topLevelItemCount()))
+        self.profile_list.setFixedHeight(rows * row_height + self.profile_list.header().sizeHint().height()
+                                        + 2 * self.profile_list.frameWidth())
 
     def _build_output(self) -> QtWidgets.QWidget:
         body = QtWidgets.QWidget()
-        layout = QtWidgets.QFormLayout(body)
+        outer = QtWidgets.QVBoxLayout(body)
+        general = QtWidgets.QGroupBox("Export")
+        layout = QtWidgets.QFormLayout(general)
+        outer.addWidget(general)
         self.workers = QtWidgets.QSpinBox()
         self.workers.setRange(1, MAX_WORKERS)
         self.workers.setKeyboardTracking(False)
@@ -280,9 +297,17 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.save_annotations = QtWidgets.QCheckBox("Export box annotation PNGs")
         self.open_saved_preview = QtWidgets.QCheckBox("Open saved page in external viewer")
         self.open_saved_preview.setChecked(True)
+        layout.addRow(self.open_saved_preview)
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+        outer.addWidget(line)
+        review = QtWidgets.QGroupBox("Optional region review files")
+        layout = QtWidgets.QFormLayout(review)
+        outer.addWidget(review)
         for widget in (self.save_regions, self.save_annotations, self.open_saved_preview):
             widget.toggled.connect(self._output_changed)
-            layout.addRow(widget)
+            if widget is not self.open_saved_preview:
+                layout.addRow(widget)
         self.region_path = QtWidgets.QLineEdit()
         self.region_path.setPlaceholderText("Optional region JSON")
         self.region_path.editingFinished.connect(self._output_changed)
@@ -291,10 +316,14 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         row.addWidget(self._button("Browse regions...", self._browse_regions))
         row.addWidget(self._button("Clear", self._clear_regions))
         layout.addRow(row)
-        note = QtWidgets.QLabel("These settings apply to the whole project.\nExport defaults to the source PDF folder.\nThe source and existing PDFs are never overwritten.")
+        note = QtWidgets.QLabel("These settings apply to the whole project.\nExport defaults to the source PDF folder.\nExisting outputs require overwrite confirmation; the source is protected.")
         note.setWordWrap(True)
-        layout.addRow(note)
-        return body
+        outer.addWidget(note)
+        outer.addStretch()
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(body)
+        return scroll
 
     def _refresh_enabled(self) -> None:
         loaded = self.project is not None
@@ -304,7 +333,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         for button in (self.open_pdf_button, self.open_project_button):
             button.setEnabled(idle)
         for widget in (self.save_project_button, self.save_as_button, self.page_number,
-                       self.original, self.auto_fit, self.show_regions, self.navigation):
+                       self.original, self.auto_fit, self.show_regions, self.navigation, self.close_pdf_button):
             widget.setEnabled(loaded and idle)
         for button in (self.preview_export_button, self.export_button):
             button.setEnabled(loaded and idle and self.settings.valid)
@@ -320,8 +349,6 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         identity = self.project.assignments[index] if self.project else SKIP_ID
         for tab in range(self.settings.count() - 1):
             self.settings.widget(tab).setEnabled(loaded and idle and identity != SKIP_ID)
-        self.rename_profile_button.setEnabled(loaded and idle and identity not in BUILTIN_IDS)
-        self.delete_profile_button.setEnabled(loaded and idle and identity not in BUILTIN_IDS)
 
     def _busy_changed(self, busy: bool) -> None:
         if busy and not self._cursor_busy:
@@ -459,9 +486,9 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         try:
             self.profile_list.clear()
             for identity, profile in self.project.profiles.items():
-                item = QtWidgets.QListWidgetItem(profile.name)
-                item.setData(PROFILE_ROLE, identity)
-                self.profile_list.addItem(item)
+                item = QtWidgets.QTreeWidgetItem([profile.name, ""])
+                item.setData(0, PROFILE_ROLE, identity)
+                self.profile_list.addTopLevelItem(item)
             self._resize_profile_list()
         finally:
             self._loading = False
@@ -474,9 +501,9 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             project = self.project
             index = project.current_page
             identity = project.assignments[index]
-            for row in range(self.profile_list.count()):
-                if self.profile_list.item(row).data(PROFILE_ROLE) == identity:
-                    self.profile_list.setCurrentRow(row)
+            for row in range(self.profile_list.topLevelItemCount()):
+                if self.profile_list.topLevelItem(row).data(0, PROFILE_ROLE) == identity:
+                    self.profile_list.setCurrentItem(self.profile_list.topLevelItem(row))
                     break
             self.settings.imported_regions = project.output.region_input is not None
             self.settings.set_config(project.profiles[identity].config)
@@ -504,24 +531,28 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         if self.project is None:
             return
         self._selection_summary()
-        self.profile_usage.show()
         self.navigation.set_profiles([self.project.profiles[value].name for value in self.project.assignments])
 
     def _selection_summary(self) -> None:
         if self.project is None:
             return
-        identity = self.project.assignments[self.project.current_page]
-        count = self.project.assignments.count(identity)
-        selected = len(self.navigation.selected_pages()) or 1
-        self.profile_usage.setText(f"Selected: {selected} page(s). Profile used by {count}.")
-        self.profile_usage.setToolTip("Ctrl/Shift-select pages in Pages, then click a profile to apply it.\n"
-                                     "Editing a profile changes all pages that use it.")
+        for row in range(self.profile_list.topLevelItemCount()):
+            item = self.profile_list.topLevelItem(row)
+            identity = item.data(0, PROFILE_ROLE)
+            pages = [index + 1 for index, value in enumerate(self.project.assignments) if value == identity]
+            if identity == DEFAULT_ID:
+                item.setText(1, "")
+                item.setToolTip(1, f"Default profile: {len(pages)} page(s).")
+                continue
+            ranges = Input.format_integer_ranges(Input.merge_integer_ranges(pages))
+            item.setText(1, ranges or "—")
+            item.setToolTip(1, f"{len(pages)} page(s): {ranges}")
 
-    def _profile_selected(self, current: QtWidgets.QListWidgetItem | None,
-                          previous: QtWidgets.QListWidgetItem | None) -> None:
+    def _profile_selected(self, current: QtWidgets.QTreeWidgetItem | None,
+                          previous: QtWidgets.QTreeWidgetItem | None) -> None:
         if self._loading or self.runner.busy or self.project is None or current is None:
             return
-        identity = str(current.data(PROFILE_ROLE))
+        identity = str(current.data(0, PROFILE_ROLE))
         selected = self.navigation.selected_pages() or (self.project.current_page,)
         if all(self.project.assignments[index] == identity for index in selected):
             return
@@ -542,14 +573,16 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         if not self.settings.commit_pending():
             return
         try:
-            name = self.profile_name.text().strip() or f"Profile {len(self.project.profiles) - 1}"
+            name, accepted = QtWidgets.QInputDialog.getText(self, "Add profile", "Name:",
+                                                           text=str(self.project.current_page + 1))
+            if not accepted:
+                return
             identity = self.project.add_profile(name, self.project.assignments[self.project.current_page])
             selected = self.navigation.selected_pages() or (self.project.current_page,)
             for index in selected:
                 self.project.assignments[index] = identity
             if self.project.current_page not in selected:
                 self.project.current_page = selected[0]
-            self.profile_name.clear()
             self._load_profiles()
             self._load_current_page()
             self._mark_dirty()
@@ -557,10 +590,12 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         except ValueError as exc:
             self._error(str(exc))
 
-    def _rename_profile(self) -> None:
-        if self.project is None:
+    def _rename_profile(self, identity: str | None = None) -> None:
+        if self.project is None or self.runner.busy:
             return
-        identity = self.project.assignments[self.project.current_page]
+        identity = identity or self.project.assignments[self.project.current_page]
+        if identity in BUILTIN_IDS:
+            return
         name, accepted = QtWidgets.QInputDialog.getText(self, "Rename profile", "Name:",
                                                        text=self.project.profiles[identity].name)
         if accepted:
@@ -572,10 +607,12 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             except ValueError as exc:
                 self._error(str(exc))
 
-    def _delete_profile(self) -> None:
-        if self.project is None:
+    def _delete_profile(self, identity: str | None = None) -> None:
+        if self.project is None or self.runner.busy:
             return
-        identity = self.project.assignments[self.project.current_page]
+        identity = identity or self.project.assignments[self.project.current_page]
+        if identity in BUILTIN_IDS:
+            return
         alternatives = [profile for profile in self.project.profiles.values() if profile.id != identity]
         name, accepted = QtWidgets.QInputDialog.getItem(self, "Delete profile",
             f"Replace it on {self.project.assignments.count(identity)} page(s) with:",
@@ -587,6 +624,63 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             self._load_current_page()
             self._mark_dirty()
             self._profile_changed_preview()
+
+    def _apply_profile_pages(self, identity: str | None = None) -> None:
+        if self.project is None or self.runner.busy or not self.settings.commit_pending():
+            return
+        identity = identity or self.project.assignments[self.project.current_page]
+        value, accepted = QtWidgets.QInputDialog.getText(
+            self, "Apply profile to pages", "Physical pages (1,2,4-10 or all):")
+        if not accepted:
+            return
+        try:
+            self.project.assign(identity, value)
+            self._mark_dirty()
+            self._load_current_page()
+            self._profile_changed_preview()
+        except ValueError as exc:
+            self._error(str(exc))
+
+    def _profile_menu(self, point: QtCore.QPoint) -> None:
+        item = self.profile_list.itemAt(point)
+        if item is None or self.project is None or self.runner.busy:
+            return
+        identity = str(item.data(0, PROFILE_ROLE))
+        menu = QtWidgets.QMenu(self)
+        menu.addAction("Apply to pages…", lambda: self._invoke(lambda: self._apply_profile_pages(identity)))
+        menu.addSeparator()
+        for label, callback in (("Rename", self._rename_profile), ("Delete", self._delete_profile)):
+            action = menu.addAction(label, lambda checked=False, action=callback: self._invoke(lambda: action(identity)))
+            action.setEnabled(identity not in BUILTIN_IDS)
+        self._invoke(lambda: menu.exec(self.profile_list.viewport().mapToGlobal(point)))
+
+    def _close_pdf(self) -> None:
+        if self.project is None or self.runner.busy or not self._confirm_discard():
+            return
+        self.preview_timer.stop()
+        self._preview_requested = False
+        self.runner.shutdown()
+        self.preview_buffer.close()
+        self.preview_buffer = PreviewBuffer()
+        self.preview_cache.clear()
+        self.project = self.project_path = None
+        self.password = ""
+        self.labels = []
+        self.dirty = False
+        self._pending_project = self._pending_project_path = self._pending_source = None
+        self._pending_password = ""
+        self._pending_relocated = False
+        self._displayed_page = self._inflight_preview = None
+        self._original_warning = False
+        self._region_boxes = []
+        self._regions_available = False
+        self._preview_revision += 1
+        old = self.takeCentralWidget()
+        if old:
+            old.deleteLater()
+        self._build()
+        self.setWindowTitle("PDF Binarize [Administrator]" if self._elevated else "PDF Binarize")
+        self._refresh_enabled()
 
     def _settings_changed(self, config: Config) -> None:
         if self._loading or self.runner.busy or self.project is None:
@@ -715,6 +809,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self._regions_available = False
         self._region_boxes = []
         self.viewer.set_regions([])
+        self.navigation.load_images(())
         if not self.runner.busy:
             self.preview_timer.start(0 if state.original else delay)
         previous = f"; displaying page {self._displayed_page + 1}" if self._displayed_page is not None else ""
@@ -744,6 +839,8 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             return
         state = PreviewState.from_project(self.project)
         self.viewer.set_pixmap(frame.pixmap, (str(self.project.source), state.page))
+        self.navigation.load_images(frame.images, page_size=frame.page_size,
+                                    preview_pixels=(frame.pixmap.width(), frame.pixmap.height()))
         self._regions_available = frame.matches_regions(state)
         self._region_boxes = list(frame.regions) if self._regions_available else []
         self.viewer.set_regions(self._region_boxes if state.show_regions else [])
@@ -788,16 +885,14 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.preview_timer.stop()
         suffix = f"_preview_p{self.project.current_page + 1}" if one_page else "_binary"
         default = self.project.source.with_name(f"{self.project.source.stem}{suffix}.pdf")
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export a new PDF", str(default), "PDF files (*.pdf)",
-                                                     options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite)
-        if not path:
+        try:
+            choice = choose_pdf_output(self, self.project.source, default)
+        except OSError as exc:
+            self._error(str(exc))
             return
-        output = Path(path)
-        if output.suffix.lower() != ".pdf":
-            output = output.with_suffix(".pdf")
-        if output.exists() or output.resolve() == self.project.source.resolve():
-            self._error("Choose a new PDF filename. Existing PDFs are never overwritten.")
+        if choice is None:
             return
+        output, overwrite = choice
         self._cancel_marker = output.parent / f".pdf-tools-cancel-{uuid4().hex}"
         self._cancel_created = False
         self._preview_requested = False
@@ -806,7 +901,8 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
         self.status.setText("Starting PDF export...")
         self.runner.start({"operation": self._operation.value, "project": self.project.to_data(),
-                           "password": self.password, "output": str(output), "cancel": str(self._cancel_marker)})
+                           "password": self.password, "output": str(output), "cancel": str(self._cancel_marker),
+                           "overwrite": overwrite})
 
     def _cancel_export(self) -> None:
         if self._cancel_marker is not None and self.runner.busy and not self._cancel_created:
@@ -854,7 +950,13 @@ class BinarizeWindow(QtWidgets.QMainWindow):
                         raise ValueError("The preview worker returned an invalid image.")
                 boxes = tuple(cast(Rectangle, tuple(float(value) for value in row))
                               for row in cast(list[list[float]], message.get("regions", [])))
-                frame = PreviewFrame(state, pixmap, boxes, bool(message.get("regions_available", False)))
+                images = tuple(ImageElement.from_data(row) for row in
+                               cast(list[dict[str, object]], message.get("images", [])))
+                page_size = tuple(float(value) for value in cast(list[float], message["page_size"]))
+                if len(page_size) != 2 or any(value <= 0 for value in page_size):
+                    raise ValueError("The preview worker returned an invalid page size.")
+                frame = PreviewFrame(state, pixmap, boxes, bool(message.get("regions_available", False)),
+                                     images, cast(tuple[float, float], page_size))
                 self.preview_cache.put(frame)
                 self._inflight_preview = None
                 self._display_preview(frame)
@@ -864,6 +966,13 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             path = str(message["path"])
             self.status.setText(f"PDF saved: {path}")
             self.progress_bar.setValue(self.progress_bar.maximum())
+            before, after = int(cast(int, message.get("before_bytes", 0))), int(cast(int, message.get("after_bytes", 0)))
+            sizes = f"Before: {before:,} bytes ({before / 1048576:.2f} MiB)\nAfter: {after:,} bytes ({after / 1048576:.2f} MiB)"
+            if before:
+                sizes += f"\nSize change: {(after / before - 1) * 100:+.1f}%"
+            if message.get("one_page"):
+                sizes += "\nBefore size refers to the complete source PDF; after size is this page only."
+            QtWidgets.QMessageBox.information(self, "PDF processing complete", f"Saved:\n{path}\n\n{sizes}")
             if message.get("one_page") and self.open_saved_preview.isChecked():
                 QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
         elif kind == "cancelled":

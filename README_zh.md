@@ -176,6 +176,7 @@
 - Windows 中执行 `run-script.ps1`，Linux/macOS 中执行 `run-script.sh`；包装脚本会查找可用的 Python 解释器，再启动真正的启动器 `run-script.py`。
 - **无参数启动启动器**时，会先检测系统/平台/架构，并检测 Conda/Python/PowerShell/Bash 环境可用性；Linux 下还会显示当前图形环境（`no-gui`/`x11`/`wayland`）。检测完毕后，会**列出当前系统/平台/架构中支持的所有脚本**；列出所有脚本后通过键盘交互选择脚本并启动，支持参数透传：
   - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-utils.py`、`ntfs-3g-utils`）
+  - 配置为在 Linux 无图形环境下隐藏的脚本，列出时会在末尾附上黄色 `[GUI]` 标记。
   - 将数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/screen-utils --list`、`screen-utils --list`）
 - **有参数启动启动器**时，会根据参数自动查找脚本，并**透传剩余的参数**，此时不会打印出支持的脚本列表，直接启动目标脚本
   （如 `run-script.sh ntfs-3g-utils --list`，会自动找到 `macos/ntfs-3g-utils` 后执行，并透传 `--list` 参数到 `macos/ntfs-3g-utils` 中）
@@ -219,11 +220,11 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-font-replace.py` | **保持文字位置的交互式 PDF 字体替换工具**：同一 PDF 可添加多条字体替换规则，独立筛选字号、页面和原文字颜色，设置替换后的颜色，并保留常规、粗体和斜体样式及其他文档内容。支持从 PDF 页面查找字体和文字颜色、按名称或本地化别名搜索系统字体、指定字体文件、子集或完整字体嵌入，以及按规则清理不再使用的原字体嵌入。 | **Python 库**：`PyMuPDF`、`fonttools`、`tqdm` |
-| `tools/document-processing/pdf-binarize.py` | **PDF 压缩桌面工具**：<br />提供紧凑工作区，支持拖入 PDF、带缓存的原图与结果预览（可显示识别框）、页面与书签导航、多选页面应用 Profile 及 JSON 工程。按图片元素压缩，支持插图保护、位深转换及清理，保留原生文字、OCR、链接、批注和书签。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
+| `tools/document-processing/pdf-font-replace.py` | **PDF 字体与文字颜色桌面工具**：查看源字体详细信息，对指定页面应用有序字体替换或仅改颜色的规则，并提供带缓存的原图／结果对照。支持按名称或本地化别名查找目标字体，默认仅嵌入用到的字符，保留文字位置、样式及其他 PDF 内容。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
+| `tools/document-processing/pdf-binarize.py` | **PDF 压缩桌面工具**：<br />提供带缓存的原图与结果预览、可复用的页面 Profile、带调参提示的分组设置和 JSON 工程。按图片元素压缩，支持原图 DPI 保护、插图裁剪和清理，保留原生 PDF 功能，并在导出后显示压缩前后体积。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
 | `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据，也可处理仅有 PDF/A 标识的无保护文件。若没有需要移除的内容，则警告并提供重新打开或退出选项。 | **Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-bookmarks-add.py` | **PDF 目录识别与书签编辑 GUI**：框选、旋转目录图片后通过预设或自定义 API 逐页识别，可追溯单页问题、补充信息后重试，并显示受支持服务的 API 余额。支持缓存翻页和 YAML、书签树、页码标签编辑，保留页面内容并导出新 PDF，无需工程文件。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
-| `tools/document-processing/pdf-split-pages.py` | **扫描版 PDF 页面切分工具**：支持左右或上下切分、两种输出顺序、自定义切分位置及忽略页码范围，保留扫描图像清晰度，无需临时图片。重新映射书签和普通链接，移除包括忽略页在内的全部页码标签，并警告无法确定所属半页的书签跳转。 | **Python 库**：`PyMuPDF`、`tqdm` |
+| `tools/document-processing/pdf-bookmarks-add.py` | **PDF 目录识别与书签编辑 GUI**：框选、旋转目录图片后通过云端或本地视觉模型逐页识别，可追溯问题并重试单页或全部页面，支持清空对话与限制上下文图片数。支持 YAML、页码标签与书签树编辑，提供多选批处理、拖拽排序及两种缩进/减少缩进模式，导出时保留源文件，无需工程文件。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
+| `tools/document-processing/pdf-split-pages.py` | **PDF 页面可视化裁剪工具**：用编号彩框预览，支持整体或单框调整、保留整页，并显示裁剪后的对应页码。无栅格化导出等大子页，缩框居中、越界留白，重映射书签与链接并移除导航页码标签。 | **Python 库**：`PySide6`、`PyMuPDF`、`tqdm` |
 | `tools/document-processing/document-screenshot.py` | **针对加密文档的自动截图抓取工具**：<br />基于模拟 PgDn 翻页 + 鼠标点击自动翻页，并通过自动截图来获取内容，适用于**全自动抓取并保存被 DRM 保护或位于加密 USB 存储设备中的 PDF** 文件内容。<br /><br />建议使用高分辨率屏幕，并将屏幕方向改为纵向，然后调整文档页面的显示范围（不超出屏幕范围并能充分利用屏幕空间）后，再用本脚本自动截图抓取。<br />macOS 中还需要额外授予相应的屏幕录制权限。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />**Python 库**：`mss`、`pynput`、`Pillow` |
 ### 视频下载
 

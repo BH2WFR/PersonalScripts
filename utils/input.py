@@ -442,7 +442,9 @@ class Input:
             text: Comma-separated selections such as ``1,2``, ``1-3,4``,
                 ``-1,-2``, or ``-3--1``. Whitespace is allowed around numbers
                 and separators. Negative numbers count from the end (-1 is
-                the last item). Empty text selects nothing.
+                the last item). ``all`` selects every item and ``none`` selects
+                nothing (case-insensitive, each as a complete expression).
+                Empty text also selects nothing.
             item_count: Total number of available items, at least zero.
             allow_zero: False (default) uses one-based numbers 1..item_count.
                 True uses zero-based numbers 0..item_count-1 instead. Negative
@@ -461,6 +463,11 @@ class Input:
         """
         if item_count < 0:
             raise ValueError("item_count must be non-negative")
+        keyword = text.strip().casefold()
+        if keyword == "all":
+            return tuple(range(item_count))
+        if keyword == "none":
+            return ()
         first_number = 0 if allow_zero else 1
         last_number = item_count - 1 if allow_zero else item_count
         selected: set[int] = set()
@@ -513,7 +520,7 @@ class Input:
         examples = "0,1 or 0-2,4" if allow_zero else "1,2 or 1-3,4"
         return Input._input_ranges(
             prompt, parser=parse, default=default,
-            hint=f"{item_count} items, {numbering}; use {examples}; -1 = last, -2 = second-last.",
+            hint=f"{item_count} items, {numbering}; use {examples}, all, or none; -1 = last, -2 = second-last.",
         )
 
     #* ============ 数字输入 ============
@@ -719,25 +726,11 @@ class Input:
     @staticmethod
     def _find_available_path(base_path: str) -> str:
         """Find the first non-existing path by appending _2, _3, etc. to the base path."""
-        if not os.path.exists(base_path):
+        try:
+            return str(Paths.available_path(base_path, start=2, limit=500))
+        except FileExistsError:
+            print(f"{FLRed}Cannot find an available path: over 500 variants of '{FGray}{base_path}{CRst}' already exist. Please enter a path manually.{CRst}")
             return base_path
-
-        dir_name = os.path.dirname(base_path) or "."
-        base_name = os.path.basename(base_path)
-        stem, ext = os.path.splitext(base_name)
-
-        n = 2
-        while n <= 500:
-            if ext:
-                candidate = os.path.join(dir_name, f"{stem}_{n}{ext}")
-            else:
-                candidate = os.path.join(dir_name, f"{base_name}_{n}")
-            if not os.path.exists(candidate):
-                return candidate
-            n += 1
-
-        print(f"{FLRed}Cannot find an available path: over 500 variants of '{FGray}{base_path}{CRst}' already exist. Please enter a path manually.{CRst}")
-        return base_path
 
     @staticmethod
     def _prompt_and_normalize_path(

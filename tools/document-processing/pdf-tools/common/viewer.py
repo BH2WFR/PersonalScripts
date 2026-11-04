@@ -38,6 +38,7 @@ class PageViewer(QtWidgets.QGraphicsView):
         self._mipmaps: dict[int, QtGui.QPixmap] = {}
         self._level = 0
         self._region_items: list[QtWidgets.QGraphicsRectItem] = []
+        self._image_highlight: QtWidgets.QGraphicsRectItem | None = None
         self.auto_fit = True
         self.navigation_enabled = True
         self._token: object = None
@@ -63,6 +64,7 @@ class PageViewer(QtWidgets.QGraphicsView):
         same_page = token == self._token
         had_page = self._token is not None
         self.set_regions([])
+        self.set_image_highlight(None)
         center = self.mapToScene(self.viewport().rect().center())
         self._original = pixmap
         self._bounds = QtCore.QRectF(0, 0, pixmap.width(), pixmap.height())
@@ -93,6 +95,7 @@ class PageViewer(QtWidgets.QGraphicsView):
         self._scene.setSceneRect(QtCore.QRectF())
         self._token = None
         self.set_regions([])
+        self.set_image_highlight(None)
 
     def set_regions(self, rectangles: list[tuple[float, float, float, float]]) -> None:
         """Replace normalized red overlays without changing the page pixels or PDF.
@@ -112,6 +115,22 @@ class PageViewer(QtWidgets.QGraphicsView):
             item.setZValue(1)
             item.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
             self._region_items.append(item)
+
+    def set_image_highlight(self, bounds: tuple[float, float, float, float] | None) -> None:
+        """Outline one displayed image in blue, independently of red region boxes."""
+        if self._image_highlight is not None:
+            self._scene.removeItem(self._image_highlight)
+            self._image_highlight = None
+        if bounds is None or self._bounds.isEmpty():
+            return
+        x0, y0, x1, y1 = bounds
+        rect = QtCore.QRectF(x0 * self._bounds.width(), y0 * self._bounds.height(),
+                            (x1 - x0) * self._bounds.width(), (y1 - y0) * self._bounds.height())
+        pen = QtGui.QPen(QtGui.QColor("#1677ff"), 2)
+        pen.setCosmetic(True)
+        self._image_highlight = self._scene.addRect(rect, pen)
+        self._image_highlight.setZValue(2)
+        self._image_highlight.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
 
     def set_zoom(self, percent: float) -> None:
         """Apply a bounded percentage without moving the current page center."""

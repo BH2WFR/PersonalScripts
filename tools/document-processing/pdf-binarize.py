@@ -11,6 +11,11 @@ default; Ctrl/Shift-select pages to apply a profile together. Completed previews
 are cached for immediate revisits; original views skip the navigation delay.
 The viewer supports auto-fit on page turns, editable zoom, focused page keys and
 optional red region outlines that stay out of exported PDFs.
+Grouped controls have tuning tooltips wrapped within 250 logical pixels; low-resolution images retain native DPI
+by default, with optional upsampling. Profiles show assigned pages and offer
+input-dialog creation/batch assignment plus rename/delete context actions.
+Close releases the PDF and resets the window. Export suggests numbered filenames,
+requires confirmation to replace an output, and reports before/after file sizes.
 On Windows, start without administrator rights to accept Explorer file drops;
 Open PDF also works when launched by an elevated terminal/editor.
 See pdf-tools/README.md for processing, project and navigation details.
@@ -76,6 +81,27 @@ def load_app(module: str = "binarize.app") -> ModuleType:
 
 def main() -> int:
     """Start the desktop app or its private worker, returning an exit status."""
+    if "--help" in sys.argv or "-h" in sys.argv:
+        Console.print_banner("PDF BINARIZE")
+        print("""Usage:
+  python pdf-binarize.py
+
+Description:
+  Compress image objects to 1-bit text and optional illustration crops while
+  retaining native text, OCR, links and bookmarks. Grouped controls include tuning
+  tooltips (maximum width 250 px) and a low-resolution DPI policy (keep native DPI by default).
+  Assign profiles by page selection or typed ranges; preview and save JSON projects.
+  Close releases the PDF and resets the window. Output names use numbered suffixes;
+  replacing an output requires confirmation. Completion reports before/after sizes.
+
+Options:
+  -h, --help  Show this help; processing is configured in the GUI.
+
+Requirements:
+  pip: PySide6, PyMuPDF>=1.28, pypdf>=6, Pillow with libtiff,
+       numpy, opencv-python, tqdm.
+""")
+        return 0
     try:
         if WORKER_ARGUMENT in sys.argv:
             return cast(Callable[[], int], load_app("binarize.worker").main)()

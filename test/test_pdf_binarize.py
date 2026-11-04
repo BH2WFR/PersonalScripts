@@ -106,8 +106,8 @@ class PdfBinarizeTests(unittest.TestCase):
                 self.assertIn("/CCITTFaxDecode", result.xref_get_key(image_xref, "Filter")[1])
                 self.assertEqual(set(page_image(result, page.number).convert("L").tobytes()), {0, 255})
             pixels = page_image(result, 0).convert("L")
-            self.assertEqual(pixels.size, (288, 144))
-            self.assertEqual([pixels.getpixel((x, 20)) for x in (20, 100, 180, 260)], [0, 0, 255, 255])
+            self.assertEqual(pixels.size, (144, 72))
+            self.assertEqual([pixels.getpixel((x, 10)) for x in (10, 50, 90, 130)], [0, 0, 255, 255])
             self.assertEqual(result.get_toc(), [[1, "Chapter", 1], [2, "Nested", 2], [1, "Final", 3]])
             with pymupdf.open(self.source) as original_doc:
                 self.assertEqual([item[3]["to"] for item in result.get_toc(False)],

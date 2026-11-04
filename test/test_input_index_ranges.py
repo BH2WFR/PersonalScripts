@@ -131,6 +131,8 @@ class InputIndexRangesTests(unittest.TestCase):
             " 1 - 3 , -2 , 3,1 ": (0, 1, 2, 8),
             "2-2": (1,), "+1,+2": (0, 1), "10,-1": (9,),
             "1--1": tuple(range(10)), "-10-2": (0, 1),
+            "all": tuple(range(10)), " ALL ": tuple(range(10)),
+            "none": (), " None ": (),
         }
         for text, expected in examples.items():
             with self.subTest(text=text):
@@ -138,12 +140,15 @@ class InputIndexRangesTests(unittest.TestCase):
 
     def test_invalid_selections(self) -> None:
         for text in ("0", "-0", "11", "-11", "1-11", "3-1", "-1--3",
-                     "1,,2", ",", "1,", "a", "1.5", "1-", "--1", "1 2", "1-2-3"):
+                     "1,,2", ",", "1,", "a", "1.5", "1-", "--1", "1 2", "1-2-3",
+                     "all,2", "none,2", "1-all"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 Input.parse_index_ranges(text, item_count=10)
 
     def test_empty_collection(self) -> None:
         self.assertEqual(Input.parse_index_ranges("", item_count=0), ())
+        self.assertEqual(Input.parse_index_ranges("all", item_count=0), ())
+        self.assertEqual(Input.parse_index_ranges("none", item_count=0), ())
         with self.assertRaises(ValueError):
             Input.parse_index_ranges("1", item_count=0)
         with self.assertRaises(ValueError):
@@ -162,6 +167,7 @@ class InputIndexRangesTests(unittest.TestCase):
             "0": (0,), "0-2,4": (0, 1, 2, 4), "1,2": (1, 2),
             "-1,-2": (8, 9), "-3--1": (7, 8, 9), "-10-2": (0, 1, 2),
             "0--1": tuple(range(10)), "0,-10,-0": (0,), "9,-1": (9,),
+            "all": tuple(range(10)), "none": (),
         }
         for text, expected in examples.items():
             with self.subTest(text=text):

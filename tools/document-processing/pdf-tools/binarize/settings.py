@@ -39,11 +39,17 @@ class _BinarizeMode(enum.StrEnum):
     SAUVOLA = "sauvola"
 
 
+class _DpiPolicy(enum.StrEnum):
+    CAP = "cap"
+    TARGET = "target"
+
+
 @dataclasses.dataclass(frozen=True)
 class _Processing:
     """Immutable image-processing settings shared by preview and page workers."""
 
     mode: _BinarizeMode = _BinarizeMode.FIXED
+    dpi_policy: _DpiPolicy = _DpiPolicy.CAP
     window: int = DEFAULT_SAUVOLA_WINDOW
     k: float = DEFAULT_SAUVOLA_K
     sharpen: bool = False
@@ -70,6 +76,8 @@ def _validate_settings(dpi: int, threshold: int, workers: int, processing: _Proc
         raise ValueError(f"Workers must be between 1 and {MAX_WORKERS}.")
     if not isinstance(processing.mode, _BinarizeMode):
         raise ValueError("Choose fixed or sauvola mode.")
+    if not isinstance(processing.dpi_policy, _DpiPolicy):
+        raise ValueError("Choose cap or target DPI policy.")
     if not 3 <= processing.window <= MAX_SAUVOLA_WINDOW or processing.window % 2 != 1:
         raise ValueError(f"Sauvola window must be an odd integer from 3 to {MAX_SAUVOLA_WINDOW}.")
     if not 0 < processing.k <= 1:

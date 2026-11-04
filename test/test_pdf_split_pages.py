@@ -4,13 +4,10 @@ Run: conda run -n base python -m unittest discover -s test -p test_pdf_split_pag
 Requires PyMuPDF and tqdm; temporary files stay under the repository tmp.
 """
 
-import contextlib
-import io
+from contextlib import closing
 from pathlib import Path
-import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 import pymupdf
 
@@ -18,17 +15,44 @@ from test_pdf_tools import load_script
 from utils import *
 
 
-splitter = load_script("pdf-split-pages")
+entry = load_script("pdf-split-pages")
+splitter = entry.load_app("split_pages.engine")
+from personal_pdf_tools.split_pages.model import Axis, Box, PageOverride, Settings
+from personal_pdf_tools.split_pages.engine import _Piece
+from personal_pdf_tools.split_pages.worker import Worker
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class PdfSplitTests(unittest.TestCase):
-    """Exercise split geometry, navigation, labels, and real CLI output."""
+    """Exercise split geometry, navigation, labels, and real worker output."""
 
     def setUp(self) -> None:
         folder = tempfile.TemporaryDirectory(prefix="pdf-split-", dir=ROOT / "tmp")
         self.addCleanup(folder.cleanup)
         self.folder = Path(folder.name)
+
+    @staticmethod
+    def build_plan(source: pymupdf.Document, ignored: set[int], axis: Axis,
+                   reverse: bool, percent: float) -> list[list[_Piece]]:
+        """Construct the original two-strip fixtures using the new explicit crop model."""
+        fraction = percent / 100
+        boxes = ((Box(0, 0, fraction, 1), Box(fraction, 0, 1, 1)) if axis == Axis.LEFT_RIGHT
+                 else (Box(0, 0, 1, fraction), Box(0, fraction, 1, 1)))
+        overrides = {page + 1: PageOverride(boxes=tuple(reversed(boxes)) if reverse else boxes)
+                     for page in range(source.page_count)}
+        overrides.update({page + 1: PageOverride(keep=True) for page in ignored})
+        if any(page < 0 or page >= source.page_count for page in ignored):
+            raise ValueError("Ignored page outside PDF")
+        plan: list[list[_Piece]] = []
+        output_index = 0
+        for index, page in enumerate(source):
+            override = overrides[index + 1]
+            override.validate()
+            crops = (Box(0, 0, 1, 1),) if override.keep else override.boxes
+            plan.append([_Piece(output_index + i, pymupdf.Rect(box.x0 * page.rect.width, box.y0 * page.rect.height,
+                         box.x1 * page.rect.width, box.y1 * page.rect.height)) for i, box in enumerate(crops)])
+            output_index += len(crops)
+        return plan
 
     def make_document(self, rotation: int = 0, cropped: bool = False) -> pymupdf.Document:
         """Build scans with four distinct quadrants and a blank second page."""
@@ -52,14 +76,14 @@ class PdfSplitTests(unittest.TestCase):
     def test_rendered_halves_match_original_all_directions_rotations_and_crops(self) -> None:
         for rotation in (0, 90, 180, 270):
             for cropped in (False, True):
-                for axis in splitter._Axis:
+                for axis in Axis:
                     for reverse in (False, True):
                         with (
                             self.subTest(rotation=rotation, cropped=cropped, axis=axis, reverse=reverse),
                             self.make_document(rotation, cropped) as source,
                             pymupdf.open() as output,
                         ):
-                            plan = splitter._build_plan(source, {1}, axis, reverse, 50)
+                            plan = self.build_plan(source, {1}, axis, reverse, 50)
                             expected = [source[0].get_pixmap(clip=piece.clip).samples for piece in plan[0]]
                             splitter._split_document(source, output, plan, progress=False)
                             self.assertEqual(output.page_count, 3)
@@ -74,7 +98,7 @@ class PdfSplitTests(unittest.TestCase):
 
     def test_custom_split_and_blank_pages(self) -> None:
         with self.make_document() as source, pymupdf.open() as output:
-            plan = splitter._build_plan(source, set(), splitter._Axis.LEFT_RIGHT, True, 25)
+            plan = self.build_plan(source, set(), Axis.LEFT_RIGHT, True, 25)
             splitter._split_document(source, output, plan, progress=False)
             self.assertEqual([page.rect.width for page in output], [150, 50, 60, 20])
             self.assertEqual([page.rect.height for page in output], [120, 120, 100, 100])
@@ -98,7 +122,7 @@ class PdfSplitTests(unittest.TestCase):
             # Reopen raw outline edits as a real input PDF, avoiding stale
             # in-memory outline caches after xref_set_key().
             with pymupdf.open(stream=source.tobytes(), filetype="pdf") as reopened:
-                plan = splitter._build_plan(reopened, {1}, splitter._Axis.LEFT_RIGHT, True, 50)
+                plan = self.build_plan(reopened, {1}, Axis.LEFT_RIGHT, True, 50)
                 ambiguous, skipped = splitter._split_document(reopened, output, plan, progress=False)
             self.assertEqual((ambiguous, skipped), (1, 0), source.get_toc(False))
             path = self.folder / "output.pdf"
@@ -139,7 +163,7 @@ class PdfSplitTests(unittest.TestCase):
                 with pymupdf.open(stream=source.tobytes(), filetype="pdf") as reopened:
                     self.assertEqual(reopened.get_toc(False)[0][3]["to"], point)
                     link_rect = reopened[0].get_links()[0]["from"]
-                    plan = splitter._build_plan(reopened, {1}, splitter._Axis.TOP_BOTTOM, False, 50)
+                    plan = self.build_plan(reopened, {1}, Axis.TOP_BOTTOM, False, 50)
                     splitter._split_document(reopened, output, plan, progress=False)
                 path = self.folder / f"rotation-{rotation}.pdf"
                 Pdf.save_new(output, path)
@@ -165,30 +189,24 @@ class PdfSplitTests(unittest.TestCase):
             annot = source[0].add_rect_annot(pymupdf.Rect(30, 30, 130, 70))
             annot.set_colors(stroke=(0, 0, 0), fill=(1, 0, 1))
             annot.update()
-            plan = splitter._build_plan(source, {1}, splitter._Axis.LEFT_RIGHT, False, 50)
+            plan = self.build_plan(source, {1}, Axis.LEFT_RIGHT, False, 50)
             expected = [source[0].get_pixmap(clip=piece.clip).samples for piece in plan[0]]
             splitter._split_document(source, output, plan, progress=False)
             for index in range(2):
                 self.assertEqual(output[index].get_pixmap().samples, expected[index])
 
-    def test_cli_ignore_all_still_removes_tags_and_warns(self) -> None:
+    def test_worker_keep_all_removes_labels_and_decrypts(self) -> None:
         source_path = self.folder / "source.pdf"
         output_path = self.folder / "output.pdf"
         with self.make_document() as source:
             source.save(source_path, encryption=pymupdf.PDF_ENCRYPT_AES_256,
                         owner_pw="owner", user_pw="secret")
         original = source_path.read_bytes()
-        with (
-            patch.object(sys, "argv", [str(splitter.__file__), str(source_path)]),
-            patch.object(Input, "input_password", return_value="secret"),
-            patch.object(Input, "resolve_output_path", return_value=str(output_path)),
-            patch("builtins.input", side_effect=["t", "2", "", "1,-1"]),
-            contextlib.redirect_stdout(io.StringIO()) as console,
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            self.assertEqual(splitter.main(), 0)
-            self.assertIn("ALL page tags / page labels will be removed", console.getvalue())
-            self.assertIn("including on ignored pages", console.getvalue())
+        with closing(Worker()) as worker:
+            result = worker.run({"operation": "export", "path": str(source_path), "password": "secret",
+                "output": str(output_path), "page_count": 2, "settings": Settings().to_data(),
+                "overrides": {"1": PageOverride(keep=True).to_data(), "2": PageOverride(keep=True).to_data()}})
+            self.assertEqual(result["kind"], "exported")
         with pymupdf.open(output_path) as result:
             self.assertFalse(result.is_encrypted)
             self.assertEqual(result.page_count, 2)
@@ -200,23 +218,18 @@ class PdfSplitTests(unittest.TestCase):
         with self.make_document() as source:
             for percent in (0, 100, -1, float("nan"), float("inf")):
                 with self.subTest(percent=percent), self.assertRaises(ValueError):
-                    splitter._build_plan(source, set(), splitter._Axis.LEFT_RIGHT, False, percent)
+                    self.build_plan(source, set(), Axis.LEFT_RIGHT, False, percent)
             with self.assertRaises(ValueError):
-                splitter._build_plan(source, {2}, splitter._Axis.LEFT_RIGHT, False, 50)
+                self.build_plan(source, {2}, Axis.LEFT_RIGHT, False, 50)
 
-    def test_cli_never_overwrites_input(self) -> None:
+    def test_worker_never_overwrites_input(self) -> None:
         source_path = self.folder / "source.pdf"
         with self.make_document() as document:
             document.save(source_path)
         original = source_path.read_bytes()
-        with (
-            patch.object(sys, "argv", [str(splitter.__file__), str(source_path)]),
-            patch.object(Input, "resolve_output_path", return_value=str(source_path)),
-            patch("builtins.input", side_effect=["", "", "", ""]),
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            self.assertEqual(splitter.main(), 1)
+        with closing(Worker()) as worker, self.assertRaisesRegex(ValueError, "source PDF"):
+            worker.run({"operation": "export", "path": str(source_path), "output": str(source_path),
+                        "overwrite": True, "page_count": 2, "settings": Settings().to_data()})
         self.assertEqual(source_path.read_bytes(), original)
 
 

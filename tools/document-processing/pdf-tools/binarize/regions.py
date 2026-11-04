@@ -27,6 +27,8 @@ from numpy.typing import NDArray
 from PIL import Image, ImageDraw, ImageEnhance
 import pymupdf
 
+from . import chromatic
+
 
 _ANALYSIS_WIDTH = 1200
 _INK_PERCENTILE = .1
@@ -123,6 +125,7 @@ class _Mode(StrEnum):
     GRAY8 = "gray8"
     COLOR2 = "color2"
     COLOR4 = "color4"
+    COLOR8 = "color8"
     TEXT = "text"
     TEXT_INVERT = "text-invert"
 
@@ -131,6 +134,12 @@ class _Dither(StrEnum):
     NONE = "none"
     ORDERED = "ordered"
     DIFFUSION = "diffusion"
+
+
+class _ColorTextMode(StrEnum):
+    FOLLOW = "follow"
+    COLOR4 = "color4"
+    COLOR8 = "color8"
 
 
 class _Codec(StrEnum):
@@ -159,6 +168,12 @@ class _Settings:
     denoise_area: float = _DENOISE_AREA
     denoise_distance: float = _DENOISE_DISTANCE
     clean_background: bool = False
+    color_text_mode: _ColorTextMode = _ColorTextMode.FOLLOW
+    color_text_contrast: float = 1.5
+    color_text_whiten: bool = False
+    color_text_white_point: int = 235
+    whiten: bool = False
+    white_point: int = 235
     input: Path | None = None
     export: Path | None = None
     preview_dir: Path | None = None
@@ -183,6 +198,7 @@ class _Region:
     quality: int = _JPEG_QUALITY
     codec: _Codec = _Codec.JPEG
     score: float | None = None
+    white_point: int = 255
 
 
 @dataclass(frozen=True)
@@ -222,7 +238,8 @@ class _Page:
 def _validate(settings: _Settings) -> None:
     """Reject nonfinite/out-of-range values before rendering or writing files."""
     for value, kind in ((settings.profile, _Profile), (settings.mode, _Mode),
-                        (settings.dither, _Dither), (settings.codec, _Codec)):
+                        (settings.dither, _Dither), (settings.codec, _Codec),
+                        (settings.color_text_mode, _ColorTextMode)):
         if not isinstance(value, kind):
             raise ValueError(f"Invalid {kind.__name__}: {value}")
     if not .1 <= settings.cutoff <= 2:
@@ -231,6 +248,16 @@ def _validate(settings: _Settings) -> None:
         raise ValueError(f"Image quality must be between 1 and {_MAX_JPEG_QUALITY}; CCITT has no quality setting.")
     if not 1 <= settings.contrast <= 4:
         raise ValueError("Image contrast must be between 1 (off) and 4.")
+    if not 1 <= settings.color_text_contrast <= 4:
+        raise ValueError("Colored text contrast must be between 1 (off) and 4.")
+    if type(settings.color_text_whiten) is not bool:
+        raise ValueError("Colored text background whitening must be on or off.")
+    if type(settings.color_text_white_point) is not int or not 1 <= settings.color_text_white_point <= 255:
+        raise ValueError("Colored text white point must be an integer from 1 to 255.")
+    if type(settings.whiten) is not bool:
+        raise ValueError("Image background whitening must be on or off.")
+    if type(settings.white_point) is not int or not 1 <= settings.white_point <= 255:
+        raise ValueError("Image white point must be an integer from 1 to 255.")
     if not 0 < settings.denoise_area <= 100 or not 1 <= settings.denoise_distance <= 100:
         raise ValueError("Denoise area must be > 0 and <= 100; distance must be 1-100 at 240 DPI.")
     if settings.export or settings.preview_dir:
@@ -314,10 +341,11 @@ def _candidates(rgb: _Pixels, gray: _Pixels, *, text_panels: bool = False) -> li
 
 
 def _detect(image: Image.Image, settings: _Settings) -> tuple[_Region, ...]:
-    """Score interior texture, always rejecting text-dominated candidates.
+    """Combine gray texture evidence with independent chromatic foreground.
 
     Threshold is a heuristic evidence ratio, not a probability. Lower values
-    relax size/texture requirements without relaxing the text exclusion gate.
+    relax size/texture requirements. Neutral text stays outside crops; colored
+    strokes can use a separate contrast/palette path without changing pictures.
     """
     rgb, gray = _analysis(image)
     background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((_TEXTURE_CLOSE,) * 2, np.uint8))
@@ -346,8 +374,28 @@ def _detect(image: Image.Image, settings: _Settings) -> tuple[_Region, ...]:
         if score >= settings.cutoff and text_fraction < _MAX_TEXT_FRACTION:
             rect = (x0 / gray.shape[1], y0 / gray.shape[0], x1 / gray.shape[1], y1 / gray.shape[0])
             retained.append(_Region(rect, settings.mode, settings.dither, settings.contrast,
-                                    settings.quality, settings.codec, score))
-    return tuple(retained)
+                                    settings.quality, settings.codec, score,
+                                    white_point=settings.white_point if settings.whiten else 255))
+    for (x0, y0, x1, y1), text_like in chromatic.detect(rgb, gray, settings.cutoff):
+        rect = (x0 / gray.shape[1], y0 / gray.shape[0], x1 / gray.shape[1], y1 / gray.shape[0])
+        region = _Region(rect, settings.mode, settings.dither, settings.contrast,
+                         settings.quality, settings.codec,
+                         white_point=settings.white_point if settings.whiten and not text_like else 255)
+        if text_like and settings.color_text_mode is not _ColorTextMode.FOLLOW:
+            region = replace(region, mode=_Mode(settings.color_text_mode.value),
+                             contrast=settings.color_text_contrast, codec=_Codec.FLATE, dither=_Dither.NONE)
+        if text_like and settings.color_text_whiten:
+            region = replace(region, white_point=settings.color_text_white_point, codec=_Codec.FLATE)
+        retained.append(region)
+    # Contained fragments add PDF overhead and can paint quantized letters over
+    # a larger illustration. Preserve the containing crop's complete appearance.
+    unique: list[tuple[_Box, _Region]] = []
+    size = (gray.shape[1], gray.shape[0])
+    for region in sorted(retained, key=lambda item: _area(_pixel_box(item.rect, size)), reverse=True):
+        box = _pixel_box(region.rect, size)
+        if not any(_intersection(box, other) >= _DUPLICATE_COVERAGE * _area(box) for other, _ in unique):
+            unique.append((box, region))
+    return tuple(region for _, region in unique)
 
 
 def _denoise(binary: Image.Image, dpi: int, settings: _Settings) -> Image.Image:
@@ -523,7 +571,8 @@ def _ordered_values(size: tuple[int, int]) -> NDArray[np.float32]:
     return np.tile(tile, ((height + 7) // 8, (width + 7) // 8))[:height, :width]
 
 
-def _quantize(image: Image.Image, bits: int, color: bool, dither: _Dither) -> tuple[_Pixels, bytes | None]:
+def _quantize(image: Image.Image, bits: int, color: bool, dither: _Dither,
+              *, preserve_white: bool = False) -> tuple[_Pixels, bytes | None]:
     """Return indices and optional RGB palette; gray samples use uniform levels."""
     levels = 1 << bits
     with image.convert("RGB" if color else "L") as original:
@@ -533,10 +582,19 @@ def _quantize(image: Image.Image, bits: int, color: bool, dither: _Dither) -> tu
                 values = values + _ordered_values(original.size)
             return np.floor(values + .5).clip(0, levels - 1).astype(np.uint8), None
         with original.convert("RGB") as rgb:
+            white_pixels = np.all(np.asarray(rgb) == 255, axis=2) if preserve_white else None
+            reserve_white = color and white_pixels is not None and bool(white_pixels.any())
             if color:
                 palette_image = rgb.quantize(colors=levels, method=Image.Quantize.MEDIANCUT,
                                              dither=Image.Dither.NONE)
                 palette = bytes((palette_image.getpalette() or [])[:levels * 3])
+                if reserve_white:
+                    # Median cut can average pure white with near-white pixels.
+                    # Reserve the lightest entry so cleaned paper stays exact.
+                    entries = np.frombuffer(palette, dtype=np.uint8).reshape(-1, 3).copy()
+                    white_index = int(np.argmax(entries.astype(np.int16).sum(axis=1)))
+                    entries[white_index] = 255
+                    palette = entries.tobytes()
             else:
                 palette = bytes(channel for value in np.linspace(0, _GRAY_MAX, levels, dtype=np.uint8)
                                 for channel in (int(value),) * 3)
@@ -553,6 +611,10 @@ def _quantize(image: Image.Image, bits: int, color: bool, dither: _Dither) -> tu
                     pillow_dither = Image.Dither.FLOYDSTEINBERG if dither is _Dither.DIFFUSION else Image.Dither.NONE
                     with prepared.quantize(palette=palette_image, dither=pillow_dither) as quantized:
                         indices = np.minimum(np.asarray(quantized), levels - 1).astype(np.uint8)
+                        if reserve_white:
+                            indices[white_pixels] = white_index
+                        elif not color and white_pixels is not None:
+                            indices[white_pixels] = levels - 1
                 return indices, palette if color else None
 
 
@@ -605,6 +667,13 @@ def _encode_crop(crop: Image.Image, box: _Box, region: _Region) -> _Layer:
             or (np.array_equal(rgb[:, :, 0], rgb[:, :, 1]) and np.array_equal(rgb[:, :, 0], rgb[:, :, 2])))
     prepared = crop.convert("L" if gray else "RGB")
     try:
+        if region.white_point < 255:
+            # All source RGB channels must reach the white point. Luminance
+            # alone would also erase bright saturated yellow/blue strokes.
+            values = np.array(prepared)
+            values[rgb.min(axis=2) >= region.white_point] = 255
+            prepared.close()
+            prepared = Image.fromarray(values)
         if region.contrast != 1:
             enhanced = ImageEnhance.Contrast(prepared).enhance(region.contrast)
             prepared.close()
@@ -626,8 +695,9 @@ def _encode_crop(crop: Image.Image, box: _Box, region: _Region) -> _Layer:
                 with Image.fromarray(thresholded).convert("1", dither=Image.Dither.NONE) as binary, io.BytesIO() as stream:
                     binary.save(stream, "PDF", resolution=_POINTS_PER_INCH)
                     return _Layer(box, crop.width, crop.height, 1, "/DeviceGray", "pdf", stream.getvalue())
-        bits = 2 if region.mode in (_Mode.GRAY2, _Mode.COLOR2) else 4
-        indices, palette = _quantize(prepared, bits, region.mode in (_Mode.COLOR2, _Mode.COLOR4), region.dither)
+        bits = 8 if region.mode is _Mode.COLOR8 else (2 if region.mode in (_Mode.GRAY2, _Mode.COLOR2) else 4)
+        indices, palette = _quantize(prepared, bits, region.mode in (_Mode.COLOR2, _Mode.COLOR4, _Mode.COLOR8),
+                                     region.dither, preserve_white=region.white_point < 255)
         colorspace = "/DeviceGray" if palette is None else f"[/Indexed /DeviceRGB {(1 << bits) - 1} <{palette.hex()}>]"
         data, predictor = _deflate(_pack(indices, bits))
         return _Layer(box, crop.width, crop.height, bits, colorspace, "/FlateDecode", data, predictor)
@@ -697,7 +767,7 @@ def _read_config(path: Path | None, source: Path, page_count: int, settings: _Se
             or data.get("page_count") != page_count or not isinstance(data.get("pages"), dict)):
         raise ValueError("Invalid region configuration or source SHA-256/page-count mismatch.")
     result: dict[int, tuple[_Region, ...]] = {}
-    fields = {"mode", "dither", "contrast", "quality", "codec"}
+    fields = {"mode", "dither", "contrast", "quality", "codec", "white_point"}
     for page_key, page_value in data["pages"].items():
         if not isinstance(page_key, str) or not page_key.isdecimal() or str(int(page_key)) != page_key or not 1 <= int(page_key) <= page_count:
             raise ValueError(f"Invalid physical page number: {page_key}")
@@ -722,6 +792,9 @@ def _read_config(path: Path | None, source: Path, page_count: int, settings: _Se
             try:
                 quality = values.get("quality", settings.quality)
                 contrast = values.get("contrast", settings.contrast)
+                white_point = values.get("white_point", 255)
+                if type(white_point) is not int or not 1 <= white_point <= 255:
+                    raise ValueError("White point must be an integer from 1 to 255.")
                 if type(quality) is not int or type(contrast) not in (int, float):
                     raise ValueError("Quality must be an integer and contrast a number.")
                 current = replace(settings, mode=_Mode(values.get("mode", settings.mode)),
@@ -731,7 +804,8 @@ def _read_config(path: Path | None, source: Path, page_count: int, settings: _Se
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid region settings on page {page_key}: {exc}") from exc
             resolved.append(_Region(cast(_Rect, tuple(float(v) for v in bounds)), current.mode,
-                                    current.dither, current.contrast, current.quality, current.codec))
+                                    current.dither, current.contrast, current.quality, current.codec,
+                                    white_point=white_point))
         result[int(page_key) - 1] = tuple(resolved)
     return result
 
@@ -741,7 +815,8 @@ def _write_config(path: Path, source: Path, page_count: int, pages: dict[int, tu
     data = {"version": _CONFIG_VERSION, "sha256": _identity(source), "page_count": page_count,
             "pages": {str(index + 1): [{"rect": region.rect, "mode": region.mode.value,
                 "dither": region.dither.value, "contrast": region.contrast, "quality": region.quality,
-                "codec": region.codec.value, "score": region.score} for region in regions]
+                "codec": region.codec.value, "score": region.score,
+                "white_point": region.white_point} for region in regions]
                 for index, regions in sorted(pages.items())}}
     with path.open("x", encoding="utf-8", newline="\n") as stream:
         json.dump(data, stream, indent=2, allow_nan=False)

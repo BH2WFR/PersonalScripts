@@ -56,7 +56,7 @@ class ScanRegionsTests(unittest.TestCase):
                     with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as doc:
                         info = doc[0].get_images()
                         expected_bits = 1 if mode in (regions._Mode.TEXT, regions._Mode.TEXT_INVERT) else (
-                            8 if mode in (regions._Mode.KEEP, regions._Mode.GRAY8) else (2 if mode.value.endswith("2") else 4))
+                            8 if mode in (regions._Mode.KEEP, regions._Mode.GRAY8, regions._Mode.COLOR8) else (2 if mode.value.endswith("2") else 4))
                         self.assertEqual(sorted(item[4] for item in info), sorted([1, expected_bits]))
                         base = next(item for item in info if "CCITT" in item[8])
                         pix = pymupdf.Pixmap(doc, base[0])
@@ -68,7 +68,7 @@ class ScanRegionsTests(unittest.TestCase):
                             self.assertEqual(crop[8], "DCTDecode" if mode in (regions._Mode.KEEP, regions._Mode.GRAY8) else "FlateDecode")
                             crop_pix = pymupdf.Pixmap(doc, crop[0])
                             self.assertEqual((crop_pix.width, crop_pix.height), (x1 - x0, y1 - y0))
-                            if expected_bits in (2, 4):
+                            if mode in (regions._Mode.GRAY2, regions._Mode.GRAY4, regions._Mode.COLOR2, regions._Mode.COLOR4, regions._Mode.COLOR8):
                                 samples = np.frombuffer(crop_pix.samples, dtype=np.uint8).reshape(-1, crop_pix.n)
                                 self.assertLessEqual(len(np.unique(samples, axis=0)), 1 << expected_bits)
                         # Exercise rendered placement, not just xref metadata.
@@ -116,6 +116,118 @@ class ScanRegionsTests(unittest.TestCase):
         regions._write_config(exported, self.source, 3, loaded)
         self.assertEqual(regions._read_config(exported, self.source, 3, regions._Settings()), loaded)
 
+    def test_color_text_has_its_own_palette_path_and_preserves_large_artwork(self) -> None:
+        with Image.new("RGB", (1200, 1600), "white") as image:
+            draw = ImageDraw.Draw(image)
+            font = ImageFont.load_default(size=32)
+            draw.text((70, 50), "Color heading 123", font=font, fill=(25, 100, 190))
+            draw.text((70, 150), "Ordinary black text", font=font, fill="black")
+            draw.rectangle((60, 250, 1140, 1560), fill=(140, 190, 80))
+            draw.ellipse((200, 400, 900, 1200), fill=(200, 90, 150))
+            for mode in regions._ColorTextMode:
+                configuration = regions._Settings(enabled=True, mode=regions._Mode.GRAY4,
+                    color_text_mode=mode, color_text_contrast=1.7, color_text_whiten=True)
+                with self.subTest(mode=mode):
+                    found = regions._detect(image, configuration)
+                    heading = [box for box in found if box.rect[1] < .07]
+                    self.assertTrue(heading)
+                    self.assertTrue(all(box.white_point == 235 and box.codec is regions._Codec.FLATE for box in heading))
+                    self.assertTrue(all(box.mode == (regions._Mode.GRAY4 if mode is regions._ColorTextMode.FOLLOW
+                                                    else regions._Mode(mode.value)) for box in heading))
+                    if mode is not regions._ColorTextMode.FOLLOW:
+                        self.assertTrue(all(box.contrast == 1.7 and box.codec is regions._Codec.FLATE
+                                            and box.dither is regions._Dither.NONE for box in heading))
+                    self.assertFalse(any(box.rect[1] < .1 < box.rect[3] for box in found))
+                    artwork = [box for box in found if box.rect[3] - box.rect[1] > .8]
+                    self.assertEqual(len(artwork), 1)
+                    self.assertEqual(artwork[0].mode, regions._Mode.GRAY4)
+                    self.assertEqual(artwork[0].white_point, 255)
+
+    def test_color_frames_do_not_protect_enclosed_body_and_pale_paper_is_ignored(self) -> None:
+        with Image.new("RGB", (1200, 1600), (240, 248, 235)) as image:
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((100, 100, 1100, 1500), outline=(45, 160, 180), width=8)
+            draw.text((350, 500), "Body text", font=ImageFont.load_default(size=40), fill="black")
+            found = regions._detect(image, regions._Settings(enabled=True))
+            self.assertTrue(found)
+            self.assertFalse(any(box.rect[0] < .5 < box.rect[2] and box.rect[1] < .5 < box.rect[3]
+                                 for box in found))
+            self.assertLess(sum((box.rect[2] - box.rect[0]) * (box.rect[3] - box.rect[1]) for box in found), .1)
+
+    def test_color_text_override_and_validation(self) -> None:
+        for bad in (float("nan"), .9, 4.1):
+            with self.subTest(contrast=bad), self.assertRaises(ValueError):
+                regions._validate(regions._Settings(color_text_contrast=bad))
+        config = self.config({"1": [{"rect": [0, 0, 1, 1], "mode": "color8", "contrast": 1.2}]})
+        loaded = regions._read_config(config, self.source, 3, regions._Settings(
+            color_text_mode=regions._ColorTextMode.COLOR4, color_text_contrast=2))
+        self.assertEqual(loaded[0][0].mode, regions._Mode.COLOR8)
+        self.assertEqual(loaded[0][0].contrast, 1.2)
+
+    def test_image_whitening_is_independent_of_colored_text_and_keeps_codec(self) -> None:
+        with Image.new("RGB", (1200, 1600), "white") as image:
+            draw = ImageDraw.Draw(image)
+            draw.text((70, 50), "Color heading", font=ImageFont.load_default(size=32), fill=(25, 100, 190))
+            draw.rectangle((60, 250, 1140, 1560), fill=(140, 190, 80))
+            for text_whiten in (False, True):
+                settings = regions._Settings(enabled=True, whiten=True, white_point=220,
+                    color_text_whiten=text_whiten, color_text_white_point=240)
+                found = regions._detect(image, settings)
+                artwork = [region for region in found if region.rect[3] - region.rect[1] > .8]
+                heading = [region for region in found if region.rect[1] < .07]
+                self.assertTrue(artwork)
+                self.assertTrue(heading)
+                self.assertTrue(all(region.white_point == 220 and region.codec is regions._Codec.JPEG for region in artwork))
+                self.assertTrue(all(region.white_point == (240 if text_whiten else 255) for region in heading))
+        for value in (0, 256, True, 230.5):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                regions._validate(regions._Settings(white_point=value))
+
+    def test_uncertain_image_panel_whitening_uses_source_rgb_and_selected_codec(self) -> None:
+        with Image.new("RGB", (60, 60), (240, 245, 238)) as image:
+            ImageDraw.Draw(image).rectangle((20, 20, 40, 40), fill=(255, 220, 80))
+            panel = regions._Panel((0, 0, 1, 1), reliable=False, reversed=False)
+            for codec in regions._Codec:
+                settings = regions._Settings(clean_background=True, whiten=True, white_point=235,
+                                             mode=regions._Mode.GRAY8, codec=codec)
+                with self.subTest(codec=codec), patch.object(regions, "_text_panels", return_value=(panel,)):
+                    encoded = raster._encode_page(image.copy(), 72, 180,
+                        engine_settings._Processing(mode=engine_settings._BinarizeMode.SAUVOLA, regions=settings))
+                    self.assertEqual(encoded.regions[0].white_point, 235)
+                    self.assertEqual(encoded.layers[0].filter, "/DCTDecode" if codec is regions._Codec.JPEG else "/FlateDecode")
+                    with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as document:
+                        xref = next(item[0] for item in document[0].get_images() if item[4] == 8)
+                        pix = pymupdf.Pixmap(document, xref)
+                        pixels = np.frombuffer(pix.samples, dtype=np.uint8).reshape(60, 60)
+                        if codec is regions._Codec.FLATE:
+                            self.assertTrue(np.all(pixels[:15] == 255))
+                        self.assertLess(int(pixels[30, 30]), 240)
+
+    def test_text_crop_whitening_survives_palette_and_pdf_decoding(self) -> None:
+        values = np.full((32, 128, 3), (243, 247, 240), dtype=np.uint8)
+        values[:, 40:60] = (255, 225, 80)  # bright yellow must not be erased by luminance
+        values[:, 70:90] = (170, 225, 255)  # pale blue must also survive
+        values[:, 100:] = np.arange(228, 256, dtype=np.uint8)[None, :, None]
+        for mode in (regions._Mode.KEEP, regions._Mode.COLOR4, regions._Mode.COLOR8):
+            with self.subTest(mode=mode), Image.fromarray(values) as image:
+                region = regions._Region((0, 0, 1, 1), mode=mode, white_point=235, codec=regions._Codec.FLATE)
+                encoded = raster._encode_page(image.copy(), 72, 180,
+                    engine_settings._Processing(regions=regions._Settings(enabled=True)), (region,))
+                with pymupdf.open(stream=regions._assemble(encoded), filetype="pdf") as document:
+                    xref = next(item[0] for item in document[0].get_images() if item[4] > 1)
+                    pix = pymupdf.Pixmap(document, xref)
+                    decoded = np.frombuffer(pix.samples, dtype=np.uint8).reshape(32, 128, 3)
+                    self.assertTrue(np.all(decoded[values.min(axis=2) >= 235] == 255))
+                    self.assertTrue(np.all(decoded[:, 40:60, 2] < 150))
+                    self.assertTrue(np.all(decoded[:, 70:90, 0] < 220))
+                sidecar = self.folder / f"{mode}.json"
+                regions._write_config(sidecar, self.source, 3, {0: (region,)})
+                self.assertEqual(regions._read_config(sidecar, self.source, 3, regions._Settings())[0], (region,))
+        with Image.fromarray(values).convert("L") as gray:
+            for bits in (2, 4):
+                indices, _ = regions._quantize(gray, bits, False, regions._Dither.DIFFUSION, preserve_white=True)
+                self.assertTrue(np.all(indices[np.asarray(gray) == 255] == (1 << bits) - 1))
+
     def test_packed_gray_roundtrip_odd_width_and_predictor(self) -> None:
         for bits in (2, 4):
             for width in (1, 3, 17, 53):
@@ -132,7 +244,7 @@ class ScanRegionsTests(unittest.TestCase):
 
     def test_palette_constant_color_and_lossless_keep_exact(self) -> None:
         for color in ((10, 120, 230), (133, 133, 133)):
-            for mode in (regions._Mode.KEEP, regions._Mode.COLOR2, regions._Mode.COLOR4):
+            for mode in (regions._Mode.KEEP, regions._Mode.COLOR2, regions._Mode.COLOR4, regions._Mode.COLOR8):
                 with self.subTest(color=color, mode=mode), Image.new("RGB", (19, 13), color) as image:
                     region = regions._Region((0, 0, 1, 1), mode=mode, codec=regions._Codec.FLATE)
                     encoded = raster._encode_page(image.copy(), 72, 180,

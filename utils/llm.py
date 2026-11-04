@@ -33,6 +33,8 @@ class LlmSettings:
         temperature: Finite sampling temperature in [0, 2].
         max_tokens: Positive output-token limit.
         timeout_seconds: Positive timeout for one operation, including pagination.
+        max_context_images: Maximum images per chat request, including the current
+            image. Keeps newest images and historical text; 0 means unlimited.
 
     Construction performs no I/O. Call Llm.validate_settings before requests.
     """
@@ -42,6 +44,7 @@ class LlmSettings:
     temperature: float = .1
     max_tokens: int = 8192
     timeout_seconds: int = 180
+    max_context_images: int = 5
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,8 @@ class Llm:
         ("Alibaba Model Studio (Singapore)", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         ("OpenRouter", "https://openrouter.ai/api/v1"),
         ("SiliconFlow", "https://api.siliconflow.cn/v1"),
+        ("Ollama (local)", "http://localhost:11434/v1"),
+        ("LM Studio (local)", "http://localhost:1234/v1"),
     )
 
     @staticmethod
@@ -265,6 +270,58 @@ class Llm:
             raise ValueError("The output-token limit must be a positive integer.")
         if type(settings.timeout_seconds) is not int or settings.timeout_seconds < 1:
             raise ValueError("The timeout must be a positive integer.")
+        if type(settings.max_context_images) is not int or settings.max_context_images < 0:
+            raise ValueError("The context image limit must be a nonnegative integer (0 = unlimited).")
+
+    @staticmethod
+    def image_count(messages: Sequence[Mapping[str, object]]) -> int:
+        """Count Chat Completions image_url parts in ordered messages.
+
+        Args:
+            messages: System/user/assistant mappings with string or list content.
+        Returns:
+            Number of image parts, including the current input; no I/O or mutation.
+        """
+        count = 0
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, list):
+                count += sum(isinstance(part, Mapping) and part.get("type") == "image_url"
+                             for part in content)
+        return count
+
+    @staticmethod
+    def limit_images(messages: Sequence[Mapping[str, object]], maximum: int) -> list[dict[str, object]]:
+        """Keep the newest image parts while retaining all messages and text.
+
+        Args:
+            messages: Chronological Chat Completions messages, current input last.
+            maximum: Nonnegative count across the whole request; 0 is unlimited.
+        Returns:
+            New message/content containers. Older images become textual omission
+            markers; the caller's history is untouched and can be resent later.
+        Raises:
+            ValueError: maximum is not a nonnegative integer.
+        No I/O; nested retained content parts are read-only by convention.
+        """
+        if type(maximum) is not int or maximum < 0:
+            raise ValueError("Image limit must be a nonnegative integer.")
+        remove = max(0, Llm.image_count(messages) - maximum) if maximum else 0
+        result: list[dict[str, object]] = []
+        for message in messages:
+            copied = dict(message)
+            content = message.get("content")
+            if isinstance(content, list):
+                parts: list[object] = []
+                for part in content:
+                    if remove and isinstance(part, Mapping) and part.get("type") == "image_url":
+                        parts.append({"type": "text", "text": "[Earlier image omitted by the context image limit.]"})
+                        remove -= 1
+                    else:
+                        parts.append(part)
+                copied["content"] = parts
+            result.append(copied)
+        return result
 
     @staticmethod
     def image_content(image: bytes, *, mime_type: str = "image/jpeg",
@@ -297,7 +354,8 @@ class Llm:
             messages: Ordered system/user/assistant messages, with text or image content.
             max_tokens: Optional positive override, e.g. for a small connectivity probe.
         Returns:
-            A new body. Nested content is read-only by convention, not deep-copied.
+            A new body with newest images limited by max_context_images (0 means
+            unlimited). Historical text remains. Nested content is read-only by convention.
             Official DeepSeek requests disable thinking so temperature applies.
         Raises:
             ValueError: Settings or token override is invalid, or messages are empty.
@@ -308,7 +366,7 @@ class Llm:
             raise ValueError("Provide messages and a positive output-token limit.")
         body: dict[str, object] = {
             "model": settings.model, "temperature": settings.temperature, "max_tokens": limit,
-            "stream": False, "messages": [dict(message) for message in messages],
+            "stream": False, "messages": Llm.limit_images(messages, settings.max_context_images),
         }
         if urlsplit(settings.base_url).hostname == "api.deepseek.com":
             body["thinking"] = {"type": "disabled"}

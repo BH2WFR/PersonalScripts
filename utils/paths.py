@@ -8,6 +8,32 @@ from pathlib import Path
 
 class Paths:
     @staticmethod
+    def available_path(path: str | os.PathLike[str], *, start: int = 1, limit: int = 10_000) -> Path:
+        """Suggest an unused filename, adding numbered suffixes on collision.
+
+        Args:
+            path: Desired file or directory path; inspected without creating it.
+            start: First suffix number, default 1 (name_1.ext).
+            limit: Largest suffix to try, inclusive.
+        Returns:
+            Original path if unused, otherwise the first unused numbered variant.
+        Raises:
+            ValueError: Invalid suffix bounds.
+            FileExistsError: All candidates are occupied.
+        This is a suggestion, not a reservation; save code must check again.
+        """
+        if type(start) is not int or type(limit) is not int or not 1 <= start <= limit:
+            raise ValueError("Require 1 <= start <= limit.")
+        base = Path(path)
+        if not os.path.lexists(base):
+            return base
+        for number in range(start, limit + 1):
+            candidate = base.with_name(f"{base.stem}_{number}{base.suffix}")
+            if not os.path.lexists(candidate):
+                return candidate
+        raise FileExistsError(f"No unused filename found for {base}.")
+
+    @staticmethod
     def resolve_path(
         path: str, base_dir: str | os.PathLike[str], *,
         expand_environment: bool = True, resolve_symlinks: bool = False,

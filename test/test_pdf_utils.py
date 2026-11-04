@@ -7,7 +7,9 @@ Requires PyMuPDF; creates in-memory PDFs only.
 from dataclasses import replace
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import pymupdf
 
@@ -76,6 +78,30 @@ class PdfUtilityTests(unittest.TestCase):
         self.assertEqual(labels, ["i", "TOC-1", "20", "21"])
         Pdf.number_page_labels(labels, [3, 2], -1, "A")
         self.assertEqual(labels[2:], ["A0", "A-1"])
+
+    def test_numbered_outputs_and_staged_replacement(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp", prefix="pdf-save-test-") as directory:
+            folder = Path(directory)
+            output = folder / "result.pdf"
+            self.assertEqual(Paths.available_path(output), output)
+            output.write_bytes(b"Existing output")
+            self.assertEqual(Paths.available_path(output).name, "result_1.pdf")
+            (folder / "result_1.pdf").touch()
+            self.assertEqual(Paths.available_path(output).name, "result_2.pdf")
+            with pymupdf.open() as document:
+                document.new_page()
+                with self.assertRaises(FileExistsError):
+                    Pdf.save_new(document, output)
+                with patch.object(pymupdf.Document, "save", side_effect=OSError("Disk write failed")):
+                    with self.assertRaises(OSError):
+                        Pdf.save_new(document, output, overwrite=True)
+                self.assertEqual(output.read_bytes(), b"Existing output")
+                self.assertFalse(list(folder.glob(".pdf-save-*")))
+                Pdf.save_new(document, output, overwrite=True)
+            with Pdf.open_document(output, interactive=False) as (document, _):
+                self.assertEqual(document.page_count, 1)
+                with self.assertRaises(ValueError):
+                    Pdf.save_new(document, output, overwrite=True)
 
 
 if __name__ == "__main__":

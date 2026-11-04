@@ -70,6 +70,23 @@ class LlmTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Llm.parse_completion(data)
 
+    def test_image_budget_keeps_latest_images_and_all_text_without_mutation(self) -> None:
+        messages = [{"role": "user", "content": [{"type": "text", "text": f"Page {index}"},
+                     Llm.image_content(str(index).encode())]} for index in range(7)]
+        for maximum, expected in ((0, 7), (1, 1), (5, 5), (20, 7)):
+            body = Llm.chat_request(LlmSettings(max_context_images=maximum), messages)
+            limited = body["messages"]
+            self.assertEqual(Llm.image_count(limited), expected)
+            self.assertEqual(limited[-1]["content"][-1], messages[-1]["content"][-1])
+            self.assertEqual([row["content"][0]["text"] for row in limited], [f"Page {index}" for index in range(7)])
+            self.assertEqual(Llm.image_count(messages), 7)
+        for invalid in (-1, True, 1.5):
+            with self.assertRaises(ValueError):
+                Llm.chat_request(LlmSettings(max_context_images=invalid), messages)
+        presets = dict(Llm.PRESETS)
+        self.assertEqual(Llm.models_url(presets["Ollama (local)"]), "http://localhost:11434/v1/models")
+        self.assertEqual(Llm.completion_url(presets["LM Studio (local)"]), "http://localhost:1234/v1/chat/completions")
+
     def test_balance_routes_do_not_send_proxy_keys_to_official_hosts(self) -> None:
         for base, expected in (
             ("https://api.deepseek.com/v1/chat/completions", "https://api.deepseek.com/user/balance"),

@@ -180,25 +180,27 @@ def _form(document: pymupdf.Document, encoded: bytes | regions._Page) -> int:
 
 
 def _render_image(document: pymupdf.Document, xref: int, width: float, height: float,
-                  dpi: int, color: bool) -> tuple[Image.Image, Image.Image | None]:
+                  dpi: int | tuple[float, float], color: bool) -> tuple[Image.Image, Image.Image | None]:
     """Render only this image, preserving its Decode, color space and transparency.
 
     The image's on-page axis lengths determine base DPI. Rotation, shear and
     clipping remain in the original content stream. Returned images are owned.
     """
     with pymupdf.open() as isolated:
+        dpi_x, dpi_y = (dpi, dpi) if isinstance(dpi, int) else dpi
+        scale = pymupdf.Matrix(dpi_x / 72, dpi_y / 72)
         copied = _graft(isolated, document, xref)
         page = isolated.new_page(width=width, height=height)
         isolated.xref_set_key(page.xref, "Resources", f"<< /XObject << /Image {copied} 0 R >> >>")
         content = _object(isolated, data=f"{width:.12g} 0 0 {height:.12g} 0 0 cm /Image Do".encode())
         page.set_contents(content)
-        pixmap = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB if color else pymupdf.csGRAY, alpha=False)
+        pixmap = page.get_pixmap(matrix=scale, colorspace=pymupdf.csRGB if color else pymupdf.csGRAY, alpha=False)
         image = Image.frombytes("RGB" if color else "L", (pixmap.width, pixmap.height), pixmap.samples)
         mask = None
         if (any(document.xref_get_key(xref, key)[0] != "null" for key in ("SMask", "Mask"))
                 or document.xref_get_key(xref, "SMaskInData")[1] not in ("null", "0")):
             image.close()
-            rgba = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB if color else pymupdf.csGRAY, alpha=True)
+            rgba = page.get_pixmap(matrix=scale, colorspace=pymupdf.csRGB if color else pymupdf.csGRAY, alpha=True)
             image, mask = _unpremultiply(rgba)
         return image, mask
 
@@ -386,9 +388,16 @@ class _Engine:
         oc = document.xref_get_key(xref, "OC")[1]
         if oc != "null":
             document.xref_set_key(target, "OC", oc)
-        image, mask = _render_image(document, xref, width, height, self.dpi, self.processing.regions.active)
+        dpi = self.dpi
+        sampling: int | tuple[float, float] = dpi
+        if self.processing.dpi_policy.value == "cap":
+            pixels_x = int(document.xref_get_key(xref, "Width")[1])
+            pixels_y = int(document.xref_get_key(xref, "Height")[1])
+            sampling = min(dpi, pixels_x * 72 / width), min(dpi, pixels_y * 72 / height)
+            dpi = max(1, math.floor(min(sampling) + 1e-6))
+        image, mask = _render_image(document, xref, width, height, sampling, self.processing.regions.active)
         try:
-            future = self.executor.submit(raster._encode_page, image, self.dpi, self.threshold,
+            future = self.executor.submit(raster._encode_page, image, dpi, self.threshold,
                                           self.processing, overrides)
         except BaseException:
             image.close()

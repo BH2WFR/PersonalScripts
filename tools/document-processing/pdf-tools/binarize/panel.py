@@ -24,7 +24,10 @@ class Field:
 
 
 FIELDS: tuple[Field, ...] = (
-    Field("dpi", "Base DPI", "Text", 36, 1200),
+    Field("dpi", "Sampling target (DPI)", "Text", 36, 1200),
+    Field("dpi_policy", "Below-target image sampling", "Text", choices=(
+        ("cap", "Use native image DPI"), ("target", "Render at target DPI"))),
+    Field("upscale", "Lanczos text enlargement", "Text", 1, 4),
     Field("mode", "Method", "Text", choices=(("fixed", "Fixed threshold"), ("sauvola", "Sauvola"))),
     Field("threshold", "Threshold", "Text", 1, 255, slider=True),
     Field("window", "Sauvola window (odd)", "Text", 3, 501, 2),
@@ -32,7 +35,6 @@ FIELDS: tuple[Field, ...] = (
     Field("levels", "Adjust black/white points", "Text"),
     Field("black_point", "Black point", "Text", 0, 254),
     Field("white_point", "White point", "Text", 1, 255),
-    Field("upscale", "Upscale factor", "Text", 1, 4),
     Field("sharpen", "Unsharp mask", "Text"),
     Field("sharpen_radius", "Sharpen radius", "Text", .1, 10, .1),
     Field("sharpen_percent", "Sharpen amount (%)", "Text", 1, 500),
@@ -43,18 +45,72 @@ FIELDS: tuple[Field, ...] = (
     Field("regions.mode", "Protected image mode", "Images", choices=(
         ("keep", "Keep original colors / grayscale"), ("gray8", "Gray8 - remove color"),
         ("gray2", "Gray2 - 4 levels"), ("gray4", "Gray4 - 16 levels"),
-        ("color2", "Color2 - 4 colors"), ("color4", "Color4 - 16 colors"))),
+        ("color2", "Color2 - 4 colors"), ("color4", "Color4 - 16 colors"),
+        ("color8", "Color8 - 256 colors"))),
     Field("regions.codec", "Crop compression", "Images", choices=(("jpeg", "JPEG"), ("flate", "Lossless Flate"))),
     Field("regions.quality", "JPEG quality", "Images", 1, 95, slider=True),
     Field("regions.dither", "Dithering", "Images", choices=(
         ("none", "None"), ("ordered", "Ordered"), ("diffusion", "Error diffusion"))),
     Field("regions.contrast", "Crop contrast (1 = off)", "Images", 1, 4, .1),
+    Field("regions.whiten", "Whiten image crop background", "Images"),
+    Field("regions.white_point", "Image crop white point", "Images", 1, 255, slider=True),
+    Field("regions.color_text_mode", "Colored text mode", "Images", choices=(
+        ("follow", "Follow illustration settings"), ("color4", "Color4 - 16 colors"),
+        ("color8", "Color8 - 256 colors"))),
+    Field("regions.color_text_contrast", "Text crop contrast (1 = off)", "Images", 1, 4, .1),
+    Field("regions.color_text_whiten", "Whiten text crop background", "Images"),
+    Field("regions.color_text_white_point", "Text crop white point", "Images", 1, 255, slider=True),
     Field("regions.denoise", "Remove isolated binary specks", "Cleanup"),
     Field("regions.denoise_area", "Maximum speck area at 240 DPI", "Cleanup", .1, 100, .5),
     Field("regions.denoise_distance", "Distance from other ink", "Cleanup", 1, 100),
     Field("regions.clean_background", "Clean shaded text (Sauvola)", "Cleanup"),
     Field("vectors", "Vector colors: non-white to black", "Cleanup"),
 )
+
+GROUP_STARTS = {
+    "dpi": "Resolution", "mode": "Binarization", "levels": "Black / white points",
+    "sharpen": "Sharpening", "regions.enabled": "Region detection",
+    "regions.mode": "Protected image appearance", "regions.codec": "Compression",
+    "regions.dither": "Tone reproduction", "regions.denoise": "Binary speck removal",
+    "regions.color_text_mode": "Colored text",
+    "regions.whiten": "Image background",
+    "regions.clean_background": "Shaded text", "vectors": "Vector graphics",
+}
+
+TIPS = {
+    "dpi": "Target sampling resolution of embedded images, based on their size on the PDF page. Higher values retain small strokes but increase time and size. Start at 300; try 200–240 for larger text. Text/vector objects are retained separately.",
+    "dpi_policy": "Use native image DPI (default) caps sampling below the target for low-resolution images. Render at target DPI asks the PDF renderer to enlarge them, which may keep visible pixel steps. The Images tab shows each image's effective DPI. For smooth one-bit text, use native DPI and then the Lanczos enlargement below.",
+    "upscale": "After sampling, enlarge grayscale with Lanczos before binarization. A 96-DPI image at 3x produces roughly 288-DPI one-bit text. On low-resolution text, try 2x for smaller files or 3x for smoother zoomed edges. Pixel count grows by the factor squared; use a separate profile for high-resolution pages.",
+    "mode": "Fixed threshold suits evenly lit scans. Sauvola computes a local threshold and usually handles uneven gray backgrounds better. Compare a difficult page before exporting.",
+    "threshold": "Pixels darker than this value become black (0=black, 255=white). Increase to retain faint strokes; decrease to remove gray noise. Start near 180 and check thin strokes and punctuation.",
+    "window": "Size of the local Sauvola neighborhood in base-rendered pixels; must be odd. Larger windows include more surrounding background; very small windows may break strokes. Start at 31 and compare 21–61.",
+    "k": "Sauvola sensitivity. Smaller values generally retain more black and faint strokes; larger values suppress more background but may erase weak text. Start at 0.20 and change by 0.02–0.05.",
+    "levels": "Stretch grayscale between the black and white points before thresholding. Helps faded scans; start off. Illustration detection uses the source image before this adjustment.",
+    "black_point": "Values at or below this become black. Raising it darkens faint text but may turn shaded backgrounds black. Start at 0 and increase gradually; it must stay below the white point.",
+    "white_point": "Values at or above this become white. Lowering it removes light paper shading but can erase pale strokes. Start at 255 and lower gradually; check the lightest text.",
+    "sharpen": "Unsharp Mask emphasizes edges before binarization. Start off; enable only for soft scans. Excessive sharpening creates halos and specks.",
+    "sharpen_radius": "Width of the sharpening neighborhood in base pixels. Larger values affect broader edges and create wider halos. Start at 1 pixel.",
+    "sharpen_percent": "Strength of edge enhancement. Higher values sharpen more but amplify noise. Start at 100%; reduce if outlines or specks appear.",
+    "regions.enabled": "Detect gray/color illustrations before text thresholding. Detected areas become separate image elements; text outside them uses 1-bit CCITT compression. Enable for diagrams or shaded panels; use Red boxes to inspect detection.",
+    "regions.profile": "Text first protects fewer regions for smaller files; Image first protects more detail. Balanced is a starting point. Fine-tune the detection threshold after checking Red boxes.",
+    "regions.threshold": "Evidence required to protect an illustration. Higher values produce fewer boxes and smaller files; lower values protect more gray content. Lower it if pictures disappear; raise it if plain text is boxed.",
+    "regions.mode": "Keep preserves source colors/tones before the chosen compression. Gray8 only removes color. Gray2/Gray4 use 4/16 gray levels; Color2/Color4/Color8 use 4/16/256 palette colors. Start with Keep; try Gray4 for compact readable diagrams.",
+    "regions.codec": "JPEG trades detail for size; Flate is lossless and often suits flat graphics. Low-bit-depth modes always use Flate. Text outside protected crops always uses lossless CCITT Group 4.",
+    "regions.quality": "JPEG quality for protected crops only; CCITT text is unaffected. Lower values save space but may damage small text inside diagrams. Start at 30 and increase if labels become unclear.",
+    "regions.dither": "Simulate intermediate tones in 2/4-bit images. None gives clean flat areas; Ordered is predictable; Error diffusion keeps gradients but can increase size and grain. Start with None for diagrams.",
+    "regions.contrast": "Contrast of protected crops; 1 leaves it unchanged. Increase to strengthen faded images, but highlights/shadows may lose detail. Start at 1 and test small increases.",
+    "regions.whiten": "Turn near-white pixels in automatically protected illustrations and uncertain shaded panels into white before contrast and quantization. Colored text has its own whitening controls. Imported regions retain their explicit settings. The selected codec is retained: JPEG may reintroduce near-white values; Flate keeps cleaned pixels exactly white.",
+    "regions.white_point": "A source pixel becomes white when all three RGB channels reach this value, before grayscale conversion or contrast. Start at 235; lower values remove more background but may erase pale details inside illustrations. 255 leaves the source unchanged.",
+    "regions.color_text_mode": "Automatic detection can recognize small colored strokes as text-like, without OCR. Follow uses the ordinary crop settings. Color4/Color8 instead use 16/256 indexed colors, separate contrast and lossless Flate without dithering. Small monochrome icons may also qualify. Imported regions keep their explicit settings; lettering inside a larger illustration follows that illustration.",
+    "regions.color_text_contrast": "Contrast applied only to automatically detected text-like colored crops when Color4/Color8 is selected above. Start at 1.5 to strengthen pale lettering and simplify its background. Use 1 for no enhancement; higher values can clip colors and thin strokes.",
+    "regions.color_text_whiten": "Turn near-white pixels in detected colored text crops into pure white before contrast and quantization. Works with Follow, Color4 and Color8. These crops use Flate and reserve pure white in their palette so compression cannot gray the cleaned pixels. Ordinary illustrations are unaffected.",
+    "regions.color_text_white_point": "A source pixel becomes white only when all three RGB channels reach this value. Start at 235; lower values remove more pale background but can erase faint colored strokes. This is separate from the black/white points used for binary text.",
+    "regions.denoise": "Remove small isolated black components after binarization, regardless of illustration protection. Start off; enable for dirty scans and inspect punctuation and thin strokes.",
+    "regions.denoise_area": "Maximum black-component area eligible for removal, normalized to 240 DPI. Higher values remove larger specks but may erase punctuation. Start with the default and increase cautiously.",
+    "regions.denoise_distance": "Required separation from other ink, scaled with DPI. Larger distances are more conservative and preserve dots near characters. Reduce only if isolated noise remains.",
+    "regions.clean_background": "Detect shaded text panels and handle dark-on-light versus light-on-dark lettering locally. Uses Sauvola automatically. Enable when gray boxes produce black patches; inspect white lettering carefully.",
+    "vectors": "Change non-white vector paint to black for e-ink; white stays white. Text, OCR, links and annotations are retained. Start off for colored charts where colors carry meaning.",
+}
 
 type Editor = QtWidgets.QCheckBox | QtWidgets.QComboBox | QtWidgets.QSpinBox | QtWidgets.QDoubleSpinBox
 
@@ -80,21 +136,36 @@ class SettingsPanel(QtWidgets.QTabWidget):
         self.editing = False
         self.editors: dict[str, Editor] = {}
         self.sliders: dict[str, QtWidgets.QSlider] = {}
+        self.labels: dict[str, QtWidgets.QLabel] = {}
         self._keys: dict[QtCore.QObject, str] = {}
         self._forms: dict[str, QtWidgets.QFormLayout] = {}
         values = self.config.values()
+        bodies: dict[str, QtWidgets.QVBoxLayout] = {}
         for name in ("Text", "Images", "Cleanup"):
             scroll = QtWidgets.QScrollArea()
             scroll.setWidgetResizable(True)
             body = QtWidgets.QWidget()
-            form = QtWidgets.QFormLayout(body)
-            form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-            form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+            layout = QtWidgets.QVBoxLayout(body)
+            layout.setContentsMargins(4, 4, 4, 4)
+            layout.setSpacing(5)
+            bodies[name] = layout
             scroll.setWidget(body)
             self.addTab(scroll, name)
-            self._forms[name] = form
         # ── create editors from the same field table ──
         for spec in FIELDS:
+            if spec.key in GROUP_STARTS:
+                layout = bodies[spec.tab]
+                if layout.count():
+                    line = QtWidgets.QFrame()
+                    line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+                    layout.addWidget(line)
+                group = QtWidgets.QGroupBox(GROUP_STARTS[spec.key])
+                form = QtWidgets.QFormLayout(group)
+                form.setContentsMargins(7, 8, 7, 7)
+                form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+                form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+                layout.addWidget(group)
+                self._forms[spec.tab] = form
             original = values[spec.key]
             editor: Editor
             if spec.choices:
@@ -124,6 +195,10 @@ class SettingsPanel(QtWidgets.QTabWidget):
                 self._keys[spin] = spec.key
                 editor = spin
             self.editors[spec.key] = editor
+            editor.setToolTip(TIPS[spec.key])
+            label = QtWidgets.QLabel(spec.label)
+            label.setToolTip(TIPS[spec.key])
+            self.labels[spec.key] = label
             form = self._forms[spec.tab]
             if isinstance(editor, QtWidgets.QCheckBox):
                 form.addRow(editor)
@@ -143,9 +218,9 @@ class SettingsPanel(QtWidgets.QTabWidget):
                 self.sliders[spec.key] = slider
                 layout.addWidget(slider, 1)
                 layout.addWidget(spin)
-                form.addRow(spec.label, row)
+                form.addRow(label, row)
             else:
-                form.addRow(spec.label, editor)
+                form.addRow(label, editor)
         hint = QtWidgets.QLabel("Text backgrounds always use lossless CCITT Group 4.\nLow-depth crops use lossless Flate.")
         hint.setWordWrap(True)
         self._forms["Images"].addRow(hint)
@@ -153,6 +228,8 @@ class SettingsPanel(QtWidgets.QTabWidget):
         self.error.setWordWrap(True)
         self.error.setStyleSheet("color: #c43b32;")
         self._forms["Cleanup"].addRow(self.error)
+        for layout in bodies.values():
+            layout.addStretch()
         self.set_config(self.config)
 
     def set_config(self, config: Config) -> None:
@@ -258,7 +335,13 @@ class SettingsPanel(QtWidgets.QTabWidget):
             "k": settings.mode.value == "sauvola", "black_point": settings.levels, "white_point": settings.levels,
             "sharpen_radius": settings.sharpen, "sharpen_percent": settings.sharpen,
             "regions.profile": image.enabled, "regions.threshold": image.enabled,
+            "regions.color_text_mode": image.enabled,
+            "regions.color_text_contrast": image.enabled and image.color_text_mode is not regions._ColorTextMode.FOLLOW,
+            "regions.color_text_whiten": image.enabled,
+            "regions.color_text_white_point": image.enabled and image.color_text_whiten,
             "regions.mode": active, "regions.contrast": active,
+            "regions.whiten": image.enabled or image.clean_background,
+            "regions.white_point": (image.enabled or image.clean_background) and image.whiten,
             "regions.codec": active and image.mode in (regions._Mode.KEEP, regions._Mode.GRAY8),
             "regions.quality": active and image.mode in (regions._Mode.KEEP, regions._Mode.GRAY8) and image.codec == regions._Codec.JPEG,
             "regions.dither": active and image.mode not in (regions._Mode.KEEP, regions._Mode.GRAY8),

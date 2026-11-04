@@ -40,24 +40,41 @@ Do not invent Cover/Table of Contents entries. If certainly no TOC entries are
 present, output entries: [] and errors: [].
 Use preceding accepted entries only to infer hierarchy. A page can start at a
 deeper level continuing a previous section. Do not repeat any previous entries.
+Historical images and replies are context only. Always transcribe ONLY the image
+in the LAST user message. On a retry, re-examine that image and return a COMPLETE
+replacement for that source page, not a patch or a cumulative book-wide list.
+Earlier replies may contain errors; the latest requirements, corrected entries and
+application diagnostics take precedence. Never copy a previous answer blindly.
 Special requirements may refine transcription, but never change this output schema.
 The image contains one book page; multi-book-page PDF layouts must be split first.'''
 
 
-def build_request(project: BookSession, page: int, image: bytes) -> dict[str, object]:
-    """Build one vision call from the current book's ordered, corrected text context."""
+def build_request(project: BookSession, page: int, image: bytes, *, retry: bool = False) -> dict[str, object]:
+    """Build a one-page vision call with session history and bounded image context."""
     context = [{"title": entry.title, "page": entry.logical_page, "level": entry.level}
                for entry in sorted(project.bookmarks, key=lambda item: item.source_page or 0)
                if entry.source_page is not None and project.context_start <= entry.source_page < page
                and project.toc[entry.source_page].status in (Status.DONE, Status.MODIFIED)]
     task = project.toc[page]
+    retry = retry or bool(task.history or task.raw_response)
     text = (f"Physical source PDF page: {page}. This is not a printed target page number.\n"
+            f"Operation: {'RETRY this page; return a complete corrected replacement' if retry else 'INITIAL recognition of this page'}.\n"
             f"Book-wide requirements:\n{project.requirements}\n"
             f"This page's requirements:\n{task.requirements}\n"
             f"Previous problem on this page (diagnostic only, resolve using the image and requirements):\n{task.error}\n"
             f"Accepted preceding entries (context only, do not repeat):\n{json.dumps(context, ensure_ascii=False)}\n"
             "Transcribe only the attached image now.")
-    return Llm.chat_request(project.api, [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": [{"type": "text", "text": text}, Llm.image_content(image)]},
-    ])
+    if retry:
+        text += f"\nPrevious draft for THIS page (may be wrong; do not copy blindly):\n{task.draft}"
+    messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for turn in project.conversation:
+        if turn.page not in project.toc:
+            continue
+        messages.append({"role": "user", "content": [
+            {"type": "text", "text": turn.prompt}, Llm.image_content(turn.image)]})
+        answer = turn.response or "[No model response was received.]"
+        if turn.error:
+            answer += f"\n[Application diagnostic: {turn.error}]"
+        messages.append({"role": "assistant", "content": answer})
+    messages.append({"role": "user", "content": [{"type": "text", "text": text}, Llm.image_content(image)]})
+    return Llm.chat_request(project.api, messages)

@@ -91,12 +91,14 @@ ignore-list:
                 - "macos/screen-utils.py"
     linux-gui-specific:
         # 规范：no-gui, wayland, x11
-        no-gui:
+        no-gui: # 下列程序在列出时会带上 `[GUI]` 的尾巴
             - "others/script-to-app.py"
             - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
             - "document-processing/pdf-binarize.py"
             - "document-processing/pdf-bookmarks-add.py"
+            - "document-processing/pdf-font-replace.py"
+            - "document-processing/pdf-split-pages.py"
             - "research/matrix-viewer.py"
         wayland:
             - "others/keyboard-hook-viewer.py"

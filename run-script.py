@@ -6,9 +6,11 @@ variable, display highlighting, supported script types, and Gitignore-style
 exclusions are defined in ``launcher-config.yaml``. Exclusions can depend on
 the operating system, normalized processor architecture, and Linux display
 environment. Existing configured dependency directories are prepended to
-``PATH`` for launched tools. Bare script names are matched recursively;
-multiple eligible matches are presented as a numbered selection before the
-original arguments are passed through. An optional
+``PATH`` for launched tools. Listed scripts matching the Linux ``no-gui``
+exclusions carry a yellow ``[GUI]`` suffix wherever they are available.
+Bare script names are matched recursively; multiple eligible matches are
+presented as a numbered selection before the original arguments are passed
+through. An optional
 ``launcher-config.patch.yaml`` overrides personal settings only when present.
 Normal startup displays resolved environment paths and, on Linux, the detected
 display environment without starting external tools for version discovery;
@@ -125,6 +127,7 @@ class _LauncherConfig:
     script_name_rules: tuple[_HighlightRule, ...]
     folder_name_rules: tuple[_HighlightRule, ...]
     ignore_spec: IgnoreSpec
+    gui_spec: IgnoreSpec
 
     @property
     def supported_extensions(self) -> tuple[str, ...]:
@@ -403,6 +406,10 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         ignore_list.get("linux-gui-specific", {}),
         "ignore-list.linux-gui-specific",
     )
+    gui_patterns = _read_pattern_list(
+        linux_gui_rules.get("no-gui"),
+        "ignore-list.linux-gui-specific.no-gui",
+    )
 
     platform_key = _platform_key()
     if platform_key is not None:
@@ -437,6 +444,7 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
 
     try:
         ignore_spec = PathSpec.from_lines("gitwildmatch", patterns)
+        gui_spec = PathSpec.from_lines("gitwildmatch", gui_patterns)
     except Exception as exc:
         raise ValueError(f"invalid Gitignore pattern: {exc}") from exc
 
@@ -482,6 +490,7 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         script_name_rules=script_name_rules,
         folder_name_rules=folder_name_rules,
         ignore_spec=ignore_spec,
+        gui_spec=gui_spec,
     )
 
 
@@ -797,9 +806,19 @@ def _highlight_subdirectory(subdirectory: str, config: _LauncherConfig) -> str:
     )
 
 
-def _format_script_path(relative_path: str, config: _LauncherConfig) -> str:
-    """Return one relative script path with configured ANSI highlighting."""
+def _format_script_path(
+    relative_path: str,
+    config: _LauncherConfig,
+    display_prefix: Optional[str] = None,
+) -> str:
+    """Highlight a script and mark no-GUI exclusions relative to its discovery root.
+
+    An optional display-only prefix labels Test paths without affecting matching.
+    """
     normalized = relative_path.replace("\\", "/")
+    gui_suffix = f" {FLYellow}[GUI]{CRst}" if _is_ignored(config.gui_spec, normalized) else ""
+    if display_prefix:
+        normalized = f"{display_prefix}/{normalized}"
     subdirectory, separator, filename = normalized.rpartition("/")
     if not separator:
         filename = normalized
@@ -807,8 +826,8 @@ def _format_script_path(relative_path: str, config: _LauncherConfig) -> str:
     highlighted_filename = _highlight_filename(filename, config)
 
     if subdirectory:
-        return f"{_highlight_subdirectory(subdirectory, config)}{highlighted_filename}"
-    return highlighted_filename
+        return f"{_highlight_subdirectory(subdirectory, config)}{highlighted_filename}{gui_suffix}"
+    return f"{highlighted_filename}{gui_suffix}"
 
 
 def _highlight_filename(filename: str, config: _LauncherConfig) -> str:
@@ -889,11 +908,9 @@ def show_scripts(
         print()
         print(f"  {config.test_header_color}─── Test ───{CRst}")
         for rel in test_group[1]:
-            normalized_rel = rel.replace("\\", "/")
-            display_path = f"{config.test_path_prefix}/{normalized_rel}"
             print(
                 f"  {FGray}[{cnt:>{max_digits}}]{CRst}: "
-                f"{_format_script_path(display_path, config)}"
+                f"{_format_script_path(rel, config, config.test_path_prefix)}"
             )
             all_scripts.append(f"@test:{rel}")
             cnt += 1
@@ -1102,7 +1119,9 @@ def _print_help(config: _LauncherConfig) -> None:
   configured Test group is enabled, its scripts participate in the same lookup.
   Ignore rules can depend on the OS, normalized processor architecture, and
   whether Linux uses X11, Wayland, or no GUI; this detected value is also shown
-  at startup. Existing dependency directories configured under extra-env-paths
+  at startup. Listed scripts matching the Linux no-gui exclusions carry a
+  yellow [GUI] suffix wherever they are available.
+  Existing dependency directories configured under extra-env-paths
   are prepended to PATH without warnings for missing directories.
 
 {FLYellow}Options:{CRst}

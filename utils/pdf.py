@@ -7,7 +7,9 @@ Operations on open documents stay in memory until Pdf.save_new is explicitly cal
 from contextlib import contextmanager
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path
+import tempfile
 from typing import TYPE_CHECKING, BinaryIO, Iterator, Sequence
 from xml.dom import minidom
 from xml.parsers.expat import ExpatError
@@ -560,23 +562,28 @@ class Pdf:
             print(f"{FLRed}Incorrect password. Please try again.{CRst}")
 
     @staticmethod
-    def save_new(document: "pymupdf.Document", output_path: str | Path, *, compact: bool = True) -> None:
-        """Save an unencrypted, non-PDF/A copy without overwriting existing files.
+    def save_new(document: "pymupdf.Document", output_path: str | Path, *, compact: bool = True,
+                 overwrite: bool = False) -> None:
+        """Save an unencrypted, non-PDF/A copy with explicit replacement support.
 
         Args:
             document: Open, authenticated PDF to save.
-            output_path: New destination with an existing parent directory.
+            output_path: Destination with an existing parent directory.
             compact: Compact object numbers and merge duplicates (default True).
                 Use False for a document that will remain open for further edits
                 and saves, preserving live object references.
+            overwrite: Explicit permission to replace an existing output after
+                a complete staged save. Defaults False. The input is protected.
 
         Raises:
-            FileExistsError: The destination exists, including the input file.
+            FileExistsError: The destination exists and overwrite is False.
             OSError: Opening or writing the destination fails.
-            ValueError: PyMuPDF cannot save the document, or PDF/A XMP is malformed.
+            ValueError: The destination is the source with overwrite=True,
+                PyMuPDF cannot save the document, or PDF/A XMP is malformed.
 
         Writes the PDF and removes only this call's new output on failure or
-        interruption. Discards unreferenced objects, including replaced images.
+        interruption. With overwrite=True, replaces the destination only after
+        a complete staged save. Discards unreferenced objects, including replaced images.
         Removes PDF/A identification from the in-memory XMP before saving;
         does so even for unencrypted, unrestricted input. Retains other metadata
         and does not modify the source file.
@@ -584,6 +591,15 @@ class Pdf:
         from pymupdf.mupdf import PDF_ENCRYPT_NONE
 
         path = Path(output_path)
+        if overwrite:
+            if document.name and (Path(document.name).resolve() == path.resolve()
+                    or path.exists() and Path(document.name).exists() and os.path.samefile(document.name, path)):
+                raise ValueError("The source PDF cannot be overwritten.")
+            with tempfile.TemporaryDirectory(prefix=".pdf-save-", dir=path.parent) as directory:
+                staged = Path(directory) / "result.pdf"
+                Pdf.save_new(document, staged, compact=compact)
+                os.replace(staged, path)
+            return
         with path.open("xb") as destination:
             try:
                 _process_pdfa_identification(document, remove=True)

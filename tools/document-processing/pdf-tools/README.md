@@ -1,5 +1,18 @@
 # PDF desktop tools
 
+`../pdf-split-pages.py` opens the visual page splitter: two left settings groups,
+colored numbered crop overlays, and read-only pages/bookmarks with output start
+indexes. Move all frames or individual crops, keep pages whole, and export equal
+child paper sizes with centered crops and blank padding. See
+[split_pages/README.md](split_pages/README.md). It reuses the shared viewer, bounded
+cache, serial jobs, RGB transfer, file actions and tooltips; exports never rasterize.
+
+`../pdf-font-replace.py` opens the font replacement GUI: ordered source/target
+rules on the left, raw/result comparison in the center, and read-only page/bookmark
+navigation on the right. See [font_replace/README.md](font_replace/README.md) for
+matching, font discovery and export behavior. It shares the viewer, cache budgets,
+RGB transport, serial job runner, file dialogs and tooltip handling below.
+
 `../pdf-bookmarks-add.py` opens the TOC recognition, bookmark editor and page-label
 GUI, including its Page labels tab. See [bookmarks/README.md](bookmarks/README.md)
 for the workflow, API testing, recognition queue and export behavior. This tool
@@ -10,11 +23,14 @@ the binarizer retains its read-only navigator.
 Both GUIs reuse bounded page-cache storage and shared-memory RGB transport;
 bookmark previews retain one latest rotation per page within 512 MiB / 100 pages.
 `utils.Pdf` owns bounded RGB rendering and generic bookmark/page-label operations.
-`utils.Llm` owns model settings, presets, payloads and a lazily created Qt API client;
+`utils.Llm` owns cloud/local model presets, payloads, context-image limits and a lazily created Qt API client;
 the bookmark package retains only its TOC prompt and book-context construction.
 They also share focus-scoped PgUp/Left/Up and PgDn/Right/Down page shortcuts.
 Clicking the viewer gives it keyboard focus, including while drawing a TOC crop;
 keys in text and settings editors retain their normal editing behavior.
+Both windows install `common/tooltips.py`: widget/action and tree-cell hints wrap
+within 250 logical pixels, including long unbroken URLs. The window-scoped filter
+also covers controls rebuilt by Close and newly created settings.
 
 The remaining sections describe PDF Binarize.
 
@@ -29,7 +45,10 @@ supported PDF constructs, crop codecs and region JSON semantics.
 ## Layout and navigation
 
 The left column independently owns the file toolbar, profile list and settings
-tabs. The profile list fits two to six occupied rows, then scrolls.
+tabs. The two-column profile list displays names and assigned page ranges, with
+twice the previous height (four to twelve visible rows), then scrolls. Its action
+buttons sit above the list. Settings use group boxes and separators; hover over
+parameter labels for their purpose, tuning direction and suggested starting values.
 One right toolbar groups compact page arrows, a page field/count, zoom controls
 and the original checkbox with vertical separators. Enter or focus loss jumps pages.
 Preview/navigation fill the remaining height; status and export share one bottom row.
@@ -44,7 +63,11 @@ session, or start the tool from a normal, non-elevated terminal to enable drops.
 Physical page numbers are one-based; the navigator also displays PDF page labels
 when present. The Pages tab lists every page and its profile, while Bookmarks
 preserves the PDF's hierarchy. Click either tree to navigate. Non-page bookmarks
-remain visible without a page action. Printed page numbers are not OCR-detected.
+remain visible without a page action. The Images tab lists individual image
+placements on the displayed original or processed page: encoding, effective DPI,
+pixel size and page position. Click one to outline it in blue; click again, empty
+space or Esc to clear. It refreshes with the preview after a profile or view change.
+Printed page numbers are not OCR-detected.
 
 The viewer supports cursor-centered wheel zoom, an editable percentage with a `%`
 suffix, drag panning, fit page, fit width and 100% (one preview pixel per Qt logical
@@ -56,7 +79,8 @@ retains position on the same page. The original checkbox remains checked across
 navigation. Editing processing settings or turning pages while showing originals
 colors it amber and explains the state in its tooltip; uncheck it to inspect the
 current processed result. Warnings do not reserve a blank row above the page.
-No channel/bit-depth/compression information panel is included.
+The Images tab reports each image's PDF encoding; there is no separate page-wide
+channel or bit-depth information panel.
 
 Red boxes toggles detected image-region outlines as independent viewer overlays;
 it never alters the image pixels or the exported PDF. Processed previews already
@@ -72,13 +96,17 @@ a profile assigns it to the selected page(s) and loads its controls. Turning pag
 already assigned profile without changing that assignment. `no-processing`
 disables processing controls while leaving whole-project output options available.
 
-Add copy duplicates the current configuration (default when copying no-processing).
+Add copy prompts for a name, initially the current physical page number, and
+duplicates the current configuration (default when copying no-processing).
+Right-click profiles to rename/delete them or apply them to typed page ranges.
+**Apply to pages…** also appears above the list and accepts `1,2,4-10` through the
+shared page-range parser. Invalid ranges leave all assignments unchanged.
 Profiles contain complete settings, so later edits to default do not affect custom
 copies. Editing a profile affects all pages referring to it. Ctrl-click individual
 pages or Shift-click a range in Pages, then click a profile on the left to apply it
 to the selection, including when that profile is already current. Modifier-clicks
 only select pages: they do not start rendering or lock the next selection. Normal
-page turns select one page. The old range-entry and Apply button are removed.
+page turns select one page. Typed-range assignment complements tree selection.
 Deleting a custom profile requires choosing a replacement for all its references.
 
 Save project writes versioned UTF-8 JSON atomically, including relative PDF and
@@ -93,7 +121,7 @@ not assert equal document contents. Relocating a PDF marks the project unsaved.
 
 Export PDF defaults to a new `<source>_binary.pdf` beside the input. Save shown page
 exports the current original/result view, optionally opening it externally. Output
-PDFs are never overwritten. Saving an existing project JSON is allowed after the
+PDFs use numbered defaults and require explicit confirmation to replace. Saving an existing project JSON is allowed after the
 user selects Save; Save as uses the standard overwrite-confirming dialog.
 PDF/A identification and encryption are removed by the shared ordinary-PDF policy;
 native text, OCR, links, annotations, widgets, geometry and bookmarks remain in
@@ -115,7 +143,7 @@ Dialogs suspend pending timers.
 One persistent QProcess accepts at most one outstanding request. It owns all MuPDF
 calls on its main thread. During work, navigation and processing controls are
 disabled and the cursor is busy; zoom/pan remain available. There is no render-job
-queue. The GUI caches decoded pixels and region metadata for at most 100 physical
+queue. The GUI caches decoded pixels, region boxes and image metadata for at most 100 physical
 pages and 512 MiB, evicting the least recently viewed pages when either limit is
 reached. Each page has separate original/processed slots; a new result overwrites
 that view's previous settings version. Processed pixels and region overlays must
@@ -146,10 +174,21 @@ a sidecar error explicitly reports the already saved PDF.
 
 ## Module ownership
 
+Both tools' **Close** action releases the PDF, clears cached previews/session
+state, and restores the startup window. Unsaved changes use the existing
+save/export/discard prompt. Successful exports show a completion dialog; Binarize
+includes source/output sizes and percentage change. `Paths.available_path` suggests
+unused `_1`, `_2`, … names. Selecting an existing output offers **Overwrite** or
+**Return**; replacement is published only after successful staging. Sources cannot
+be overwritten. These shared save-dialog rules live in `common/file_actions.py`.
+
 | Module | Responsibility |
 | --- | --- |
-| `common/viewer.py` | Raster display, zoom, focus-scoped page keys and region overlays |
-| `common/navigation.py` | Reusable physical-page and bookmark trees |
+| `common/viewer.py` | Raster display, zoom, focus-scoped page keys and red/blue overlays |
+| `common/navigation.py` | Reusable physical-page, bookmark and image trees |
+| `common/pdf_images.py` | Read displayed image placements, encoding and effective DPI |
+| `common/bookmark_editor.py` | Optional batch outline editing, two indent/outdent modes and arbitrary-selection subtree dragging |
+| `common/tooltips.py` | Window-scoped tooltips with strict width and long-token wrapping |
 | `common/file_drop.py` | Route PDF/project drops from child controls to the owning window |
 | `common/jobs.py` | Single-request subprocess transport, progress and failure recovery |
 | `common/preview_buffer.py` | Bounded RGB shared-memory transport owned by the GUI |
@@ -162,7 +201,7 @@ a sidecar error explicitly reports the already saved PDF.
 | `binarize/workflow.py` | Conversion/preview orchestration and shared review output |
 | `binarize/settings.py` | Canonical processing defaults and validation |
 | `binarize/objects.py` | Content streams, image objects, vector paint and resource isolation |
-| `binarize/raster.py`, `binarize/regions.py` | Image algorithms, segmentation and encoding |
+| `binarize/raster.py`, `binarize/regions.py`, `binarize/chromatic.py` | Image algorithms, gray/color segmentation and encoding |
 
 The entry loads this directory as `personal_pdf_tools`. Launcher discovery hides
 internals; the compiler recursively stages both subpackages under that valid import

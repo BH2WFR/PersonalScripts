@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 from utils import *
 ENTRY = ROOT / "tools/document-processing/pdf-bookmarks-add.py"
 runpy.run_path(str(ENTRY))["load_app"]("bookmarks.model")
-from personal_pdf_tools.bookmarks.model import Bookmark, BookSession, NeedsInformation, Status, TocPage, parse_draft
+from personal_pdf_tools.bookmarks.model import Bookmark, BookSession, ConversationTurn, NeedsInformation, Status, TocPage, parse_draft
 from personal_pdf_tools.bookmarks.recognition import build_request
 from personal_pdf_tools.bookmarks.app import BookmarksWindow
 from personal_pdf_tools.bookmarks.worker import Worker, export_project
@@ -52,6 +52,9 @@ class BookmarksTests(unittest.TestCase):
         cls.application.setStyle("Fusion")
 
     def setUp(self) -> None:
+        notice = patch.object(QtWidgets.QMessageBox, "information")
+        self.notice = notice.start()
+        self.addCleanup(notice.stop)
         directory = tempfile.TemporaryDirectory(dir=ROOT / "tmp", prefix="bookmarks-test-")
         self.addCleanup(directory.cleanup)
         self.folder = Path(directory.name)
@@ -425,7 +428,8 @@ class BookmarksTests(unittest.TestCase):
         self.assertEqual(task.raw_response, problem)
         self.assertEqual(window.session.toc[2].status, Status.DONE)
         self.assertEqual([item.title for item in window.session.bookmarks], ["Beta"])
-        self.assertNotIn("Missing number", json.dumps(requests[1]))
+        self.assertIn("Missing number", requests[1]["messages"][2]["content"])
+        self.assertNotIn("Missing number", requests[1]["messages"][-1]["content"][0]["text"])
         with patch.object(window, "_error") as error, patch.object(QtWidgets.QFileDialog, "getSaveFileName") as dialog:
             self.assertFalse(window._export())
             error.assert_called_once()
@@ -446,7 +450,8 @@ class BookmarksTests(unittest.TestCase):
         self.assertEqual(len(requests), 3)
         self.assertIn("Missing number", json.dumps(requests[2]))
         self.assertIn("Alpha has printed page 1.", json.dumps(requests[2]))
-        self.assertNotIn('"Beta"', json.dumps(requests[2]))
+        self.assertIn("Beta", requests[2]["messages"][4]["content"])
+        self.assertNotIn("Beta", requests[2]["messages"][-1]["content"][0]["text"])
         self.assertEqual([item.title for item in window.session.bookmarks], ["Alpha", "Beta"])
         self.assertEqual(task.status, Status.DONE)
         self.assertFalse(task.draft_invalid)
@@ -588,9 +593,65 @@ class BookmarksTests(unittest.TestCase):
         window._retry()
         wait_for(lambda: not window._running and not window.runner.busy)
         self.assertEqual(len(requests), 3)
-        self.assertNotIn("Recognized 2", json.dumps(requests[2]))
+        self.assertIn("Recognized 2", json.dumps(requests[2]))
+        self.assertIn("RETRY this page", requests[2]["messages"][-1]["content"][0]["text"])
         self.assertEqual(len(window.session.bookmarks), 2)
         self.assertEqual(window.session.last_prompt_tokens, 321)
+
+    def test_conversation_budget_retry_all_clear_and_local_no_key(self) -> None:
+        endpoint, requests = self.api_server(replies=['- {page: 1, level: 1, title: "Reply"}'] * 8)
+        window = self.window()
+        window.toc_last.setValue(2)
+        window._mark_toc()
+        wait_for(lambda: not window.runner.busy)
+        window.api_url.setEditText(endpoint)
+        window.api_model.setCurrentText("local-vision")
+        window.api_key.clear()
+        window.context_images.setValue(1)
+        window._run_all()
+        wait_for(lambda: not window._running and not window.runner.busy)
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(len(window.session.conversation), 2)
+        self.assertEqual([Llm.image_count(request["messages"]) for request in requests], [1, 1])
+        self.assertNotIn("conversation", window.session.to_data())
+        self.assertNotIn("data:image", json.dumps(window.session.to_data()))
+        window.requirements.setPlainText("Keep all titles; correct the hierarchy.")
+        window.context_images.setValue(0)
+        window._retry_all()
+        wait_for(lambda: not window._running and not window.runner.busy)
+        self.assertEqual([turn.page for turn in window.session.conversation], [1, 2, 1, 2])
+        self.assertEqual([Llm.image_count(request["messages"]) for request in requests], [1, 1, 3, 4])
+        self.assertIn("correct the hierarchy", requests[2]["messages"][-1]["content"][0]["text"])
+        self.assertEqual([entry.source_page for entry in window.session.bookmarks], [1, 2])
+        window.clear_context.setChecked(True)
+        window._retry_all()
+        wait_for(lambda: not window._running and not window.runner.busy)
+        self.assertEqual([turn.page for turn in window.session.conversation], [1, 2])
+        self.assertEqual([len(request["messages"]) for request in requests[-2:]], [2, 4])
+        self.assertEqual([Llm.image_count(request["messages"]) for request in requests[-2:]], [1, 2])
+        self.assertEqual(len(window.session.bookmarks), 2)
+        window.go_page(1)
+        wait_for(lambda: not window.runner.busy)
+        window._retry()
+        wait_for(lambda: not window._running and not window.runner.busy)
+        self.assertEqual([turn.page for turn in window.session.conversation], [1])
+        self.assertEqual([entry.source_page for entry in window.session.bookmarks], [1, 2])
+
+    def test_conversation_uses_old_responses_as_context_and_excludes_worker_payload(self) -> None:
+        project = self.project
+        project.conversation = [ConversationTurn(1, "Earlier prompt", b"jpeg", "Ambiguous response", "Missing number")]
+        project.toc[2].draft = "Previous incorrect draft"
+        project.toc[2].requirements = "The first printed page is 3."
+        project.api.max_context_images = 1
+        body = build_request(project, 2, b"current", retry=True)
+        self.assertEqual(len(body["messages"]), 4)
+        self.assertEqual(Llm.image_count(body["messages"]), 1)
+        self.assertIn("Missing number", body["messages"][2]["content"])
+        self.assertIn("Previous incorrect draft", body["messages"][-1]["content"][0]["text"])
+        self.assertIn("The first printed page is 3", body["messages"][-1]["content"][0]["text"])
+        data = project.to_data()
+        self.assertNotIn("conversation", data)
+        self.assertEqual(BookSession.from_data(data, self.folder).conversation, [])
 
     def test_stop_aborts_request_and_does_not_send_next_page(self) -> None:
         endpoint, requests = self.api_server(delay=.3)
@@ -849,15 +910,43 @@ class BookmarksTests(unittest.TestCase):
         target.write_bytes(b"Existing content")
         with patch.object(QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.StandardButton.Save), \
                 patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(target), "PDF")), \
+                patch.object(QtWidgets.QMessageBox, "exec", return_value=0), \
                 patch.object(window, "_error") as error:
             window.close()
             wait_for(lambda: not window.runner.busy)
-            error.assert_called_once()
+            error.assert_not_called()
         self.assertTrue(window.isVisible())
         self.assertTrue(window.dirty)
         self.assertFalse(window.session.bookmarks)
         self.assertIsNone(window._after_export)
         self.assertEqual(target.read_bytes(), b"Existing content")
+
+    def test_close_pdf_resets_session_releases_file_and_reopens(self) -> None:
+        window = self.window()
+        window.api_key.setText("unsaved-test-key")
+        window.dirty = False
+        window._close_pdf()
+        self.application.processEvents()
+        self.assertTrue(window.isVisible())
+        self.assertIsNone(window.session)
+        self.assertEqual(window.api_key.text(), "")
+        self.assertFalse(window.close_pdf_button.isEnabled())
+        moved = self.folder / "moved.pdf"
+        self.source.rename(moved)
+        window.open_path(moved)
+        wait_for(lambda: window.session is not None and window._shown is not None and not window.runner.busy)
+        self.assertEqual(window.session.source, moved)
+
+    def test_export_overwrite_shows_completion(self) -> None:
+        window = self.window()
+        target = self.folder / "existing.pdf"
+        target.write_bytes(b"Old output")
+        with patch("personal_pdf_tools.bookmarks.app.choose_pdf_output", return_value=(target, True)):
+            window._export()
+        wait_for(lambda: not window.runner.busy)
+        self.assertIn(str(target), self.notice.call_args.args[2])
+        with pymupdf.open(target) as document:
+            self.assertEqual(document.page_count, 6)
 
 
 if __name__ == "__main__":

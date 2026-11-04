@@ -204,6 +204,8 @@ def _run_compiler(
                 "keyboard-remap.py": ("keyboard-remap", "personal_keyboard_remap"),
                 "rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
                 "pdf-binarize.py": ("pdf-tools", "personal_pdf_tools"),
+                "pdf-font-replace.py": ("pdf-tools", "personal_pdf_tools"),
+                "pdf-split-pages.py": ("pdf-tools", "personal_pdf_tools"),
                 "pdf-bookmarks-add.py": ("pdf-tools", "personal_pdf_tools")}
     package = packages.get(os.path.basename(script_path))
     if package is None:

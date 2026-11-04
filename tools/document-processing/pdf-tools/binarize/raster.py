@@ -97,7 +97,8 @@ def _encode_page(
                     regions._intersection(box, regions._pixel_box(region.rect, rendered.size)) > 0 for region in boxes
                 ):
                     boxes += (regions._Region(panel.rect, mode=settings.mode, dither=settings.dither,
-                                              quality=settings.quality, codec=settings.codec),)
+                                              quality=settings.quality, codec=settings.codec,
+                                              white_point=settings.white_point if settings.whiten else 255),)
         layers: list[regions._Layer] = []
         # Crops retain their native rendered resolution, unaffected by text-only
         # levels, enlargement and sharpening. Map bounds to the enlarged base.

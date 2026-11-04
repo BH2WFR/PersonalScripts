@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QPixmap
 
+from ..common.pdf_images import ImageElement
 from .project import Config, Project, SKIP_ID
 from ..common.page_cache import CACHE_BYTES, CACHE_PAGES, PageCache, pixmap_bytes
 
@@ -39,12 +40,14 @@ class PreviewState:
 
 @dataclass(frozen=True)
 class PreviewFrame:
-    """Detached pixels and region metadata; callers must not mutate the pixmap."""
+    """Detached pixels, region boxes and displayed image metadata."""
 
     state: PreviewState
     pixmap: QPixmap
     regions: tuple[Rectangle, ...]
     regions_available: bool
+    images: tuple[ImageElement, ...] = ()
+    page_size: tuple[float, float] | None = None
 
     def matches_regions(self, state: PreviewState) -> bool:
         """Whether these boxes were calculated with the requested processing inputs."""

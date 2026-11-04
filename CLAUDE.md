@@ -290,12 +290,13 @@ Canonical implementations live there; do not add implementations to the
 | Open a file in the default app | `System.open_with_default_app(path)` |
 | Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |
 | Resolve `$VAR` / `{{placeholders}}` in paths | `Paths.resolve_vars(path, schema_dir=..., script_dir=...)` |
+| Suggest an unused filename | `Paths.available_path(path, start=1, limit=10000) -> Path`; retains a free path or tries `stem_1.ext`, `stem_2.ext`, etc.; does not reserve it, so writers must still check collisions |
 | Open a PDF for processing | `with Pdf.open_document(path, password=None, interactive=True) as (document, password): ...`; all PDF tools use this authenticated context manager for input files; closes on success, failure, or cancellation; reuse the returned password with `interactive=False` for secondary/background readers |
 | Allocate a private PDF object | `Pdf.new_object(document, value="<<>>", data=None) -> int`; adds a new object and optional decoded stream in memory, without changing a source xref |
 | Resolve a PDF resource dictionary | `Pdf.read_dictionary(document, xref, key) -> str`; direct/indirect dictionary syntax, null becomes empty; child references remain shared; used by font replacement and image binarization |
 | Authenticate an already open PDF | `Pdf.unlock(document, password=None, interactive=True) -> str`; validates PDF input, silently handles empty-password protection, tries a supplied password, otherwise prompts privately with retry and cancellation; False raises instead of prompting; does not recover a password from an already authenticated document |
 | Detect PDF/A identification | `Pdf.has_pdfa_identification(document) -> bool`; read-only check for XMP identification elements/attributes, independent of encryption; namespace declarations alone do not count; malformed PDF/A XMP raises ValueError; does not validate PDF/A conformance |
-| Save a new ordinary PDF | `Pdf.save_new(document, output_path, compact=True) -> None`; always removes encryption and PDF/A identification from XMP, including for unencrypted input, while retaining other metadata; exclusive output creation, removes its partial output on failure, drops unused objects; use `compact=False` for continued editing/repeated saves to preserve live object references; PyMuPDF is imported lazily in `utils/pdf.py` |
+| Save an ordinary PDF | `Pdf.save_new(document, output_path, compact=True, overwrite=False) -> None`; removes encryption and PDF/A identification while retaining other metadata; default exclusive creation cleans its partial file on failure; explicitly authorized `overwrite=True` stages beside the destination before replacement and rejects the source; use `compact=False` for continued editing to preserve live object references; PyMuPDF loads lazily |
 | Read effective PDF page labels | `Pdf.read_page_labels(document) -> list[str]`; preserves blank labels, falls back to physical page numbers when no label rules exist |
 | Render a bounded PDF preview | `Pdf.render_page(page, dpi=200, rotation=0, max_pixels=12_000_000, annotations=True) -> Pixmap`; opaque RGB, extra clockwise rotation, integer rounding kept inside pixel budget; no Qt or file writes |
 | Read editable bookmarks | `Pdf.read_bookmarks(document) -> list[PdfBookmark]`; depth-first title/one-based page/level/original_xref; non-page actions retain nonpositive targets |
@@ -303,9 +304,10 @@ Canonical implementations live there; do not add implementations to the
 | Replace or clear bookmarks | `Pdf.write_bookmarks(document, bookmarks) -> None`; validates hierarchy/targets before mutation; [] clears; retained same-document xrefs preserve style/collapse and unchanged destinations/actions; does not save |
 | Number or clear selected labels | `Pdf.number_page_labels(labels, indexes, first=1, prefix="")`, `Pdf.clear_page_labels(labels, indexes)`; mutate label lists only, indexes are zero-based; apply with write_page_labels |
 | Generate body/TOC labels | `Pdf.generate_page_labels(labels, body_pdf, body_book, toc_pages, toc_prefix="C")`; one-based physical mapping, positive printed body number; TOC takes precedence, other front matter remains |
-| Shared LLM settings and presets | `LlmSettings(base_url=..., model=..., temperature=.1, max_tokens=8192, timeout_seconds=180)`; no secrets; `Llm.PRESETS` contains named editable endpoints; helpers use stdlib only |
+| Shared LLM settings and presets | `LlmSettings(base_url=..., model=..., temperature=.1, max_tokens=8192, timeout_seconds=180, max_context_images=5)`; no secrets; `Llm.PRESETS` includes cloud providers and local Ollama/LM Studio endpoints; helpers use stdlib only |
 | Validate/resolve LLM endpoints | `Llm.validate_settings(settings, require_model=True)`, `Llm.completion_url(base)`, `Llm.models_url(base, page=1)`; reject credentials/query/fragment in base URLs; same-host Alibaba catalog pagination and SiliconFlow chat filter |
-| Construct chat/image requests | `Llm.chat_request(settings, messages, max_tokens=None)`, `Llm.image_content(image, mime_type="image/jpeg", detail="high")`; caller owns context; official DeepSeek body disables thinking; no I/O |
+| Construct chat/image requests | `Llm.chat_request(settings, messages, max_tokens=None)`, `Llm.image_content(image, mime_type="image/jpeg", detail="high")`; caller owns context; chat_request applies max_context_images across the entire request; official DeepSeek body disables thinking; no I/O |
+| Count/limit context images | `Llm.image_count(messages)`, `Llm.limit_images(messages, maximum)`; 0 = unlimited, otherwise keep newest image_url parts including current input; omit older images with text markers, retain all text/replies, never mutate caller history |
 | Construct a vision API probe | `Llm.vision_test_request(settings)`; generated 48x48 red PNG and 32 output tokens, no user content or image-library dependency |
 | Parse LLM responses/catalogs | `Llm.parse_completion(data) -> LlmResponse(text, prompt_tokens, finish_reason)` retains partial text; `Llm.parse_models(data) -> (ids, total_or_none)` validates compatible/native formats |
 | Query API account balances | `Llm.balance_url(base)` resolves same-origin official DeepSeek/Kimi China/OpenRouter routes; unsupported bases raise NotImplementedError. `Llm.parse_balance(base,data) -> list[tuple[str,str]]` returns currency/finite decimal amount pairs; OpenRouter subtracts usage from credits and requires a management key; no guessed proxy routes or key-quota substitution |
@@ -507,7 +509,10 @@ page buffers and new empty documents may use PyMuPDF directly. Passwords stay in
 memory and are never passed to external command lines. Ghostscript compression
 stages an unprotected input in its temporary directory and publishes the validated
 result through `Pdf.save_new()`. All saved PDFs omit encryption, permission
-restrictions, and PDF/A identification; existing files are never overwritten.
+restrictions, and PDF/A identification. Existing files are protected by default;
+the Binarize/Bookmarks GUIs can explicitly confirm replacement of output PDFs.
+Their shared `common/file_actions.py` chooser uses `Paths.available_path`, protects
+source aliases, and returns overwrite permission for staged worker publication.
 Internal `_process_pdfa_identification()` shares namespace-aware detection/removal
 between `has_pdfa_identification()` and `save_new()`, retaining unrelated XMP.
 `pdf-decrypt.py` also accepts PDF/A-only input with an ordinary informational
@@ -573,8 +578,9 @@ I'll decide whether to modify utils or handle it differently.
   editable without password or permission restrictions. Remove PDF/A
   identification even when input is not encrypted, retaining unrelated metadata.
   Never reapply the source encryption, restrictions, or PDF/A identification.
-- Preserve the source and never overwrite an existing output. Use the shared
-  save function's exclusive creation and partial-output cleanup.
+- Preserve the source. Use exclusive creation and partial-output cleanup by
+  default. The Binarize/Bookmarks GUIs allow explicit output replacement after
+  confirmation, using staged publication; failures retain the old output.
 
 ### Progress output — all scripts
 
@@ -1010,6 +1016,13 @@ Run keyboard regression tests with `-p "test_keyboard*.py"`.
 `tools/document-processing/pdf-binarize.py` starts the PySide6/Fusion GUI and uses
 `pdf-tools/`, imported as `personal_pdf_tools`. See its README for module ownership. Common viewer,
 navigation and single-request QProcess components live in `common/`; binarizer
+profiles show assigned ranges in a second column and support input-dialog batch
+assignment plus context-menu rename/delete. Label tooltips describe grouped
+settings. Each profile defaults to capping per-axis image DPI at native resolution;
+optional target upsampling and explicit post-sampling enlargement stay distinct.
+Both GUIs provide Close to stop the idle worker, release source/cache state and
+rebuild the startup UI. Exports show completion dialogs, including sizes in Binarize.
+The binarizer's
 models/UI/worker and shared image engines live in `binarize/`. All MuPDF calls run
 in the worker's main thread for the GUI. File actions stay above the left profiles;
 one separated right toolbar combines page jumps, zoom and original view. Windows
@@ -1030,17 +1043,62 @@ validated before adoption. Internals stay out of launcher/compiler lists;
 the entry stages the package recursively. Run `-p "test_pdf_binarize*.py"` for engine,
 project, offscreen GUI, real worker and packaging-staging checks.
 
+`pdf-split-pages.py` is the GUI-only entry for `pdf-tools/split_pages/`.
+Its two settings groups separate global strips/range/order from per-page overrides.
+Original previews use the shared serial worker, RGB buffer and 512 MiB / 100-page
+cache without debounce; geometry changes redraw only 50%-opacity colored outlines
+and fixed-size order numbers. Pages/bookmarks are read-only; Pages adds colored
+whole/custom status and one-based output start indexes. Crop coordinates may cross
+source edges. Moving frames preserves sizes; reducing one crop keeps it centered
+on the original equal-size output canvas. Custom pages capture order/canvas size
+and survive global edits. In-bounds full crops use CropBox; padding uses clipped
+Form XObjects with original resources. Isolate shared annotations before clipping
+appearances; keep copied widgets registered in AcroForm. Remap destinations using
+output paper origins, not trimmed crop origins. Clear all page labels as before.
+Source and existing-output safety use common file actions and Pdf.save_new.
+The compiler stages the shared package; no-GUI Linux excludes the GUI entry.
+Run `-p "test_pdf_split_pages*.py"` for geometry, padded/rotated output, navigation,
+real-worker/offscreen UI, source protection and packaging checks.
+
+`pdf-font-replace.py` is the GUI-only entry for `pdf-tools/font_replace/`.
+See its README for module ownership and supported encodings. The migrated engine
+matches original text, with the first ordered rule winning and no cascading.
+Rules include applied physical pages (default all), parsed by Input.parse_index_ranges
+with ignored pages subtracted. Color-only rules keep fonts and skip decoding/embedding;
+retain their resources during other rules' cleanup. Count their text-show runs separately
+from font-replaced characters. Target embedding defaults to used-glyph subsets.
+The left source/target list owns committed rules; Match/Target controls edit a
+draft until Add/Update. Preview and export share the same engine. Each preview
+uses a fresh page extract and remaps ignored physical pages; export opens the
+complete original separately. Raw/result caches share 512 MiB / 100 physical pages
+and check rule revisions. It reuses common viewer/navigation (read-only), serial
+jobs, shared-memory pixels, file dialogs and tooltips. Target discovery runs in
+the worker and uses utils.Font; no model/PDF object crosses into the UI.
+Visible target results show aliases/styles and select family variants on click.
+Worker source descriptions report PDF resource/type/encoding/embedding metadata
+and scan-scoped sizes/pages/colors; UI rows retain exact matching names in item data.
+Rules stay in memory. Source PDFs are protected and only Export writes output;
+active operations finish before closing. No new dependencies are introduced.
+The compiler stages the shared package, and no-gui Linux hides this entry.
+Run `-p "test_pdf_font_replace*.py"` for engine and real-worker/offscreen GUI checks.
+
 `pdf-bookmarks-add.py` is the GUI-only entry for `pdf-tools/bookmarks/`, including
 the page-label tab. The separate page-tag entry, CLI editors and multi-up mapping
 are removed. See `bookmarks/README.md` for module ownership.
 Recognition has one normalized crop per rotated book page, one serial PDF worker
-and one cancellable Qt HTTP request. Only Run/Retry sends images. Context is earlier
-accepted text from the current book; retries replace entries by source TOC page.
+and one cancellable Qt HTTP request. Only Run/Retry sends book images. Each request
+introduces one new source page and carries the current book's chronological exchanges,
+including failed replies/diagnostics. Retries replace entries by source TOC page;
+Retry all bypasses pending-only filtering. Clear conversation runs once before a queue
+and keeps results/drafts/requirements. Context images default to five including current;
+one keeps only current, zero is unlimited. Omitted old images retain textual markers.
+ConversationTurn images/replies stay in memory and are excluded from worker payloads.
+Local Ollama/LM Studio presets use the same optional-key client and model discovery.
 TOC responses accept entries/errors envelopes and legacy YAML lists. Model issues
 and null targets cannot replace accepted entries; failed drafts block export.
 Page-specific requirements plus previous diagnostics accompany explicit retries.
-Bounded request/reply histories stay in TocPage memory and are omitted from worker
-payloads; images and API keys are excluded. The queue advances only after the
+Bounded request/reply trace histories stay in TocPage memory and are omitted from worker
+payloads; trace records exclude images and API keys. The queue advances only after the
 current request completes, including after a page reports a recoverable problem.
 Preserve raw YAML/comments separately from the authoritative editable outline.
 BookSession, credentials and recognition drafts stay in memory; this tool has no
@@ -1057,8 +1115,16 @@ book-specific context. `utils.Pdf` owns bookmark/label edits and bounded renderi
 worker modules only coordinate sessions and transport. Do not restore duplicate
 API, outline or label modules in the private tool package.
 Common crop/tree editing is opt-in; Binarize's navigator remains read-only.
-New bookmarks use the current page. Ctrl/right-click selects without navigation;
-outdent offers preserved reading order or moving after the former parent's subtree.
+New bookmarks use the current page. Ctrl/Shift selects without navigation;
+right-click retains multi-selection. Indent either moves selected subtrees or only
+explicitly selected levels, preserving reading order; outdent offers preserved
+reading order or moving after the former parent's subtree. Arbitrary, nonconsecutive
+selected subtrees drag together in document order; ancestor/descendant overlap is
+deduplicated and self-drops rejected. The widget owns QDrag publication to avoid
+Qt's default move cleanup deleting rows twice. Each batch emits one undoable edit.
+Both PDF windows install `common/tooltips.TooltipFilter`, which wraps widget/action
+and tree-cell text within 250 logical pixels, including unbroken URLs. It survives
+central-widget rebuilding and never rewrites the underlying tooltip strings.
 Shared `common/page_cache.py` owns per-page LRU budgets, and
 `common/pixel_transfer.py` publishes worker RGB data to the existing PreviewBuffer.
 Bookmarks retain one rotation per page; Binarize retains its configuration-aware

@@ -16,12 +16,14 @@ from utils import *
 from ..common.bookmark_editor import BookmarkEditor, OutlineRow
 from ..common.crop_viewer import CropViewer, Rectangle
 from ..common.file_drop import FileDropFilter
+from ..common.file_actions import choose_pdf_output
+from ..common.tooltips import TooltipFilter
 from ..common.jobs import JobRunner
 from ..common.protocol import Json
 from ..common.page_cache import PageCache, pixmap_bytes
 from ..common.preview_buffer import PreviewBuffer
 from .recognition import SYSTEM_PROMPT, build_request
-from .model import MAX_DRAFT, Bookmark, BookSession, NeedsInformation, Status, TocPage
+from .model import MAX_DRAFT, Bookmark, BookSession, ConversationTurn, NeedsInformation, Status, TocPage
 
 
 class BookmarksWindow(QtWidgets.QMainWindow):
@@ -41,6 +43,9 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self._test_elapsed = QtCore.QElapsedTimer()
         self._queue: list[int] = []
         self._active: int | None = None
+        self._pending_turn: ConversationTurn | None = None
+        self._retry_run = False
+        self._last_image_count = 0
         self._purpose = ""
         self._shown: tuple[int, float] | None = None
         self._closing = False
@@ -66,6 +71,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self.resize(1500, 950)
         self.setMinimumSize(1050, 650)
         self._build()
+        self.tooltips = TooltipFilter(self)
         self.setAcceptDrops(True)
         self.file_drops = FileDropFilter(self, self.open_path, lambda: not self._api_busy and not self.runner.busy, suffixes=(".pdf",))
         self._enabled()
@@ -93,6 +99,8 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         row.setContentsMargins(0, 0, 0, 0)
         for text, action in (("Open PDF", self._open_dialog),):
             row.addWidget(self._button(text, action))
+        self.close_pdf_button = self._button("Close", self._close_pdf)
+        row.addWidget(self.close_pdf_button)
         left.addWidget(self.files)
         self.tabs = QtWidgets.QTabWidget()
         recognition = QtWidgets.QWidget()
@@ -133,12 +141,13 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self.requirement_scope.addItems(["Whole book", "Current TOC page"])
         self.requirement_scope.currentIndexChanged.connect(self._load_requirements)
         self.requirements = QtWidgets.QPlainTextEdit()
-        self.requirements.setPlaceholderText("Special transcription requirements")
+        self.requirements.setPlaceholderText("Transcription requirements or retry corrections (whole book / current page)")
         self.requirements.setMaximumHeight(105)
         self.requirements.textChanged.connect(self._requirements_changed)
         form.addRow(self.requirement_scope)
         form.addRow(self.requirements)
-        self.clear_context = QtWidgets.QCheckBox("Clear context before this run")
+        self.clear_context = QtWidgets.QCheckBox("Clear conversation before this run / retry")
+        self.clear_context.setToolTip("Clear previous LLM exchanges once before the queue starts. Keeps recognized results, drafts and your requirements. Current-page diagnostics still accompany retries.")
         self.only_pending = QtWidgets.QCheckBox("Run only pending / failed pages")
         self.only_pending.setChecked(True)
         self.append_existing = QtWidgets.QCheckBox("Keep existing PDF bookmarks")
@@ -159,6 +168,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
 
         api = QtWidgets.QWidget()
         settings = QtWidgets.QFormLayout(api)
+        settings.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
         self.api_url = QtWidgets.QComboBox()
         self.api_url.setEditable(True)
         self.api_url.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
@@ -183,6 +193,9 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self.temperature.setValue(.1)
         self.max_tokens = self._spin(1, 65536, 8192)
         self.timeout = self._spin(5, 1800, 180)
+        self.context_images = self._spin(0, 10000, 5)
+        self.context_images.setSpecialValueText("0 — unlimited")
+        self.context_images.setToolTip("Maximum images in each request, including the current page. Keeps the newest images; older image parts are omitted but text/replies remain. Use 5 for a five-image model, 1 for only the current image, or 0 for no limit.")
         self.fetch_button = self._button("Get models", self._fetch_models)
         self.fetch_button.setToolTip("Request the provider's model catalog with this key. No PDF content is sent; select a vision-capable model.")
         model_row = QtWidgets.QHBoxLayout()
@@ -190,11 +203,12 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         model_row.addWidget(self.fetch_button)
         settings.addRow("API preset / URL", self.api_url)
         settings.addRow("Model", model_row)
-        self.models_status = QtWidgets.QLabel("Enter a key, then Get models; manual model names are also accepted.")
+        self.models_status = QtWidgets.QLabel("Get models or enter a vision model name. Local servers may leave API key empty.")
         self.models_status.setWordWrap(True)
         settings.addRow(self.models_status)
         for label, widget in (("API key", self.api_key),
-                              ("Temperature", self.temperature), ("Max output tokens", self.max_tokens), ("Timeout (seconds)", self.timeout)):
+                              ("Temperature", self.temperature), ("Max output tokens", self.max_tokens),
+                              ("Timeout (seconds)", self.timeout), ("Context images", self.context_images)):
             settings.addRow(label, widget)
         self.balance_key = QtWidgets.QLineEdit()
         self.balance_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
@@ -218,7 +232,9 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         settings.addRow(self.test_status)
         note = QtWidgets.QLabel("OpenAI-compatible Chat Completions with image input.\n"
                                "Run / Retry sends book images; Test API sends only a generated square.\n"
-                               "Context includes this book's earlier accepted entries, not earlier images.")
+                               "Conversation is kept per book; the image limit includes the current page.\n"
+                               "Ollama / LM Studio: start a vision-capable server, then Get models.\n"
+                               "API key can be empty unless your server requires authentication; LAN URLs also work.")
         note.setWordWrap(True)
         settings.addRow(note)
         settings.addRow(self._button("Copy system prompt", lambda: QtWidgets.QApplication.clipboard().setText(SYSTEM_PROMPT)))
@@ -235,7 +251,12 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self.temperature.valueChanged.connect(self._api_changed)
         self.max_tokens.valueChanged.connect(self._api_changed)
         self.timeout.valueChanged.connect(self._api_changed)
-        self.tabs.addTab(api, "API")
+        self.context_images.valueChanged.connect(self._api_changed)
+        api_scroll = QtWidgets.QScrollArea()
+        api_scroll.setWidgetResizable(True)
+        api_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        api_scroll.setWidget(api)
+        self.tabs.addTab(api_scroll, "API")
 
         labels = QtWidgets.QWidget()
         label_form = QtWidgets.QFormLayout(labels)
@@ -256,12 +277,14 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(labels, "Page labels")
         left.addWidget(self.tabs)
 
-        actions = QtWidgets.QHBoxLayout()
+        actions = QtWidgets.QGridLayout()
         self.run_button = self._button("Run TOC queue", self._run_all)
         self.retry_button = self._button("Retry this page", self._retry)
+        self.retry_all_button = self._button("Retry all TOC pages", self._retry_all)
+        self.retry_all_button.setToolTip("Resend every marked TOC page in page order, even accepted pages. Ignores the pending-only checkbox; each reply replaces only its source page's results.")
         self.stop_button = self._button("Stop", self._stop)
-        for button in (self.run_button, self.retry_button, self.stop_button):
-            actions.addWidget(button)
+        for index, button in enumerate((self.run_button, self.retry_button, self.retry_all_button, self.stop_button)):
+            actions.addWidget(button, index // 2, index % 2)
         left.addLayout(actions)
         self.yaml_label = QtWidgets.QLabel("YAML draft — current TOC page")
         left.addWidget(self.yaml_label)
@@ -361,6 +384,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         loaded = session is not None
         idle = not self.runner.busy and not self._api_busy
         self.files.setEnabled(idle)
+        self.close_pdf_button.setEnabled(loaded and idle)
         self.tabs.setEnabled(idle)
         self.tabs.widget(0).setEnabled(loaded)
         self.tabs.widget(2).setEnabled(loaded)
@@ -371,7 +395,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self.pages.setEnabled(loaded and idle)
         self.yaml.setEnabled(idle and session.current_page in session.toc if session else False)
         self.supplement_button.setEnabled(idle and session.current_page in session.toc if session else False)
-        for widget in (self.run_button, self.retry_button, self.export_button, self.page_number):
+        for widget in (self.run_button, self.retry_button, self.retry_all_button, self.export_button, self.page_number):
             widget.setEnabled(loaded and idle)
         self.previous.setEnabled(idle and session.current_page > 1 if session else False)
         self.next.setEnabled(idle and session.current_page < session.page_count if session else False)
@@ -399,6 +423,34 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF (*.pdf)")
         if path:
             self.open_path(Path(path))
+
+    def _close_pdf(self) -> None:
+        if self.session is None or self._api_busy or self.runner.busy or not self._discard(self._close_pdf):
+            return
+        self.draft_timer.stop()
+        self._balance_identity = None
+        self.balance_client.cancel("PDF closed.")
+        self.runner.shutdown()
+        self.preview_cache.clear()
+        self.preview_buffer.close()
+        self.preview_buffer = PreviewBuffer()
+        self.session = None
+        self.password = ""
+        self.dirty = False
+        self._source = None
+        self._shown = None
+        self._after_export = None
+        self._purpose = ""
+        self._queue.clear()
+        self._active = None
+        self._pending_turn = None
+        self._undo.clear()
+        old = self.takeCentralWidget()
+        if old:
+            old.deleteLater()
+        self._build()
+        self.setWindowTitle("PDF Bookmarks & Page Labels")
+        self._enabled()
 
     def _discard(self, after_export: Callable[[], None]) -> bool:
         if self.draft_timer.isActive():
@@ -429,7 +481,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
 
     def _read_api(self) -> LlmSettings:
         return LlmSettings(self._api_base(), self.api_model.currentText().strip(),
-                           self.temperature.value(), self.max_tokens.value(), self.timeout.value())
+                           self.temperature.value(), self.max_tokens.value(), self.timeout.value(), self.context_images.value())
 
     def _api_base(self) -> str:
         index = self.api_url.currentIndex()
@@ -915,9 +967,13 @@ class BookmarksWindow(QtWidgets.QMainWindow):
 
     def _retry(self) -> None:
         if self.session:
-            self._start_queue([self.session.current_page] if self.session.current_page in self.session.toc else [])
+            self._start_queue([self.session.current_page] if self.session.current_page in self.session.toc else [], retry=True)
 
-    def _start_queue(self, pages: list[int]) -> None:
+    def _retry_all(self) -> None:
+        if self.session:
+            self._start_queue(sorted(self.session.toc), retry=True)
+
+    def _start_queue(self, pages: list[int], *, retry: bool = False) -> None:
         if self.session is None or self._api_busy or self.runner.busy:
             return
         self.draft_timer.stop()
@@ -931,12 +987,15 @@ class BookmarksWindow(QtWidgets.QMainWindow):
                 return
         self._sync_api()
         try:
-            Llm.completion_url(self.session.api.base_url)
+            Llm.validate_settings(self.session.api)
         except ValueError as exc:
             self._error(str(exc))
             return
         if self.clear_context.isChecked():
+            self.session.conversation.clear()
             self.session.context_start = min(pages)
+        self._retry_run = retry
+        self._pending_turn = None
         self._queue = sorted(set(pages))
         self._running = True
         self._enabled()
@@ -954,6 +1013,8 @@ class BookmarksWindow(QtWidgets.QMainWindow):
             self._refresh_balance()
             return
         self._active = self._queue.pop(0)
+        self._pending_turn = None
+        self._last_image_count = 0
         self.session.current_page = self._active
         task = self.session.toc[self._active]
         task.status = Status.RUNNING
@@ -975,12 +1036,17 @@ class BookmarksWindow(QtWidgets.QMainWindow):
             buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
             if not self._image().save(buffer, "JPEG", 92):
                 raise ValueError("Cannot encode the recognition crop.")
-            body = build_request(self.session, self._active, bytes(buffer.data()))
+            image = bytes(buffer.data())
+            body = build_request(self.session, self._active, image, retry=self._retry_run)
             # Trace text/context exactly as sent, without image bytes or credentials.
             messages = cast(list[dict[str, object]], body["messages"])
             content = cast(list[dict[str, object]], messages[-1]["content"])
-            self.session.toc[self._active].request_trace += f"\nSystem prompt:\n{SYSTEM_PROMPT}\nUser prompt:\n{content[0]['text']}"
+            self._last_image_count = Llm.image_count(messages)
+            self.session.toc[self._active].request_trace += (f"\nConversation turns: {len(self.session.conversation)}"
+                f"\nImages sent (including current): {self._last_image_count}\nImage limit: {self.session.api.max_context_images}"
+                f"\nSystem prompt:\n{SYSTEM_PROMPT}\nUser prompt:\n{content[0]['text']}")
             self.client.send(self.session.api, self.api_key.text(), body)
+            self._pending_turn = ConversationTurn(self._active, str(content[0]["text"]), image)
             self.status.setText(f"Recognizing TOC page {self._active}; {len(self._queue)} remaining...")
         except (ValueError, RuntimeError) as exc:
             self._recognized("", 0, str(exc))
@@ -993,7 +1059,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
             task.raw_response = text
             task.draft = text
         self.session.last_prompt_tokens = tokens
-        self.usage.setText(f"Last request: {tokens} input tokens (API reported); {len(self.session.bookmarks)} context/export entries.")
+        self.usage.setText(f"Last request: {tokens} input tokens (API reported); {self._last_image_count} image(s) sent.")
         if not self._running:
             task.status = Status.INTERRUPTED
             task.error = error or "Recognition stopped."
@@ -1008,6 +1074,10 @@ class BookmarksWindow(QtWidgets.QMainWindow):
                 task.error = str(exc)
         if task.status != Status.DONE:
             task.draft_invalid = True
+        if self._pending_turn is not None:
+            self._pending_turn.response, self._pending_turn.error = text, task.error
+            self.session.conversation.append(self._pending_turn)
+            self._pending_turn = None
         record = (f"PDF page {task.page} | Result: {task.status.value}\nError: {task.error or '(none)'}"
                   f"\nInput tokens: {tokens}\nOriginal response:\n{text or '(no response)'}"
                   f"\n\nRequest details:\n{task.request_trace}")
@@ -1088,6 +1158,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
             self.temperature.setValue(self.session.api.temperature)
             self.max_tokens.setValue(self.session.api.max_tokens)
             self.timeout.setValue(self.session.api.timeout_seconds)
+            self.context_images.setValue(self.session.api.max_context_images)
             self.append_existing.setChecked(self.session.keep_existing)
             self.only_pending.setChecked(self.session.pending_only)
             self.clear_context.setChecked(self.session.clear_context)
@@ -1109,6 +1180,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
             self.status.setText(f"PDF saved: {message['path']}")
             self.dirty = False
             self.setWindowTitle(f"{self.session.source.name} — PDF Bookmarks & Page Labels")
+            QtWidgets.QMessageBox.information(self, "PDF processing complete", f"Saved:\n{message['path']}")
             callback, self._after_export = self._after_export, None
             if callback:
                 QtCore.QTimer.singleShot(0, callback)
@@ -1133,12 +1205,18 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         except ValueError as exc:
             self._error(str(exc))
             return False
-        selected, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export PDF",
-            str(self.session.source.with_name(f"{self.session.source.stem}_bookmarked.pdf")), "PDF (*.pdf)")
-        if selected:
+        try:
+            choice = choose_pdf_output(self, self.session.source,
+                self.session.source.with_name(f"{self.session.source.stem}_bookmarked.pdf"))
+        except OSError as exc:
+            self._error(str(exc))
+            return False
+        if choice:
+            selected, overwrite = choice
             self._purpose = "export"
             return self.runner.start(cast(dict[str, Json], {"operation": "export", "path": str(self.session.source),
-                "password": self.password, "output": selected, "session": self.session.to_data()}))
+                "password": self.password, "output": str(selected), "session": self.session.to_data(),
+                "overwrite": overwrite}))
         return False
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:

@@ -90,6 +90,30 @@ class ObjectPipelineTests(unittest.TestCase):
             self.assertEqual(pix.pixel(90, 25), (255, 255, 255))
         self.assertEqual(self.source.read_bytes(), original_bytes)
 
+    def test_dpi_policy_caps_each_axis_and_optionally_upsamples(self) -> None:
+        for policy, placement, expected in (
+            ("cap", (160, 120), (80, 60)),
+            ("target", (160, 120), (320, 240)),
+            ("cap", (20, 15), (40, 30)),
+            ("target", (20, 15), (40, 30)),
+            ("cap", (20, 120), (40, 60)),
+        ):
+            with self.subTest(policy=policy, placement=placement), pymupdf.open() as document:
+                width, height = placement
+                page = document.new_page(width=200, height=200)
+                xref = page.insert_image((0, 0, width, height), stream=image_bytes(), keep_proportion=False)
+                processing = replace(engine_settings._Processing(), dpi_policy=engine_settings._DpiPolicy(policy))
+                engine = objects._Engine(document, 144, 180, processing, 1)
+                try:
+                    engine.page_rect = page.rect
+                    target = engine._image(xref, pymupdf.Matrix(width, 0, 0, height, 0, 0))
+                    engine._finish()
+                    document.xref_set_key(page.xref, "Resources", f"<< /XObject << /Result {target} 0 R >> >>")
+                    page.set_contents(objects._object(document, data=b"/Result Do"))
+                    self.assertEqual(page.get_images()[0][2:4], expected)
+                finally:
+                    engine.close()
+
     def test_vector_default_preserves_colors_and_text_only_pages_have_no_image(self) -> None:
         with pymupdf.open() as document:
             page = document.new_page(width=100, height=100)
@@ -169,7 +193,9 @@ class ObjectPipelineTests(unittest.TestCase):
             page = document.new_page(width=160, height=120)
             page.insert_image(page.rect, stream=image_bytes())
             document.save(self.source)
-        self.convert()
+        with contextlib.redirect_stdout(io.StringIO()):
+            workflow._binarize_pdf(self.source, self.target, 144, 180, 2, "", processing=
+                engine_settings._Processing(dpi_policy=engine_settings._DpiPolicy.TARGET))
         with pymupdf.open(self.source) as before, pymupdf.open(self.target) as after:
             pix = before[0].get_pixmap(dpi=144, colorspace=pymupdf.csGRAY, alpha=False)
             expected = bytes(0 if value < 180 else 255 for value in pix.samples)
@@ -298,6 +324,8 @@ class ObjectPipelineTests(unittest.TestCase):
             self.assertIn("document-processing/pdf-binarize.py", paths)
             self.assertNotIn("document-processing/pdf-binarize-old.py", paths)
             self.assertIn("document-processing/pdf-bookmarks-add.py", paths)
+            self.assertIn("document-processing/pdf-font-replace.py", paths)
+            self.assertIn("document-processing/pdf-split-pages.py", paths)
             self.assertNotIn("document-processing/pdf-page-tag.py", paths)
             self.assertFalse(any(path.startswith("document-processing/pdf-tools/") for path in paths))
         stages: list[Path] = []
@@ -310,10 +338,14 @@ class ObjectPipelineTests(unittest.TestCase):
             self.assertTrue((stage / "personal_pdf_tools/common/navigation.py").is_file())
             self.assertTrue((stage / "personal_pdf_tools/bookmarks/app.py").is_file())
             self.assertTrue((stage / "personal_pdf_tools/bookmarks/worker.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/font_replace/app.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/font_replace/engine.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/split_pages/app.py").is_file())
+            self.assertTrue((stage / "personal_pdf_tools/split_pages/engine.py").is_file())
             self.assertTrue(any("personal_pdf_tools" in part for part in command))
             return subprocess.CompletedProcess(command, 0)
 
-        for filename in ("pdf-binarize.py", "pdf-bookmarks-add.py"):
+        for filename in ("pdf-binarize.py", "pdf-bookmarks-add.py", "pdf-font-replace.py", "pdf-split-pages.py"):
             entry = str(ROOT / "tools/document-processing" / filename)
             for tool in ("nuitka", "pyinstaller"):
                 with patch.object(compiler.subprocess, "run", side_effect=staged):

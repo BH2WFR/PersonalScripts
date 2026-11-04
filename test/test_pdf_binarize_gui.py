@@ -27,6 +27,7 @@ from personal_pdf_tools.binarize.preview_cache import PreviewCache, PreviewFrame
 from personal_pdf_tools.binarize.project import Config, DEFAULT_ID, Project, SKIP_ID
 from personal_pdf_tools.binarize.worker import Cancelled, Worker, export_project
 from personal_pdf_tools.common.jobs import JobRunner
+from personal_pdf_tools.common.pdf_images import inspect_images
 from personal_pdf_tools.common.preview_buffer import PreviewBuffer
 from personal_pdf_tools.common.viewer import ViewMode
 
@@ -54,6 +55,26 @@ class ProjectTests(unittest.TestCase):
         make_source(self.source)
         self.project = Project.create(self.source, 3)
 
+    def test_image_occurrences_report_codec_effective_dpi_and_position(self) -> None:
+        path = self.folder / "placements.pdf"
+        with Image.new("RGB", (200, 100), "white") as image, io.BytesIO() as encoded:
+            image.save(encoded, format="JPEG")
+            with pymupdf.open() as document:
+                page = document.new_page(width=320, height=160)
+                first = pymupdf.Rect(50, 60, 150, 110)
+                second = pymupdf.Rect(200, 60, 300, 110)
+                xref = page.insert_image(first, stream=encoded.getvalue())
+                page.insert_image(second, xref=xref)
+                document.save(path)
+        with pymupdf.open(path) as document:
+            images = inspect_images(document[0])
+        self.assertEqual(len(images), 2)
+        self.assertEqual([image.codec for image in images], ["JPEG", "JPEG"])
+        self.assertEqual([image.position for image in images], [(50, 60, 150, 110), (200, 60, 300, 110)])
+        self.assertAlmostEqual(images[0].dpi_x, 144)
+        self.assertAlmostEqual(images[0].dpi_y, 144)
+        self.assertAlmostEqual(images[0].bounds[0], 50 / 320)
+
     def test_profile_copies_are_independent_and_bulk_apply_is_atomic(self) -> None:
         project = self.project
         self.assertEqual(project.assignments, [DEFAULT_ID] * 3)
@@ -80,6 +101,11 @@ class ProjectTests(unittest.TestCase):
         self.project.show_regions = True
         self.project.current_page = 2
         identity = self.project.add_profile("Grayscale", DEFAULT_ID)
+        values = self.project.profiles[identity].config.values()
+        values.update({"regions.color_text_mode": "color8", "regions.color_text_contrast": 1.7,
+                       "regions.color_text_whiten": True, "regions.color_text_white_point": 228,
+                       "regions.whiten": True, "regions.white_point": 220})
+        self.project.profiles[identity].config = Config.from_values(values)
         self.project.assign(identity, "3")
         self.project.save(path)
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -181,6 +207,22 @@ class ProjectTests(unittest.TestCase):
             with Image.open(io.BytesIO(base64.b64decode(result["png"]))) as shown:
                 self.assertEqual(document[2].get_pixmap(dpi=300).samples, shown.convert("RGB").tobytes())
 
+    def test_dpi_policy_roundtrip_and_safe_overwrite(self) -> None:
+        self.assertEqual(Config.from_values({}).processing.dpi_policy.value, "cap")
+        config = Config.from_values({"dpi_policy": "target"})
+        self.assertEqual(Config.from_values(config.values()), config)
+        target = self.folder / "existing.pdf"
+        target.write_bytes(b"retain old output")
+        with patch("personal_pdf_tools.binarize.worker._publish", side_effect=OSError("Failed publish")):
+            with self.assertRaises(OSError):
+                export_project(self.project, target, overwrite=True)
+        self.assertEqual(target.read_bytes(), b"retain old output")
+        export_project(self.project, target, overwrite=True)
+        with pymupdf.open(target) as result:
+            self.assertEqual(result.page_count, 3)
+        with self.assertRaises(FileExistsError):
+            export_project(self.project, self.source, overwrite=True)
+
 
 class GuiTests(unittest.TestCase):
     """Exercise real Qt events and one actual subprocess opening/rendering path."""
@@ -192,6 +234,9 @@ class GuiTests(unittest.TestCase):
 
     def setUp(self) -> None:
         folder = tempfile.TemporaryDirectory(prefix="pdf-gui-ui-", dir=ROOT / "tmp")
+        notice = patch.object(QtWidgets.QMessageBox, "information")
+        self.notice = notice.start()
+        self.addCleanup(notice.stop)
         self.addCleanup(folder.cleanup)
         self.folder = Path(folder.name)
         self.source = self.folder / "source.pdf"
@@ -214,6 +259,116 @@ class GuiTests(unittest.TestCase):
         self.window.dirty = False
         self.window.close()
         self.application.processEvents()
+
+    def test_profile_input_dialog_ranges_and_label_tooltips(self) -> None:
+        window = self.window
+        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("1", True)) as prompt:
+            window._add_profile()
+        self.assertEqual(prompt.call_args.kwargs["text"], "1")
+        identity = window.project.assignments[0]
+        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("1,3", True)):
+            window._apply_profile_pages(identity)
+        self.assertEqual(window.project.assignments, [identity, DEFAULT_ID, identity])
+        item = window.profile_list.topLevelItem(2)
+        self.assertEqual(item.text(1), "1,3")
+        original = list(window.project.assignments)
+        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("2,99", True)), patch.object(window, "_error") as error:
+            window._apply_profile_pages(identity)
+        error.assert_called_once()
+        self.assertEqual(window.project.assignments, original)
+        window.preview_timer.stop()
+        with patch.object(QtWidgets.QMenu, "exec"):
+            point = window.profile_list.visualItemRect(window.profile_list.topLevelItem(1)).center()
+            QtTest.QTest.mouseClick(window.profile_list.viewport(), QtCore.Qt.MouseButton.RightButton, pos=point)
+        self.assertEqual(window.project.assignments, original)
+        for key in ("dpi", "dpi_policy", "threshold", "k"):
+            self.assertTrue(window.settings.labels[key].toolTip())
+        self.assertGreaterEqual(len(window.settings.findChildren(QtWidgets.QGroupBox)), 8)
+
+    def test_colored_text_controls_follow_detection_and_whitening_switches(self) -> None:
+        panel = self.window.settings
+        panel.set_config(Config.from_values({"regions.enabled": True, "regions.color_text_mode": "color4",
+                                             "regions.color_text_whiten": True}))
+        self.assertTrue(panel.editors["regions.color_text_contrast"].isEnabled())
+        self.assertTrue(panel.editors["regions.color_text_white_point"].isEnabled())
+        panel.set_config(Config.from_values({"regions.enabled": True}))
+        self.assertFalse(panel.editors["regions.color_text_contrast"].isEnabled())
+        self.assertFalse(panel.editors["regions.color_text_white_point"].isEnabled())
+        self.assertTrue(panel.editors["regions.color_text_whiten"].isEnabled())
+        panel.set_config(Config())
+        self.assertFalse(panel.editors["regions.color_text_mode"].isEnabled())
+        self.assertFalse(panel.editors["regions.color_text_whiten"].isEnabled())
+
+    def test_image_whitening_controls_commit_and_support_shaded_panels(self) -> None:
+        panel = self.window.settings
+        panel.set_config(Config.from_values({"regions.enabled": True}))
+        self.assertTrue(panel.editors["regions.whiten"].isEnabled())
+        self.assertFalse(panel.editors["regions.white_point"].isEnabled())
+        panel.editors["regions.whiten"].setChecked(True)
+        self.assertTrue(panel.config.processing.regions.whiten)
+        self.assertTrue(panel.editors["regions.white_point"].isEnabled())
+        self.assertFalse(panel.config.processing.regions.color_text_whiten)
+        panel.set_config(Config.from_values({"mode": "sauvola", "regions.clean_background": True,
+                                            "regions.whiten": True}))
+        self.assertTrue(panel.editors["regions.white_point"].isEnabled())
+        panel.set_config(Config())
+        self.assertFalse(panel.editors["regions.whiten"].isEnabled())
+
+    def test_apply_all_pages_and_hide_default_profile_ranges(self) -> None:
+        window = self.window
+        default_item = window.profile_list.topLevelItem(0)
+        self.assertEqual(default_item.text(1), "")
+        self.assertIn("3 page(s)", default_item.toolTip(1))
+        identity = window.project.add_profile("Special", DEFAULT_ID)
+        window._load_profiles()
+        window._load_current_page()
+        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("ALL", True)) as dialog:
+            window._apply_profile_pages(identity)
+        self.assertIn("all", dialog.call_args.args[2])
+        self.assertEqual(window.project.assignments, [identity] * 3)
+        self.assertEqual(window.profile_list.topLevelItem(0).text(1), "")
+        self.assertEqual(window.profile_list.topLevelItem(2).text(1), "1-3")
+        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("none", True)), \
+                patch.object(window, "_error") as error:
+            window._apply_profile_pages(DEFAULT_ID)
+        error.assert_called_once()
+        self.assertEqual(window.project.assignments, [identity] * 3)
+
+    def test_close_pdf_releases_handles_resets_and_can_reopen(self) -> None:
+        window = self.window
+        window.open_path(self.source)
+        wait_for(lambda: not window.runner.busy and window._displayed_page is not None)
+        window.dirty = False
+        window._close_pdf()
+        self.application.processEvents()
+        self.assertTrue(window.isVisible())
+        self.assertIsNone(window.project)
+        self.assertEqual(window.profile_list.topLevelItemCount(), 0)
+        self.assertFalse(window.close_pdf_button.isEnabled())
+        moved = self.folder / "moved.pdf"
+        self.source.rename(moved)
+        window.open_path(moved)
+        wait_for(lambda: not window.runner.busy and window._displayed_page is not None)
+        self.assertEqual(window.project.source, moved)
+
+    def test_output_dialog_numbers_defaults_and_requires_explicit_overwrite(self) -> None:
+        from personal_pdf_tools.common.file_actions import choose_pdf_output
+        target = self.folder / "output.pdf"
+        target.write_bytes(b"Existing")
+        with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=("", "")) as dialog:
+            self.assertIsNone(choose_pdf_output(self.window, self.source, target))
+        self.assertEqual(Path(dialog.call_args.args[2]).name, "output_1.pdf")
+        with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(target), "PDF")), \
+                patch.object(QtWidgets.QMessageBox, "exec", return_value=0):
+            self.assertIsNone(choose_pdf_output(self.window, self.source, target))
+            with patch.object(QtWidgets.QMessageBox, "clickedButton",
+                              new=lambda message: next(button for button in message.buttons() if button.text() == "Overwrite")):
+                self.assertEqual(choose_pdf_output(self.window, self.source, target), (target, True))
+        self.assertEqual(target.read_bytes(), b"Existing")
+        with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(self.source), "PDF")), \
+                patch.object(QtWidgets.QMessageBox, "warning") as warning:
+            self.assertIsNone(choose_pdf_output(self.window, self.source, target))
+        warning.assert_called_once()
 
     def test_navigation_coalesces_and_busy_blocks_all_submissions(self) -> None:
         with patch.object(self.window.runner, "start", return_value=True) as start:
@@ -241,7 +396,7 @@ class GuiTests(unittest.TestCase):
         self.window._load_current_page()
         self.window.original.setChecked(True)
         self.window.preview_timer.stop()
-        default_item = self.window.profile_list.item(0)
+        default_item = self.window.profile_list.topLevelItem(0)
         self.window.profile_list.setCurrentItem(default_item)
         self.window.preview_timer.stop()
         self.assertEqual(self.window.project.assignments[0], DEFAULT_ID)
@@ -251,7 +406,7 @@ class GuiTests(unittest.TestCase):
         self.window.preview_timer.stop()
         self.assertEqual(self.window.project.assignments, before)
         self.assertTrue(self.window.original.isChecked())
-        self.assertEqual(self.window.profile_list.currentItem().data(QtCore.Qt.ItemDataRole.UserRole), SKIP_ID)
+        self.assertEqual(self.window.profile_list.currentItem().data(0, QtCore.Qt.ItemDataRole.UserRole), SKIP_ID)
         self.assertFalse(self.window.settings.widget(0).isEnabled())
         self.window.go_page(2)
         self.window.preview_timer.stop()
@@ -292,6 +447,8 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(self.window.next_button.isEnabled())
         wait_for(lambda: not self.window.runner.busy)
         self.assertTrue(output.is_file())
+        self.assertIn("Before:", self.notice.call_args.args[2])
+        self.assertIn("After:", self.notice.call_args.args[2])
         with pymupdf.open(output) as result:
             self.assertEqual([page.get_images()[0][4] for page in result], [1, 1, 1])
 
@@ -390,7 +547,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(window.page_number.width(), 48)
         self.assertEqual(window.page_total.text(), "/ 3")
         self.assertEqual(sum(action.isSeparator() for action in window.view_toolbar.actions()), 2)
-        self.assertLess(window.profile_list.height(), 100)
+        self.assertGreater(window.profile_list.height(), 80)
         toolbar_bottom = window.view_toolbar.mapTo(window, window.view_toolbar.rect().bottomLeft()).y()
         self.assertLessEqual(window.viewer.mapTo(window, QtCore.QPoint()).y(), toolbar_bottom + 8)
         self.assertTrue(window.progress_bar.isHidden())
@@ -418,7 +575,7 @@ class GuiTests(unittest.TestCase):
         window._schedule_preview(0)
         wait_for(lambda: window._displayed_page == 0 and not window.runner.busy)
         original = window.viewer._original.toImage()
-        window.profile_list.setCurrentRow(0)
+        window.profile_list.setCurrentItem(window.profile_list.topLevelItem(0))
         wait_for(lambda: "Processed page 1" in window.status.text() and not window.runner.busy)
         processed = window.viewer._original.toImage()
         self.assertNotEqual(processed, original)
@@ -430,7 +587,7 @@ class GuiTests(unittest.TestCase):
         window.original.setChecked(False)
         wait_for(lambda: "Processed page 1" in window.status.text() and not window.runner.busy)
         self.assertEqual(window.viewer._original.toImage(), processed)
-        window.profile_list.setCurrentRow(1)
+        window.profile_list.setCurrentItem(window.profile_list.topLevelItem(1))
         wait_for(lambda: "no-processing" in window.status.text() and not window.runner.busy)
         self.assertEqual(window.viewer._original.toImage(), original)
 
@@ -456,9 +613,68 @@ class GuiTests(unittest.TestCase):
         QtTest.QTest.keyClick(window.viewer, QtCore.Qt.Key.Key_Right)
         self.assertEqual(window.project.current_page, 2)
         window.preview_timer.stop()
-        window.profile_name.setFocus()
-        QtTest.QTest.keyClick(window.profile_name, QtCore.Qt.Key.Key_Left)
+        window.region_path.setFocus()
+        QtTest.QTest.keyClick(window.region_path, QtCore.Qt.Key.Key_Left)
         self.assertEqual(window.project.current_page, 2)
+
+    def test_image_tab_tracks_view_and_profile_and_blue_outline_can_be_cleared(self) -> None:
+        window = self.window
+        window.navigation.setCurrentIndex(2)
+        window._schedule_preview(0)
+        wait_for(lambda: window._displayed_page == 0 and not window.runner.busy)
+        tree = window.navigation.images
+        self.assertGreater(tree.topLevelItemCount(), 0)
+        self.assertIn("144.0 × 72.0 pt", window.navigation.page_size_label.text())
+        self.assertIn("72 DPI", window.navigation.scan_dpi_label.text())
+        self.assertIn("300 DPI", window.navigation.preview_dpi_label.text())
+        processed_codec = tree.topLevelItem(0).text(1)
+        processed_dpi = float(tree.topLevelItem(0).text(2))
+        item = tree.topLevelItem(0)
+        point = QtCore.QPoint(15, tree.visualItemRect(item).center().y())
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=point)
+        self.assertIsNotNone(window.viewer._image_highlight)
+        self.assertEqual(window.viewer._image_highlight.pen().color(), QtGui.QColor("#1677ff"))
+        bounds = window.preview_cache.get(PreviewState.from_project(window.project)).images[0].bounds
+        self.assertAlmostEqual(window.viewer._image_highlight.rect().x(),
+                               bounds[0] * window.viewer._bounds.width(), delta=1)
+        window.viewer.set_regions([(.1, .2, .3, .4)])
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=point)
+        self.assertIsNone(window.viewer._image_highlight)
+        self.assertEqual(len(window.viewer._region_items), 1)
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=point)
+        self.assertIsNotNone(window.viewer._image_highlight)
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                                pos=QtCore.QPoint(15, tree.viewport().height() - 5))
+        self.assertIsNone(window.viewer._image_highlight)
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=point)
+        self.assertIsNotNone(window.viewer._image_highlight)
+        QtTest.QTest.keyClick(tree, QtCore.Qt.Key.Key_Escape)
+        self.assertIsNone(window.viewer._image_highlight)
+        window.original.setChecked(True)
+        wait_for(lambda: not window._preview_requested and not window.runner.busy)
+        self.assertEqual(tree.topLevelItem(0).text(1), "JPEG")
+        self.assertIn("144.0 × 72.0 pt", window.navigation.page_size_label.text())
+        self.assertIn("72 DPI", window.navigation.scan_dpi_label.text())
+        self.assertIsNone(window.viewer._image_highlight)
+        window.original.setChecked(False)
+        self.assertEqual(tree.topLevelItem(0).text(1), processed_codec)
+        identity = window.project.add_profile("Double resolution", DEFAULT_ID)
+        window.project.profiles[identity].config = Config.from_values({"dpi": 72, "upscale": 2})
+        window.project.assign(identity, "1")
+        window._load_current_page()
+        window._schedule_preview(0)
+        self.assertEqual(tree.topLevelItemCount(), 0)
+        self.assertEqual(window.navigation.page_size_label.text(), "Page: —")
+        wait_for(lambda: not window._preview_requested and not window.runner.busy
+                 and tree.topLevelItemCount() > 0)
+        self.assertGreater(float(tree.topLevelItem(0).text(2)), processed_dpi)
+        self.assertIn("144 DPI", window.navigation.scan_dpi_label.text())
+        self.assertIn("300 DPI", window.navigation.preview_dpi_label.text())
+        window.go_page(1)
+        self.assertEqual(window.navigation.page_size_label.text(), "Page: —")
+        wait_for(lambda: window._displayed_page == 1 and not window.runner.busy)
+        self.assertNotIn("144.0 × 72.0 pt", window.navigation.page_size_label.text())
+        self.assertIn("DPI", window.navigation.preview_dpi_label.text())
 
     def test_original_transport_reuses_document_and_red_boxes_are_overlay_only(self) -> None:
         window = self.window
@@ -599,7 +815,7 @@ class GuiTests(unittest.TestCase):
             click_page(2, QtCore.Qt.KeyboardModifier.ControlModifier)
             self.assertEqual(window.navigation.selected_pages(), (0, 2))
             self.assertFalse(window.preview_timer.isActive())
-            item = window.profile_list.item(0)
+            item = window.profile_list.topLevelItem(0)
             QtTest.QTest.mouseClick(window.profile_list.viewport(), QtCore.Qt.MouseButton.LeftButton,
                                    pos=window.profile_list.visualItemRect(item).center())
             window.preview_timer.stop()
@@ -610,7 +826,7 @@ class GuiTests(unittest.TestCase):
             click_page(2, QtCore.Qt.KeyboardModifier.ShiftModifier)
             self.assertEqual(window.navigation.selected_pages(), (0, 1, 2))
             self.assertFalse(window.preview_timer.isActive())
-            window.profile_list.setCurrentRow(1)
+            window.profile_list.setCurrentItem(window.profile_list.topLevelItem(1))
             window.preview_timer.stop()
             self.assertEqual(window.project.assignments, [SKIP_ID] * 3)
             self.assertFalse(window.settings.widget(0).isEnabled())

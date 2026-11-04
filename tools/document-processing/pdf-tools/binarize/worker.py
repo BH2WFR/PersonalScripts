@@ -19,6 +19,7 @@ import pymupdf
 
 from utils import *
 from ..common.protocol import Json, MAX_PREVIEW_PIXELS
+from ..common.pdf_images import inspect_images
 from ..common.pixel_transfer import preview_reply
 from . import objects, regions, workflow
 from .project import Config, Project, SKIP_ID, mapping, text_value
@@ -84,15 +85,21 @@ def _preview(project: Project, password: str, source: pymupdf.Document, raw: boo
             if not original:
                 page = document[0]
         pixmap = Pdf.render_page(page, dpi=DISPLAY_DPI, max_pixels=MAX_DISPLAY_PIXELS)
+        images = inspect_images(page)
         return {"kind": "preview", "page": project.current_page, "width": pixmap.width, "height": pixmap.height,
+                "page_size": [page.rect.width, page.rect.height],
                 "regions": [list(box.rect) for box in boxes],
+                "images": [image.to_data() for image in images],
                 "regions_available": not original or project.show_regions}, (
                     pixmap.samples if raw else pixmap.pil_tobytes(format="PNG", compress_level=1))
 
 
-def _publish(staged: Path, output: Path, cancel: Path | None) -> None:
-    """Copy to an exclusively created destination; remove only our partial file."""
+def _publish(staged: Path, output: Path, cancel: Path | None, overwrite: bool = False) -> None:
+    """Publish a completed stage exclusively, or replace an explicitly approved output."""
     _check_cancel(cancel)
+    if overwrite:
+        staged.replace(output)
+        return
     with output.open("xb") as destination:
         try:
             with staged.open("rb") as source:
@@ -107,7 +114,7 @@ def _publish(staged: Path, output: Path, cancel: Path | None) -> None:
 
 def export_project(project: Project, output: Path, password: str = "", *,
                    progress: Callable[[dict[str, Json]], None] | None = None,
-                   cancel: Path | None = None, one_page: bool = False) -> None:
+                   cancel: Path | None = None, one_page: bool = False, overwrite: bool = False) -> None:
     """Export current profiles while preserving source objects and original order.
 
     Args:
@@ -117,17 +124,20 @@ def export_project(project: Project, output: Path, password: str = "", *,
         progress: Optional receiver of page/save stage messages.
         cancel: Optional marker file checked at page and publication boundaries.
         one_page: Export only the current page, including its chosen viewing mode.
+        overwrite: Explicit GUI approval to atomically replace an existing output.
 
     Raises:
         ValueError: Source page count or parameters no longer match the project.
-        FileExistsError: PDF or requested review outputs already exist.
+        FileExistsError: Destination is the source, an unapproved PDF already
+            exists, or requested review sidecars already exist.
         Cancelled: Cancellation was requested before completion.
         OSError: Input/output access fails. A sidecar error reports an already
             published PDF explicitly, matching the terminal workflow.
 
     Writes a new PDF and optional review files; never overwrites the source.
     """
-    if output.resolve() == project.source.resolve() or output.exists():
+    if (output.resolve() == project.source.resolve()
+            or output.exists() and (output.samefile(project.source) or not overwrite)):
         raise FileExistsError(f"Output must be a new PDF: {output}")
     review = regions._Settings(enabled=True,
         export=output.with_suffix(".regions.json") if project.output.export_regions else None,
@@ -188,7 +198,7 @@ def export_project(project: Project, output: Path, password: str = "", *,
                 _check_cancel(cancel)
                 send({"kind": "progress", "stage": "Writing PDF", "done": project.page_count, "total": project.page_count})
                 Pdf.save_new(document, staged)
-        _publish(staged, output, cancel)
+        _publish(staged, output, cancel, overwrite)
     if review.export or review.preview_dir:
         workflow._publish_region_files(project.source, output, project.page_count, review, records, annotations)
 
@@ -243,8 +253,10 @@ class Worker:
         output = Path(text_value(request.get("output"), "Output PDF"))
         marker = request.get("cancel")
         export_project(project, output, password, progress=send,
-                       cancel=Path(str(marker)) if marker else None, one_page=operation == "export-page")
-        return {"kind": "exported", "path": str(output), "one_page": operation == "export-page"}
+                       cancel=Path(str(marker)) if marker else None, one_page=operation == "export-page",
+                       overwrite=request.get("overwrite") is True)
+        return {"kind": "exported", "path": str(output), "one_page": operation == "export-page",
+                "before_bytes": project.source.stat().st_size, "after_bytes": output.stat().st_size}
 
 
 def main() -> int:

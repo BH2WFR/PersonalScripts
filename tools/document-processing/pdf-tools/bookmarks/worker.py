@@ -21,8 +21,20 @@ PREVIEW_DPI = 200
 MAX_PIXELS = 12_000_000
 
 
-def export_project(project: BookSession, output: Path, password: str = "") -> None:
-    """Write the edited outline and labels to a new PDF, preserving original page objects."""
+def export_project(project: BookSession, output: Path, password: str = "", *, overwrite: bool = False) -> None:
+    """Write the outline and labels while preserving original page objects.
+
+    Args:
+        project: Validated in-memory book session to export.
+        output: Destination PDF with an existing parent directory.
+        password: In-memory input password, empty for unprotected files.
+        overwrite: Explicit permission to replace an output after successful staging.
+    Raises:
+        ValueError: Invalid session or attempt to overwrite its source.
+        FileExistsError: Output exists without replacement permission.
+        OSError: Reading, saving or publishing the PDF fails.
+    Writes a decrypted PDF; failed staged saves retain the previous output.
+    """
     project.validate_export()
     with Pdf.open_document(project.source, password=password, interactive=False) as (document, _):
         if document.page_count != project.page_count:
@@ -32,7 +44,7 @@ def export_project(project: BookSession, output: Path, password: str = "") -> No
             for entry in project.bookmarks
         ])
         Pdf.write_page_labels(document, project.labels)
-        Pdf.save_new(document, output)
+        Pdf.save_new(document, output, overwrite=overwrite)
 
 
 class Worker:
@@ -80,7 +92,7 @@ class Worker:
                                  pixmap.samples if request.get("pixel_buffer") else pixmap.tobytes("png"), request)
         if operation == "export":
             project = BookSession.from_data(cast(dict[str, object], request["session"]), Path.cwd())
-            export_project(project, Path(str(request["output"])), password)
+            export_project(project, Path(str(request["output"])), password, overwrite=request.get("overwrite") is True)
             return {"kind": "exported", "path": request["output"]}
         raise ValueError(f"Unknown operation: {operation}")
 

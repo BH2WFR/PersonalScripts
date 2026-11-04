@@ -60,6 +60,17 @@ class TocPage:
     history: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ConversationTurn:
+    """One actual vision exchange, in memory only; never sent to the PDF worker."""
+
+    page: int
+    prompt: str
+    image: bytes = field(repr=False)
+    response: str = ""
+    error: str = ""
+
+
 class NeedsInformation(ValueError):
     """Recognition cannot be accepted until missing or ambiguous content is resolved."""
 
@@ -149,6 +160,7 @@ class BookSession:
     keep_existing: bool = False
     pending_only: bool = True
     clear_context: bool = False
+    conversation: list[ConversationTurn] = field(default_factory=list, repr=False)
 
     def apply_draft(self, page: int, draft: str) -> None:
         """Replace one source page atomically, rejecting model issues/unresolved pages.
@@ -197,7 +209,11 @@ class BookSession:
 
     def to_data(self) -> dict[str, object]:
         """Serialize this in-memory session for the private export worker only."""
-        data = asdict(self)
+        # Avoid serializing/copying the vision conversation into worker payloads.
+        data = {key: value for key, value in self.__dict__.items() if key != "conversation"}
+        data["bookmarks"] = [asdict(item) for item in self.bookmarks]
+        data["labels"] = list(self.labels)
+        data["api"] = asdict(self.api)
         data["source"] = str(self.source)
         data["toc"] = [{key: value for key, value in asdict(self.toc[page]).items()
                         if key not in ("request_trace", "history")} for page in sorted(self.toc)]
@@ -235,7 +251,8 @@ class BookSession:
             if (not isinstance(session.api.base_url, str) or not isinstance(session.api.model, str)
                     or not math.isfinite(session.api.temperature) or not 0 <= session.api.temperature <= 2
                     or type(session.api.max_tokens) is not int or not 1 <= session.api.max_tokens <= 65536
-                    or type(session.api.timeout_seconds) is not int or not 5 <= session.api.timeout_seconds <= 1800):
+                    or type(session.api.timeout_seconds) is not int or not 5 <= session.api.timeout_seconds <= 1800
+                    or type(session.api.max_context_images) is not int or session.api.max_context_images < 0):
                 raise ValueError("Invalid API settings.")
             toc_rows = data.get("toc", [])
             bookmark_rows = data.get("bookmarks", [])
