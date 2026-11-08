@@ -141,7 +141,7 @@ class LlmQtClient(QtCore.QObject):
     def _read(self) -> None:
         if self.reply is None:
             return
-        self._data.extend(bytes(self.reply.readAll()))
+        self._data.extend(self.reply.readAll().data())
         if len(self._data) > Llm.MAX_RESPONSE:
             self.cancel("The API response exceeded the size limit.")
 
@@ -150,7 +150,7 @@ class LlmQtClient(QtCore.QObject):
         if reply is None:
             return
         if reply.bytesAvailable():
-            self._data.extend(bytes(reply.readAll()))
+            self._data.extend(reply.readAll().data())
         status = reply.attribute(QtNetwork.QNetworkRequest.Attribute.HttpStatusCodeAttribute)
         text, tokens, error = "", 0, self._error
         more_models = False

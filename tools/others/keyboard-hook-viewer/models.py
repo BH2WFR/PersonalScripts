@@ -102,7 +102,9 @@ class EventSink(Protocol):
 
     def _emit_mouse(self, x: int, y: int, btn: str, pressed: bool) -> None: ...
 
-    def _emit_scroll(self, dx: int, dy: int) -> None: ...
+    def _emit_scroll(
+        self, dx: int, dy: int, *, raw_delta: tuple[int, int] | None = None,
+    ) -> None: ...
 
 
 class Hook(Protocol):

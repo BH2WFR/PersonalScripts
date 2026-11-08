@@ -2,8 +2,8 @@
 
 Private implementation; launch ../keyboard-hook-viewer.py.
 Platform dependencies are loaded only when the backend is used.
-Scroll events use signed integer display steps; nonzero sub-notch deltas retain
-their direction instead of becoming zero. These are not precise wheel distances.
+Scroll callbacks retain signed integer steps; the terminal displays original
+wheel deltas (120 per notch). These are not physical touchpad distances.
 """
 
 from __future__ import annotations
@@ -232,7 +232,9 @@ def create_hook(sink: EventSink) -> Hook | None:
                 delta = _wheel_steps(aux)
                 if delta:
                     dx, dy = (delta, 0) if msg_id == _WM_MOUSEHWHEEL else (0, delta)
-                    sink._emit_scroll(dx, dy)
+                    raw = ctypes.c_short(aux & _WORD_MASK).value
+                    raw_delta = (raw, 0) if msg_id == _WM_MOUSEHWHEEL else (0, raw)
+                    sink._emit_scroll(dx, dy, raw_delta=raw_delta)
 
         def _process_message(self, wParam, lParam):
             msg_id = lParam & 0xFFFF

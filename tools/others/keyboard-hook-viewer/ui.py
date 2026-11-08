@@ -67,9 +67,29 @@ def _print_mouse(x: int, y: int, btn_name: str, pressed: bool):
     print(_format_event("MOU", arrow, btn_name, f"({x}, {y})"))
 
 
-def _print_scroll(dx: int, dy: int):
-    direction = "↑" if dy > 0 else "↓"
-    print(_format_event("MOU", direction, f"scroll ({dx}, {dy})"))
+def _print_scroll(
+    dx: int, dy: int, *, raw_delta: tuple[int, int] | None = None,
+) -> None:
+    """Print one native-value pair and cyan scroll directions on every platform."""
+    display_dx, display_dy = raw_delta if raw_delta is not None else (dx, dy)
+    # Quartz axis 2 and this viewer's X11 button-6 mapping are left-positive.
+    # Windows wheel metadata is always right-positive, regardless of the host.
+    right_delta = (
+        -display_dx if raw_delta is None and sys.platform in ("darwin", "linux")
+        else display_dx
+    )
+    directions: list[str] = []
+    arrows: list[str] = []
+    if display_dy:
+        directions.append("up" if display_dy > 0 else "down")
+        arrows.append("↑" if display_dy > 0 else "↓")
+    if right_delta:
+        directions.append("right" if right_delta > 0 else "left")
+        arrows.append("→" if right_delta > 0 else "←")
+    arrow = "".join(arrows) or "-"
+    direction = "+".join(directions) or "none"
+    line = _format_event("MOU", arrow, f"scroll ({display_dx}, {display_dy})")
+    print(f"{line} {FCyan}{direction}{CRst}")
 
 
 def _print_key(

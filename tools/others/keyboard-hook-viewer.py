@@ -2,8 +2,11 @@
 """Monitor global keyboard and mouse events without suppressing input.
 
 Windows events retain virtual keys, scan codes and low-level hook flags.
-Windows scroll output preserves the direction of small wheel deltas as integer
-steps (right/up positive); it is not a precise physical-distance measurement.
+Scroll output shows one (x, y) pair and cyan up/down/left/right labels.
+Windows displays raw wheel deltas (120 per notch, right/up positive); macOS
+and X11 retain their backend values. Callback step values remain unchanged.
+Remote sessions show the wheel events received by Windows, including pinch
+only when translated to wheel input; these are not physical touchpad distances.
 macOS supports CGEvent/IOHID device identity; Linux requires an X11 session.
 Implementation modules live in keyboard-hook-viewer/ and are not commands.
 

@@ -98,10 +98,21 @@ def _emit_mouse(x: int, y: int, btn: str, pressed: bool) -> None:
         _on_mouse_cb(MouseEvent(x=x, y=y, button=btn, pressed=pressed))
 
 
-def _emit_scroll(dx: int, dy: int) -> None:
-    """Called by every platform hook for scroll events."""
+def _emit_scroll(
+    dx: int, dy: int, *, raw_delta: tuple[int, int] | None = None,
+) -> None:
+    """Display native deltas and directions, retaining callback step semantics.
+
+    Args:
+        dx: Horizontal backend steps (right-positive on Windows, left otherwise).
+        dy: Vertical steps, positive upwards.
+        raw_delta: Windows wheel units (x, y), or None for other backends.
+
+    Side effects:
+        Prints the event and invokes the registered mouse callback.
+    """
     ui._check_win_change()
-    ui._print_scroll(dx, dy)
+    ui._print_scroll(dx, dy, raw_delta=raw_delta)
     if _on_mouse_cb:
         _on_mouse_cb(MouseEvent(scroll_dx=dx, scroll_dy=dy, is_scroll=True))
 

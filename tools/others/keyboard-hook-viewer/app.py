@@ -27,8 +27,12 @@ Usage:
 Description:
   Monitor global keyboard and mouse events; input passes through unchanged.
   Windows displays scan codes and preserves sided keys and keypad Enter.
-  Windows scroll (dx, dy): right/up are positive; small nonzero deltas show
-  at least one integer step, not precise physical wheel distance.
+  Scroll shows one (x, y) pair with cyan up/down/left/right labels.
+  Windows displays raw wheel deltas: 120 units per notch, right/up positive.
+  macOS/X11 retain backend values (left/up positive); callback steps are unchanged.
+  Diagonal events show both directions; values are not physical distances.
+  Remote pinch appears here only if delivered to Windows as wheel input;
+  native macOS gesture deltas and zoom scale are not available on this host.
   macOS can display the physical HID device identity when available.
 
 Options:

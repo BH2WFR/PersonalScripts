@@ -257,6 +257,7 @@ class ViewerEventsTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         runtime._on_key_cb = None
+        runtime._on_mouse_cb = None
         runtime._hotkeys.clear()
         runtime._held.clear()
         runtime._physical_held.clear()
@@ -309,7 +310,8 @@ class ViewerEventsTests(unittest.TestCase):
         runtime._on_mouse_cb = callback
         for message in (windows._WM_MOUSEHWHEEL, windows._WM_MOUSEWHEEL):
             for raw, steps in ((1, 1), (60, 1), (120, 1), (-1, -1), (-60, -1),
-                               (-120, -1), (240, 2), (-240, -2), (0, 0)):
+                               (-120, -1), (239, 1), (-239, -1), (240, 2),
+                               (-240, -2), (32767, 273), (-32768, -273), (0, 0)):
                 with self.subTest(message=message, raw=raw):
                     callback.reset_mock()
                     runtime.ui._print_scroll.reset_mock()
@@ -320,13 +322,21 @@ class ViewerEventsTests(unittest.TestCase):
                         runtime.ui._print_scroll.assert_not_called()
                         continue
                     expected = (steps, 0) if message == windows._WM_MOUSEHWHEEL else (0, steps)
-                    runtime.ui._print_scroll.assert_called_once_with(*expected)
+                    raw_delta = (raw, 0) if message == windows._WM_MOUSEHWHEEL else (0, raw)
+                    runtime.ui._print_scroll.assert_called_once_with(*expected, raw_delta=raw_delta)
                     callback.assert_called_once()
                     event = callback.call_args.args[0]
                     self.assertTrue(event.is_scroll)
                     self.assertEqual((event.scroll_dx, event.scroll_dy), expected)
         native.user32.SetWindowsHookExW.assert_not_called()
         native.user32.SendInput.assert_not_called()
+
+    def test_scroll_without_native_metadata_keeps_portable_callback(self) -> None:
+        callback = Mock()
+        runtime._on_mouse_cb = callback
+        runtime._emit_scroll(-2, 3)
+        runtime.ui._print_scroll.assert_called_once_with(-2, 3, raw_delta=None)
+        callback.assert_called_once_with(models.MouseEvent(scroll_dx=-2, scroll_dy=3, is_scroll=True))
 
     def test_sided_modifiers_and_auto_repeat_do_not_lose_held_state(self) -> None:
         trigger = Mock()
@@ -371,6 +381,40 @@ class ViewerEventsTests(unittest.TestCase):
             api.tap("KP_Enter")
         controller.press.assert_called_once_with("right_ctrl")
         controller.tap.assert_called_once_with("kp_enter")
+
+
+class ViewerScrollDisplayTests(unittest.TestCase):
+    """Check actual terminal output with and without Windows wheel metadata."""
+
+    def test_windows_shows_one_raw_pair_and_cyan_direction(self) -> None:
+        for steps, raw, direction in (
+            ((0, -1), (0, -30), "down"), ((0, 1), (0, 120), "up"),
+            ((1, 0), (120, 0), "right"), ((-1, 0), (-1, 0), "left"),
+        ):
+            with self.subTest(raw=raw), contextlib.redirect_stdout(io.StringIO()) as output:
+                runtime.ui._print_scroll(*steps, raw_delta=raw)
+            rendered = output.getvalue()
+            self.assertIn(f"scroll ({raw[0]}, {raw[1]})", rendered)
+            self.assertNotIn("delta", rendered)
+            self.assertTrue(rendered.endswith(f" {FCyan}{direction}{CRst}\n"))
+
+    def test_platform_directions_preserve_values_and_handle_both_axes(self) -> None:
+        for platform in ("win32", "darwin", "linux"):
+            right_sign = 1 if platform == "win32" else -1
+            for dx, dy, direction, arrow in (
+                (0, 1, "up", "↑"), (0, -1, "down", "↓"),
+                (right_sign, 0, "right", "→"), (-right_sign, 0, "left", "←"),
+                (right_sign, 2, "up+right", "↑→"),
+                (-right_sign, -2, "down+left", "↓←"), (0, 0, "none", "-"),
+            ):
+                with self.subTest(platform=platform, dx=dx, dy=dy), \
+                        patch.object(runtime.ui.sys, "platform", platform), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    runtime.ui._print_scroll(dx, dy)
+                rendered = output.getvalue()
+                self.assertIn(f"scroll ({dx}, {dy})", rendered)
+                self.assertIn(arrow, rendered)
+                self.assertTrue(rendered.endswith(f" {FCyan}{direction}{CRst}\n"))
 
 
 class ViewerDiscoveryTests(unittest.TestCase):
