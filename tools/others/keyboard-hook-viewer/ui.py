@@ -7,7 +7,7 @@ Platform dependencies are loaded only when the backend is used.
 from __future__ import annotations
 
 from utils import *
-from .models import InputDevice
+from .models import GesturePhase, InputDevice
 from . import backend
 _last_win_key: tuple[int, str] = (-1, "")
 
@@ -68,16 +68,14 @@ def _print_mouse(x: int, y: int, btn_name: str, pressed: bool):
 
 
 def _print_scroll(
-    dx: int, dy: int, *, raw_delta: tuple[int, int] | None = None,
+    dx: int, dy: int, *, raw_delta: tuple[float, float] | None = None,
 ) -> None:
     """Print one native-value pair and cyan scroll directions on every platform."""
+    if raw_delta == (0, 0):
+        return  # Gesture phase boundaries can carry no actual movement.
     display_dx, display_dy = raw_delta if raw_delta is not None else (dx, dy)
     # Quartz axis 2 and this viewer's X11 button-6 mapping are left-positive.
-    # Windows wheel metadata is always right-positive, regardless of the host.
-    right_delta = (
-        -display_dx if raw_delta is None and sys.platform in ("darwin", "linux")
-        else display_dx
-    )
+    right_delta = -display_dx if sys.platform in ("darwin", "linux") else display_dx
     directions: list[str] = []
     arrows: list[str] = []
     if display_dy:
@@ -88,8 +86,18 @@ def _print_scroll(
         arrows.append("→" if right_delta > 0 else "←")
     arrow = "".join(arrows) or "-"
     direction = "+".join(directions) or "none"
-    line = _format_event("MOU", arrow, f"scroll ({display_dx}, {display_dy})")
+    line = _format_event("MOU", arrow, f"scroll ({display_dx:g}, {display_dy:g})")
     print(f"{line} {FCyan}{direction}{CRst}")
+
+
+def _print_magnify(delta: float, phase: GesturePhase) -> None:
+    """Print signed magnification and cyan direction/phase, including gesture edges."""
+    direction = "zoom in" if delta > 0 else "zoom out" if delta < 0 else ""
+    arrow = "+" if delta > 0 else "-" if delta < 0 else "="
+    phase_name = phase.name.lower() if phase.name is not None else f"0x{int(phase):x}"
+    label = f"{direction} phase={phase_name}".strip()
+    line = _format_event("MOU", arrow, f"magnify ({delta:+g})")
+    print(f"{line} {FCyan}{label}{CRst}")
 
 
 def _print_key(

@@ -4,9 +4,12 @@
 Windows events retain virtual keys, scan codes and low-level hook flags.
 Scroll output shows one (x, y) pair and cyan up/down/left/right labels.
 Windows displays raw wheel deltas (120 per notch, right/up positive); macOS
-and X11 retain their backend values. Callback step values remain unchanged.
-Remote sessions show the wheel events received by Windows, including pinch
-only when translated to wheel input; these are not physical touchpad distances.
+shows precise NSEvent scrolling deltas, including fractional trackpad movement.
+X11 and callback step values remain unchanged. Zero native deltas are not printed.
+macOS also shows native pinch magnification deltas, zoom direction and phase;
+zero-delta pinch start/end events remain visible. On a Windows remote host,
+pinch is visible only when translated to wheel input; these are not physical
+touchpad distances or an application's current zoom level.
 macOS supports CGEvent/IOHID device identity; Linux requires an X11 session.
 Implementation modules live in keyboard-hook-viewer/ and are not commands.
 

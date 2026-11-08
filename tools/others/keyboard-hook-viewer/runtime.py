@@ -10,7 +10,7 @@ from utils import *
 import threading
 from typing import Callable, cast
 from collections.abc import Sequence
-from .models import KeyEvent, MouseEvent, InputDevice, Hotkey, Hook, EventSink
+from .models import GesturePhase, KeyEvent, MouseEvent, InputDevice, Hotkey, Hook, EventSink
 from . import backend, ui
 
 
@@ -99,14 +99,16 @@ def _emit_mouse(x: int, y: int, btn: str, pressed: bool) -> None:
 
 
 def _emit_scroll(
-    dx: int, dy: int, *, raw_delta: tuple[int, int] | None = None,
+    dx: int, dy: int, *, raw_delta: tuple[float, float] | None = None,
 ) -> None:
     """Display native deltas and directions, retaining callback step semantics.
 
     Args:
         dx: Horizontal backend steps (right-positive on Windows, left otherwise).
         dy: Vertical steps, positive upwards.
-        raw_delta: Windows wheel units (x, y), or None for other backends.
+        raw_delta: Windows wheel units or macOS NSEvent scrolling deltas (x, y).
+            None uses the backend steps for display. Zero native deltas are
+            omitted from the display without suppressing the callback.
 
     Side effects:
         Prints the event and invokes the registered mouse callback.
@@ -115,6 +117,21 @@ def _emit_scroll(
     ui._print_scroll(dx, dy, raw_delta=raw_delta)
     if _on_mouse_cb:
         _on_mouse_cb(MouseEvent(scroll_dx=dx, scroll_dy=dy, is_scroll=True))
+
+
+def _emit_magnify(delta: float, phase: GesturePhase) -> None:
+    """Display a native macOS pinch without treating it as a mouse wheel event.
+
+    Args:
+        delta: Per-event magnification change; positive zooms in, negative out.
+        phase: Native gesture phase flags, including zero-valued phase edges.
+
+    Side effects:
+        Prints the foreground window and gesture. Existing keyboard/mouse
+        callbacks are not invoked for this display-only gesture event.
+    """
+    ui._check_win_change()
+    ui._print_magnify(delta, phase)
 
 
 # ============ public setup ============

@@ -29,10 +29,16 @@ Description:
   Windows displays scan codes and preserves sided keys and keypad Enter.
   Scroll shows one (x, y) pair with cyan up/down/left/right labels.
   Windows displays raw wheel deltas: 120 units per notch, right/up positive.
-  macOS/X11 retain backend values (left/up positive); callback steps are unchanged.
+  macOS uses precise NSEvent scrolling deltas, preserving fractional movement;
+  precise devices use point deltas, ordinary wheels use line deltas.
+  macOS/X11 are left/up positive; X11 and callback step values are unchanged.
+  Zero native scroll deltas are not printed (for example, phase boundaries).
   Diagonal events show both directions; values are not physical distances.
-  Remote pinch appears here only if delivered to Windows as wheel input;
-  native macOS gesture deltas and zoom scale are not available on this host.
+  macOS pinch: magnify (+0.025) zoom in phase=changed; negative means zoom out.
+  Pinch begin/end phases remain visible even with zero magnification delta.
+  This per-event delta is not the target application's current zoom level.
+  On a Windows remote host, pinch appears only if delivered as wheel input;
+  run this viewer on the Mac to inspect native pinch events.
   macOS can display the physical HID device identity when available.
 
 Options:

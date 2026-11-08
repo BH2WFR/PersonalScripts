@@ -8,9 +8,22 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable
+from enum import IntFlag
 from typing import Protocol
 import threading
 from utils import *
+
+
+class GesturePhase(IntFlag):
+    """Native NSEvent phase flags retained for gesture display, including zero."""
+
+    NONE = 0
+    BEGAN = 1
+    STATIONARY = 2
+    CHANGED = 4
+    ENDED = 8
+    CANCELLED = 16
+    MAY_BEGIN = 32
 
 
 @dataclasses.dataclass
@@ -103,8 +116,10 @@ class EventSink(Protocol):
     def _emit_mouse(self, x: int, y: int, btn: str, pressed: bool) -> None: ...
 
     def _emit_scroll(
-        self, dx: int, dy: int, *, raw_delta: tuple[int, int] | None = None,
+        self, dx: int, dy: int, *, raw_delta: tuple[float, float] | None = None,
     ) -> None: ...
+
+    def _emit_magnify(self, delta: float, phase: GesturePhase) -> None: ...
 
 
 class Hook(Protocol):

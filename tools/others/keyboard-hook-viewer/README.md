@@ -47,17 +47,35 @@ symmetrically. Zero deltas are ignored. This is per-event direction monitoring,
 not accumulated high-resolution scrolling or a physical-distance measurement.
 The terminal shows one `scroll (x, y)` pair. Windows uses the original signed
 wheel units before step conversion (120 units per notch), for example
-`scroll (0, -30) down`. macOS and X11 retain their backend values.
+`scroll (0, -30) down`. macOS uses `NSEvent.scrollingDeltaX/Y`: precise trackpads
+and mice report point deltas, ordinary wheels report line deltas. Fractional
+values and momentum are retained; legacy integer CGEvent line fields are used
+only for callback compatibility (or as a fallback if NSEvent conversion fails).
+X11 retains its backend values. Values from different platforms/devices are
+not directly comparable in scale. See Apple's [scrollingDeltaY documentation](https://developer.apple.com/documentation/appkit/nsevent/scrollingdeltay).
 Every platform appends direction labels in cyan (`FCyan`): `up`, `down`, `left`,
-or `right`; diagonal events include both, such as `up+right`. Zero movement is
-labelled `none`. Direction labels account for the existing left-positive
+or `right`; diagonal events include both, such as `up+right`. Zero native deltas
+are not printed, avoiding directionless gesture phase events. Direction labels
+use the displayed deltas and account for the existing left-positive
 horizontal values on macOS/X11 and right-positive values on Windows; vertical
 values are up-positive everywhere. These describe scroll events, not finger
 motion or an application's resulting content movement. Callback values remain
 unchanged on every platform.
-When monitoring a remote session from Windows App on a Mac, these values are
+Native macOS pinch gestures appear separately, for example
+`magnify (+0.025) zoom in phase=changed` or
+`magnify (-0.015) zoom out phase=changed`. Direction and phase use `FCyan`.
+The event tap listens for generic gesture packets and checks the converted
+NSEvent's magnify subtype; unrelated rotation/swipe/pressure events are ignored.
+The value is the per-event [magnification change](https://developer.apple.com/documentation/appkit/nsevent/magnification),
+not an application's current zoom level. Zero-delta begin/end/cancelled events
+remain visible so the gesture lifecycle can be inspected. Pinch is display-only
+and does not enter the existing keyboard/mouse callbacks.
+
+When monitoring a remote session from Windows App on a Windows host, values are
 the wheel deltas received by Windows. Pinch is visible here only if translated
-to wheel input; this hook cannot recover native macOS pinch deltas or zoom scale.
+to wheel input; the Windows backend cannot recover native macOS pinch deltas.
+Run the viewer locally on the Mac to inspect native pinch. X11 has no native
+pinch display in this viewer; neither backend infers pinch from Ctrl+wheel.
 
 After loading the entry with `importlib.util`, call `entry.load_app()` to
 register the package. Then import `personal_keyboard_hook_viewer.api` for

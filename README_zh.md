@@ -344,5 +344,5 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/others/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：全平台显示滚动方向，Windows 显示扫描码及原始滚动 delta，并区分左右修饰键、小键盘 Enter；macOS 可显示事件来源设备信息，Linux 使用 X11 XRecord。**仅限键盘测试、特殊热键、经授权的自动化操作等正当用途。** | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
+| `tools/others/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：全平台显示滚动方向，Windows 显示扫描码及原始滚动 delta，并区分左右修饰键、小键盘 Enter；macOS 显示精细滚动与捏合缩放增量及可用的事件来源设备信息，Linux 使用 X11 XRecord。**仅限键盘测试、特殊热键、经授权的自动化操作等正当用途。** | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
 | `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | **命令行参数打印工具**：<br />可打印出所有传入脚本的 argv 参数，用于判断脚本传入参数是否正确 |  |

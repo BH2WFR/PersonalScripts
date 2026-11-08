@@ -2,6 +2,9 @@
 
 Private implementation; launch ../keyboard-hook-viewer.py.
 Platform dependencies are loaded only when the backend is used.
+Scroll display uses NSEvent scrollingDeltaX/Y to retain precise trackpad deltas;
+legacy integer CGEvent line values remain available to callbacks.
+Native pinch gestures display NSEvent magnification deltas and phase flags.
 """
 
 from __future__ import annotations
@@ -9,7 +12,7 @@ from __future__ import annotations
 from utils import *
 import threading
 from typing import Callable
-from .models import InputDevice, WindowInfo, EventSink
+from .models import GesturePhase, InputDevice, WindowInfo, EventSink
 _OS = sys.platform
 
 
@@ -286,7 +289,7 @@ def create_hook(sink: EventSink):
             kCGKeyboardEventKeycode, kCGMouseEventButtonNumber,
             kCGScrollWheelEventDeltaAxis1, kCGScrollWheelEventDeltaAxis2,
             kCGSessionEventTap,
-            NSEvent, NSSystemDefined,
+            NSEvent, NSSystemDefined, NSEventTypeGesture, NSEventTypeMagnify,
         )
     except ImportError:
         return None
@@ -303,6 +306,9 @@ def create_hook(sink: EventSink):
         | CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventOtherMouseUp)
         | CGEventMaskBit(kCGEventOtherMouseDragged)
         | CGEventMaskBit(kCGEventScrollWheel)
+        # CGEvent taps generally wrap pinch events in the generic gesture type;
+        # NSEvent.type() identifies the magnify subtype after conversion.
+        | CGEventMaskBit(NSEventTypeGesture) | CGEventMaskBit(NSEventTypeMagnify)
     )
 
     _MOUSE_PRESS = {
@@ -371,11 +377,28 @@ def create_hook(sink: EventSink):
             if event_type == kCGEventScrollWheel:
                 dx = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis2)
                 dy = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1)
-                sink._emit_scroll(dx, dy)
+                # Integer line fields can be zero throughout smooth scrolling.
+                # NSEvent exposes precise device deltas, including momentum.
+                # https://developer.apple.com/documentation/appkit/nsevent/scrollingdeltay
+                scroll_event = NSEvent.eventWithCGEvent_(event)
+                raw_delta = (
+                    (float(scroll_event.scrollingDeltaX()), float(scroll_event.scrollingDeltaY()))
+                    if scroll_event is not None else None
+                )
+                sink._emit_scroll(dx, dy, raw_delta=raw_delta)
             elif event_type in _MOUSE_PRESS:
                 sink._emit_mouse(x, y, _MOUSE_BTN_MAP.get(btn, f"button{btn}"), True)
             elif event_type in _MOUSE_RELEASE:
                 sink._emit_mouse(x, y, _MOUSE_BTN_MAP.get(btn, f"button{btn}"), False)
+
+        def _handle_gesture_event(self, event: object) -> None:
+            """Display only native magnify events, retaining zero-valued phase edges."""
+            gesture = NSEvent.eventWithCGEvent_(event)
+            if gesture is None or gesture.type() != NSEventTypeMagnify:
+                return
+            sink._emit_magnify(
+                float(gesture.magnification()), GesturePhase(int(gesture.phase())),
+            )
 
         def _handle(self, _proxy, event_type, event, _refcon):
             try:
@@ -387,6 +410,8 @@ def create_hook(sink: EventSink):
                     self._handle_flags_changed(event)
                 elif event_type == NSSystemDefined:
                     self._handle_system_defined(event)
+                elif event_type in (NSEventTypeGesture, NSEventTypeMagnify):
+                    self._handle_gesture_event(event)
                 elif event_type in (
                     kCGEventLeftMouseDown, kCGEventLeftMouseUp,
                     kCGEventLeftMouseDragged,
@@ -399,6 +424,7 @@ def create_hook(sink: EventSink):
                     self._handle_mouse_event(event_type, event)
             except Exception:
                 pass
+            return event
 
         def start(self):
             self._tap = CGEventTapCreate(

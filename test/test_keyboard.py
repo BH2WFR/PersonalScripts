@@ -250,7 +250,7 @@ class ViewerEventsTests(unittest.TestCase):
         runtime._hotkeys.clear()
         runtime._on_key_cb = None
         runtime._on_mouse_cb = None
-        for name in ("_check_win_change", "_print_key", "_print_mouse", "_print_scroll"):
+        for name in ("_check_win_change", "_print_key", "_print_mouse", "_print_scroll", "_print_magnify"):
             mocker = patch.object(runtime.ui, name)
             mocker.start()
             self.addCleanup(mocker.stop)
@@ -338,6 +338,80 @@ class ViewerEventsTests(unittest.TestCase):
         runtime.ui._print_scroll.assert_called_once_with(-2, 3, raw_delta=None)
         callback.assert_called_once_with(models.MouseEvent(scroll_dx=-2, scroll_dy=3, is_scroll=True))
 
+    def test_macos_smooth_scroll_uses_precise_values_even_with_zero_line_delta(self) -> None:
+        macos = importlib.import_module(f"{entry.PACKAGE_NAME}.macos")
+        quartz = Mock()
+        quartz.CGEventMaskBit.return_value = 0
+        quartz.CGEventGetLocation.return_value = (0, 0)
+        with patch.dict(sys.modules, {"Quartz": quartz}), patch.object(macos, "_OS", "darwin"):
+            hook = macos.create_hook(runtime)
+        assert hook is not None
+        callback = Mock()
+        runtime._on_mouse_cb = callback
+
+        # Start, steady movement, acceleration, diagonal/momentum, phase end.
+        for line_dy, precise in (
+            (1, (0.0, 2.5)), (0, (0.0, 2.5)), (0, (0.0, 7.75)),
+            (0, (0.125, -0.25)), (-1, (0.0, -12.5)), (0, (0.0, 0.0)),
+            (1, None),  # Unconvertible CGEvent retains the legacy fallback.
+        ):
+            with self.subTest(line_dy=line_dy, precise=precise):
+                fields = {quartz.kCGScrollWheelEventDeltaAxis1: line_dy}
+                quartz.CGEventGetIntegerValueField.side_effect = lambda event, field: fields.get(field, 0)
+                scroll_event = Mock() if precise is not None else None
+                if precise is not None and scroll_event is not None:
+                    scroll_event.scrollingDeltaX.return_value = precise[0]
+                    scroll_event.scrollingDeltaY.return_value = precise[1]
+                quartz.NSEvent.eventWithCGEvent_.return_value = scroll_event
+                callback.reset_mock()
+                runtime.ui._print_scroll.reset_mock()
+                hook._handle_mouse_event(quartz.kCGEventScrollWheel, object())
+                runtime.ui._print_scroll.assert_called_once_with(0, line_dy, raw_delta=precise)
+                callback.assert_called_once_with(models.MouseEvent(scroll_dy=line_dy, is_scroll=True))
+        quartz.CGEventTapCreate.assert_not_called()
+
+    def test_macos_native_pinch_packets_preserve_delta_and_phase(self) -> None:
+        macos = importlib.import_module(f"{entry.PACKAGE_NAME}.macos")
+        quartz = Mock()
+        quartz.CGEventMaskBit.return_value = 0
+        with patch.dict(sys.modules, {"Quartz": quartz}), patch.object(macos, "_OS", "darwin"):
+            hook = macos.create_hook(runtime)
+        assert hook is not None
+        quartz.CGEventMaskBit.assert_any_call(quartz.NSEventTypeGesture)
+        quartz.CGEventMaskBit.assert_any_call(quartz.NSEventTypeMagnify)
+        runtime._on_mouse_cb = Mock()
+        runtime._on_key_cb = Mock()
+
+        # Generic CG gesture packets must be decoded as NSEvent magnify events.
+        for packet_type in (quartz.NSEventTypeGesture, quartz.NSEventTypeMagnify):
+            for delta, phase in ((0.0, 1), (0.025, 4), (-0.015, 4), (0.0, 8), (0.0, 16)):
+                with self.subTest(packet_type=packet_type, delta=delta, phase=phase):
+                    native_event = object()
+                    gesture = Mock()
+                    gesture.type.return_value = quartz.NSEventTypeMagnify
+                    gesture.magnification.return_value = delta
+                    gesture.phase.return_value = phase
+                    quartz.NSEvent.eventWithCGEvent_.return_value = gesture
+                    runtime.ui._print_magnify.reset_mock()
+                    self.assertIs(hook._handle(None, packet_type, native_event, None), native_event)
+                    runtime.ui._print_magnify.assert_called_once_with(delta, models.GesturePhase(phase))
+
+        # Never call magnification on a non-magnify NSEvent or failed conversion.
+        for other_type in (quartz.NSEventTypeRotate, quartz.NSEventTypeSwipe, None):
+            gesture = Mock() if other_type is not None else None
+            if gesture is not None:
+                gesture.type.return_value = other_type
+            quartz.NSEvent.eventWithCGEvent_.return_value = gesture
+            runtime.ui._print_magnify.reset_mock()
+            hook._handle(None, quartz.NSEventTypeGesture, object(), None)
+            runtime.ui._print_magnify.assert_not_called()
+            if gesture is not None:
+                gesture.magnification.assert_not_called()
+        runtime.ui._print_scroll.assert_not_called()
+        runtime._on_mouse_cb.assert_not_called()
+        runtime._on_key_cb.assert_not_called()
+        quartz.CGEventTapCreate.assert_not_called()
+
     def test_sided_modifiers_and_auto_repeat_do_not_lose_held_state(self) -> None:
         trigger = Mock()
         runtime._hotkeys.append(models.Hotkey("ctrl+a", trigger))
@@ -391,12 +465,32 @@ class ViewerScrollDisplayTests(unittest.TestCase):
             ((0, -1), (0, -30), "down"), ((0, 1), (0, 120), "up"),
             ((1, 0), (120, 0), "right"), ((-1, 0), (-1, 0), "left"),
         ):
-            with self.subTest(raw=raw), contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.subTest(raw=raw), patch.object(runtime.ui.sys, "platform", "win32"), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
                 runtime.ui._print_scroll(*steps, raw_delta=raw)
             rendered = output.getvalue()
             self.assertIn(f"scroll ({raw[0]}, {raw[1]})", rendered)
             self.assertNotIn("delta", rendered)
             self.assertTrue(rendered.endswith(f" {FCyan}{direction}{CRst}\n"))
+
+    def test_macos_precise_values_drive_direction_without_integer_rounding(self) -> None:
+        for raw, label, direction in (
+            ((0.0, 0.125), "0, 0.125", "up"),
+            ((0.0, -18.5), "0, -18.5", "down"),
+            ((0.125, 0.0), "0.125, 0", "left"),
+            ((-0.25, 0.125), "-0.25, 0.125", "up+right"),
+            ((0.0, 0.00001), "0, 1e-05", "up"),
+        ):
+            with self.subTest(raw=raw), patch.object(runtime.ui.sys, "platform", "darwin"), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                runtime.ui._print_scroll(0, 0, raw_delta=raw)
+            self.assertIn(f"scroll ({label})", output.getvalue())
+            self.assertTrue(output.getvalue().endswith(f" {FCyan}{direction}{CRst}\n"))
+
+    def test_zero_native_delta_does_not_print_a_directionless_event(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            runtime.ui._print_scroll(0, 0, raw_delta=(0.0, 0.0))
+        self.assertEqual(output.getvalue(), "")
 
     def test_platform_directions_preserve_values_and_handle_both_axes(self) -> None:
         for platform in ("win32", "darwin", "linux"):
@@ -415,6 +509,28 @@ class ViewerScrollDisplayTests(unittest.TestCase):
                 self.assertIn(f"scroll ({dx}, {dy})", rendered)
                 self.assertIn(arrow, rendered)
                 self.assertTrue(rendered.endswith(f" {FCyan}{direction}{CRst}\n"))
+
+
+class ViewerMagnifyDisplayTests(unittest.TestCase):
+    """Native pinch has a signed delta and cyan direction/phase, not wheel steps."""
+
+    def test_signed_magnification_and_phase_use_cyan(self) -> None:
+        for delta, phase, label in (
+            (0.025, models.GesturePhase.CHANGED, "zoom in phase=changed"),
+            (-0.015, models.GesturePhase.CHANGED, "zoom out phase=changed"),
+            (0.0, models.GesturePhase.BEGAN, "phase=began"),
+            (0.0, models.GesturePhase.ENDED, "phase=ended"),
+            (0.0, models.GesturePhase.CANCELLED, "phase=cancelled"),
+            (0.0, models.GesturePhase.NONE, "phase=none"),
+            (0.001, models.GesturePhase(64), "zoom in phase=0x40"),
+        ):
+            with self.subTest(delta=delta, phase=phase), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                runtime.ui._print_magnify(delta, phase)
+            rendered = output.getvalue()
+            self.assertIn(f"magnify ({delta:+g})", rendered)
+            self.assertNotIn("scroll", rendered)
+            self.assertTrue(rendered.endswith(f" {FCyan}{label}{CRst}\n"))
 
 
 class ViewerDiscoveryTests(unittest.TestCase):
