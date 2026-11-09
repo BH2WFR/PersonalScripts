@@ -220,11 +220,11 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-font-replace.py` | **PDF 字体与文字颜色桌面工具**：查看源字体详细信息，对指定页面应用有序字体替换或仅改颜色的规则，使用已应用的字体预览当前筛选命中的文字。支持带缓存的原图／结果对照、按名称或本地化别名查找目标字体，默认仅嵌入用到的字符，保留文字位置、样式及其他 PDF 内容。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
-| `tools/document-processing/pdf-binarize.py` | **PDF 压缩桌面工具**：<br />提供带缓存的原图与结果预览、可复用的页面 Profile、带调参提示的分组设置和 JSON 工程。按图片元素压缩，支持原图 DPI 保护、插图裁剪和清理，保留原生 PDF 功能，并在导出后显示压缩前后体积。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
-| `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据，也可处理仅有 PDF/A 标识的无保护文件。若没有需要移除的内容，则警告并提供重新打开或退出选项。 | **Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-bookmarks-add.py` | **PDF 目录识别与书签编辑 GUI**：框选、旋转目录图片后通过云端或本地视觉模型逐页识别，可追溯问题并重试单页或全部页面，支持清空对话与限制上下文图片数。支持 YAML、页码标签与书签树编辑，提供多选批处理、拖拽排序及两种缩进/减少缩进模式，导出时保留源文件，无需工程文件。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
-| `tools/document-processing/pdf-split-pages.py` | **PDF 页面可视化裁剪工具**：用编号彩框预览，支持整体或单框调整、保留整页，并显示裁剪后的对应页码。无栅格化导出等大子页，缩框居中、越界留白，重映射书签与链接并移除导航页码标签。 | **Python 库**：`PySide6`、`PyMuPDF`、`tqdm` |
+| `tools/document-processing/pdf-font-replace.py` | **PDF 字体与文字颜色替换工具**：可在不改变文字排版、行距的前提下一键替换文本的颜色和字体。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
+| `tools/document-processing/pdf-binarize.py` | **扫描版 PDF 二值化与极限压缩工具**：<br />仅处理 PDF 中的图片元素，可使用自适应灰度阈值，可对识别到的图片、黑框文字、矢量元素使用单独的处理方式。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
+| `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据。 | **Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 目录识别、书签编辑、页码标签编辑工具**：框选目录图片后通过云端或本地视觉模型逐页识别，并将识别到的目录打入到 PDF 文件中。支持**页码标签**与书签树编辑。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
+| `tools/document-processing/pdf-split-pages.py` | **扫描版 PDF 页面裁剪工具**：用于对双页扫描版 PDF 进行裁剪。 | **Python 库**：`PySide6`、`PyMuPDF`、`tqdm` |
 | `tools/document-processing/document-screenshot.py` | **针对加密文档的自动截图抓取工具**：<br />基于模拟 PgDn 翻页 + 鼠标点击自动翻页，并通过自动截图来获取内容，适用于**全自动抓取并保存被 DRM 保护或位于加密 USB 存储设备中的 PDF** 文件内容。<br /><br />建议使用高分辨率屏幕，并将屏幕方向改为纵向，然后调整文档页面的显示范围（不超出屏幕范围并能充分利用屏幕空间）后，再用本脚本自动截图抓取。<br />macOS 中还需要额外授予相应的屏幕录制权限。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />**Python 库**：`mss`、`pynput`、`Pillow` |
 ### 视频下载
 
@@ -246,10 +246,10 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/filesystem/list-disks.py` | **磁盘与分区信息查看工具**：以设备树显示挂载点、盘符、卷标、容量和完整 ID，方便在终端中选取复制。 | Windows：`pwsh` 7；Linux：`lsblk`；macOS：`diskutil` |
-| `tools/filesystem/path-in-use.py` | **文件/目录占用查询工具**：列出占用进程的 PID、可执行文件路径。递归检查目录（含盘符/挂载点），Windows 下同时后检测文件句柄和内存映射文件。 | `psutil`；<br />**需要提权** |
+| `tools/filesystem/path-in-use.py` | **文件/目录占用查询工具**：列出占用某文件/目录的进程的 PID、可执行文件路径。支持递归检查目录（含盘符/挂载点）。 | `psutil`；<br />**需要提权** |
 | `tools/filesystem/openssl-file-hash.py` | 基于 OpenSSL 的**文件哈希值计算工具**：<br />支持批量处理文件，并支持 `md5`、`sha256` 等 OpenSSL 提供的常见算法。 | `openssl` |
 | `tools/filesystem/check-filename-overlong.py` | **长文件名自动截断工具**：<br />按 UTF-8 编码统计字节长度，自动截断超过指定字节数（默认 143，适配群晖的加密文件夹限制）的文件名。<br />截断时**保留扩展名**，若发生重名则在扩展名前自动加 `_1`、`_2` 等后缀 |  |
-| `tools/filesystem/modify-file-time.py`        | **文件/文件夹时间戳修改工具**（创建/修改/访问时间），支持加入随机抖动，支持备份/还原指定文件夹下所有文件/文件夹的时间 |  |
+| `tools/filesystem/modify-file-time.py`        | **文件/文件夹时间戳修改工具**：可修改创建/修改/访问时间，支持加入随机抖动，支持备份/还原指定文件夹下所有文件/文件夹的时间 |  |
 | `tools/macos/ntfs-3g-utils.py`                | 仅 macOS，**基于 ntfs-3g-mac 的 NTFS 分区可写挂载工具**：<br />支持自动扫描 NTFS 分区，并支持卸载/弹出分区 | **仅 macOS**<br />**需要提权**<br />需在安全模式下允许来自认可开发者的内核扩展，并安装内核扩展 `macFUSE` 和挂载工具 `ntfs-3g-mac` |
 
 ### 文件系统/符号链接工具
@@ -273,7 +273,7 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/network/tailscale-restart-accept-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
-| [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务（含 Linux GUI 条件），同步、复制、移动或比较多对目录，也可复制和移动单个文件。支持云端及本地同步，支持按卷标定位移动硬盘、字面路径、每组路径临时指定 SFTP/WebDAV 地址、命令预览、重试、试运行和取消操作。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
+| [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，同步、复制、移动或比较多对目录/文件到云盘、U盘中。支持按卷标定位移动硬盘。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
 | `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />连接设置和加密凭据来自用户 `config.yaml` 的 `upload-ipaddress` 节 | **Python 库：**`boto3` |
 | `tools/windows/firewall-app-blocker.py` | 仅 Windows，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
 | `tools/network/webserver-run.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |
@@ -283,7 +283,7 @@
 | 脚本                                | 描述                                                         | 依赖                                    |
 | ----------------------------------- | ------------------------------------------------------------ | --------------------------------------- |
 | `tools/windows/file-association.py` | 仅 Windows，**为指定扩展名的文件在系统中注册指定 EXE 作为打开方式的工具**：<br />可用于给一些便携软件注册对指定扩展名的打开方式 | **仅 Windows**<br />**需要提权** |
-| `tools/others/script-to-app.py` | 在 Windows、macOS 和 Linux 桌面为 Python 脚本创建文件打开方式，统一收纳到 `PersonalScripts`，使用选定的 Python 环境，不打包依赖。支持自定义输出目录和中文名称；macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式，后者效果取决于文件管理器。 | **Windows / macOS / Linux 桌面**<br />Windows 需提权或使用可写目录；Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选） |
+| `tools/others/script-to-app.py      | **以「应用」的方式创建 Python 脚本的启动器**的工具（不是打包！）：不会打包脚本，支持绑定 conda 环境。Windows 下输出 .cmd，macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式。 | **Windows / macOS / Linux 桌面**<br />Windows 需提权或使用可写目录；Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选） |
 
 ### 文本处理
 
@@ -313,7 +313,7 @@
 
 | 脚本                               | 描述                                                         | 依赖                                             |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `tools/windows/keyboard-remap.py` | **注册表键盘映射 GUI**：支持列表选键或捕获按键、禁用按键、拖动排序及最终十六进制预览。写入前确认并备份，支持恢复，保存后需重启 Windows 生效。 | **Windows 10+**<br />`PySide6`<br />写入时需要管理员权限 |
+| `tools/windows/keyboard-remap.py` | **注册表键盘映射编辑工具**：支持列表选键或捕获按键、禁用按键、拖动排序及最终十六进制预览。写入前确认并备份，支持恢复，保存后需重启 Windows 生效。 | **Windows 10+**<br />`PySide6`<br />写入时需要管理员权限 |
 | `tools/windows/usb-eject-log.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
 | `tools/windows/restart-service.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | `tools/others/power-current.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
@@ -344,5 +344,5 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/others/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：全平台显示滚动方向，Windows 显示扫描码及原始滚动 delta，并区分左右修饰键、小键盘 Enter；macOS 显示精细滚动与捏合缩放增量及可用的事件来源设备信息，Linux 使用 X11 XRecord。**仅限键盘测试、特殊热键、经授权的自动化操作等正当用途。** | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
+| `tools/others/keyboard-hook-viewer.py` | **全局键盘鼠标钩子监控器**：全平台显示滚动方向，Windows 显示扫描码及原始滚动 delta，并区分左右修饰键、小键盘 Enter；macOS 显示精细滚动与捏合缩放增量及可用的事件来源设备信息，Linux 使用 X11 XRecord。<br />**仅限键盘测试、特殊热键、经授权的自动化操作等正当用途。** | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
 | `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | **命令行参数打印工具**：<br />可打印出所有传入脚本的 argv 参数，用于判断脚本传入参数是否正确 |  |

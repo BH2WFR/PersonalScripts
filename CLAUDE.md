@@ -972,15 +972,15 @@ centered in a ~48-char-wide comment line.
 
 ### After creating or modifying a script
 
-When you create a new script or change an existing one's behaviour, **update
-ALL of these** so they stay consistent:
+When you create a new script or change an existing one's behaviour, **review
+all of these and update the affected content**:
 
 1. **Module docstring** — the triple-quoted string between `#!/usr/bin/env
    python3` and the imports. Cover what, requirements, and usage.
 2. **`--help` output** — the formatted help text inside `main()`. Must list
    description, usage, all CLI flags, and dependencies.
-3. **[README.md](README.md)** — English. Add or update the entry in the correct
-   category table.
+3. **[README.md](README.md)** — English. Add an entry for a new script; update
+   an existing entry only when its core purpose, capabilities, or requirements change.
 4. **[README_zh.md](README_zh.md)** — Chinese. Same as above.
 
 These four places must agree on the script's purpose and requirements, but
@@ -993,13 +993,15 @@ not in the README.
 - **`README.md` and `README_zh.md` are quick overviews for first-time users.
   They are not technical documentation or API documentation.**
 - Introduce each script **only in its category table**, using **no more than
-  two sentences** to describe its purpose and key highlights. Do not add
-  standalone detailed script explanations outside the table.
-- Do not include implementation details, API descriptions, special parameters,
-  or interaction details that do not help a new user understand what the script
-  does. Detailed command options, prompt/menu behavior, configuration precedence,
-  inheritance rules, and other technical specifics belong in script-level
-  documentation or example configuration files.
+  two concise sentences** about what it does, the problem it solves, and its
+  core capabilities; do not pack an exhaustive feature list into those sentences.
+- Exclude incidental operation and interaction details: menus, buttons, input
+  controls, selection gestures, preview controls, confirmations, retries, and
+  exit behavior. An interface improvement alone does not warrant a README change.
+- Keep implementation details, APIs, command options, configuration rules, and
+  usage steps in script-level documentation, `--help`, or example configuration.
+  Retain only conditions essential to understanding the core function; put
+  dependencies and platform requirements in the Requirements column.
 - **The Highlights section in either language is authored exclusively by the
   project owner.** Do not independently add, remove, rewrite, reorder, or polish
   its content. Only translate owner-written content into the other language,
