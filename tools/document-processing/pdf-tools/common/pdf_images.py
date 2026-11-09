@@ -1,9 +1,13 @@
 """Displayed PDF image occurrences and their effective page resolutions."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
+from typing import cast
 
 import pymupdf
+
+from .protocol import Json
 
 
 @dataclass(frozen=True)
@@ -18,17 +22,22 @@ class ImageElement:
     # The same visible bounds scaled to [0, 1] for the raster preview overlay.
     bounds: tuple[float, float, float, float]
 
-    def to_data(self) -> dict[str, object]:
+    def to_data(self) -> dict[str, Json]:
         return {"codec": self.codec, "width": self.width, "height": self.height,
                 "dpi_x": self.dpi_x, "dpi_y": self.dpi_y,
                 "position": list(self.position), "bounds": list(self.bounds)}
 
     @classmethod
-    def from_data(cls, data: dict[str, object]) -> "ImageElement":
-        return cls(str(data["codec"]), int(data["width"]), int(data["height"]),
-                   float(data["dpi_x"]), float(data["dpi_y"]),
-                   tuple(float(value) for value in data["position"]),  # type: ignore[arg-type]
-                   tuple(float(value) for value in data["bounds"]))  # type: ignore[arg-type]
+    def from_data(cls, data: Mapping[str, object]) -> "ImageElement":
+        """Restore the image metadata schema emitted by the preview worker."""
+        position = tuple(float(value) for value in cast(list[float], data["position"]))
+        bounds = tuple(float(value) for value in cast(list[float], data["bounds"]))
+        if len(position) != 4 or len(bounds) != 4:
+            raise ValueError("Image position and bounds must each contain four coordinates.")
+        return cls(str(data["codec"]), int(cast(int, data["width"])), int(cast(int, data["height"])),
+                   float(cast(float, data["dpi_x"])), float(cast(float, data["dpi_y"])),
+                   (position[0], position[1], position[2], position[3]),
+                   (bounds[0], bounds[1], bounds[2], bounds[3]))
 
 
 def _codec(document: pymupdf.Document, xref: int) -> str:
@@ -50,8 +59,11 @@ def inspect_images(page: pymupdf.Page) -> tuple[ImageElement, ...]:
     Effective DPI comes from pixel count and the placement transform, not the
     often inaccurate XResolution/YResolution tags stored in the image stream.
     """
+    document = page.parent
+    if document is None:
+        raise ValueError("Cannot inspect images on an orphaned PDF page.")
     visible = page.rect
-    elements = []
+    elements: list[ImageElement] = []
     for info in page.get_image_info(xrefs=True):
         matrix = info["transform"]
         axis_x = math.hypot(matrix[0], matrix[1])
@@ -64,7 +76,7 @@ def inspect_images(page: pymupdf.Page) -> tuple[ImageElement, ...]:
         x0, y0 = bbox.x0 - visible.x0, bbox.y0 - visible.y0
         x1, y1 = bbox.x1 - visible.x0, bbox.y1 - visible.y0
         elements.append(ImageElement(
-            _codec(page.parent, info["xref"]), info["width"], info["height"],
+            _codec(document, info["xref"]), info["width"], info["height"],
             info["width"] * 72 / axis_x, info["height"] * 72 / axis_y,
             (x0, y0, x1, y1),
             (x0 / visible.width, y0 / visible.height, x1 / visible.width, y1 / visible.height)))

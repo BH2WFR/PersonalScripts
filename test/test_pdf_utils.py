@@ -1,7 +1,7 @@
 """Verify reusable PDF operations independently of the PDF GUI packages.
 
 Run: conda run -n base python -m unittest discover -s test -p test_pdf_utils.py.
-Requires PyMuPDF; creates in-memory PDFs only.
+Requires PyMuPDF and PySide6 for fixed-canvas rotation; no QApplication needed.
 """
 
 from dataclasses import replace
@@ -20,6 +20,35 @@ from utils import *
 
 class PdfUtilityTests(unittest.TestCase):
     """Check pixel limits and retained PDF objects through the public Pdf API."""
+
+    def test_rotation_keeps_canvas_center_scale_metadata_and_white_edges(self) -> None:
+        with pymupdf.open() as document:
+            page = document.new_page(width=201, height=301)
+            page.draw_rect((90.5, 140.5, 110.5, 160.5), color=None, fill=(1, 0, 0))
+            page.draw_rect((140.5, 140.5, 160.5, 160.5), color=None, fill=(0, 0, 0))
+            original = Pdf.render_page(page, dpi=72)
+            original.set_origin(3, 7)
+            original.set_dpi(200, 300)
+            before = original.samples
+            self.assertIs(Pdf.rotate_pixmap(original, 0), original)
+            for angle in (0, 3, -3, 45, 90, -90, 180):
+                rotated = Pdf.rotate_pixmap(original, angle)
+                self.assertEqual((rotated.width, rotated.height), (201, 301))
+                self.assertEqual((rotated.x, rotated.y, rotated.xres, rotated.yres), (3, 7, 200, 300))
+                self.assertEqual(rotated.pixel(100, 150), (255, 0, 0))
+                self.assertEqual(rotated.pixel(0, 0), (255, 255, 255))
+            clockwise = Pdf.rotate_pixmap(original, 90)
+            self.assertEqual(clockwise.pixel(100, 200), (0, 0, 0))
+            self.assertEqual(clockwise.pixel(100, 211), (255, 255, 255))
+            self.assertEqual(clockwise.pixel(100, 189), (255, 255, 255))
+            self.assertEqual(Pdf.rotate_pixmap(original, -90).pixel(100, 100), (0, 0, 0))
+            self.assertEqual(original.samples, before)
+            for angle in (float("nan"), float("inf"), 181):
+                with self.assertRaises(ValueError):
+                    Pdf.rotate_pixmap(original, angle)
+            for unsupported in (pymupdf.Pixmap(pymupdf.csGRAY, original), pymupdf.Pixmap(original, 1)):
+                with self.assertRaises(ValueError):
+                    Pdf.rotate_pixmap(unsupported, 30)
 
     def test_rotated_rgb_preview_respects_pixel_budget_and_annotation_switch(self) -> None:
         with pymupdf.open() as document:

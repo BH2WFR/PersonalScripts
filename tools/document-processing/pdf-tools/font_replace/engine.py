@@ -3,6 +3,7 @@
 Migrated from pdf-font-replace without changing original-text matching, positions,
 style handling or resource isolation. Requires PyMuPDF >= 1.28, fonttools and tqdm.
 No interactive prompts; unsupported encodings, glyphs and styles raise errors.
+Rewritten operations retain token boundaries even in compact PDF streams.
 """
 
 from collections.abc import Callable, Iterator, Sequence
@@ -537,6 +538,7 @@ class _Engine:
     processed_forms: set[int] = field(default_factory=set)
     converted_colors: dict[tuple[str, bytes], int] = field(default_factory=dict)
     loaded_color_spaces: dict[str, "FzColorspace"] = field(default_factory=dict)
+    preview_mark: _Rule | None = None  # Independent original-text filter; never supplied by export.
 
     def source_color(self, space: str, command: bytes, pattern: str | None) -> int | None:
         """Convert a solid original color with the same MuPDF conversion as texttrace.
@@ -587,7 +589,7 @@ class _Engine:
                 return True
         return False
 
-    def selected(self, state: _State) -> int | None:
+    def selected(self, state: _State, rules: Sequence[_Rule] | None = None) -> int | None:
         """Return the first rule matching the original font, size and current page."""
         if not state.font:
             return None
@@ -595,7 +597,7 @@ class _Engine:
             self.source_names[state.font] = {name.casefold() for name in _source_names(self.document, state.font)}
         names = self.source_names[state.font]
         size = state.effective_size()
-        for index, rule in enumerate(self.rules):
+        for index, rule in enumerate(self.rules if rules is None else rules):
             if self.current_page in rule.ignored:
                 continue
             if rule.names is not None and not any(_font_name(candidate).casefold() in names for candidate in rule.names):
@@ -635,7 +637,8 @@ class _Engine:
             raise ValueError("PDF form nesting is too deep.")
         document = self.document
         resource = _object(document, resources)
-        recoloring = any(rule.color is not None or rule.source_colors is not None for rule in self.rules)
+        recoloring = self.preview_mark is not None or any(
+            rule.color is not None or rule.source_colors is not None for rule in self.rules)
         resource_keys = ("Font", "XObject", "ColorSpace", "Pattern") if recoloring else ("Font", "XObject")
         for key in resource_keys:
             document.xref_set_key(resource, key, _dictionary(document, resource, key))
@@ -771,12 +774,15 @@ class _Engine:
                             alias += "x"
                         document.xref_set_key(resource, f"XObject/{alias}", f"{clone} 0 R")
                         patches.append((operands[0].start, token.end, f"/{alias} Do".encode("ascii")))
-            elif op in (b"Tj", b"TJ", b"'", b'"') and (rule_index := self.selected(state)) is not None:
+            elif op in (b"Tj", b"TJ", b"'", b'"') and state.font:
+                rule_index = self.selected(state)
+                mark = self.preview_mark if (self.preview_mark is not None
+                    and self.selected(state, (self.preview_mark,)) is not None) else None
+                rule = self.rules[rule_index] if rule_index is not None else mark
                 strings = operands[-1].children if op == b"TJ" else operands[-1:]
                 values = [_string_bytes(item.raw) for item in strings if item.kind == "string"]
-                if any(values):
+                if rule is not None and any(values):
                     start = operands[0].start
-                    rule = self.rules[rule_index]
                     if rule.color_only:
                         # Keep original string/font operators; no Unicode mapping or embedding needed.
                         if rule.color is None:
@@ -785,6 +791,7 @@ class _Engine:
                         self.recolored_runs += 1
                         changed_show = data[start:token.end]
                     else:
+                        assert rule_index is not None
                         replacement = self.replacement(state, rule_index)
                         codes = [code for value in values for code in replacement.source.codes(value)]
                         replacement.codes.update(codes)
@@ -793,16 +800,18 @@ class _Engine:
                         size = f"{state.size:.12g}"
                         changed_show = (f"/{target_alias} {size} Tf\n".encode("ascii") + data[start:token.end]
                                         + f"\n/{original_alias} {size} Tf".encode("ascii"))
-                    text_color = rule.color
+                    # Decide both filters against the original state in one pass:
+                    # marks override color while applied rules still select fonts.
+                    text_color = mark.color if mark is not None else rule.color
                     if text_color is not None:
                         rgb = " ".join(f"{channel:.12f}" for channel in text_color)
                         changed_show = (f"{rgb} rg\n{rgb} RG\n".encode("ascii") + changed_show + b"\n"
                                         + restore_color(state.fill_space, state.fill_color, state.fill_pattern, stroke=False) + b"\n"
                                         + restore_color(state.stroke_space, state.stroke_color, state.stroke_pattern, stroke=True))
                     patches.append((start, token.end, changed_show))
-            elif op in (b"Tj", b"TJ", b"'", b'"') and state.font:
-                # Even hidden/clipping text must retain its original font data.
-                self.retained_fonts.add(state.font)
+                else:
+                    # Even hidden/clipping text must retain its original font data.
+                    self.retained_fonts.add(state.font)
             operands = []
         if operands:
             raise ValueError("PDF content ends with operands without an operator.")
@@ -812,7 +821,12 @@ class _Engine:
         position = 0
         for start, end, value in patches:
             output.extend(data[position:start])
+            # A replaced string/array/name may have delimited the preceding
+            # operator itself (e.g. TD<...>Tj). New numeric color operands need
+            # whitespace; also separate restored operators from following tokens.
+            output.extend(b"\n")
             output.extend(value)
+            output.extend(b"\n")
             position = end
         output.extend(data[position:])
         return bytes(output), resource, bool(patches)
@@ -825,6 +839,7 @@ class _Engine:
         """
         from tqdm import tqdm
 
+        matching_rules = (*self.rules, self.preview_mark) if self.preview_mark is not None else self.rules
         cleaning = any(rule.remove_original for rule in self.rules)
         if cleaning:
             selected_pages = set(pages)
@@ -837,7 +852,7 @@ class _Engine:
             self.current_page = index
             page = self.document[index]
             if not any(index not in rule.ignored and _matching_font_names(page, rule.names, rule.sizes, rule.source_colors)
-                       for rule in self.rules):
+                       for rule in matching_rules):
                 if cleaning:
                     self.retained_fonts.update(row[0] for row in page.get_fonts(full=True))
                 continue
@@ -994,15 +1009,18 @@ def _page_font_aliases(page: "pymupdf.Page") -> dict[str, str]:
     import pymupdf.mupdf as mupdf
 
     candidates: dict[str, set[str]] = {}
+    document = page.parent
+    if document is None:
+        raise ValueError("Cannot inspect fonts on an orphaned PDF page.")
     for row in page.get_fonts(full=True):
         xref = row[0]
         if not xref:
             continue
-        base = _font_name(page.parent.xref_get_key(xref, "BaseFont")[1].lstrip("/"))
+        base = _font_name(document.xref_get_key(xref, "BaseFont")[1].lstrip("/"))
         if not any(ord(char) > 255 for char in base):
             continue
         try:
-            loaded = _load_pdf_font(page.parent, xref)
+            loaded = _load_pdf_font(document, xref)
             extracted = mupdf.ll_fz_font_name(loaded.m_internal.font)
         except (RuntimeError, ValueError):
             continue

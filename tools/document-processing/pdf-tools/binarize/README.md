@@ -77,6 +77,8 @@ new GUI sessions process all pages by default, including covers.
 Apply to pages accepts page ranges or `all`; the default profile's page ranges
 are hidden in the left list to keep it compact. The shared range parser also
 recognizes `none` as an empty selection, which cannot assign a profile.
+The page dialog offers **All / Odd / Even** radio buttons synchronized with
+`|odd` / `|even` suffixes; All retains the entire entered range.
 
 ## Image settings
 

@@ -10,15 +10,18 @@ from enum import StrEnum
 from pathlib import Path
 import sys
 from typing import Callable, cast
-from uuid import uuid4
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls
 
 from utils import *
 from ..common.jobs import JobRunner
+from ..common.task_buttons import TaskButtons
 from ..common.file_drop import FileDropFilter
 from ..common.file_actions import choose_pdf_output
+from ..common.preferences import choose_open_file, choose_save_file, remember_directory
 from ..common.tooltips import TooltipFilter
+from ..common.range_input import PageRangeDialog
 from ..common.navigation import NavigationPane
 from ..common.pdf_images import ImageElement
 from ..common.protocol import Json
@@ -85,8 +88,6 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self._pending_source: Path | None = None
         self._pending_password = ""
         self._pending_relocated = False
-        self._cancel_marker: Path | None = None
-        self._cancel_created = False
         self._displayed_page: int | None = None
         self._preview_requested = False
         self._preview_revision = 0
@@ -100,6 +101,8 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.runner.busyChanged.connect(self._busy_changed)
         self.runner.completed.connect(self._completed)
         self.runner.progress.connect(self._progress)
+        self.runner.controlChanged.connect(lambda: self._busy_changed(self.runner.busy))
+        self.runner.controlStatus.connect(lambda text: self.status.setText(text))
         self.preview_timer = QtCore.QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self._start_preview)
@@ -200,7 +203,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             button.setFixedWidth(26)
             button.setToolTip(label)
             button.setAccessibleName(label)
-        self.page_number = QtWidgets.QSpinBox()
+        self.page_number = NoWheelSpinBox()
         self.page_number.setFixedWidth(48)
         self.page_number.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.page_number.setAccessibleName("Physical page number")
@@ -221,7 +224,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         for label, handler in (("Fit page", self.viewer.fit_page), ("Fit width", self.viewer.fit_width),
                                ("100%", self.viewer.actual_pixels)):
             self.view_toolbar.addWidget(self._button(label, handler, compact=True))
-        self.zoom = QtWidgets.QDoubleSpinBox()
+        self.zoom = NoWheelDoubleSpinBox()
         self.zoom.setRange(MIN_SCALE * 100, MAX_SCALE * 100)
         self.zoom.setDecimals(1)
         self.zoom.setValue(100)
@@ -248,7 +251,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         content.addWidget(self.viewer)
         self.navigation = NavigationPane()
-        self.navigation.pageRequested.connect(lambda index: self.go_page(index, preserve_selection=True))
+        self.navigation.pageRequested.connect(self.go_page)
         self.navigation.imageSelected.connect(self.viewer.set_image_highlight)
         self.navigation.pages.itemSelectionChanged.connect(self._selection_summary)
         content.addWidget(self.navigation)
@@ -263,12 +266,15 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedWidth(120)
-        self.cancel_button = self._button("Cancel", self._cancel_export)
+        self.task_buttons = TaskButtons(self.runner)
+        self.pause_button = self.task_buttons.pause_button
+        self.cancel_button = self.task_buttons.stop_button
         self.preview_export_button = self._button("Save shown page", lambda: self._export(True))
         self.export_button = self._button("Export PDF", lambda: self._export(False))
         bottom.addWidget(self.status, 1)
         bottom.addWidget(self.progress_bar)
-        for button in (self.cancel_button, self.preview_export_button, self.export_button):
+        bottom.addWidget(self.task_buttons)
+        for button in (self.preview_export_button, self.export_button):
             bottom.addWidget(button)
         layout.addLayout(bottom)
         splitter.addWidget(right)
@@ -288,7 +294,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         general = QtWidgets.QGroupBox("Export")
         layout = QtWidgets.QFormLayout(general)
         outer.addWidget(general)
-        self.workers = QtWidgets.QSpinBox()
+        self.workers = NoWheelSpinBox()
         self.workers.setRange(1, MAX_WORKERS)
         self.workers.setKeyboardTracking(False)
         self.workers.editingFinished.connect(self._output_changed)
@@ -338,8 +344,6 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         for button in (self.preview_export_button, self.export_button):
             button.setEnabled(loaded and idle and self.settings.valid)
         exporting = self.runner.busy and self._operation in (Operation.EXPORT, Operation.EXPORT_PAGE)
-        self.cancel_button.setEnabled(exporting and not self._cancel_created)
-        self.cancel_button.setVisible(exporting)
         self.progress_bar.setVisible(exporting)
         index = self.project.current_page if self.project else 0
         count = self.project.page_count if self.project else 0
@@ -351,10 +355,11 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             self.settings.widget(tab).setEnabled(loaded and idle and identity != SKIP_ID)
 
     def _busy_changed(self, busy: bool) -> None:
-        if busy and not self._cursor_busy:
+        working = busy and not self.runner.paused
+        if working and not self._cursor_busy:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.BusyCursor)
             self._cursor_busy = True
-        elif not busy and self._cursor_busy:
+        elif not working and self._cursor_busy:
             QtWidgets.QApplication.restoreOverrideCursor()
             self._cursor_busy = False
         self._refresh_enabled()
@@ -389,14 +394,14 @@ class BinarizeWindow(QtWidgets.QMainWindow):
     def _choose_pdf(self) -> None:
         if self.runner.busy:
             return
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF files (*.pdf)")
+        path = choose_open_file(self, "Open PDF", "PDF files (*.pdf)")
         if path:
             self.open_path(Path(path))
 
     def _choose_project(self) -> None:
         if self.runner.busy:
             return
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open project", "", "PDF projects (*.json)")
+        path = choose_open_file(self, "Open project", "PDF projects (*.json)", kind="open-project")
         if path:
             self.open_path(Path(path))
 
@@ -413,8 +418,8 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             pending = Project.load(path) if path.suffix.lower() == ".json" else None
             source = pending.source if pending else path
             if pending is not None and not source.is_file():
-                replacement, _ = QtWidgets.QFileDialog.getOpenFileName(
-                    self, f"Locate missing PDF: {source.name}", str(path.parent), "PDF files (*.pdf)")
+                replacement = choose_open_file(
+                    self, f"Locate missing PDF: {source.name}", "PDF files (*.pdf)", fallback=path.parent)
                 if not replacement:
                     return
                 source = Path(replacement)
@@ -450,7 +455,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             dialog.addButton("Exit", QtWidgets.QMessageBox.ButtonRole.RejectRole)
             dialog.exec()
             if dialog.clickedButton() is choose:
-                path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select matching PDF", "", "PDF files (*.pdf)")
+                path = choose_open_file(self, "Select matching PDF", "PDF files (*.pdf)")
                 if path:
                     self._pending_source = Path(path)
                     self._pending_project.source = Path(path)
@@ -462,9 +467,13 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             return
         self.project = self._pending_project or Project.create(self._pending_source, count)
         self.project_path = self._pending_project_path
+        remember_directory(self, "open-pdf", self.project.source)
+        if self.project_path is not None:
+            remember_directory(self, "open-project", self.project_path)
         self.password = str(message.get("password", ""))
         self.labels = cast(list[str], message["labels"])
-        bookmarks = [(int(row[0]), str(row[1]), int(row[2])) for row in cast(list[list[Json]], message["bookmarks"])]
+        bookmarks = [(int(cast(int, row[0])), str(row[1]), int(cast(int, row[2])))
+                     for row in cast(list[list[Json]], message["bookmarks"])]
         self.navigation.load(self.labels, bookmarks)
         self.viewer.clear()
         self.preview_cache.clear()
@@ -629,8 +638,8 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         if self.project is None or self.runner.busy or not self.settings.commit_pending():
             return
         identity = identity or self.project.assignments[self.project.current_page]
-        value, accepted = QtWidgets.QInputDialog.getText(
-            self, "Apply profile to pages", "Physical pages (1,2,4-10 or all):")
+        value, accepted = PageRangeDialog.get_text(
+            self, "Apply profile to pages", "Physical pages (1,2,4-10 or all; append |odd or |even):")
         if not accepted:
             return
         try:
@@ -710,7 +719,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             self._profile_changed_preview()
 
     def _browse_regions(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import region JSON", "", "JSON files (*.json)")
+        path = choose_open_file(self, "Import region JSON", "JSON files (*.json)", kind="open-regions")
         if path:
             self.region_path.setText(path)
             self._output_changed()
@@ -860,7 +869,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         path = self.project_path
         if save_as or path is None:
             default = path or self.project.source.with_suffix(".binarize.json")
-            selected, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save project", str(default), "JSON project (*.json)")
+            selected = choose_save_file(self, "Save project", default, "JSON project (*.json)", kind="save-project")
             if not selected:
                 return False
             path = Path(selected)
@@ -893,40 +902,28 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         if choice is None:
             return
         output, overwrite = choice
-        self._cancel_marker = output.parent / f".pdf-tools-cancel-{uuid4().hex}"
-        self._cancel_created = False
         self._preview_requested = False
         self._operation = Operation.EXPORT_PAGE if one_page else Operation.EXPORT
         self.progress_bar.setRange(0, self.project.page_count)
         self.progress_bar.setValue(0)
         self.status.setText("Starting PDF export...")
         self.runner.start({"operation": self._operation.value, "project": self.project.to_data(),
-                           "password": self.password, "output": str(output), "cancel": str(self._cancel_marker),
+                           "password": self.password, "output": str(output),
                            "overwrite": overwrite})
 
     def _cancel_export(self) -> None:
-        if self._cancel_marker is not None and self.runner.busy and not self._cancel_created:
-            try:
-                self._cancel_marker.touch(exist_ok=False)
-                self._cancel_created = True
-                self.status.setText("Cancelling after the current processing step...")
-                self._refresh_enabled()
-            except OSError as exc:
-                self._error(str(exc))
+        self.runner.stop()
 
     def _progress(self, message: dict[str, Json]) -> None:
-        self.progress_bar.setRange(0, int(cast(int, message.get("total", 1))))
-        self.progress_bar.setValue(int(cast(int, message.get("done", 0))))
-        if not self._cancel_created:
-            self.status.setText(str(message.get("stage", "Processing...")))
+        if "total" in message:
+            self.progress_bar.setRange(0, int(cast(int, message["total"])))
+        if "done" in message:
+            self.progress_bar.setValue(int(cast(int, message["done"])))
+        self.status.setText(str(message.get("stage", "Processing...")))
 
     def _completed(self, message: dict[str, Json]) -> None:
         operation = self._operation
         self._operation = Operation.NONE
-        if self._cancel_created and self._cancel_marker is not None:
-            self._cancel_marker.unlink(missing_ok=True)
-        self._cancel_created = False
-        self._cancel_marker = None
         kind = message.get("kind")
         if self._close_after_job:
             self._closing = True
@@ -946,7 +943,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
                     pixmap = self.preview_buffer.read(int(cast(int, message["width"])), int(cast(int, message["height"])))
                 else:
                     pixmap = QtGui.QPixmap()
-                    if not pixmap.loadFromData(base64.b64decode(str(message["png"])), "PNG"):
+                    if not pixmap.loadFromData(base64.b64decode(str(message["png"])), b"PNG"):
                         raise ValueError("The preview worker returned an invalid image.")
                 boxes = tuple(cast(Rectangle, tuple(float(value) for value in row))
                               for row in cast(list[list[float]], message.get("regions", [])))
@@ -1043,6 +1040,7 @@ def main(entry: Path) -> int:
     if not isinstance(application, QtWidgets.QApplication):
         raise RuntimeError("A GUI QApplication is required.")
     application.setStyle("Fusion")
+    install_no_wheel_controls(application)
     window = BinarizeWindow(entry)
     window.show()
     if owns_application:

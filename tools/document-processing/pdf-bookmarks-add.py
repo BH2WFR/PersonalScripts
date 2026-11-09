@@ -2,16 +2,19 @@
 """Open the PDF directory recognition, bookmark editor and page-label desktop tool.
 
 Mark TOC pages with editable red crop boxes, rotate recognition inputs, and run
-a serial OpenAI-compatible vision queue. Edit per-page YAML or the final tree.
+a serial LiteLLM vision queue using compatible endpoints. Edit per-page YAML or the final tree.
 Inspect page-specific model problems and request history, add missing information,
 then retry that page or all TOC pages in order. Keep or clear the book's conversation;
 limit context images (default 5 including the current page, 0 for unlimited).
 Select provider presets or a custom API URL, fetch model choices, and fill TOC/body
 page fields from the viewer with Use current page. Local Ollama/LM Studio presets
 connect to an already running vision server; API keys are optional for local use.
+HTTP local endpoints are supported; per-source Skip certificate verification defaults to off.
 Display API account balances with automatic/manual refresh on supported services.
 Shared model requests and PDF operations are provided by utils.Llm and utils.Pdf.
-Drafts, API keys and PDF passwords stay in memory; no project files are used.
+Drafts and PDF passwords stay in memory; no project files are used. API settings
+and encrypted keys persist per source in llm.yaml. Startup/Load reads; Save and
+window close write. Source switches restore in-memory drafts without file I/O.
 Cached previews, current-page insertion, Ctrl/Shift batch selection and two modes
 each for indent/outdent aid editing. Drag any selected subtrees together, including
 nonconsecutive selections. Tooltips wrap within 250 logical pixels.
@@ -22,7 +25,7 @@ resets the window without exiting the application.
 One physical book page per PDF page; split multi-page scans before recognition.
 
 Requirements:
-    - pip: PySide6, PyMuPDF, PyYAML.
+    - pip: PySide6, PyMuPDF, PyYAML, cryptography, litellm, openai, httpx, truststore.
 Usage:
     conda run -n base python tools/document-processing/pdf-bookmarks-add.py
 """
@@ -74,11 +77,15 @@ Description:
   and two indent/outdent modes. Ctrl/Shift selects multiple bookmarks; drag selected
   subtrees together, including nonconsecutive selections. Indent can move descendants
   or just the selected items while keeping reading order. Tooltips wrap at 250 px.
-  Drafts stay in memory; there are no project files.
+  Drafts stay in memory; there are no project files. API settings and encrypted
+  keys persist per source in llm.yaml. Startup/Load reads; Save/window close writes.
+  Switching sources restores drafts without I/O. Busy config errors appear in tooltips.
   Click the viewer to turn pages with PgUp/PgDn or the arrow keys.
   API presets include Kimi, Alibaba Model Studio, OpenRouter, SiliconFlow, Ollama
   and LM Studio. Local use requires a running vision server; keys may be empty.
   Custom/LAN URLs and model names are supported. Get models sends no PDF content.
+  HTTP local endpoints need no TLS setting. Skip certificate verification is per source,
+  off by default, and applies to HTTPS inference, API tests, catalogs and balances.
   Use current page fills the first/last TOC page or first body PDF page field.
   API balance stays visible; refresh after editing credentials or completing a run.
   DeepSeek/Kimi China are supported; OpenRouter requires an optional balance-only
@@ -96,16 +103,17 @@ Options:
   -h, --help  Show this help.
 
 Requirements:
-  pip: PySide6, PyMuPDF, PyYAML.
+  pip: PySide6, PyMuPDF, PyYAML, cryptography, litellm, openai, httpx, truststore.
 """)
         return 0
     try:
+        importlib.import_module("truststore")
         if "--pdf-tools-worker" in sys.argv:
             return cast(Callable[[], int], load_app("bookmarks.worker").main)()
         return cast(Callable[[Path], int], load_app().main)(Path(__file__).resolve())
     except ImportError as exc:
         print(f"{FLRed}Missing dependency: {exc.name}{CRst}")
-        print(f"{FGray}Install: pip install PySide6 PyMuPDF PyYAML{CRst}")
+        print(f"{FGray}Install: pip install PySide6 PyMuPDF PyYAML cryptography litellm openai httpx truststore{CRst}")
         return 1
 
 

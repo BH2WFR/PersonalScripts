@@ -28,18 +28,15 @@ Project-specific reminders:
 
 ## Environment
 
-### Project-specific environment variables
+### User configuration
 
-- All project-specific environment variables must start with `ZL_`.
-  Standard system and third-party variables retain their original names.
-- Whenever a script adds, uses, renames, or changes a project-specific
-  environment variable, document it in the repository-root
-  `Environmental_Variables.md` in the same change. Include the variable name,
-  owning script, purpose, whether it is required, and relevant value format,
-  defaults, and precedence. Identify internal-only variables as such.
-- Keep code, help text, configuration samples, and this registry consistent.
-  Use placeholder values in documentation, never real credentials or private
-  machine-specific paths.
+Use `utils.ConfigStore` for user settings, never project-specific environment
+variables or script-local configuration I/O. All platforms use the directory
+returned by `ConfigStore.directory()`; its name is defined only by
+`APP_DIRECTORY_NAME` in `utils/config.py`. Do not duplicate path literals in code.
+Keep `Environmental_Variables.md` updated with config keys and native variables.
+Each owning module supplies its own key to `EncryptedValue.encrypt/decrypt`; fixed keys provide obfuscation,
+not a security boundary. Never log decrypted secrets or commit user configuration.
 
 ### Python — CRITICAL: conda first, never system Python
 
@@ -138,7 +135,7 @@ the appropriate package manager — do not install it yourself.
 `run-script.py` is the unified entry point. Use it to list or launch other
 scripts in the project:
 
-Launcher settings come from `launcher-config.yaml`. An optional Gitignored
+Repository launcher rules come from `launcher-config.yaml`; personal Conda/environment selection and additional roots come from user `launcher.yaml`. An optional Gitignored
 `launcher-config.patch.yaml` deep-merges personal overrides when present.
 
 ```bash
@@ -274,6 +271,10 @@ Canonical implementations live there; do not add implementations to the
 
 | Need | Use |
 |---|---|
+| User configuration directory/files | `ConfigStore.directory()`, `ConfigStore(name=GENERAL_CONFIG).path`; application filenames belong to their modules; `initialize()` creates only the general config |
+| Read/update user configuration | `store.load()` returns {} for missing/empty files; reads/writes acquire a nonblocking per-file process/thread lock and raise `ConfigBusyError` (`status='busy'`) immediately on contention; `store.update(changes)` rereads/deep-merges and atomically replaces; `store.edit(callback)` supports removal; `ensure(initial=None)` creates only absent files; malformed YAML is never silently overwritten |
+| Encrypted configuration strings | `EncryptedValue.encrypt(text, module_key)` creates opaque ciphertext; `.decrypt(module_key)` returns plaintext; `EncryptedValue.decrypt_tree(data, module_key)` decodes a module-owned nested schema/section. YAML `!encrypted` and unrelated writes preserve ciphertext without knowing its key; repr is redacted. Keys belong to each consuming module, never config.py |
+| External YAML and redirects | `ConfigStore.parse(stream)` rejects duplicate explicit keys while permitting merge overrides; `read_file(path)` locks briefly and requires a string-keyed mapping; `resolve_file(path)` follows redirect-only mappings relative to each file, rejects missing/cyclic/mixed/overlong chains, returns final schema path |
 | Admin / root detection | `System.is_elevated() -> bool` |
 | Re-execute as admin (force) | `System.restart_elevated()` — supports source/bundled apps and paths containing spaces; gsudo uses a Windows PowerShell bootstrap |
 | Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` — never re-runs after a helper starts |
@@ -299,19 +300,25 @@ Canonical implementations live there; do not add implementations to the
 | Save an ordinary PDF | `Pdf.save_new(document, output_path, compact=True, overwrite=False) -> None`; removes encryption and PDF/A identification while retaining other metadata; default exclusive creation cleans its partial file on failure; explicitly authorized `overwrite=True` stages beside the destination before replacement and rejects the source; use `compact=False` for continued editing to preserve live object references; PyMuPDF loads lazily |
 | Read effective PDF page labels | `Pdf.read_page_labels(document) -> list[str]`; preserves blank labels, falls back to physical page numbers when no label rules exist |
 | Render a bounded PDF preview | `Pdf.render_page(page, dpi=200, rotation=0, max_pixels=12_000_000, annotations=True) -> Pixmap`; opaque RGB, extra clockwise rotation, integer rounding kept inside pixel budget; no Qt or file writes |
+| GUI inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
+| Strict visual model discovery | `Llm.parse_models(data, vision_only=True)` or Qt client `fetch_models(settings, key, vision_only=True)` excludes unknown capability metadata and explicit non-text-output models; requires image input via modalities or `capabilities.vision=True`, never name heuristics; pagination totals/counts remain unfiltered |
+| SiliconFlow visual capabilities | `Llm.vision_catalog_url(base)` returns the public model-center URL for official SiliconFlow hosts or None; `Llm.parse_vision_catalog(html)` reads exact text-model IDs marked `vlm=True` from embedded JSON, raises if metadata is missing/changed. Qt strict discovery intersects these IDs with account models using an unauthenticated GET under the same timeout; never send credentials to the public catalog |
+| Rotate within a fixed preview canvas | `Pdf.rotate_pixmap(pixmap, angle) -> Pixmap`; opaque RGB only, clockwise -180..180 around center, unchanged dimensions/origin/DPI, white fill and edge clipping; zero returns input, otherwise lazy PySide6 without QApplication; no PDF edits |
 | Read editable bookmarks | `Pdf.read_bookmarks(document) -> list[PdfBookmark]`; depth-first title/one-based page/level/original_xref; non-page actions retain nonpositive targets |
 | Append a bookmark | `Pdf.append_bookmark(document, title, page_index, parent=None) -> int`; zero-based page, optional parent outline xref; preserves existing entries and returns new xref |
 | Replace or clear bookmarks | `Pdf.write_bookmarks(document, bookmarks) -> None`; validates hierarchy/targets before mutation; [] clears; retained same-document xrefs preserve style/collapse and unchanged destinations/actions; does not save |
 | Number or clear selected labels | `Pdf.number_page_labels(labels, indexes, first=1, prefix="")`, `Pdf.clear_page_labels(labels, indexes)`; mutate label lists only, indexes are zero-based; apply with write_page_labels |
 | Generate body/TOC labels | `Pdf.generate_page_labels(labels, body_pdf, body_book, toc_pages, toc_prefix="C")`; one-based physical mapping, positive printed body number; TOC takes precedence, other front matter remains |
-| Shared LLM settings and presets | `LlmSettings(base_url=..., model=..., temperature=.1, max_tokens=8192, timeout_seconds=180, max_context_images=5)`; no secrets; `Llm.PRESETS` includes cloud providers and local Ollama/LM Studio endpoints; helpers use stdlib only |
+| Shared LLM settings and presets | `LlmSettings(base_url=..., model=..., temperature=.1, max_tokens=8192, timeout_seconds=180, max_context_images=5, reasoning_effort=LlmReasoning.AUTO, skip_certificate_verification=False)`; HTTP(S) supported; TLS opt-out is per source and also applies to Qt catalog/balance requests; no secrets; `Llm.PRESETS` includes cloud providers and local endpoints |
+| Reasoning choices | `Llm.reasoning_options(base, model="")` returns ordered `(label, LlmReasoning)` pairs; AUTO explicitly enables, DEFAULT sends no controls, NONE disables, remaining enum values select effort. Known provider/model restrictions apply; generic options are not live capability guarantees |
 | Validate/resolve LLM endpoints | `Llm.validate_settings(settings, require_model=True)`, `Llm.completion_url(base)`, `Llm.models_url(base, page=1)`; reject credentials/query/fragment in base URLs; same-host Alibaba catalog pagination and SiliconFlow chat filter |
-| Construct chat/image requests | `Llm.chat_request(settings, messages, max_tokens=None)`, `Llm.image_content(image, mime_type="image/jpeg", detail="high")`; caller owns context; chat_request applies max_context_images across the entire request; official DeepSeek body disables thinking; no I/O |
+| Construct chat/image requests | `Llm.chat_request(settings, messages, max_tokens=None)`, `Llm.image_content(image, mime_type="image/jpeg", detail="high")`; caller owns context; chat_request limits images across the entire request and maps reasoning to provider fields, rejecting known unsupported levels; no I/O |
 | Count/limit context images | `Llm.image_count(messages)`, `Llm.limit_images(messages, maximum)`; 0 = unlimited, otherwise keep newest image_url parts including current input; omit older images with text markers, retain all text/replies, never mutate caller history |
-| Construct a vision API probe | `Llm.vision_test_request(settings)`; generated 48x48 red PNG and 32 output tokens, no user content or image-library dependency |
+| Construct a vision API probe | `Llm.vision_test_request(settings)`; generated 48x48 red PNG, preserves selected reasoning and output budget; only explicit Off caps output at 32 tokens; no user content or image-library dependency |
 | Parse LLM responses/catalogs | `Llm.parse_completion(data) -> LlmResponse(text, prompt_tokens, finish_reason)` retains partial text; `Llm.parse_models(data) -> (ids, total_or_none)` validates compatible/native formats |
 | Query API account balances | `Llm.balance_url(base)` resolves same-origin official DeepSeek/Kimi China/OpenRouter routes; unsupported bases raise NotImplementedError. `Llm.parse_balance(base,data) -> list[tuple[str,str]]` returns currency/finite decimal amount pairs; OpenRouter subtracts usage from credits and requires a management key; no guessed proxy routes or key-quota substitution |
-| Create an asynchronous LLM client | `Llm.create_qt_client(parent=None)` lazily loads PySide6; send(settings,key,body), fetch_models(settings,key), fetch_balance(settings,key), cancel(reason); completed(text,tokens,error) / modelsCompleted(ids,error) / balanceCompleted(pairs,error); one active request per client, bounded pagination/size/timeout, key redaction, no automatic retry; balance timeout capped at 30 seconds; response buffers use typed `QByteArray.data()` access |
+| Send text/vision through LiteLLM | `await Llm.acompletion(settings, key, messages=(), prompt="", system_prompt="", images=()) -> LlmResponse`; append prompt/images to caller-owned history, prepend optional system prompt; images use `Llm.image_content`; newest image limit spans the whole conversation (0 = unlimited); returns text/prompt_tokens/finish_reason, including partial responses; no history mutation, retries, redirects or credential environment fallback |
+| Create an asynchronous LLM client | `Llm.create_qt_client(parent=None)` lazily loads PySide6; send(settings,key,body), fetch_models(settings,key), fetch_balance(settings,key), cancel(reason); completed(text,tokens,error) / modelsCompleted(ids,error) / balanceCompleted(pairs,error); reply is an opaque busy marker; LiteLLM inference runs on a cancellable QThread, native catalog/balance GETs retain Qt; bounded pagination/size/timeout, key redaction, no automatic retry; balance timeout capped at 30 seconds |
 | Discover installed font files | `Font.system_font_paths() -> list[Path]`; sorted unique absolute TTF/OTF/TTC/OTC paths from Windows registry/directories, macOS directories, or Linux fontconfig/directories; `Font.FILE_SUFFIXES` contains supported suffixes |
 | Read font names and styles | `Font.read_faces(path: Path) -> list[FontFace]`; collection order, canonical name, family, all readable aliases, full_names/family_names classified by name-table role and language, and `FontStyle` regular/bold/italic/bold-italic; imports fonttools lazily |
 | Build a font catalog | `Font.read_catalog(paths: Sequence[Path], show_progress=False) -> list[FontFace]`; sorts by family/style/name, skips unreadable files with an aggregate warning; True shows a tqdm bar on interactive stderr; fonttools and tqdm are imported lazily |
@@ -359,12 +366,12 @@ Canonical implementations live there; do not add implementations to the
 | Numeric input with validation | `Input.input_number(prompt, default=..., min_value=..., allow_float=...)` |
 | Merge consecutive integers into ranges | `Input.merge_integer_ranges(values: Iterable[int]) -> tuple[tuple[int, int], ...]`; sorts and deduplicates any integer iterable, supports negatives and zero, returns inclusive endpoint pairs; singletons have equal endpoints; empty input returns () |
 | Format integer ranges as text | `Input.format_integer_ranges(ranges: Iterable[tuple[int, int]]) -> str`; `((1, 3), (5, 5))` becomes `"1-3,5"`; preserves order, duplicates, and descending ranges; supports signed endpoints; empty input returns `""`; output uses parse_integer_ranges syntax |
-| Parse arbitrary integer sequences | `Input.parse_integer_ranges(text, allow_zero=True) -> tuple[int, ...]`; signed integers and inclusive ascending/descending ranges; preserves order and duplicates; empty text returns (); False rejects zero even inside a range |
-| Interactive integer sequences | `Input.input_integer_ranges(prompt, allow_zero=True, default=None) -> tuple[int, ...] \| None`; retries invalid input; Enter returns None unless a nonempty expression is supplied as the default; literal zero returns (0,) when allowed |
+| Parse arbitrary integer sequences | `Input.parse_integer_ranges(text, allow_zero=True, parity=None, allow_parity=True) -> tuple[int, ...]`; signed inclusive ascending/descending ranges; preserves order and duplicates; empty text returns (); False rejects zero even inside a range; accepts `\|odd` / `\|even` suffixes |
+| Interactive integer sequences | `Input.input_integer_ranges(prompt, allow_zero=True, default=None, parity=None, allow_parity=True) -> tuple[int, ...] \| None`; retries invalid input; Enter returns None unless the default produces values; literal zero returns (0,) when allowed; accepts `\|odd` / `\|even` suffixes |
 | Parse continuous real ranges | `Input.parse_real_ranges(text, allow_zero=True, allow_infinity=True) -> tuple[tuple[float, float], ...]`; accepts `13.5,14.5-15`, `-2.5--1`, `0-3`, scientific notation, and `-inf-inf`; returns inclusive lower/upper pairs without enumeration; reversals such as `1--1` normalize to (-1.0, 1.0); keeps interval order/duplicates, empty text returns (); zero policy includes interval interiors; infinity may bound intervals but cannot stand alone |
 | Interactive real ranges | `Input.input_real_ranges(prompt, allow_zero=True, allow_infinity=True, default=None) -> tuple[tuple[float, float], ...] \| None`; same continuous-interval semantics; validates defaults before prompting, retries invalid input, Enter returns None without a nonempty default |
-| Parse item numbers and inclusive ranges | `Input.parse_index_ranges(text, item_count=..., allow_zero=False) -> tuple[int, ...]`; accepts `1,2`, `1-3,4`, `-1,-2`, and `-3--1`; negatives count from the end; returns sorted, unique zero-based indexes; empty text returns (); False uses one-based input, True switches to zero-based input; reversed resolved ranges and out-of-range values raise ValueError |
-| Interactive item/range selection | `Input.input_index_ranges(prompt, item_count=..., allow_zero=False, default=None) -> tuple[int, ...] \| None`; same index parser and numbering modes; retries invalid input; Enter returns None unless a nonempty expression is supplied as the default |
+| Parse item numbers and inclusive ranges | `Input.parse_index_ranges(text, item_count=..., allow_zero=False, parity=None, allow_parity=True) -> tuple[int, ...]`; signed ranges, all/none and `\|odd` / `\|even` suffixes; negatives count from the end; returns sorted, unique zero-based indexes; empty text returns (); False uses one-based input, True uses zero-based input; reversed resolved ranges and out-of-range values raise ValueError |
+| Interactive item/range selection | `Input.input_index_ranges(prompt, item_count=..., allow_zero=False, default=None, parity=None, allow_parity=True) -> tuple[int, ...] \| None`; same index parser and numbering modes; retries invalid input; Enter returns None unless the default produces values |
 | Number + unit (e.g. `90deg`) | `Input.input_number_with_unit(prompt, ..., allowed_units=("deg","rad"))` |
 | Password / masked input | `Input.input_password(prompt)` |
 | Output path (auto collision avoidance) | `Input.resolve_output_path(default_path, prompt=..., path_type="file")` |
@@ -374,6 +381,12 @@ Canonical implementations live there; do not add implementations to the
 
 The range APIs share internal `_parse_range_tokens()` for signed endpoint syntax
 and generic `_input_ranges()` for default validation, blank input, and retries.
+Integer/index parsers share `_range_parity()` for suffix validation and
+`_filter_range_parity()` for filtering. `parity` accepts exported `RangeParity.ODD`,
+`RangeParity.EVEN`, or None; `allow_parity=False` disables only textual suffixes.
+One case-insensitive `|odd` / `|even` suffix must follow a selection and agree
+with any explicit filter. Validate first, then filter integer values or resolved
+item numbers in the selected numbering mode; real intervals are unchanged.
 `_parse_integer_spans()` converts integer tokens for the integer/index parsers.
 Integer sequences expand literal endpoints; index selections resolve endpoints
 against the collection before expanding. Indexes never accept floating-point
@@ -526,12 +539,20 @@ Bookmark replacement validates first, retains original PDF actions/styles, and
 recalculates visible descendants bottom-up. Label-edit helpers mutate plain lists.
 Both PDF GUI workers share `Pdf.render_page` for bounded RGB display rendering.
 
-`utils/llm.py` owns generic settings, provider presets, URL/payload construction and
-response parsing. `utils/_llm_qt.py` is a private, lazy transport adapter; callers
+`utils/llm.py` owns provider presets, requests, balances, source profiles and its encryption key.
+Internal `_reasoning_api`/`_reasoning_parameters` map exact provider hosts and known
+model families to payload dialects; token budgets are not converted to effort levels.
+Reasoning is saved per source as an enum string; older profiles default to AUTO.
+`Llm.load_profiles()` reads llm.yaml; `Llm.save_profiles(profiles)` commits changed sources.
+`LlmProfiles.get_api(base)` returns a detached profile, `set_api(settings, api_key, balance_key)`
+updates only its in-memory draft, and `providers()` includes built-in/custom sources.
+`Llm.source_id(base)` canonicalizes base/full endpoint aliases. Failed saves retain drafts.
+The UI loads at startup or Load, saves only on Save or window close; source switches do no I/O. `utils/_llm_qt.py` is a private, lazy transport adapter; callers
 use the factory, never import it via the utility facade. Ordinary `from utils import *`
 does not load Qt, PyMuPDF, Pillow or any PDF tool package. Prompt/history logic
 belongs to callers; bookmarks keeps it in `bookmarks/recognition.py`. No utility
-imports application code or saves API keys. Run `test_llm.py` for headless utility
+imports application code; Llm owns LLM credential persistence. Internal `_profiles_from_data`
+validates/decrypts a stored mapping before callers replace drafts. Run `test_llm.py` for headless utility
 checks and `test_pdf_utils.py` for standalone PDF operations; GUI loopback tests
 exercise the same shared transport.
 
@@ -539,7 +560,7 @@ The bookmarks GUI uses a separate single-request Llm client for account balances
 so navigation and the serial recognition queue remain responsive. Balance refresh
 runs on credential editingFinished, explicit Refresh, and completion of a test or
 TOC queue; no periodic polling. Endpoint/key changes cancel and invalidate old
-results. An optional in-memory balance-only key supports OpenRouter management
+results. An optional per-source encrypted balance-only key supports OpenRouter management
 credentials; it never enters a model request or session export. Unsupported
 providers show a reason instead of zero or an unrelated key limit.
 
@@ -594,6 +615,7 @@ I'll decide whether to modify utils or handle it differently.
 ### GUI framework and theme
 
 - Use **PySide6** for GUI programs in this project.
+- All GUI forms must use `NoWheelSpinBox`, `NoWheelDoubleSpinBox` and `NoWheelComboBox` from `utils.qt_widgets`, even when focused; install `install_no_wheel_controls(application)` at startup to cover Qt-generated dialog controls. Keyboard/buttons and open combo-popup scrolling remain enabled. Import these Qt-only APIs explicitly; do not export them through the Qt-free `utils` facade or duplicate their implementations.
 - Use the **Fusion** theme on every platform. After creating or obtaining the
   `QApplication`, call `application.setStyle("Fusion")` before creating windows
   or widgets, including when reusing an existing application instance.
@@ -1086,7 +1108,7 @@ Run `-p "test_pdf_font_replace*.py"` for engine and real-worker/offscreen GUI ch
 the page-label tab. The separate page-tag entry, CLI editors and multi-up mapping
 are removed. See `bookmarks/README.md` for module ownership.
 Recognition has one normalized crop per rotated book page, one serial PDF worker
-and one cancellable Qt HTTP request. Only Run/Retry sends book images. Each request
+and one cancellable LiteLLM inference request. Only Run/Retry sends book images. Each request
 introduces one new source page and carries the current book's chronological exchanges,
 including failed replies/diagnostics. Retries replace entries by source TOC page;
 Retry all bypasses pending-only filtering. Clear conversation runs once before a queue
@@ -1098,11 +1120,18 @@ TOC responses accept entries/errors envelopes and legacy YAML lists. Model issue
 and null targets cannot replace accepted entries; failed drafts block export.
 Page-specific requirements plus previous diagnostics accompany explicit retries.
 Bounded request/reply trace histories stay in TocPage memory and are omitted from worker
-payloads; trace records exclude images and API keys. The queue advances only after the
-current request completes, including after a page reports a recoverable problem.
+payloads; trace records exclude images and API keys. The queue advances only after
+the current page succeeds. Needs-information, transport and validation errors pause
+on the failed page; a warning focuses Information with structured issues and an inline
+page-requirements editor. Resume retries the blocked page before the retained queue,
+preserving earlier results and conversation. Stop drops the queue, not results.
+The prompt defaults missing parent page numbers to the first following child's page
+within the same section; explicit user formulas override that inheritance.
 Preserve raw YAML/comments separately from the authoritative editable outline.
-BookSession, credentials and recognition drafts stay in memory; this tool has no
-project-file persistence. Only export writes a PDF; close/open can defer until an
+BookSession and recognition drafts stay in memory; API settings and encrypted
+keys persist per source in llm.yaml through utils.Llm. Directory histories share
+common/preferences.py and config-pdf-tools.yaml, accessed only during open/save.
+Configuration contention uses console/tooltip feedback, never retry loops or modal dialogs. Only export writes a PDF; close/open can defer until an
 explicitly requested export succeeds. API Test sends a generated color square,
 never book content, and shares the cancellable single-request client.
 Model discovery uses that same client with GETs and separate completion signals;
@@ -1112,6 +1141,22 @@ can copy the current physical page; TOC marking remains explicit. Export keeps p
 original outline actions/styles where targets are unchanged, using `Pdf.save_new`.
 Generic API code is `utils.Llm`; `recognition.py` contains only the TOC prompt and
 book-specific context. `utils.Pdf` owns bookmark/label edits and bounded rendering;
+`Llm._acompletion_body` is the internal shared text/vision transport for coroutine
+and Qt callers. It lazily loads LiteLLM with bundled pricing and dotenv disabled,
+owns an OpenAI/HTTPX client per request, enforces the image limit again at send time,
+and drains LiteLLM bookkeeping before a worker loop closes. Its bounded HTTP client
+captures transport exception causes, send/read stage and request/received byte counts
+before SDK wrapping; errors retain full cause text, redact the submitted key and
+never include image bodies. Explicit `truststore.SSLContext(PROTOCOL_TLS_CLIENT)`
+uses native system trust and hostname verification (Windows/macOS system stores;
+Linux OpenSSL CA locations), unless the source explicitly sets
+`skip_certificate_verification=True`; proxy routing remains unchanged. Qt GETs
+ignore SSL errors only for an opted-out request and clear cached connections when
+the policy changes. Recognition errors use a resizable,
+scrollable plain-text dialog with Copy error before focusing Information.
+Catalog GETs retain
+native adapters: LiteLLM discovery currently loses custom path prefixes and hides
+some errors as empty lists. Balance queries also retain provider adapters.
 worker modules only coordinate sessions and transport. Do not restore duplicate
 API, outline or label modules in the private tool package.
 Common crop/tree editing is opt-in; Binarize's navigator remains read-only.
@@ -1135,6 +1180,10 @@ this component rather than duplicate keyboard handling.
 Both GUI entries stage the same private package for builds. Run
 `-p "test_pdf_bookmarks_gui.py"` for offscreen GUI/loopback API tests and
 `-p "test_pdf_tools.py"` for retained structure/authentication/export checks.
+PDF page-range fields/dialogs share `common/range_input.py` for All/Odd/Even
+radio buttons synchronized with `|odd` / `|even`; callers retain validation
+and commit ownership. All removes only the parity filter. Integer permutation
+fields and continuous real intervals retain their existing constraints.
 
 `tools/network/rclone-sync.py` is a thin entry for the private
 `tools/network/rclone-sync/` package, loaded as `personal_rclone_sync`.
@@ -1168,6 +1217,7 @@ API facade from the entry. Run rclone tests with `-p "test_rclone*.py"`.
 │   ├── ansi.py             # ANSI color/style/cursor constants
 │   ├── cmd_check.py        # CmdCheck
 │   ├── console.py          # Console formatting and terminal interaction
+│   ├── config.py          # Shared YAML configuration, redirects and encrypted values
 │   ├── environment.py      # Runtime environment and executable discovery
 │   ├── system.py           # OS integration, privilege, and macOS permissions
 │   ├── paths.py            # Path placeholder and environment expansion

@@ -6,6 +6,7 @@ No user PDF or installed font catalog is needed; Qt uses the offscreen platform.
 
 from contextlib import closing
 from dataclasses import replace
+import base64
 import os
 from pathlib import Path
 import tempfile
@@ -15,7 +16,7 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtTest, QtWidgets
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 import pymupdf
 
 from test_pdf_font_replace import ROOT, make_font
@@ -51,6 +52,7 @@ class FontGuiTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="font-gui-", dir=ROOT / "tmp")
         self.addCleanup(self.temporary.cleanup)
         self.folder = Path(self.temporary.name)
+        self.enterContext(patch("utils.config.ConfigStore.directory", return_value=self.folder / "user-config"))
         self.font = self.folder / "fixture.ttf"
         make_font(self.font)
         self.face = Font.read_faces(self.font)[0]
@@ -130,7 +132,7 @@ class FontGuiTests(unittest.TestCase):
             result = worker.run(self.request("export", output=str(output)))
             self.assertEqual(result["count"], len("First pageSecond page"))
         self.assertEqual(self.source.read_bytes(), before)
-        self.assertEqual(messages[-1]["done"], 2)
+        self.assertEqual([message["done"] for message in messages if "done" in message][-1], 2)
         with Pdf.open_document(output, interactive=False) as (doc, _):
             self.assertEqual(doc.get_toc(), [[1, "Opening", 1], [2, "Second", 2]])
             self.assertEqual(Pdf.read_page_labels(doc), ["i", "1"])
@@ -139,6 +141,136 @@ class FontGuiTests(unittest.TestCase):
             self.assertIn("Fixture-Regular", {span["font"] for span in doc[1].get_texttrace()})
             self.assertIn("Times-Roman", {span["font"] for span in doc[1].get_texttrace()})
 
+    def test_match_preview_obeys_filters_and_never_changes_export(self) -> None:
+        rule = replace(self.rule, color="#00FF00", pages="2", sizes="14", source_colors="#000")
+        before = self.source.read_bytes()
+        output = self.folder / "preview-mark-export.pdf"
+        with closing(Worker()) as worker:
+            request = self.request("preview", page=2, rules=[rule.to_data()], match_rule=rule.to_data())
+            expected = worker.run({**request, "rules": [replace(rule, color="#0000ff").to_data()]})
+            processed = worker.run(request)
+            for raw in (False, True):
+                plain = worker.run({**request, "raw": raw})
+                marked = worker.run({**request, "raw": raw, "mark_matches": True, "mark_color": "#0000ff"})
+                default_marked = worker.run({**request, "raw": raw, "mark_matches": True})
+                self.assertNotEqual(marked["png"], default_marked["png"])
+                self.assertNotEqual(plain["png"], marked["png"])
+                # Target glyphs and diagnostic color must be rendered together.
+                self.assertEqual(marked["png"], expected["png"])
+                self.assertEqual(marked["count"], len("Second page"))
+                plain_image = QtGui.QImage.fromData(base64.b64decode(plain["png"]))
+                marked_image = QtGui.QImage.fromData(base64.b64decode(marked["png"]))
+                # The Times line and annotation below the selected line stay identical.
+                below = QtCore.QRect(0, int(plain_image.height() / 4), plain_image.width(), int(plain_image.height() * .75))
+                self.assertEqual(plain_image.copy(below), marked_image.copy(below))
+            original = worker.run({**request, "raw": True})
+            for excluded in (replace(rule, sizes="10"),
+                             replace(rule, source_colors="#0000FF"), replace(rule, names=("MissingFont",))):
+                marked = worker.run({**request, "raw": True, "mark_matches": True, "match_rule": excluded.to_data()})
+                self.assertEqual(marked["png"], processed["png"])
+            times = ReplacementRule(names=("Times-Roman",), color_only=True, color="#0000ff")
+            marked_times = worker.run({**request, "mark_matches": True, "mark_color": "#0000ff",
+                                      "match_rule": times.to_data()})
+            expected_times = worker.run({**request, "rules": [rule.to_data(), times.to_data()]})
+            self.assertEqual(marked_times["png"], expected_times["png"])
+            # Applied page scopes still control substitution; marking remains page-local.
+            marked_first = worker.run({**request, "page": 1, "mark_matches": True, "mark_color": "#0000ff"})
+            expected_first = worker.run({**request, "page": 1, "rules": [
+                replace(rule, color_only=True, faces={}, pages="all", color="#0000ff").to_data()]})
+            self.assertEqual(marked_first["png"], expected_first["png"])
+            self.assertEqual(marked_first["count"], 0)
+            independent = replace(rule, ignored="2", pages="none", faces={}, color="invalid")
+            marked = worker.run({**request, "raw": True, "mark_matches": True, "rules": [], "match_rule": independent.to_data()})
+            self.assertNotEqual(marked["png"], original["png"])
+            self.assertEqual(marked["count"], 0)
+            self.assertGreater(marked["recolored_runs"], 0)
+            # Even an unexpected preview flag in an export request is ignored.
+            worker.run(self.request("export", output=str(output), rules=[rule.to_data()], mark_matches=True, mark_color="#0000ff"))
+        with Pdf.open_document(output, interactive=False) as (document, _):
+            spans = document[1].get_texttrace()
+            replaced = [span for span in spans if span["font"] == "Fixture-Regular"]
+            self.assertTrue(replaced)
+            self.assertTrue(all(tuple(span["color"]) == (0, 1, 0) for span in replaced))
+            self.assertTrue(all(tuple(span["color"]) == (0, 0, 0) for span in spans if span["font"] == "Times-Roman"))
+        self.assertEqual(self.source.read_bytes(), before)
+
+    def test_match_preview_cache_switches_views_and_invalidates_on_rule_change(self) -> None:
+        window = self.window()
+        window.raw.setChecked(True)
+        self.settled(window)
+        original = window.viewer._original.toImage()
+        window.raw.setChecked(False)
+        self.settled(window)
+        self.assertFalse(window.mark_matches.isChecked())
+        window.panel.load_rule(self.rule)
+        window._commit_rule(True)
+        self.settled(window)
+        processed = window.viewer._original.toImage()
+        window.mark_matches.setChecked(True)
+        self.settled(window)
+        self.assertNotEqual(window.viewer._original.toImage(), processed)
+        window.raw.setChecked(True)
+        self.settled(window)
+        marked_raw = window.viewer._original.toImage()
+        self.assertNotEqual(marked_raw, original)
+        with patch.object(window.runner, "start", wraps=window.runner.start) as start:
+            window.mark_matches.setChecked(False)
+            self.assertEqual(window.viewer._original.toImage(), original)
+            window.mark_matches.setChecked(True)
+            self.assertEqual(window.viewer._original.toImage(), marked_raw)
+            start.assert_not_called()
+        window._clear_rules()
+        self.settled(window)
+        self.assertNotEqual(window.viewer._original.toImage(), marked_raw)
+        window.go_page(2)
+        self.settled(window)
+        self.assertTrue(window.mark_matches.isChecked())
+        self.assertTrue(window.raw.isChecked())
+
+    def test_draft_matches_update_current_page_without_commit_or_target(self) -> None:
+        window = self.window()
+        original = window.viewer._original.toImage()
+        window.panel.names.setText("Helvetica")
+        window.panel.pages.setText("none")
+        window.panel.ignored.setText("all")
+        window.mark_matches.setChecked(True)
+        self.settled(window)
+        helvetica_marked = window.viewer._original.toImage()
+        self.assertNotEqual(helvetica_marked, original)
+        self.assertFalse(window.raw.isEnabled())
+        self.assertFalse(window.rules)
+        self.assertFalse(window.dirty)
+        self.assertFalse(window.panel.read_rule().faces)
+        self.assertEqual(window._request["page"], 1)
+        window.panel.set_sources(["Helvetica", "Times-Roman"], [0])
+        window.panel.sources.setCurrentItem(window.panel.sources.topLevelItem(1))
+        self.settled(window)
+        self.assertNotEqual(window.viewer._original.toImage(), helvetica_marked)
+        window.panel.names.setText("Helvetica")
+        window.panel.names.editingFinished.emit()
+        self.settled(window)
+        self.assertEqual(window.viewer._original.toImage(), helvetica_marked)
+        window.panel.sizes.setText("invalid")
+        with patch.object(QtWidgets.QMessageBox, "warning") as warning, \
+                patch.object(window.runner, "start", wraps=window.runner.start) as start:
+            window.panel.sizes.editingFinished.emit()
+            self.assertIn("Invalid match filter", window.status.text())
+            self.assertTrue(window.viewer._original.isNull())
+            warning.assert_not_called()
+            start.assert_not_called()
+        window.panel.sizes.setText("14")
+        window.panel.sizes.editingFinished.emit()
+        self.settled(window)
+        window.go_page(2)
+        self.settled(window)
+        self.assertEqual(window._request["page"], 2)
+        self.assertEqual(window._request["match_rule"]["names"], ["Helvetica"])
+        self.assertFalse(window.rules)
+        self.assertFalse(window.dirty)
+        window.mark_matches.setChecked(False)
+        self.settled(window)
+        self.assertTrue(window.raw.isEnabled())
+
     def test_export_failure_preserves_existing_output(self) -> None:
         output = self.folder / "keep.pdf"
         output.write_bytes(b"existing")
@@ -146,6 +278,48 @@ class FontGuiTests(unittest.TestCase):
         with closing(Worker()) as worker, self.assertRaisesRegex(ValueError, "Missing target REGULAR"):
             worker.run(self.request("export", output=str(output), overwrite=True, rules=[bad.to_data()]))
         self.assertEqual(output.read_bytes(), b"existing")
+
+    def test_match_color_refreshes_and_page_turns_render_with_current_color(self) -> None:
+        window = self.window()
+        window.panel.load_rule(self.rule)
+        window._commit_rule(True)
+        self.settled(window)
+        for raw in (False, True):
+            window.raw.setChecked(raw)
+            self.settled(window)
+            window.mark_matches.setChecked(False)
+            self.settled(window)
+            window.go_page(2)
+            self.settled(window)
+            plain_second = window.viewer._original.toImage()
+            window.go_page(1)
+            self.settled(window)
+            window.mark_matches.setChecked(True)
+            self.settled(window)
+            with patch.object(QtWidgets.QColorDialog, "getColor", return_value=QtGui.QColor("#0066ff")):
+                window.mark_color_button.click()
+            self.settled(window)
+            self.assertEqual(window.cache.get(1).mark_color, "#0066ff")
+            window.go_page(2)
+            self.settled(window)
+            self.assertTrue(window.mark_matches.isChecked())
+            self.assertEqual(window._request["mark_color"], "#0066ff")
+            self.assertNotEqual(window.viewer._original.toImage(), plain_second)
+            blue_second = window.viewer._original.toImage()
+            window.go_page(1)
+            self.settled(window)
+            with patch.object(QtWidgets.QColorDialog, "getColor", return_value=QtGui.QColor("#00aa00")):
+                window.mark_color_button.click()
+            self.settled(window)
+            window.go_page(2)
+            self.settled(window)
+            self.assertEqual(window.cache.get(2).mark_color, "#00aa00")
+            self.assertNotEqual(window.viewer._original.toImage(), blue_second)
+            with patch.object(QtWidgets.QColorDialog, "getColor", return_value=QtGui.QColor()), \
+                    patch.object(window.runner, "start") as start:
+                window.mark_color_button.click()
+                self.assertEqual(window.mark_color, "#00aa00")
+                start.assert_not_called()
 
     def test_scan_and_font_file_discovery(self) -> None:
         with closing(Worker()) as worker:
@@ -280,7 +454,7 @@ class FontGuiTests(unittest.TestCase):
         self.assertNotEqual(first, original)
         self.assertEqual(window.rule_list.topLevelItemCount(), 1)
         window.panel.color.setText("#F00")
-        window._commit_rule(False)
+        window.panel.update_button.click()
         self.settled(window)
         red = window.viewer._original.toImage()
         self.assertNotEqual(red, first)
@@ -307,6 +481,19 @@ class FontGuiTests(unittest.TestCase):
         self.settled(window)
         self.assertEqual(window.current_page, 2)
         self.assertTrue(window.raw.isChecked())
+        self.assertEqual(window.navigation.selected_pages(), (1,))
+        window.cache.clear()
+        window.navigation.pages.setFocus()
+        QtTest.QTest.keyClick(window.navigation.pages, QtCore.Qt.Key.Key_Left)
+        self.settled(window)
+        self.assertEqual(window.current_page, 1)
+        self.assertEqual(window.navigation.selected_pages(), (0,))
+        self.assertTrue(window.navigation.pages.hasFocus())
+        QtTest.QTest.keyClick(window.navigation.pages, QtCore.Qt.Key.Key_Down)
+        self.settled(window)
+        self.assertEqual(window.current_page, 2)
+        self.assertEqual(window.navigation.selected_pages(), (1,))
+        self.assertTrue(window.navigation.pages.hasFocus())
         window.panel.load_rule(self.rule)
         window._commit_rule(True)
         self.settled(window)
@@ -383,6 +570,8 @@ class FontGuiTests(unittest.TestCase):
         parser.assert_any_call("1,3-4,-1", item_count=5)
         self.assertEqual(replace(self.rule, pages="ALL").compile(3).ignored, ())
         self.assertEqual(replace(self.rule, pages="none").compile(3).ignored, (0, 1, 2))
+        self.assertEqual(replace(self.rule, pages="all|odd", ignored="3-5|odd").compile(5).ignored, (1, 2, 3, 4))
+        self.assertEqual(replace(self.rule, pages="1-5|even").compile(5).ignored, (0, 2, 4))
         for pages in ("0", "3", "bad", "2-1"):
             with self.subTest(pages=pages), self.assertRaises(ValueError):
                 replace(self.rule, pages=pages).compile(2)

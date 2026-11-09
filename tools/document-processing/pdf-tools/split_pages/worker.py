@@ -11,6 +11,7 @@ import pymupdf
 from utils import *
 from ..common.pixel_transfer import preview_reply
 from ..common.protocol import Json
+from ..common.task_control import Cancelled, TaskControl
 from .engine import build_plan, _split_document
 from .model import Settings, PageOverride
 
@@ -24,6 +25,7 @@ class Worker:
         self._identity: tuple[str, int, int, str] | None = None
         self.password = ""
         self.progress = progress
+        self.control = TaskControl()
 
     def close(self) -> None:
         """Release source handles and authentication state; never write the input."""
@@ -34,6 +36,7 @@ class Worker:
     def _progress(self, done: int, total: int) -> None:
         if self.progress is not None:
             self.progress({"kind": "progress", "done": done, "total": total})
+        self.control.checkpoint()
 
     def run(self, request: dict[str, Json]) -> dict[str, Json]:
         """Execute inspect, preview or export with one-based physical page numbers.
@@ -46,6 +49,8 @@ class Worker:
             ValueError, OSError: Invalid settings, authentication or file operations.
         Only export writes a new or explicitly replaceable output through Pdf.save_new.
         """
+        self.control = TaskControl.from_request(request, self.progress)
+        self.control.checkpoint()
         path = Path(str(request["path"]))
         password = str(request.get("password", ""))
         stat = path.stat()
@@ -85,7 +90,7 @@ class Worker:
             with pymupdf.open() as output:
                 ambiguous, skipped = _split_document(source, output, plan, on_progress=self._progress)
                 count = output.page_count
-                Pdf.save_new(output, output_path, overwrite=request.get("overwrite") is True)
+                self.control.save(output, output_path, path, overwrite=request.get("overwrite") is True)
             return {"kind": "exported", "path": str(output_path), "page_count": count,
                     "ambiguous": ambiguous, "skipped_links": skipped}
         raise ValueError(f"Unknown operation: {operation}")
@@ -103,7 +108,9 @@ def main() -> int:
         for line in sys.stdin:
             try:
                 with redirect_stdout(sys.stderr):
-                    reply = worker.run(json.loads(line))
+                    reply: dict[str, Json] = worker.run(json.loads(line))
+            except Cancelled as exc:
+                reply = {"kind": "cancelled", "message": str(exc)}
             except Exception as exc:
                 reply = {"kind": "error", "message": str(exc),
                          "code": "password" if "password" in str(exc).lower() else "error"}

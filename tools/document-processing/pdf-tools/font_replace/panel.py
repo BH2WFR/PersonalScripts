@@ -1,7 +1,9 @@
 """Compact rule editor with PDF-source discovery and explicit target style faces."""
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_widgets import NoWheelComboBox
 from utils import *
+from ..common.range_input import RangeInput
 from .engine import _Embedding
 from .model import ReplacementRule
 
@@ -19,6 +21,7 @@ class RulePanel(QtWidgets.QWidget):
     catalogRequested = QtCore.Signal()
     fileRequested = QtCore.Signal(str)
     commitRequested = QtCore.Signal(bool)  # True adds, False updates selected.
+    matchChanged = QtCore.Signal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,13 +76,15 @@ class RulePanel(QtWidgets.QWidget):
         self.sizes.setPlaceholderText("All sizes; e.g. 12,14-18")
         filters.addRow("Font sizes (pt)", self.sizes)
         self.ignored = QtWidgets.QLineEdit()
-        self.ignored.setPlaceholderText("None; e.g. 1,2,-1")
-        filters.addRow("Ignore pages", self.ignored)
+        self.ignored.setPlaceholderText("None; e.g. 1,2,-1; append |odd or |even")
+        self.ignored.setToolTip("Physical pages to exclude. Append |odd or |even to filter page numbers.")
+        self.ignored_range = RangeInput(self.ignored)
+        filters.addRow("Ignore pages", self.ignored_range)
         self.source_colors = QtWidgets.QLineEdit()
         self.source_colors.setPlaceholderText("All colors; e.g. #000; #F00")
         self.source_colors.setToolTip("Match original fill or stroke at 8-bit RGB precision. Separate colors with semicolons; RGB input is also supported.")
         filters.addRow("Match text colors", self._color_control(self.source_colors, append=True))
-        self.found_colors = QtWidgets.QComboBox()
+        self.found_colors = NoWheelComboBox()
         self.found_colors.addItem("Discovered colors…", None)
         self.found_colors.activated.connect(self._select_color)
         filters.addRow("Append color", self.found_colors)
@@ -122,7 +127,7 @@ class RulePanel(QtWidgets.QWidget):
         font_layout.addWidget(self.selected_target)
         self.styles: dict[FontStyle, QtWidgets.QComboBox] = {}
         for style in FontStyle:
-            combo = QtWidgets.QComboBox()
+            combo = NoWheelComboBox()
             combo.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(10)
             combo.addItem("Not assigned", None)
@@ -130,7 +135,7 @@ class RulePanel(QtWidgets.QWidget):
             self.styles[style] = combo
             combo.currentIndexChanged.connect(self._show_selected_target)
             target_form.addRow(style.name.replace("_", " ").title(), combo)
-        self.embedding = QtWidgets.QComboBox()
+        self.embedding = NoWheelComboBox()
         self.embedding.addItem("Used glyphs (subset)", _Embedding.SUBSET)
         self.embedding.addItem("Full font face", _Embedding.FULL)
         self.embedding.setCurrentIndex(0)
@@ -155,21 +160,24 @@ class RulePanel(QtWidgets.QWidget):
         self.tabs.addTab(target, "Target")
         scope = QtWidgets.QFormLayout()
         self.pages = QtWidgets.QLineEdit("all")
-        self.pages.setPlaceholderText("all; or 1,2,5-10,-1")
-        self.pages.setToolTip("Physical pages for this rule: all (default), 1,2,5-10, -1 for the last page, or none. Ignore pages is subtracted from this selection. Applies to preview and export.")
-        scope.addRow("Apply to pages", self.pages)
+        self.pages.setPlaceholderText("all; or 1,2,5-10,-1; append |odd or |even")
+        self.pages.setToolTip("Physical pages for this rule: all (default), 1,2,5-10, -1 for the last page, or none. Append |odd or |even to filter page numbers. Ignore pages is subtracted from this selection. Applies to preview and export.")
+        self.pages_range = RangeInput(self.pages)
+        scope.addRow("Apply to pages", self.pages_range)
         layout.addLayout(scope)
         actions = QtWidgets.QHBoxLayout()
         self.add = QtWidgets.QPushButton("Add rule")
-        self.update = QtWidgets.QPushButton("Update selected")
+        self.update_button = QtWidgets.QPushButton("Update selected")
         self.add.clicked.connect(lambda: self.commitRequested.emit(True))
-        self.update.clicked.connect(lambda: self.commitRequested.emit(False))
+        self.update_button.clicked.connect(lambda: self.commitRequested.emit(False))
         actions.addWidget(self.add)
-        actions.addWidget(self.update)
+        actions.addWidget(self.update_button)
         layout.addLayout(actions)
-        hint = QtWidgets.QLabel("Edit settings, then Add / Update to refresh the preview.")
+        hint = QtWidgets.QLabel("Mark matches previews current filters directly. Add / Update commits replacement rules.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+        for field in (self.names, self.sizes, self.source_colors):
+            field.editingFinished.connect(self.matchChanged.emit)
 
     def _color_control(self, field: QtWidgets.QLineEdit, *, append: bool = False) -> QtWidgets.QWidget:
         """Pair a shared-parser color field with an optional native color chooser."""
@@ -196,21 +204,26 @@ class RulePanel(QtWidgets.QWidget):
             value = color.name().upper()
             current = field.text().strip()
             field.setText(f"{current}; {value}" if append and current else value)
+            if field is self.source_colors:
+                self.matchChanged.emit()
 
     def _font_file(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Target font", "", "Fonts (*.ttf *.otf *.ttc *.otc)")
+        from ..common.preferences import choose_open_file
+        path = choose_open_file(self, "Target font", "Fonts (*.ttf *.otf *.ttc *.otc)", kind="open-font")
         if path:
             self.fileRequested.emit(path)
 
     def _select_sources(self) -> None:
         if not self._loading:
             self.names.setText("; ".join(str(item.data(0, QtCore.Qt.ItemDataRole.UserRole)) for item in self.sources.selectedItems()))
+            self.matchChanged.emit()
 
     def _select_color(self, index: int) -> None:
         color = self.found_colors.itemData(index)
         if color is not None:
             current = self.source_colors.text().strip()
             self.source_colors.setText(f"{current}; {color}" if current else color)
+            self.matchChanged.emit()
 
     def set_sources(self, names: list[str], colors: list[int], details: dict[str, str] | None = None) -> None:
         """Show bold source names and metadata columns, retaining exact rule names."""
@@ -308,6 +321,13 @@ class RulePanel(QtWidgets.QWidget):
             self.color.text().strip(), faces, _Embedding(self.embedding.currentData()), self.remove_original.isChecked(),
             self.pages.text().strip() or "all", self.color_only.isChecked())
 
+    def read_match_rule(self) -> ReplacementRule:
+        """Read current text filters only; exclude targets and export page scope."""
+        return ReplacementRule(
+            names=tuple(name.strip() for name in self.names.text().split(";") if name.strip()),
+            sizes=self.sizes.text().strip(), source_colors=self.source_colors.text().strip(),
+            color_only=True)
+
     def load_rule(self, rule: ReplacementRule) -> None:
         """Populate controls from a selected active rule without committing edits."""
         self.names.setText("; ".join(rule.names))
@@ -324,3 +344,4 @@ class RulePanel(QtWidgets.QWidget):
         self.embedding.setCurrentIndex(self.embedding.findData(rule.embedding))
         self.remove_original.setChecked(rule.remove_original)
         self._show_selected_target()
+        self.matchChanged.emit()

@@ -1,6 +1,7 @@
 """Interactive terminal input helpers."""
 
 import glob as glob_module
+from enum import StrEnum
 import math
 import os
 import re
@@ -11,6 +12,14 @@ from .ansi import *
 from .menu import Menu
 from .menu_option import MenuOption
 from .paths import Paths
+
+
+class RangeParity(StrEnum):
+    """Parity of literal integers or resolved, displayed item numbers."""
+
+    ODD = "odd"
+    EVEN = "even"
+
 
 class Input:
     @staticmethod
@@ -265,6 +274,38 @@ class Input:
         return tuple((int(first), int(last)) for first, last in Input._parse_range_tokens(text, r"[+-]?[0-9]+"))
 
     @staticmethod
+    def _range_parity(
+        text: str, parity: RangeParity | None, allow_parity: bool,
+    ) -> tuple[str, RangeParity | None]:
+        """Separate one optional parity suffix and reject conflicting filters."""
+        if parity is not None and not isinstance(parity, RangeParity):
+            raise ValueError("parity must be RangeParity.ODD, RangeParity.EVEN, or None.")
+        if "|" not in text:
+            return text, parity
+        if not allow_parity:
+            raise ValueError("Parity suffixes are disabled when allow_parity=False.")
+        expression, suffix = text.split("|", 1)
+        try:
+            selected = RangeParity(suffix.strip().casefold())
+        except ValueError:
+            raise ValueError("Append one |odd or |even suffix to the selection.") from None
+        if parity is not None and parity != selected:
+            raise ValueError("The parity suffix conflicts with the parity argument.")
+        if not expression.strip():
+            raise ValueError("Enter a selection before |odd or |even.")
+        return expression, selected
+
+    @staticmethod
+    def _filter_range_parity(
+        values: typing.Iterable[int], parity: RangeParity | None, *, number_offset: int = 0,
+    ) -> tuple[int, ...]:
+        """Filter by displayed number while retaining values, order and duplicates."""
+        if parity is None:
+            return tuple(values)
+        remainder = 1 if parity == RangeParity.ODD else 0
+        return tuple(value for value in values if (value + number_offset) % 2 == remainder)
+
+    @staticmethod
     def _input_ranges[T](
         prompt: str,
         *,
@@ -285,7 +326,10 @@ class Input:
                 print(f"{FLRed}{exc}{CRst}")
 
     @staticmethod
-    def parse_integer_ranges(text: str, *, allow_zero: bool = True) -> tuple[int, ...]:
+    def parse_integer_ranges(
+        text: str, *, allow_zero: bool = True,
+        parity: RangeParity | None = None, allow_parity: bool = True,
+    ) -> tuple[int, ...]:
         """Expand comma-separated integers and inclusive ranges into a sequence.
 
         Args:
@@ -293,6 +337,11 @@ class Input:
                 around numbers and separators is allowed. Empty text yields ().
             allow_zero: Whether zero is allowed, including inside a range.
                 Defaults to True. Negative values are literal integers.
+            parity: Optional RangeParity.ODD or RangeParity.EVEN value filter;
+                None (default) keeps both. Order and duplicates are retained.
+            allow_parity: Accept a case-insensitive trailing ``|odd`` / ``|even``
+                in text (default True). False disables only suffix syntax.
+                A suffix must agree with an explicit parity argument.
 
         Returns:
             Integers in input order, retaining duplicates. Ranges include both
@@ -300,17 +349,19 @@ class Input:
 
         Raises:
             ValueError: Malformed input, or a selection containing zero when
-                allow_zero is False.
+                allow_zero is False, invalid/disabled suffix, or conflicting
+                filters. Input is validated before filtering.
 
         This parser does not read input or print anything.
         """
+        text, parity = Input._range_parity(text, parity, allow_parity)
         values: list[int] = []
         for first, last in Input._parse_integer_spans(text):
             if not allow_zero and min(first, last) <= 0 <= max(first, last):
                 raise ValueError("The selection contains zero; zero is invalid when allow_zero=False.")
             step = 1 if first <= last else -1
             values.extend(range(first, last + step, step))
-        return tuple(values)
+        return Input._filter_range_parity(values, parity)
 
     @staticmethod
     def input_integer_ranges(
@@ -318,6 +369,8 @@ class Input:
         *,
         allow_zero: bool = True,
         default: str | None = None,
+        parity: RangeParity | None = None,
+        allow_parity: bool = True,
     ) -> tuple[int, ...] | None:
         """Read an integer sequence, retrying invalid expressions.
 
@@ -326,6 +379,9 @@ class Input:
             allow_zero: Allow zero, including inside ranges; defaults to True.
             default: Expression in parse_integer_ranges syntax used on Enter.
                 None (the default), empty, or whitespace-only means no default.
+            parity: Optional RangeParity filter, default None, as in the parser.
+            allow_parity: Enable ``|odd`` / ``|even`` input suffixes by default;
+                False disables suffix syntax but not the parity argument.
 
         Returns:
             Integers in input order, including duplicates; None on blank input
@@ -339,12 +395,13 @@ class Input:
         Prints syntax hints and validation errors; reads stdin through Input.prompt.
         """
         def parse(text: str) -> tuple[int, ...]:
-            return Input.parse_integer_ranges(text, allow_zero=allow_zero)
+            return Input.parse_integer_ranges(text, allow_zero=allow_zero, parity=parity, allow_parity=allow_parity)
 
         zero_hint = "Zero is allowed." if allow_zero else "Zero is invalid, including inside ranges."
+        parity_hint = " Append |odd or |even to filter." if allow_parity else ""
         return Input._input_ranges(
             prompt, parser=parse, default=default,
-            hint=f"Use 1,2 or -3--1,5-3; ranges include both ends. {zero_hint}",
+            hint=f"Use 1,2 or -3--1,5-3; ranges include both ends. {zero_hint}{parity_hint}",
         )
 
     @staticmethod
@@ -435,6 +492,7 @@ class Input:
     @staticmethod
     def parse_index_ranges(
         text: str, *, item_count: int, allow_zero: bool = False,
+        parity: RangeParity | None = None, allow_parity: bool = True,
     ) -> tuple[int, ...]:
         """Resolve item numbers and inclusive ranges to zero-based indexes.
 
@@ -449,6 +507,13 @@ class Input:
             allow_zero: False (default) uses one-based numbers 1..item_count.
                 True uses zero-based numbers 0..item_count-1 instead. Negative
                 numbers count from the end in both modes.
+            parity: Optional RangeParity.ODD or RangeParity.EVEN filter, default
+                None. Uses resolved item numbers in the selected numbering mode,
+                not positions in the selection or raw negative endpoints.
+            allow_parity: Accept a trailing ``|odd`` / ``|even`` on numeric,
+                all, or none selections (case-insensitive; default True).
+                False disables only suffix syntax. A suffix must agree with
+                an explicit parity argument.
 
         Returns:
             Sorted, unique zero-based indexes. Both range endpoints are included.
@@ -457,18 +522,21 @@ class Input:
             ValueError: Negative item_count, malformed input, zero in one-based
                 mode, an out-of-range endpoint, or a range whose resolved start
                 follows its end. Endpoints are resolved before expansion, so
-                ``1--1`` selects all items in one-based mode.
+                ``1--1`` selects all items in one-based mode. Invalid/disabled
+                suffixes or conflicting filters also raise. Validation precedes
+                filtering; an invalid endpoint cannot be filtered away.
 
         This parser does not read input or print anything.
         """
         if item_count < 0:
             raise ValueError("item_count must be non-negative")
+        text, parity = Input._range_parity(text, parity, allow_parity)
+        first_number = 0 if allow_zero else 1
         keyword = text.strip().casefold()
         if keyword == "all":
-            return tuple(range(item_count))
+            return Input._filter_range_parity(range(item_count), parity, number_offset=first_number)
         if keyword == "none":
             return ()
-        first_number = 0 if allow_zero else 1
         last_number = item_count - 1 if allow_zero else item_count
         selected: set[int] = set()
         for first, last in Input._parse_integer_spans(text):
@@ -482,7 +550,7 @@ class Input:
             if start > end:
                 raise ValueError(f"Range {first}-{last} starts after its end.")
             selected.update(range(start, end + 1))
-        return tuple(sorted(selected))
+        return Input._filter_range_parity(sorted(selected), parity, number_offset=first_number)
 
     @staticmethod
     def input_index_ranges(
@@ -491,6 +559,8 @@ class Input:
         item_count: int,
         allow_zero: bool = False,
         default: str | None = None,
+        parity: RangeParity | None = None,
+        allow_parity: bool = True,
     ) -> tuple[int, ...] | None:
         """Prompt for item numbers/ranges, retrying malformed or out-of-range input.
 
@@ -501,6 +571,10 @@ class Input:
                 zero-based numbers. Negative numbers count from the end in both.
             default: Expression in parse_index_ranges syntax used on Enter.
                 None (the default), empty, or whitespace-only means no default.
+            parity: Optional RangeParity filter, default None; tests resolved
+                item numbers using allow_zero, as in parse_index_ranges.
+            allow_parity: Enable ``|odd`` / ``|even`` input suffixes by default;
+                False disables suffix syntax but not the parity argument.
 
         Returns:
             Sorted, unique zero-based indexes from parse_index_ranges; None on
@@ -514,13 +588,17 @@ class Input:
         Prints syntax hints and validation errors; reads stdin through Input.prompt.
         """
         def parse(text: str) -> tuple[int, ...]:
-            return Input.parse_index_ranges(text, item_count=item_count, allow_zero=allow_zero)
+            return Input.parse_index_ranges(
+                text, item_count=item_count, allow_zero=allow_zero,
+                parity=parity, allow_parity=allow_parity,
+            )
 
         numbering = "zero-based (0 = first)" if allow_zero else "one-based (1 = first)"
         examples = "0,1 or 0-2,4" if allow_zero else "1,2 or 1-3,4"
+        parity_hint = " Append |odd or |even to filter item numbers." if allow_parity else ""
         return Input._input_ranges(
             prompt, parser=parse, default=default,
-            hint=f"{item_count} items, {numbering}; use {examples}, all, or none; -1 = last, -2 = second-last.",
+            hint=f"{item_count} items, {numbering}; use {examples}, all, or none; -1 = last, -2 = second-last.{parity_hint}",
         )
 
     #* ============ 数字输入 ============

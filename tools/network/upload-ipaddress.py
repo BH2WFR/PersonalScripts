@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Upload local network information using the upload-ipaddress user config section.
+
+Requirements: boto3, PyYAML, cryptography for encrypted credentials.
+Usage: python upload-ipaddress.py [--help]
+"""
 import sys
 import os
 import socket
@@ -8,24 +13,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from utils import *
 from datetime import datetime
 
-# pip install boto3
-import boto3
-from botocore.config import Config
-from botocore.exceptions import ClientError, NoCredentialsError
-
-#* env var names
-_ENV_BUCKET  = "ZL-IP-ADDRESS-S3-BUCKET"
-_ENV_ENDPOINT = "ZL-IP-ADDRESS-S3-ENDPOINT"
-_ENV_ID      = "ZL-IP-ADDRESS-S3-ID"
-_ENV_SECRET  = "ZL-IP-ADDRESS-S3-SECRET"
-
+UPLOAD_ENCRYPTION_KEY = b"PwMoFseUfbszDg3JsbCkGEvKgvFbW9uWKOwmkD-sMZ8="
 
 def main() -> int:
-    BUCKET_NAME  = os.getenv(_ENV_BUCKET)
-    ENDPOINT_URL = os.getenv(_ENV_ENDPOINT)
-    ACCESS_ID    = os.getenv(_ENV_ID)
-    ACCESS_KEY   = os.getenv(_ENV_SECRET)
-
     if "--help" in sys.argv or "-h" in sys.argv:
         script_name = os.path.basename(sys.argv[0])
         print(f"""
@@ -38,30 +28,50 @@ Usage:
 
 {FLYellow}Description:{CRst}
   Collect network info (ipconfig / ip addr / ifconfig) and upload to an
-  S3-compatible bucket. Requires environment variables:
-    {FLCyan}ZL-IP-ADDRESS-S3-BUCKET{CRst}     S3 bucket name
-    {FLCyan}ZL-IP-ADDRESS-S3-ENDPOINT{CRst}    S3 endpoint URL
-    {FLCyan}ZL-IP-ADDRESS-S3-ID{CRst}          access key ID
-    {FLCyan}ZL-IP-ADDRESS-S3-SECRET{CRst}      secret access key
+  S3-compatible bucket. Configuration:
+    {FLCyan}{ConfigStore().path}{CRst}, upload-ipaddress section:
+      bucket, endpoint, access-id, secret (supports !encrypted).
 
 {FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install boto3{CRst}
+  Python: {FGray}pip install boto3 PyYAML cryptography{CRst}
   All other tools (ipconfig / ip / ifconfig) are platform built-ins.
 """)
         return 0
 
     Console.print_banner("UPLOAD IP ADDRESS INFO TO S3 BUCKET")
 
-    #============ 环境变量检查 ===========
+    try:
+        import boto3
+        from botocore.config import Config
+        from botocore.exceptions import ClientError, NoCredentialsError
+    except ImportError as exc:
+        print(f"{FLRed}Missing dependency: {exc.name}{CRst}")
+        print(f"{FGray}Install: pip install boto3 PyYAML cryptography{CRst}")
+        return 1
+
+    try:
+        settings = ConfigStore().load().get("upload-ipaddress", {})
+        if not isinstance(settings, dict):
+            raise ValueError("upload-ipaddress must be a mapping")
+        settings = EncryptedValue.decrypt_tree(settings, UPLOAD_ENCRYPTION_KEY)
+    except (OSError, ValueError) as exc:
+        print(f"{FLRed}ERROR: Cannot read user configuration: {exc}{CRst}")
+        return 1
+    BUCKET_NAME = settings.get("bucket")
+    ENDPOINT_URL = settings.get("endpoint")
+    ACCESS_ID = settings.get("access-id")
+    ACCESS_KEY = settings.get("secret")
+
+    #============ Configuration validation ===========
     _required = [
-        (_ENV_BUCKET, BUCKET_NAME),
-        (_ENV_ENDPOINT, ENDPOINT_URL),
-        (_ENV_ID, ACCESS_ID),
-        (_ENV_SECRET, ACCESS_KEY),
+        ("bucket", BUCKET_NAME),
+        ("endpoint", ENDPOINT_URL),
+        ("access-id", ACCESS_ID),
+        ("secret", ACCESS_KEY),
     ]
     for _name, _val in _required:
-        if not _val:
-            print(f"{FLRed}ERROR: Environment variable '{_name}' not set. EXIT...{CRst}\n")
+        if not isinstance(_val, str) or not _val:
+            print(f"{FLRed}ERROR: Configuration value '{_name}' is missing or invalid. EXIT...{CRst}\n")
             return 1
 
     #============ 获取计算机网络信息 ===========
@@ -120,7 +130,7 @@ Usage:
         )
         print(f"{FLGreen}Upload SUCCESS{CRst}: {FGray}{ENDPOINT_URL}/{BUCKET_NAME}/{s3_key}{CRst}\n")
     except NoCredentialsError:
-        print(f"{FLRed}ERROR: Invalid credentials. Check {_ENV_ID} and {_ENV_SECRET}. EXIT...{CRst}\n")
+        print(f"{FLRed}ERROR: Invalid credentials. Check access-id and secret in user config.yaml. EXIT...{CRst}\n")
         return 1
     except ClientError as e:
         print(f"{FLRed}ERROR: Upload failed: {e}{CRst}\n")

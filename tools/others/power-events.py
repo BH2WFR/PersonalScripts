@@ -633,6 +633,7 @@ def export_events(path: Path, events: Iterable[PowerEvent], result: QueryResult)
 def _launch_gui() -> int:
     """Load the Qt GUI after CLI help/dependency checks and run its event loop."""
     from PySide6 import QtCore, QtGui, QtWidgets
+    from utils.qt_widgets import NoWheelComboBox, install_no_wheel_controls
 
     class QueryWorker(QtCore.QThread):
         """Run log collection off the GUI thread and deliver results via Qt signals."""
@@ -741,7 +742,7 @@ def _launch_gui() -> int:
 
             # ── time range and query controls ───────────
             bar = QtWidgets.QHBoxLayout()
-            self.range_box = QtWidgets.QComboBox()
+            self.range_box = NoWheelComboBox()
             self.range_box.addItems([value.value for value in TimeRange])
             self.range_box.currentIndexChanged.connect(self._apply_range)
             self.start_edit = QtWidgets.QDateTimeEdit()
@@ -1029,6 +1030,7 @@ def _launch_gui() -> int:
     if not isinstance(application, QtWidgets.QApplication):
         raise RuntimeError("A non-GUI Qt application is already running.")
     application.setStyle(GUI_STYLE)
+    install_no_wheel_controls(application)
     window = PowerEventsWindow()
     window.show()
     # Keep a reference when embedded in another Qt session (also used by GUI tests).

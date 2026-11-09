@@ -54,6 +54,7 @@ from typing import Protocol, cast
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_widgets import install_no_wheel_controls
 
 from .coordinates import AxisCoordinates
 from .data_model import (COLORMAPS, DEFAULT_CLIP_COLOR, DEFAULT_MAX_POINTS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, Array, Component, Crop, Document, FilterMode, Frame, ImageMember,
@@ -2116,6 +2117,7 @@ def run(paths: Sequence[Path], key: str | None, mode: str | None,
     else:
         application = QtWidgets.QApplication([sys.argv[0]])
     application.setStyle(CompactFusionStyle())
+    install_no_wheel_controls(application)
     from .workspace_window import WorkspaceWindow
     window = WorkspaceWindow(max_edge, mode, channel_axis)
     window.show()

@@ -5,10 +5,13 @@ from pathlib import Path
 from typing import cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls
 from utils import *
 from ..common.file_actions import choose_pdf_output
+from ..common.preferences import choose_open_file, remember_directory
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
+from ..common.task_buttons import TaskButtons
 from ..common.navigation import NavigationPane
 from ..common.page_cache import PageCache, pixmap_bytes
 from ..common.preview_buffer import PreviewBuffer
@@ -51,6 +54,8 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.runner.completed.connect(self._completed)
         self.runner.busyChanged.connect(self._enabled)
         self.runner.progress.connect(self._progress)
+        self.runner.controlChanged.connect(self._enabled)
+        self.runner.controlStatus.connect(lambda text: self.status.setText(text))
         self.preview_buffer = PreviewBuffer()
         self.cache = PageCache[CachedPage](lambda page: pixmap_bytes(page.pixmap))
         self.timer = QtCore.QTimer(self)
@@ -107,7 +112,7 @@ class SplitWindow(QtWidgets.QMainWindow):
             "Previous page", lambda: self.go_page(self.current_page - 1))
         self.next = self.toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowForward),
             "Next page", lambda: self.go_page(self.current_page + 1))
-        self.page_number = QtWidgets.QSpinBox()
+        self.page_number = NoWheelSpinBox()
         self.page_number.setRange(1, 1)
         self.page_number.setFixedWidth(55)
         self.page_number.setKeyboardTracking(False)
@@ -122,7 +127,7 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.toolbar.addAction("Fit page", self.viewer.fit_page)
         self.toolbar.addAction("Fit width", self.viewer.fit_width)
         self.toolbar.addAction("100%", self.viewer.actual_pixels)
-        self.zoom = QtWidgets.QDoubleSpinBox()
+        self.zoom = NoWheelDoubleSpinBox()
         self.zoom.setRange(2.5, 1600)
         self.zoom.setSuffix(" %")
         self.zoom.setFixedWidth(85)
@@ -159,6 +164,9 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
         footer.addWidget(self.status, 1)
+        self.task_buttons = TaskButtons(self.runner, with_progress=True)
+        self.progress_bar = self.task_buttons.progress_bar
+        footer.addWidget(self.task_buttons)
         self.export_button = QtWidgets.QPushButton("Export PDF")
         self.export_button.clicked.connect(self._export)
         footer.addWidget(self.export_button)
@@ -178,10 +186,11 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.next.setEnabled(loaded and idle and self.current_page < self.page_count)
         self.export_button.setEnabled(loaded and idle)
         self.viewer.navigation_enabled = loaded and idle
-        if self.runner.busy and not self._cursor_busy:
+        working = self.runner.busy and not self.runner.paused
+        if working and not self._cursor_busy:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.BusyCursor)
             self._cursor_busy = True
-        elif idle and self._cursor_busy:
+        elif not working and self._cursor_busy:
             QtWidgets.QApplication.restoreOverrideCursor()
             self._cursor_busy = False
 
@@ -201,7 +210,7 @@ class SplitWindow(QtWidgets.QMainWindow):
 
     def _open_dialog(self) -> None:
         self.timer.stop()
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF (*.pdf)")
+        path = choose_open_file(self, "Open PDF", "PDF (*.pdf)")
         if path:
             self.open_path(Path(path))
         else:
@@ -426,11 +435,13 @@ class SplitWindow(QtWidgets.QMainWindow):
         self._summary()
 
     def _progress(self, message: dict[str, Json]) -> None:
-        self.status.setText(f"Splitting: {message.get('done', 0)} / {message.get('total', 0)} source pages…")
+        self.status.setText(str(message.get("stage") or f"Splitting: {message.get('done', 0)} / {message.get('total', 0)} source pages…"))
 
     def _completed(self, message: dict[str, Json]) -> None:
         kind = message.get("kind")
-        if kind == "error":
+        if kind == "cancelled":
+            self.status.setText("Task cancelled. Adjust settings and export again.")
+        elif kind == "error":
             if message.get("code") == "password" and self._request.get("operation") == "inspect":
                 password, accepted = QtWidgets.QInputDialog.getText(self, "PDF password", "Password:", QtWidgets.QLineEdit.EchoMode.Password)
                 if accepted:
@@ -444,6 +455,7 @@ class SplitWindow(QtWidgets.QMainWindow):
             path = Path(str(self._request["path"]))
             self._reset()
             self.source = path
+            remember_directory(self, "open-pdf", path)
             self.password = str(message.get("password", ""))
             self.page_count = int(cast(int, message["page_count"]))
             self.page_number.setRange(1, self.page_count)
@@ -510,6 +522,7 @@ def main(entry: Path) -> int:
     application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     assert isinstance(application, QtWidgets.QApplication)
     application.setStyle("Fusion")
+    install_no_wheel_controls(application)
     window = SplitWindow(entry)
     window.show()
     return application.exec()

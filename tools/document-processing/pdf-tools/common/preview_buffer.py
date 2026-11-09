@@ -28,7 +28,10 @@ class PreviewBuffer:
         """Copy validated RGB dimensions into a detached, GUI-owned pixmap."""
         if self._memory is None or width <= 0 or height <= 0 or width * height * 3 > self._memory.size:
             raise ValueError("Invalid shared preview dimensions.")
-        image = QtGui.QImage(self._memory.buf, width, height, width * 3, QtGui.QImage.Format.Format_RGB888)
+        buffer = self._memory.buf
+        if buffer is None:
+            raise ValueError("Preview buffer is closed.")
+        image = QtGui.QImage(buffer, width, height, width * 3, QtGui.QImage.Format.Format_RGB888)
         return QtGui.QPixmap.fromImage(image.copy())
 
     def close(self) -> None:

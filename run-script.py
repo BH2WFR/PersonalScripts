@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Discover and run PersonalScripts tools from configured directories.
 
-The primary script directory, optional additional-directory environment
-variable, display highlighting, supported script types, and Gitignore-style
+The primary script directory, display highlighting, supported script types, and Gitignore-style
 exclusions are defined in ``launcher-config.yaml``. Exclusions can depend on
 the operating system, normalized processor architecture, and Linux display
 environment. Existing configured dependency directories are prepended to
@@ -16,8 +15,11 @@ Normal startup displays resolved environment paths and, on Linux, the detected
 display environment without starting external tools for version discovery;
 ``--env-info`` enables those slower probes.
 Python targets use the Conda environment selected by a leading ``--env=NAME``,
-then ``ZL_CONDA_ENV``, and finally ``base``. The launcher itself remains in its
+then ``conda-environment`` in the shared user launcher.yaml, and finally ``base``.
+Additional script roots come from its ``additional-paths`` list. The launcher remains in its
 bootstrap environment.
+The script list shows the user configuration path; enter ``c`` in the
+interactive selector to open its directory and exit the launcher.
 
 Requirements:
     - pip: pathspec, PyYAML
@@ -42,10 +44,10 @@ from typing import Optional, Protocol
 from utils import *
 
 CONFIG_FILE_NAME = "launcher-config.yaml"
+LAUNCHER_CONFIG = "launcher.yaml"
 PATCH_CONFIG_FILE_NAME = "launcher-config.patch.yaml"
 ENV_INFO_FLAG = "--env-info"
 CONDA_ENV_FLAG_PREFIX = "--env="
-CONDA_ENV_VARIABLE = "ZL_CONDA_ENV"
 DEFAULT_CONDA_ENV = Environment.DEFAULT_CONDA_ENV
 SCRIPT_TYPE_KEYS = ("python", "bash", "powershell")
 ARCHITECTURE_ALIASES = {
@@ -116,7 +118,6 @@ class _LauncherConfig:
     test_enabled: bool
     test_root: Optional[str]
     test_path_prefix: Optional[str]
-    additional_path_env: str
     requirements_file: str
     extra_env_paths: tuple[str, ...]
     excluded_paths: frozenset[str]
@@ -313,11 +314,6 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
     requirements_file = Paths.resolve_path(
         _read_required_string(launcher, "requirements-file", "launcher"), project_dir,
     )
-    additional_path_env = _read_required_string(
-        launcher,
-        "additional-path-env",
-        "launcher",
-    )
 
     excluded_paths = frozenset(
         _normalize_relative_path(path)
@@ -470,7 +466,6 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         test_enabled=test_enabled_value,
         test_root=test_root,
         test_path_prefix=test_path_prefix,
-        additional_path_env=additional_path_env,
         requirements_file=requirements_file,
         extra_env_paths=extra_env_paths,
         excluded_paths=excluded_paths,
@@ -928,6 +923,8 @@ def show_scripts(
 
     Console.print_separator(width=60, color_ansi_esc=None, indent=2)
 
+    print(f"  {FLYellow}Config Path{CRst}: {FGray}{ConfigStore(LAUNCHER_CONFIG).path.as_posix()}{CRst}")
+
     return all_scripts
 
 
@@ -991,10 +988,13 @@ def _parse_launcher_invocation(arguments: list[str]) -> _LauncherInvocation:
 
 
 def _default_conda_env_name(command_line_env: Optional[str]) -> str:
-    """Apply CLI, environment-variable, and base precedence for target Python."""
+    """Apply CLI, shared user launcher config, and base precedence for target Python."""
     if command_line_env is not None:
         return command_line_env
-    configured_env = os.environ.get(CONDA_ENV_VARIABLE, "").strip()
+    configured_env = ConfigStore(LAUNCHER_CONFIG).load().get("conda-environment", "")
+    if not isinstance(configured_env, str):
+        raise ValueError("launcher.yaml conda-environment must be a string")
+    configured_env = configured_env.strip()
     return configured_env or DEFAULT_CONDA_ENV
 
 
@@ -1123,6 +1123,8 @@ def _print_help(config: _LauncherConfig) -> None:
   yellow [GUI] suffix wherever they are available.
   Existing dependency directories configured under extra-env-paths
   are prepended to PATH without warnings for missing directories.
+  The script list shows the user configuration path. Enter c at the interactive
+  selector to open its directory and exit the launcher.
 
 {FLYellow}Options:{CRst}
   {FLCyan}--list{CRst}                   List scripts and exit.
@@ -1130,15 +1132,16 @@ def _print_help(config: _LauncherConfig) -> None:
                              Must precede the script selector.
   {FLCyan}{CONDA_ENV_FLAG_PREFIX}<name>{CRst}             Run the selected Python script in this Conda environment.
                              Must precede the script selector and overrides
-                             {FLCyan}{CONDA_ENV_VARIABLE}{CRst}.
+                             {FLCyan}{LAUNCHER_CONFIG}{CRst}.
   {FLCyan}--help, -h{CRst}               Show this help message and exit.
 
 {FLYellow}Configuration:{CRst}
   {FLCyan}{CONFIG_FILE_NAME}{CRst}         Paths, script types, colors, and context-aware ignore rules.
   {FLCyan}{PATCH_CONFIG_FILE_NAME}{CRst}   Optional personal overrides; ignored when absent.
-  {FLCyan}{config.additional_path_env}{CRst}  Additional directories separated by
-                             {FGray}{path_separator}{CRst}. Relative paths use the project root.
-  {FLCyan}{CONDA_ENV_VARIABLE}{CRst}          Default Conda environment for Python targets.
+  {FLCyan}{ConfigStore(LAUNCHER_CONFIG).path}{CRst}
+                             additional-paths: list of extra script directories.
+                             Relative paths use the project root.
+                             conda-environment: default environment for Python targets.
                              Empty or unset selects {FGray}{DEFAULT_CONDA_ENV}{CRst}.
 
 {FLYellow}Requirements:{CRst}
@@ -1156,17 +1159,17 @@ def _resolve_additional_directories(
 
     Args:
         project_dir: Base directory for resolving relative entries.
-        config: Validated launcher settings containing the environment name.
+        config: Validated repository launcher settings.
 
     Returns:
-        Existing absolute directories in environment-variable order.
+        Existing absolute directories in user configuration order.
 
     Side effects:
         Prints a warning for each configured path that is not a directory.
     """
-    raw_value = os.environ.get(config.additional_path_env, "").strip()
-    if not raw_value:
-        return []
+    entries = ConfigStore(LAUNCHER_CONFIG).load().get("additional-paths", [])
+    if not isinstance(entries, list) or not all(isinstance(entry, str) and entry.strip() for entry in entries):
+        raise ValueError("launcher.yaml additional-paths must be a list of nonempty paths")
 
     def warn_missing(directory: str) -> None:
         """Keep the launcher's warning format while sharing directory resolution."""
@@ -1176,18 +1179,19 @@ def _resolve_additional_directories(
             file=sys.stderr,
         )
 
-    entries = [entry.strip() for entry in raw_value.split(os.pathsep) if entry.strip()]
     return list(Paths.resolve_directories(entries, project_dir, on_missing=warn_missing))
 
 
 def main() -> int:
     try:
         invocation = _parse_launcher_invocation(sys.argv[1:])
-    except ValueError as exc:
-        print(f"{FLRed}Invalid launcher option:{CRst} {exc}", file=sys.stderr)
+        ConfigStore.initialize()
+        ConfigStore(LAUNCHER_CONFIG).ensure({"conda-environment": "base", "additional-paths": []})
+        target_conda_env = _default_conda_env_name(invocation.conda_env_name)
+    except (OSError, ImportError, ValueError) as exc:
+        print(f"{FLRed}Invalid launcher option or user configuration:{CRst} {exc}", file=sys.stderr)
         return 2
     launcher_args = list(invocation.arguments)
-    target_conda_env = _default_conda_env_name(invocation.conda_env_name)
 
     project_dir = _get_project_dir()
     try:
@@ -1234,7 +1238,12 @@ def main() -> int:
 
     # ── additional script directories ─────────────────────
     additional_groups: list[tuple[str, list[str]]] = []
-    for directory in _resolve_additional_directories(project_dir, config):
+    try:
+        additional_directories = _resolve_additional_directories(project_dir, config)
+    except (OSError, ValueError) as exc:
+        print(f"{FLRed}Cannot load user launcher paths:{CRst} {exc}", file=sys.stderr)
+        return 1
+    for directory in additional_directories:
         scripts_found = find_scripts(directory, config)
         if scripts_found:
             additional_groups.append((directory, scripts_found))
@@ -1274,6 +1283,7 @@ def main() -> int:
         print(f"    {FLCyan}--env=test{CRst} {FLYellow}5{CRst}                   select environment + number")
         print(f"    {FLYellow}5{CRst} {FLCyan}--help{CRst}                       number + passthrough args")
         print(f"    {FLYellow}script-name{CRst} {FLCyan}arg1 arg2{CRst}          name + passthrough args")
+        print(f"    {FGray}[{FLGreen}c{FGray}]{CRst}                            Open configuration directory and exit")
 
         script_path: Optional[str] = None
         command_line_parts = (
@@ -1287,7 +1297,8 @@ def main() -> int:
                 parts = command_line_parts
                 command_line_parts = None
             else:
-                print(f"\n{FLYellow}Enter number or script name to execute{CRst} (or {FLYellow}Enter{CRst} to exit): ", end="")
+                print(f"\n({FLGreen}c{CRst}: config directory; {FLYellow}Enter{CRst}: exit)")
+                print(f"{FLYellow}Enter number or script name to execute{CRst}: ", end="")
                 try:
                     choice_line = Input.prompt("")
                 except EOFError:
@@ -1299,6 +1310,13 @@ def main() -> int:
                     Console.print_exit_message("Bye.")
                     return 0
                 parts = choice_line.split()
+                if len(parts) == 1 and parts[0].casefold() == "c":
+                    try:
+                        System.open_with_default_app(str(ConfigStore(LAUNCHER_CONFIG).path.parent))
+                    except OSError as exc:
+                        print(f"{FLRed}Cannot open configuration directory:{CRst} {exc}", file=sys.stderr)
+                        continue
+                    return 0
 
             if parts[0].startswith(CONDA_ENV_FLAG_PREFIX):
                 try:

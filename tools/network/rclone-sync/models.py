@@ -12,13 +12,9 @@ import datetime
 from typing import Optional
 
 
-ENV_SCHEMA_FILE = "ZL_RCLONE_SYNC_SCHEMA_FILE"
-
-
-ENV_CONFIG_PASSWORD = "ZL_RCLONE_CONFIG_PASSWORD"
-
-
 UNGROUPED_KEY = "ungrouped"
+RCLONE_CONFIG = "rclone-sync.yaml"
+RCLONE_ENCRYPTION_KEY = b"JYXH6wMQaYeFsRthBuNNc9a8WmIn1RHcrrG8F1jksOg="
 
 
 UNNAMED_TASK = "unnamed"

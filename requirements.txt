@@ -1,9 +1,14 @@
 # Launcher dependencies
 pathspec>=0.12,<2
 PyYAML>=6.0,<7
+cryptography
 
 # Tool runtime dependencies
 boto3
+litellm
+openai
+httpx
+truststore
 mss
 numpy
 opencv-python

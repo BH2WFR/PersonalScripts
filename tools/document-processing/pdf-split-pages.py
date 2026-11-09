@@ -15,7 +15,7 @@ target the first crop and are reported. Sources cannot be overwritten.
 Settings stay in memory; use Export PDF to save beside the input.
 
 Requirements:
-    - pip: PySide6, PyMuPDF, tqdm.
+    - pip: PySide6, PyMuPDF, tqdm, PyYAML, cryptography.
 Usage:
     conda run -n base python tools/document-processing/pdf-split-pages.py
 """
@@ -85,7 +85,7 @@ Options:
   -h, --help  Show this help. Open/drop PDFs in the GUI.
 
 Requirements:
-  pip: PySide6, PyMuPDF, tqdm.
+  pip: PySide6, PyMuPDF, tqdm, PyYAML, cryptography.
 """)
         return 0
     try:
@@ -94,7 +94,7 @@ Requirements:
         return cast(Callable[[Path], int], load_app().main)(Path(__file__).resolve())
     except ImportError as exc:
         print(f"{FLRed}Missing dependency: {exc.name}{CRst}")
-        print(f"{FGray}Install: pip install PySide6 PyMuPDF tqdm{CRst}")
+        print(f"{FGray}Install: pip install PySide6 PyMuPDF tqdm PyYAML cryptography{CRst}")
         return 1
 
 

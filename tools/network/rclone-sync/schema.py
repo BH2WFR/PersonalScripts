@@ -11,6 +11,7 @@ import dataclasses
 from typing import Optional, Any, Union, Set, TextIO, cast
 from . import endpoints as endpoint_ops
 from . import models
+from utils import *
 
 
 @dataclasses.dataclass
@@ -588,57 +589,8 @@ class SyncTask:
 
 
 def _load_schema(stream: TextIO) -> Any:
-    """Safely load a YAML document, rejecting duplicate keys before merging.
-
-    Args:
-        stream: Open UTF-8 YAML text stream; its name appears in parse errors.
-
-    Returns:
-        The raw YAML value for schema validation, or None for an empty document.
-
-    Raises:
-        yaml.YAMLError: Invalid/unsafe YAML or duplicate keys. Duplicate-key
-            errors include the first and repeated definition's line and column.
-
-    Side effects:
-        Reads the stream. YAML merge-key overrides remain supported; no global
-        PyYAML constructors are changed.
-    """
-    import yaml
-
-    class SchemaLoader(yaml.SafeLoader):
-        """Check each original mapping once, before YAML merges expand aliases."""
-
-        def __init__(self, source: TextIO) -> None:
-            super().__init__(source)
-            self.checked_mappings: set[yaml.MappingNode] = set()
-
-        def flatten_mapping(self, node: yaml.MappingNode) -> None:
-            """Reject repeated explicit keys while allowing inherited overrides."""
-            if node not in self.checked_mappings:
-                self.checked_mappings.add(node)
-                marks: dict[object, yaml.error.Mark] = {}
-                for key_node, _ in node.value:
-                    if key_node.tag in {"tag:yaml.org,2002:merge", "tag:yaml.org,2002:value"}:
-                        key = key_node.value
-                    else:
-                        key = self.construct_object(key_node, deep=True)
-                    try:
-                        first = marks.get(key)
-                        if first is not None:
-                            raise yaml.constructor.ConstructorError(
-                                "first key defined here", first,
-                                f"duplicate YAML key {key!r}", key_node.start_mark,
-                            )
-                        marks[key] = key_node.start_mark
-                    except TypeError as exc:
-                        raise yaml.constructor.ConstructorError(
-                            "while reading a mapping", node.start_mark,
-                            "mapping keys must be hashable", key_node.start_mark,
-                        ) from exc
-            super().flatten_mapping(node)
-
-    return yaml.load(stream, Loader=SchemaLoader)
+    """Load shared safe YAML, including encrypted strings and duplicate-key checks."""
+    return EncryptedValue.decrypt_tree(ConfigStore.parse(stream), models.RCLONE_ENCRYPTION_KEY)
 
 
 def _validate_field_in_dict(

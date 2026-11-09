@@ -29,6 +29,7 @@ from personal_pdf_tools.binarize.worker import Cancelled, Worker, export_project
 from personal_pdf_tools.common.jobs import JobRunner
 from personal_pdf_tools.common.pdf_images import inspect_images
 from personal_pdf_tools.common.preview_buffer import PreviewBuffer
+from personal_pdf_tools.common.range_input import PageRangeDialog
 from personal_pdf_tools.common.viewer import ViewMode
 
 ENTRY = ROOT / "tools/document-processing/pdf-binarize.py"
@@ -51,6 +52,7 @@ class ProjectTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory(prefix="pdf-gui-model-", dir=ROOT / "tmp")
         self.addCleanup(folder.cleanup)
         self.folder = Path(folder.name)
+        self.enterContext(patch("utils.config.ConfigStore.directory", return_value=self.folder / "user-config"))
         self.source = self.folder / "source.pdf"
         make_source(self.source)
         self.project = Project.create(self.source, 3)
@@ -185,6 +187,43 @@ class ProjectTests(unittest.TestCase):
             export_project(self.project, target)
         self.assertFalse(target.exists())
 
+    def test_pause_after_page_stop_preserves_existing_output(self) -> None:
+        target = self.folder / "result.pdf"
+        target.write_bytes(b"previous output")
+        pause, cancel = self.folder / "pause", self.folder / "cancel"
+        states: list[bool] = []
+
+        def control(message: dict[str, object]) -> None:
+            if message.get("done") == 1:
+                pause.touch()
+            if message.get("paused") is True:
+                states.append(True)
+                cancel.touch()
+
+        with self.assertRaises(Cancelled):
+            export_project(self.project, target, progress=control, pause=pause, cancel=cancel, overwrite=True)
+        self.assertEqual(states, [True])
+        self.assertEqual(target.read_bytes(), b"previous output")
+        self.assertFalse(list(self.folder.glob(".pdf-tools-*")))
+
+    def test_pause_before_save_resumes_and_completes(self) -> None:
+        target, pause = self.folder / "result.pdf", self.folder / "pause"
+        states: list[bool] = []
+
+        def control(message: dict[str, object]) -> None:
+            if message.get("stage") == "Writing PDF":
+                pause.touch()
+            if "paused" in message:
+                states.append(bool(message["paused"]))
+                if message["paused"]:
+                    self.assertFalse(target.exists())
+                    pause.unlink()
+
+        export_project(self.project, target, progress=control, pause=pause)
+        self.assertEqual(states, [True, False])
+        with pymupdf.open(target) as result:
+            self.assertEqual(result.page_count, 3)
+
     def test_preview_is_repeatable_and_matches_full_export(self) -> None:
         project = self.project
         project.profiles[DEFAULT_ID].config = Config(72, 180)
@@ -239,6 +278,7 @@ class GuiTests(unittest.TestCase):
         self.addCleanup(notice.stop)
         self.addCleanup(folder.cleanup)
         self.folder = Path(folder.name)
+        self.enterContext(patch("utils.config.ConfigStore.directory", return_value=self.folder / "user-config"))
         self.source = self.folder / "source.pdf"
         make_source(self.source)
         self.window = BinarizeWindow(ENTRY)
@@ -266,13 +306,13 @@ class GuiTests(unittest.TestCase):
             window._add_profile()
         self.assertEqual(prompt.call_args.kwargs["text"], "1")
         identity = window.project.assignments[0]
-        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("1,3", True)):
+        with patch.object(PageRangeDialog, "get_text", return_value=("all|odd", True)):
             window._apply_profile_pages(identity)
         self.assertEqual(window.project.assignments, [identity, DEFAULT_ID, identity])
         item = window.profile_list.topLevelItem(2)
         self.assertEqual(item.text(1), "1,3")
         original = list(window.project.assignments)
-        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("2,99", True)), patch.object(window, "_error") as error:
+        with patch.object(PageRangeDialog, "get_text", return_value=("2,99|odd", True)), patch.object(window, "_error") as error:
             window._apply_profile_pages(identity)
         error.assert_called_once()
         self.assertEqual(window.project.assignments, original)
@@ -322,13 +362,13 @@ class GuiTests(unittest.TestCase):
         identity = window.project.add_profile("Special", DEFAULT_ID)
         window._load_profiles()
         window._load_current_page()
-        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("ALL", True)) as dialog:
+        with patch.object(PageRangeDialog, "get_text", return_value=("ALL", True)) as dialog:
             window._apply_profile_pages(identity)
         self.assertIn("all", dialog.call_args.args[2])
         self.assertEqual(window.project.assignments, [identity] * 3)
         self.assertEqual(window.profile_list.topLevelItem(0).text(1), "")
         self.assertEqual(window.profile_list.topLevelItem(2).text(1), "1-3")
-        with patch.object(QtWidgets.QInputDialog, "getText", return_value=("none", True)), \
+        with patch.object(PageRangeDialog, "get_text", return_value=("none", True)), \
                 patch.object(window, "_error") as error:
             window._apply_profile_pages(DEFAULT_ID)
         error.assert_called_once()
@@ -452,6 +492,56 @@ class GuiTests(unittest.TestCase):
         with pymupdf.open(output) as result:
             self.assertEqual([page.get_images()[0][4] for page in result], [1, 1, 1])
 
+    def test_real_worker_pause_resume_stop_and_edit_again(self) -> None:
+        window = self.window
+        window.preview_timer.stop()
+        window._preview_requested = False
+        for stop in (False, True):
+            output = self.folder / f"pause-{stop}.pdf"
+            with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(output), "")):
+                window._export(False)
+            # Request pause before pumping events / allowing the worker to start.
+            window.pause_button.click()
+            pause, cancel = window.runner.pause_marker, window.runner.cancel_marker
+            self.assertTrue(pause.exists())
+            wait_for(lambda: window.runner.paused)
+            self.assertTrue(window.runner.busy)
+            self.assertFalse(window._cursor_busy)
+            self.assertEqual(window.pause_button.text(), "Resume")
+            self.assertTrue(window.cancel_button.isEnabled())
+            self.assertFalse(window.settings.isEnabled())
+            value = window.progress_bar.value()
+            QtTest.QTest.qWait(180)
+            self.assertEqual(window.progress_bar.value(), value)
+            self.assertFalse(output.exists())
+            if stop:
+                window.cancel_button.click()
+            else:
+                window.pause_button.click()
+            wait_for(lambda: not window.runner.busy)
+            self.assertFalse(pause.exists())
+            self.assertFalse(cancel.exists())
+            self.assertFalse(window.runner.paused)
+            self.assertFalse(window._cursor_busy)
+            self.assertTrue(window.settings.isEnabled())
+            self.assertTrue(window.export_button.isEnabled())
+            self.assertTrue(window.pause_button.isVisible())
+            self.assertFalse(window.pause_button.isEnabled())
+            self.assertEqual(output.exists(), not stop)
+            if stop:
+                self.assertIn("cancelled", window.status.text())
+                window.settings.editors["threshold"].setValue(160)
+                window.settings.editors["threshold"].editingFinished.emit()
+                self.assertEqual(window.project.profiles[DEFAULT_ID].config.threshold, 160)
+                window.preview_timer.stop()
+                window._preview_requested = False
+        # Same persistent worker and project remain usable after Stop.
+        output = self.folder / "after-stop.pdf"
+        with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(output), "")):
+            window._export(False)
+        wait_for(lambda: not window.runner.busy)
+        self.assertTrue(output.is_file())
+
     def test_cancelled_save_dialog_preserves_pending_preview_without_rendering_inside(self) -> None:
         self.window.project.assign(DEFAULT_ID, "1")
         self.window._load_current_page()
@@ -551,7 +641,11 @@ class GuiTests(unittest.TestCase):
         toolbar_bottom = window.view_toolbar.mapTo(window, window.view_toolbar.rect().bottomLeft()).y()
         self.assertLessEqual(window.viewer.mapTo(window, QtCore.QPoint()).y(), toolbar_bottom + 8)
         self.assertTrue(window.progress_bar.isHidden())
-        self.assertTrue(window.cancel_button.isHidden())
+        self.assertTrue(window.cancel_button.isVisible())
+        self.assertFalse(window.cancel_button.isEnabled())
+        self.assertFalse(window.left.isAncestorOf(window.task_buttons))
+        self.assertFalse(window.pause_button.icon().isNull())
+        self.assertFalse(window.cancel_button.icon().isNull())
         window.page_number.setFocus()
         self.application.processEvents()
         QtTest.QTest.keyClick(window.page_number, QtCore.Qt.Key.Key_A, QtCore.Qt.KeyboardModifier.ControlModifier)
@@ -613,9 +707,29 @@ class GuiTests(unittest.TestCase):
         QtTest.QTest.keyClick(window.viewer, QtCore.Qt.Key.Key_Right)
         self.assertEqual(window.project.current_page, 2)
         window.preview_timer.stop()
+        self.assertEqual(window.navigation.selected_pages(), (2,))
+        window.navigation.pages.setFocus()
+        QtTest.QTest.keyClick(window.navigation.pages, QtCore.Qt.Key.Key_Up)
+        self.assertEqual(window.project.current_page, 1)
+        self.assertEqual(window.navigation.selected_pages(), (1,))
+        window.preview_timer.stop()
+        QtTest.QTest.keyClick(window.navigation.pages, QtCore.Qt.Key.Key_Right)
+        self.assertEqual(window.project.current_page, 2)
+        self.assertEqual(window.navigation.selected_pages(), (2,))
+        window.preview_timer.stop()
         window.region_path.setFocus()
         QtTest.QTest.keyClick(window.region_path, QtCore.Qt.Key.Key_Left)
         self.assertEqual(window.project.current_page, 2)
+        window.navigation.pages.setFocus()
+        QtTest.QTest.keyClick(window.navigation.pages, QtCore.Qt.Key.Key_Left)
+        wait_for(lambda: not window.runner.busy and not window.preview_timer.isActive())
+        self.assertEqual(window.project.current_page, 1)
+        self.assertEqual(window.navigation.selected_pages(), (1,))
+        self.assertTrue(window.navigation.pages.hasFocus())
+        with patch.object(window.runner, "busy", True):
+            QtTest.QTest.keyClick(window.navigation.pages, QtCore.Qt.Key.Key_Right)
+            self.assertEqual(window.project.current_page, 1)
+            self.assertEqual(window.navigation.selected_pages(), (1,))
 
     def test_image_tab_tracks_view_and_profile_and_blue_outline_can_be_cleared(self) -> None:
         window = self.window

@@ -4,7 +4,8 @@ Printed page numbers belong to recognition drafts; editable export entries use
 physical PDF pages. Credentials and rendered images are never serialized.
 """
 
-from dataclasses import asdict, dataclass, field
+from bisect import bisect_left
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 import math
 from pathlib import Path
@@ -43,6 +44,15 @@ class Bookmark:
 
 
 @dataclass
+class RecognitionIssue:
+    """A model question with its source location and requested clarification."""
+
+    location: str
+    error_message: str
+    needs: str
+
+
+@dataclass
 class TocPage:
     """Session-only recognition input, drafts and bounded request history for one page."""
 
@@ -58,6 +68,7 @@ class TocPage:
     draft_invalid: bool = False
     request_trace: str = ""
     history: list[str] = field(default_factory=list)
+    issues: list[RecognitionIssue] = field(default_factory=list)
 
 
 @dataclass
@@ -73,6 +84,10 @@ class ConversationTurn:
 
 class NeedsInformation(ValueError):
     """Recognition cannot be accepted until missing or ambiguous content is resolved."""
+
+    def __init__(self, message: str, issues: tuple[RecognitionIssue, ...] = ()) -> None:
+        super().__init__(message)
+        self.issues = issues
 
 
 class _UniqueLoader(yaml.SafeLoader):
@@ -110,14 +125,15 @@ def parse_draft(text: str, source_page: int, body_pdf: int, body_book: int) -> l
     if isinstance(data, dict):
         if set(data) != {"entries", "errors"} or not isinstance(data["entries"], list) or not isinstance(data["errors"], list):
             raise ValueError("Expected entries and errors lists, or a plain entry list.")
-        problems: list[str] = []
+        problems: list[RecognitionIssue] = []
         for number, issue in enumerate(data["errors"], 1):
             if (not isinstance(issue, dict) or set(issue) != {"error_message", "location", "needs"}
                     or any(not isinstance(value, str) or not value.strip() for value in issue.values())):
                 raise ValueError(f"Error {number}: error_message, location and needs must be nonempty strings.")
-            problems.append(f"{issue['location']}: {issue['error_message']}\nNeeded: {issue['needs']}")
+            problems.append(RecognitionIssue(issue["location"], issue["error_message"], issue["needs"]))
         if problems:
-            raise NeedsInformation("\n\n".join(problems))
+            raise NeedsInformation("\n\n".join(
+                f"{issue.location}: {issue.error_message}\nNeeded: {issue.needs}" for issue in problems), tuple(problems))
         data = data["entries"]
     if not isinstance(data, list):
         raise ValueError("Expected a YAML list; use [] for an empty TOC page.")
@@ -161,6 +177,81 @@ class BookSession:
     pending_only: bool = True
     clear_context: bool = False
     conversation: list[ConversationTurn] = field(default_factory=list, repr=False)
+    source_page_count: int = 0
+    source_pages: list[int] = field(default_factory=list)
+    mapping_required: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.source_page_count:
+            self.source_page_count = self.page_count
+        if not self.source_pages:
+            self.source_pages = list(range(1, self.page_count + 1))
+
+    def physical_page(self, printed: int) -> int:
+        """Resolve a printed number through retained source pages; zero means missing."""
+        if self.mapping_required:
+            raise ValueError("Choose a new body page and printed start after deleting the body anchor.")
+        number = printed if printed > 0 else printed + 1
+        source = self.source_pages[self.body_pdf - 1] + number - self.body_book
+        index = bisect_left(self.source_pages, source)
+        return index + 1 if index < self.page_count and self.source_pages[index] == source else 0
+
+    def delete_pages(self, pages: list[int], *, shift: bool, delete_bookmarks: bool) -> None:
+        """Delete current physical pages atomically; compose source/printed mappings.
+
+        Retained descendants of removed bookmarks are promoted. Deleted targets
+        move to the preceding retained page (or first retained page) unless removed.
+        No-shift targets remain literal physical numbers, even if now out of range.
+        """
+        if (not pages or any(type(page) is not int or not 1 <= page <= self.page_count for page in pages)
+                or len(set(pages)) == self.page_count):
+            raise ValueError("Select valid pages and retain at least one page.")
+        removed = set(pages)
+        ordered_removed = sorted(removed)
+        retained = [page for page in range(1, self.page_count + 1) if page not in removed]
+        mapping = {old: new for new, old in enumerate(retained, 1)}
+
+        def preceding(page: int) -> int:
+            return mapping.get(page, max(1, bisect_left(retained, page)))
+
+        entries: list[Bookmark] = []
+        ancestors: list[int] = []
+        for original in self.bookmarks:
+            while ancestors and ancestors[-1] >= original.level:
+                ancestors.pop()
+            if original.page in removed and delete_bookmarks:
+                continue
+            item = replace(original, level=len(ancestors) + 1)
+            ancestors.append(original.level)
+            if original.page in removed:
+                item.page = preceding(original.page)
+                item.logical_page = None
+            elif shift and original.page > 0:
+                item.page = original.page - bisect_left(ordered_removed, original.page)
+            elif not shift:
+                item.logical_page = None
+            if original.source_page is not None:
+                item.source_page = mapping.get(original.source_page)
+                if item.source_page is None:
+                    item.logical_page = None
+            entries.append(item)
+
+        anchor_source = self.source_pages[self.body_pdf - 1]
+        anchor_old = self.body_pdf if self.body_pdf in mapping else next(
+            (page for page in retained if page > self.body_pdf), retained[-1])
+        printed = self.body_book + self.source_pages[anchor_old - 1] - anchor_source
+        self.mapping_required = self.mapping_required or printed < 1
+        self.body_pdf, self.body_book = mapping[anchor_old], max(1, printed)
+        self.bookmarks = entries
+        self.toc = {mapping[page]: replace(task, page=mapping[page], request_trace="", history=[])
+                    for page, task in self.toc.items() if page in mapping}
+        self.labels = [self.labels[page - 1] for page in retained]
+        self.source_pages = [self.source_pages[page - 1] for page in retained]
+        self.page_count = len(retained)
+        self.current_page = preceding(self.current_page)
+        self.context_start = 1
+        self.last_prompt_tokens = 0
+        self.conversation.clear()
 
     def apply_draft(self, page: int, draft: str) -> None:
         """Replace one source page atomically, rejecting model issues/unresolved pages.
@@ -178,12 +269,18 @@ class BookSession:
                       for number, item in enumerate(entries, 1) if item.logical_page is None]
         if unresolved:
             raise NeedsInformation("\n".join(unresolved) + "\nNeeded: provide the printed page number or its mapping.")
+        for item in entries:
+            assert item.logical_page is not None
+            item.page = self.physical_page(item.logical_page)
+            if not item.page:
+                raise NeedsInformation(f"Printed page {item.logical_page} ({item.title}) is deleted or outside this PDF.")
         retained = [item for item in self.bookmarks if item.source_page != page]
         insertion = next((i for i, item in enumerate(retained)
                           if item.source_page is not None and item.source_page > page), len(retained))
         self.bookmarks = retained[:insertion] + entries + retained[insertion:]
         self.toc[page].draft = draft
         self.toc[page].error = ""
+        self.toc[page].issues.clear()
         self.toc[page].edited = False
         self.toc[page].draft_invalid = False
 
@@ -192,10 +289,10 @@ class BookSession:
         if not 1 <= body_pdf <= self.page_count or body_book < 1:
             raise ValueError("The body anchor must be inside the PDF; printed start must be positive.")
         self.body_pdf, self.body_book = body_pdf, body_book
+        self.mapping_required = False
         for item in self.bookmarks:
             if item.logical_page is not None:
-                number = item.logical_page if item.logical_page > 0 else item.logical_page + 1
-                item.page = body_pdf + number - body_book
+                item.page = self.physical_page(item.logical_page)
 
     def validate_export(self) -> None:
         """Reject unresolved targets and skipped hierarchy levels before modifying a PDF."""
@@ -213,10 +310,13 @@ class BookSession:
         data = {key: value for key, value in self.__dict__.items() if key != "conversation"}
         data["bookmarks"] = [asdict(item) for item in self.bookmarks]
         data["labels"] = list(self.labels)
-        data["api"] = asdict(self.api)
+        data["source_pages"] = list(self.source_pages)
+        api = asdict(self.api)
+        api["reasoning_effort"] = self.api.reasoning_effort.value
+        data["api"] = api
         data["source"] = str(self.source)
         data["toc"] = [{key: value for key, value in asdict(self.toc[page]).items()
-                        if key not in ("request_trace", "history")} for page in sorted(self.toc)]
+                        if key not in ("request_trace", "history", "issues")} for page in sorted(self.toc)]
         return {"format": "pdf-bookmarks-session", "version": 1, **data}
 
     @classmethod
@@ -231,7 +331,16 @@ class BookSession:
             if type(count) is not int or count < 1 or not isinstance(labels, list) or len(labels) != count or not all(isinstance(v, str) for v in labels):
                 raise ValueError("Invalid page count/labels.")
             session = cls(source, count, cast(list[str], list(labels)))
-            for name in ("keep_existing", "pending_only", "clear_context"):
+            source_count = data.get("source_page_count", count)
+            source_pages = data.get("source_pages", list(range(1, count + 1)))
+            if (type(source_count) is not int or source_count < count
+                    or not isinstance(source_pages, list) or len(source_pages) != count
+                    or any(type(page) is not int or not 1 <= page <= source_count for page in source_pages)
+                    or source_pages != sorted(set(source_pages))):
+                raise ValueError("Invalid retained source pages.")
+            session.source_page_count = source_count
+            session.source_pages = cast(list[int], list(source_pages))
+            for name in ("keep_existing", "pending_only", "clear_context", "mapping_required"):
                 value = data.get(name, getattr(session, name))
                 if type(value) is not bool:
                     raise ValueError(f"Invalid {name}.")
@@ -252,7 +361,8 @@ class BookSession:
                     or not math.isfinite(session.api.temperature) or not 0 <= session.api.temperature <= 2
                     or type(session.api.max_tokens) is not int or not 1 <= session.api.max_tokens <= 65536
                     or type(session.api.timeout_seconds) is not int or not 5 <= session.api.timeout_seconds <= 1800
-                    or type(session.api.max_context_images) is not int or session.api.max_context_images < 0):
+                    or type(session.api.max_context_images) is not int or session.api.max_context_images < 0
+                    or type(session.api.skip_certificate_verification) is not bool):
                 raise ValueError("Invalid API settings.")
             toc_rows = data.get("toc", [])
             bookmark_rows = data.get("bookmarks", [])

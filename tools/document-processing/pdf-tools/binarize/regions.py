@@ -276,9 +276,9 @@ def _pixel_box(rect: _Rect, size: tuple[int, int]) -> _Box:
 def _analysis(image: Image.Image) -> tuple[_Pixels, _Pixels]:
     """Return fixed-width RGB/gray analysis rasters independent of export DPI."""
     with image.convert("RGB") as rgb_image:
-        rgb = cv2.resize(np.asarray(rgb_image),
-                         (_ANALYSIS_WIDTH, max(1, round(image.height * _ANALYSIS_WIDTH / image.width))))
-    return rgb, cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        size = (_ANALYSIS_WIDTH, max(1, round(image.height * _ANALYSIS_WIDTH / image.width)))
+        rgb = np.asarray(cv2.resize(np.asarray(rgb_image), size), dtype=np.uint8)
+    return rgb, np.asarray(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), dtype=np.uint8)
 
 
 def _intersection(a: _Box, b: _Box) -> int:
@@ -297,7 +297,7 @@ def _candidates(rgb: _Pixels, gray: _Pixels, *, text_panels: bool = False) -> li
     background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((_STROKE_CLOSE,) * 2, np.uint8))
     chroma = rgb.max(axis=2).astype(np.int16) - rgb.min(axis=2)
     tone = ((background > ink + _INK_GAP) & (background < paper - _PAPER_GAP)) | (chroma > _CHROMA_GAP)
-    meaningful = cv2.morphologyEx(np.uint8(tone) * _GRAY_MAX, cv2.MORPH_OPEN,
+    meaningful = cv2.morphologyEx(np.asarray(tone, dtype=np.uint8) * _GRAY_MAX, cv2.MORPH_OPEN,
                                  np.ones((_TONE_OPEN,) * 2, np.uint8))
     close_size = _TONE_OPEN if text_panels else _TONE_CLOSE
     meaningful = cv2.morphologyEx(meaningful, cv2.MORPH_CLOSE, np.ones((close_size,) * 2, np.uint8))
@@ -312,14 +312,14 @@ def _candidates(rgb: _Pixels, gray: _Pixels, *, text_panels: bool = False) -> li
         patch = gray[y:y + h, x:x + w]
         local_ink = float(np.percentile(patch, 10))
         interior = (patch > max(ink + _INK_GAP, local_ink + _CHROMA_GAP)) & (patch < paper - _PAPER_GAP)
-        interior = cv2.morphologyEx(np.uint8(interior), cv2.MORPH_OPEN, np.ones((_TONE_OPEN,) * 2, np.uint8))
+        interior = cv2.morphologyEx(np.asarray(interior, dtype=np.uint8), cv2.MORPH_OPEN, np.ones((_TONE_OPEN,) * 2, np.uint8))
         dense_panel = np.mean((patch > ink + _INK_GAP) & (patch < paper - _PAPER_GAP)) > _DENSE_PANEL
         if (dense_panel or np.mean(interior) >= _INTERIOR_FRACTION
                 or np.mean(chroma[y:y + h, x:x + w] > _CHROMA_GAP) >= _CHROMA_FRACTION):
             candidates.append((x, y, x + w, y + h))
 
     # ── snap small patches to printed frames; never merge along arrows ──
-    outlines, _ = cv2.findContours(np.uint8(gray < paper - _FRAME_INK_GAP) * _GRAY_MAX,
+    outlines, _ = cv2.findContours(np.asarray(gray < paper - _FRAME_INK_GAP, dtype=np.uint8) * _GRAY_MAX,
                                    cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     frames: list[_Box] = []
     for outline in outlines:
@@ -348,7 +348,7 @@ def _detect(image: Image.Image, settings: _Settings) -> tuple[_Region, ...]:
     strokes can use a separate contrast/palette path without changing pictures.
     """
     rgb, gray = _analysis(image)
-    background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((_TEXTURE_CLOSE,) * 2, np.uint8))
+    background = np.asarray(cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((_TEXTURE_CLOSE,) * 2, np.uint8)), dtype=np.uint8)
     smoothed = cv2.GaussianBlur(background.astype(np.float32), (_TEXTURE_WINDOW,) * 2, 0)
     texture = np.abs(background.astype(np.float32) - smoothed) > _TEXTURE_DELTA
     retained: list[_Region] = []
@@ -363,7 +363,7 @@ def _detect(image: Image.Image, settings: _Settings) -> tuple[_Region, ...]:
         spread = float(np.percentile(patch, 90) - np.percentile(patch, 10))
         original = gray[y0:y1, x0:x1]
         residual = cv2.absdiff(original, cv2.medianBlur(original, _TEXTURE_CLOSE)) > _GLYPH_RESIDUAL
-        _, _, stats, _ = cv2.connectedComponentsWithStats(np.uint8(residual), connectivity=8)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(np.asarray(residual, dtype=np.uint8), connectivity=8)
         components = stats[1:]
         glyphs = ((components[:, 2] >= _GLYPH_MIN_WIDTH) & (components[:, 2] <= _GLYPH_MAX_SIDE)
                   & (components[:, 3] >= _GLYPH_MIN_HEIGHT) & (components[:, 3] <= _GLYPH_MAX_SIDE)
@@ -405,7 +405,7 @@ def _denoise(binary: Image.Image, dpi: int, settings: _Settings) -> Image.Image:
     original mask, so deletion cannot cascade through dots or dotted lines.
     Returns an owned 1-bit image and leaves the input unchanged.
     """
-    ink = np.uint8(~np.asarray(binary.convert("1")))
+    ink = np.asarray(~np.asarray(binary.convert("1")), dtype=np.uint8)
     _, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     scale = dpi / _REFERENCE_DPI
     max_area = max(1, round(settings.denoise_area * scale * scale))
@@ -433,10 +433,10 @@ def _panel_signal(gray: _Pixels, scale: float = 1.0) -> tuple[_Pixels, NDArray[n
     window = max(3, round(_TABLE_POLARITY_WINDOW * scale) | 1)
     blur_size = max(3, round(3 * scale) | 1)
     cleaned = cv2.GaussianBlur(gray, (blur_size,) * 2, .6 * scale)
-    background = cv2.medianBlur(cleaned, median_size)
-    difference = cleaned.astype(np.float32) - background.astype(np.float32)
-    bright = cv2.boxFilter(np.maximum(difference - _TABLE_NOISE, 0), -1, (window,) * 2)
-    dark = cv2.boxFilter(np.maximum(-difference - _TABLE_NOISE, 0), -1, (window,) * 2)
+    background = np.asarray(cv2.medianBlur(cleaned, median_size), dtype=np.uint8)
+    difference = np.asarray(cleaned.astype(np.float32) - background.astype(np.float32), dtype=np.float32)
+    bright = np.asarray(cv2.boxFilter(np.maximum(difference - _TABLE_NOISE, 0), -1, (window,) * 2), dtype=np.float32)
+    dark = np.asarray(cv2.boxFilter(np.maximum(-difference - _TABLE_NOISE, 0), -1, (window,) * 2), dtype=np.float32)
     return background, difference, bright, dark
 
 
@@ -454,13 +454,13 @@ def _text_panels(image: Image.Image) -> tuple[_Panel, ...]:
         patch = gray[y0:y1, x0:x1]
         background, difference, bright, dark = _panel_signal(patch)
         support = (background > _INK_GAP) & (background < _GRAY_MAX - _PAPER_GAP)
-        support = cv2.erode(np.uint8(support), np.ones((_TABLE_BORDER * 2 + 1,) * 2, np.uint8)) > 0
+        support = cv2.erode(np.asarray(support, dtype=np.uint8), np.ones((_TABLE_BORDER * 2 + 1,) * 2, np.uint8)) > 0
         support[:_TABLE_BORDER] = support[-_TABLE_BORDER:] = False
         support[:, :_TABLE_BORDER] = support[:, -_TABLE_BORDER:] = False
         if float(np.mean(support)) < _PANEL_MIN_COVERAGE:
             continue
         residual = (np.abs(difference) > _TABLE_STROKE) & support
-        _, labels, stats, _ = cv2.connectedComponentsWithStats(np.uint8(residual), connectivity=8)
+        _, labels, stats, _ = cv2.connectedComponentsWithStats(np.asarray(residual, dtype=np.uint8), connectivity=8)
         glyphs = ((stats[:, 2] >= 2) & (stats[:, 3] >= 3)
                   & (np.minimum(stats[:, 2], stats[:, 3]) <= _PANEL_MAX_GLYPH_SIDE)
                   & (np.maximum(stats[:, 2], stats[:, 3]) <= _PANEL_MAX_GLYPH_EXTENT)
@@ -515,7 +515,7 @@ def _text_panel(gray: _Pixels, fallback: _Pixels, scale: float = 1.0) -> _Pixels
     support = background < _GRAY_MAX - _PAPER_GAP
     support[:border] = support[-border:] = False
     support[:, :border] = support[:, -border:] = False
-    result[support] = np.uint8(~ink[support]) * _GRAY_MAX
+    result[support] = np.asarray(~ink[support], dtype=np.uint8) * _GRAY_MAX
     return result
 
 
@@ -530,7 +530,7 @@ def _clean_background(image: Image.Image, binary: Image.Image,
     with image.convert("L") as gray_image:
         values = np.asarray(gray_image)
         white = np.asarray(binary).copy()
-        _, labels, stats, _ = cv2.connectedComponentsWithStats(np.uint8(white), connectivity=8)
+        _, labels, stats, _ = cv2.connectedComponentsWithStats(np.asarray(white, dtype=np.uint8), connectivity=8)
         totals = np.bincount(labels.ravel(), weights=values.ravel(), minlength=len(stats))
         means = totals / np.maximum(stats[:, cv2.CC_STAT_AREA], 1)
         enclosed = ((stats[:, 0] > 0) & (stats[:, 1] > 0)
@@ -555,7 +555,7 @@ def _clean_background(image: Image.Image, binary: Image.Image,
             if panel.reversed:
                 _, thresholded = cv2.threshold(patch, 0, _GRAY_MAX, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
             else:
-                thresholded = _text_panel(patch, np.uint8(np.asarray(binary)[b:d, a:c]) * _GRAY_MAX,
+                thresholded = _text_panel(patch, np.asarray(np.asarray(binary)[b:d, a:c], dtype=np.uint8) * _GRAY_MAX,
                                           image.width / _ANALYSIS_WIDTH)
             with Image.fromarray(thresholded).convert("1", dither=Image.Dither.NONE) as replacement:
                 base.paste(replacement, box)
@@ -624,7 +624,7 @@ def _pack(indices: _Pixels, bits: int) -> _Pixels:
     padded = np.pad(indices, ((0, 0), (0, (-indices.shape[1]) % count)))
     packed = np.zeros((len(indices), padded.shape[1] // count), dtype=np.uint8)
     for offset in range(count):
-        packed |= padded[:, offset::count] << (8 - bits * (offset + 1))
+        np.bitwise_or(packed, padded[:, offset::count] << (8 - bits * (offset + 1)), out=packed)
     return packed
 
 
@@ -688,10 +688,10 @@ def _encode_crop(crop: Image.Image, box: _Box, region: _Region) -> _Layer:
                           zlib.compress(prepared.tobytes(), _DEFLATE_LEVEL))
         if region.mode in (_Mode.TEXT, _Mode.TEXT_INVERT):
             with prepared.convert("L") as gray_image:
-                values = np.asarray(gray_image)
+                gray_values = np.asarray(gray_image, dtype=np.uint8)
                 if region.mode is _Mode.TEXT_INVERT:
-                    values = _GRAY_MAX - values
-                thresholded = _text_panel(values, np.full_like(values, _GRAY_MAX))
+                    gray_values = np.asarray(_GRAY_MAX - gray_values, dtype=np.uint8)
+                thresholded = _text_panel(gray_values, np.full_like(gray_values, _GRAY_MAX))
                 with Image.fromarray(thresholded).convert("1", dither=Image.Dither.NONE) as binary, io.BytesIO() as stream:
                     binary.save(stream, "PDF", resolution=_POINTS_PER_INCH)
                     return _Layer(box, crop.width, crop.height, 1, "/DeviceGray", "pdf", stream.getvalue())
@@ -795,7 +795,7 @@ def _read_config(path: Path | None, source: Path, page_count: int, settings: _Se
                 white_point = values.get("white_point", 255)
                 if type(white_point) is not int or not 1 <= white_point <= 255:
                     raise ValueError("White point must be an integer from 1 to 255.")
-                if type(quality) is not int or type(contrast) not in (int, float):
+                if type(quality) is not int or isinstance(contrast, bool) or not isinstance(contrast, (int, float)):
                     raise ValueError("Quality must be an integer and contrast a number.")
                 current = replace(settings, mode=_Mode(values.get("mode", settings.mode)),
                     dither=_Dither(values.get("dither", settings.dither)), codec=_Codec(values.get("codec", settings.codec)),

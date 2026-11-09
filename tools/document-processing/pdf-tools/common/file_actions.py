@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from PySide6 import QtWidgets
 from utils import *
+from .preferences import dialog_directory, remember_directory
 
 
 def choose_pdf_output(parent: QtWidgets.QWidget, source: Path, default: Path) -> tuple[Path, bool] | None:
@@ -22,7 +23,7 @@ def choose_pdf_output(parent: QtWidgets.QWidget, source: Path, default: Path) ->
         OSError: Filesystem inspection or finding an unused default fails.
     No file is created or removed. A worker must still reject new collisions.
     """
-    suggested = Paths.available_path(default)
+    suggested = Paths.available_path(Path(dialog_directory(parent, "save-pdf", default.parent)) / default.name)
     selected, _ = QtWidgets.QFileDialog.getSaveFileName(parent, "Export PDF", str(suggested),
         "PDF (*.pdf)", options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite)
     if not selected:
@@ -43,4 +44,5 @@ def choose_pdf_output(parent: QtWidgets.QWidget, source: Path, default: Path) ->
         dialog.exec()
         if dialog.clickedButton() is not replace:
             return None
+    remember_directory(parent, "save-pdf", output)
     return output, overwrite

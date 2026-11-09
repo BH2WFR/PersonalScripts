@@ -206,9 +206,9 @@ def _clip_annotations(page: pymupdf.Page, clip: pymupdf.Rect) -> None:
     # copied pages. Never alter those dictionaries in place when clipping.
     # Widgets are already isolated by insert_pdf and registered in AcroForm.
     # Retain their xrefs so the field tree and page annotation references agree.
-    widgets = {widget.xref: widget for widget in page.widgets()}
-    copies = {xref: xref if kind == pymupdf.PDF_ANNOT_WIDGET else
-              Pdf.new_object(document, document.xref_object(xref)) for xref, kind, _ in annotations}
+    widgets = {widget.xref: widget for widget in page.widgets() if isinstance(widget, pymupdf.Widget)}
+    copies = {xref: xref if xref in widgets else
+              Pdf.new_object(document, document.xref_object(xref)) for xref, _kind, _ in annotations}
     for original_xref, _kind, _name in annotations:
         xref = copies[original_xref]
         document.xref_set_key(xref, "P", f"{page.xref} 0 R")

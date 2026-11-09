@@ -341,12 +341,12 @@ def _build_launcher_content(
     prefix = _escape_cmd_set_value(runtime.prefix)
     conda_name = _escape_cmd_set_value(runtime.conda_env or "")
     conda_runner = _escape_cmd_set_value(conda_executable or "")
-    python_command = '"%ZL_APP_PYTHON%"'
+    python_command = '"%_APP_PYTHON%"'
     conda_checks = ""
     if runtime.conda_env is not None:
-        python_command = '"%ZL_APP_CONDA%" run --no-capture-output --prefix "%ZL_APP_PREFIX%" "%ZL_APP_PYTHON%"'
-        conda_checks = '''if not exist "%ZL_APP_CONDA%" goto environment_error
-if not exist "%ZL_APP_PREFIX%\\conda-meta\\" goto environment_error
+        python_command = '"%_APP_CONDA%" run --no-capture-output --prefix "%_APP_PREFIX%" "%_APP_PYTHON%"'
+        conda_checks = '''if not exist "%_APP_CONDA%" goto environment_error
+if not exist "%_APP_PREFIX%\\conda-meta\\" goto environment_error
 '''
     probe = (
         "import os,sys; "
@@ -363,33 +363,33 @@ REM ============================================
 
 chcp 65001 >nul
 
-set "ZL_APP_PYTHON={escaped_python_exe}"
-set "ZL_APP_TARGET={escaped_target_script}"
-set "ZL_APP_PREFIX={prefix}"
-set "ZL_APP_CONDA_NAME={conda_name}"
-set "ZL_APP_CONDA={conda_runner}"
+set "_APP_PYTHON={escaped_python_exe}"
+set "_APP_TARGET={escaped_target_script}"
+set "_APP_PREFIX={prefix}"
+set "_APP_CONDA_NAME={conda_name}"
+set "_APP_CONDA={conda_runner}"
 
-if not exist "%ZL_APP_TARGET%" goto script_error
-if exist "%ZL_APP_TARGET%\\" goto script_error
-if not exist "%ZL_APP_PYTHON%" goto environment_error
-{conda_checks}{python_command} -I -c "{probe}" "%ZL_APP_PREFIX%" {is_conda}
+if not exist "%_APP_TARGET%" goto script_error
+if exist "%_APP_TARGET%\\" goto script_error
+if not exist "%_APP_PYTHON%" goto environment_error
+{conda_checks}{python_command} -I -c "{probe}" "%_APP_PREFIX%" {is_conda}
 if not "%ERRORLEVEL%"=="0" goto environment_error
 
-{python_command} -E "%ZL_APP_TARGET%" %*
-set "ZL_APP_EXIT_CODE=%ERRORLEVEL%"
-if not "%ZL_APP_EXIT_CODE%"=="0" goto execution_error
+{python_command} -E "%_APP_TARGET%" %*
+set "_APP_EXIT_CODE=%ERRORLEVEL%"
+if not "%_APP_EXIT_CODE%"=="0" goto execution_error
 if "%~1"=="" pause
 exit /b 0
 
 :script_error
-echo ERROR: Target script is missing or is not a file: "%ZL_APP_TARGET%"
+echo ERROR: Target script is missing or is not a file: "%_APP_TARGET%"
 goto invalid_launcher
 
 :environment_error
 echo ERROR: The recorded Python environment is missing, changed, or cannot start.
-echo Python: "%ZL_APP_PYTHON%"
-echo Environment directory: "%ZL_APP_PREFIX%"
-if defined ZL_APP_CONDA_NAME echo Conda environment: "%ZL_APP_CONDA_NAME%"
+echo Python: "%_APP_PYTHON%"
+echo Environment directory: "%_APP_PREFIX%"
+if defined _APP_CONDA_NAME echo Conda environment: "%_APP_CONDA_NAME%"
 goto invalid_launcher
 
 :invalid_launcher
@@ -400,9 +400,9 @@ exit /b 1
 
 :execution_error
 echo.
-echo Script execution failed with exit code: %ZL_APP_EXIT_CODE%
+echo Script execution failed with exit code: %_APP_EXIT_CODE%
 pause
-exit /b %ZL_APP_EXIT_CODE%
+exit /b %_APP_EXIT_CODE%
 '''
 
 
@@ -484,12 +484,12 @@ invalid_launcher() {{
 {invocation} {probe} || invalid_launcher 'ERROR: The recorded Python environment is missing, changed, or cannot start.'
 cd -- {shlex.quote(os.path.dirname(target_script))} || invalid_launcher 'ERROR: Cannot access the script directory.'
 {invocation} -E {shlex.quote(target_script)} "$@"
-ZL_APP_EXIT_CODE=$?
-if [[ "$ZL_APP_EXIT_CODE" -ne 0 ]]; then
-    printf 'Script execution failed with exit code: %s\\n' "$ZL_APP_EXIT_CODE"
+_APP_EXIT_CODE=$?
+if [[ "$_APP_EXIT_CODE" -ne 0 ]]; then
+    printf 'Script execution failed with exit code: %s\\n' "$_APP_EXIT_CODE"
     read -r -p 'Press Enter to close...' || true
 fi
-exit "$ZL_APP_EXIT_CODE"
+exit "$_APP_EXIT_CODE"
 '''
 
 

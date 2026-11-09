@@ -22,7 +22,7 @@ See pdf-tools/README.md for processing, project and navigation details.
 
 Requirements:
     - pip: PySide6, PyMuPDF>=1.28, Pillow with libtiff, numpy, opencv-python,
-      tqdm, pypdf>=6.
+      tqdm, pypdf>=6, PyYAML, cryptography.
 
 Usage:
     conda run -n base python tools/document-processing/pdf-binarize.py
@@ -99,7 +99,7 @@ Options:
 
 Requirements:
   pip: PySide6, PyMuPDF>=1.28, pypdf>=6, Pillow with libtiff,
-       numpy, opencv-python, tqdm.
+       numpy, opencv-python, tqdm, PyYAML, cryptography.
 """)
         return 0
     try:
@@ -108,7 +108,7 @@ Requirements:
         application = load_app()
     except ImportError as exc:
         print(f"{FLRed}Missing PDF/image dependency: {exc.name}{CRst}")
-        print(f"{FGray}Install: pip install PySide6 PyMuPDF Pillow numpy opencv-python tqdm pypdf{CRst}")
+        print(f"{FGray}Install: pip install PySide6 PyMuPDF Pillow numpy opencv-python tqdm pypdf PyYAML cryptography{CRst}")
         return 1
     return cast(Callable[[Path], int], application.main)(Path(__file__).resolve())
 

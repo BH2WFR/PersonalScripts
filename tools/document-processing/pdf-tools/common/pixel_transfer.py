@@ -28,7 +28,10 @@ def preview_reply(metadata: dict[str, Json], pixels: bytes, request: dict[str, J
         try:
             if len(pixels) > memory.size:
                 raise ValueError("Preview buffer is too small.")
-            memory.buf[:len(pixels)] = pixels
+            buffer = memory.buf
+            if buffer is None:
+                raise ValueError("Preview buffer is closed.")
+            buffer[:len(pixels)] = pixels
         finally:
             memory.close()
         response["pixel_buffer"] = name

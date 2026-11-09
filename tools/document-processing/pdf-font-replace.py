@@ -12,7 +12,11 @@ Filter sizes and original text colors; change fonts
 and/or recolor text. Color-only mode keeps original fonts without re-embedding.
 Apply to pages defaults to all; accepts 1,2,5-10,-1 via utils.Input, minus ignored
 pages. Choose exact style faces, subset embedding (default) or full font embedding.
+Page inputs offer All/Odd/Even controls synchronized with |odd / |even suffixes.
 Compare raw/current results using cached previews, zoom/pan and page shortcuts.
+Mark current draft filters on the visible page without Add / Update or a target
+font; choose a preview-only color. Applied replacements supply the displayed fonts,
+while matching still uses original text. Page turns update automatically; export is unchanged.
 Page/bookmark navigation is read-only. Commit drafts with Add / Update.
 Export preserves text positions, advances, drawing order and document features.
 No reflow or rasterization; missing glyphs/styles and unsupported encodings fail.
@@ -20,7 +24,7 @@ Sources are protected. Outputs follow the unencrypted/non-PDF-A save policy.
 Rules stay in memory. Active jobs finish before closing.
 
 Requirements:
-    - pip: PySide6, PyMuPDF>=1.28, fonttools, tqdm.
+    - pip: PySide6, PyMuPDF>=1.28, fonttools, tqdm, PyYAML, cryptography.
 Usage:
     conda run -n base python tools/document-processing/pdf-font-replace.py
 """
@@ -69,10 +73,15 @@ def main() -> int:
 Description:
   Ordered source/target rules, cached raw/result previews and read-only navigation.
   Add / Update commits a draft and refreshes the current page.
+  Mark matches checks current draft font/size/source-color filters on the visible
+  page using original text. Applied rules supply target fonts within their page
+  scopes; draft filters need no Add / Update or target and ignore draft page ranges.
+  Choose a preview-only color; page turns update automatically.
   Filter fonts, effective sizes and original text colors. Color-only mode keeps
   original fonts and needs no target font. Color fields accept hex/RGB or a picker.
   Apply to pages defaults to all; use 1,2,5-10,-1 (last), or none. Ignore pages
   is subtracted. Discovery pages only scope the font/color scan.
+  Page inputs offer All/Odd/Even controls, or append |odd / |even to a range.
   Scan in pages opens a page input dialog defaulting to all. Scan all searches the
   whole PDF; Scan current immediately searches the viewed physical page.
   Source rows show PDF type, embedding and sizes; hover for names/encoding/pages/colors.
@@ -92,7 +101,7 @@ Options:
   -h, --help  Show this help. Open/drop PDFs in the GUI.
 
 Requirements:
-  pip: PySide6, PyMuPDF>=1.28, fonttools, tqdm.
+  pip: PySide6, PyMuPDF>=1.28, fonttools, tqdm, PyYAML, cryptography.
 """)
         return 0
     try:
@@ -101,7 +110,7 @@ Requirements:
         return cast(Callable[[Path], int], load_app().main)(Path(__file__).resolve())
     except ImportError as exc:
         print(f"{FLRed}Missing dependency: {exc.name}{CRst}")
-        print(f"{FGray}Install: pip install PySide6 PyMuPDF fonttools tqdm{CRst}")
+        print(f"{FGray}Install: pip install PySide6 PyMuPDF fonttools tqdm PyYAML cryptography{CRst}")
         return 1
 
 

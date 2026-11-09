@@ -123,7 +123,7 @@
 - **环境变量**：
 
   - **建议将本路径加入到 `PATH` 环境变量中**，方便直接通过 `run-script.ps1` 或 `run-script.sh` 启动启动器；
-  - 其他与启动器有关的环境变量请参考后面的[「如何使用启动器」](#如何使用启动器)章节。
+  - 启动器个人配置请参考后面的[「如何使用启动器」](#如何使用启动器)章节。
 
 - **各脚本所依赖的命令行工具和 Python 库：**
 
@@ -190,9 +190,9 @@
   - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - **Test 分组默认关闭**。将 `launcher.test.enabled` 设置为 `true` 后，启动器会把配置的测试目录显示为独立的 `Test` 分组，并让其中的脚本参与裸名称查找；可使用 `test/<名称>` 或 `@test:<名称>` 精确指定测试脚本。
 - 自动检测 Python：优先在 `./deps/python` 中查找打包的 Python，然后尽可能从 Conda 命令路径推导 base 环境中的 Python，再尝试已知路径和 `conda info --base`，最后回退到 `python3`
-  - 可通过设置**系统环境变量 `ZL_CONDA_ENV`**来指定启动器执行脚本时使用的 **Conda 虚拟环境名称**，默认为 `base`。
-- **`ZL_SCRIPT_ADDITIONAL_PATH`** 用于发现附加目录，环境变量名本身也可配置。
-  多个目录使用平台路径分隔符分隔（Windows 为 `;`，macOS/Linux 为 `:`）；相对路径以项目根目录为基准。每个目录显示为 `─── Additional [N] ───`（N 从 1 开始），并应用相同的配置化忽略规则。
+  - 可通过 **`~/.config/PersonalScripts/launcher.yaml` 中的 `conda-environment`** 指定启动器执行脚本时使用的 **Conda 虚拟环境名称**，默认为 `base`。
+- **同一用户 `launcher.yaml` 中的 `additional-paths`** 用于指定附加脚本目录。
+  多个目录使用 YAML 列表填写；相对路径以项目根目录为基准。每个目录显示为 `─── Additional [N] ───`（N 从 1 开始），并应用相同的配置化忽略规则。
   配合 **`@N:` 前缀** 可精确指定脚本来源：`@0:` = 主目录，`@1:` = 第一个附加目录（对应 `Additional [1]`），依此类推。裸名递归搜索所有分组；`@N:` 将相同匹配规则限制到指定分组。多个有效匹配会以带编号的 `@N:` 路径列出。CLI 同样可用（如 `python run-script.py @1:test.py`）
 - 已预留脚本打包、依赖打包功能（在 `./deps` 目录中放置依赖的二进制可执行文件），但还**没有完整实现并验证**，也不打算优先解决此问题。
   - 请勿启动 `compile-script.py`。
@@ -220,7 +220,7 @@
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
 | `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-font-replace.py` | **PDF 字体与文字颜色桌面工具**：查看源字体详细信息，对指定页面应用有序字体替换或仅改颜色的规则，并提供带缓存的原图／结果对照。支持按名称或本地化别名查找目标字体，默认仅嵌入用到的字符，保留文字位置、样式及其他 PDF 内容。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
+| `tools/document-processing/pdf-font-replace.py` | **PDF 字体与文字颜色桌面工具**：查看源字体详细信息，对指定页面应用有序字体替换或仅改颜色的规则，使用已应用的字体预览当前筛选命中的文字。支持带缓存的原图／结果对照、按名称或本地化别名查找目标字体，默认仅嵌入用到的字符，保留文字位置、样式及其他 PDF 内容。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
 | `tools/document-processing/pdf-binarize.py` | **PDF 压缩桌面工具**：<br />提供带缓存的原图与结果预览、可复用的页面 Profile、带调参提示的分组设置和 JSON 工程。按图片元素压缩，支持原图 DPI 保护、插图裁剪和清理，保留原生 PDF 功能，并在导出后显示压缩前后体积。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
 | `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据，也可处理仅有 PDF/A 标识的无保护文件。若没有需要移除的内容，则警告并提供重新打开或退出选项。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-bookmarks-add.py` | **PDF 目录识别与书签编辑 GUI**：框选、旋转目录图片后通过云端或本地视觉模型逐页识别，可追溯问题并重试单页或全部页面，支持清空对话与限制上下文图片数。支持 YAML、页码标签与书签树编辑，提供多选批处理、拖拽排序及两种缩进/减少缩进模式，导出时保留源文件，无需工程文件。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
@@ -274,7 +274,7 @@
 |------|------|------|
 | `tools/network/tailscale-restart-accept-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
 | [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务（含 Linux GUI 条件），同步、复制、移动或比较多对目录，也可复制和移动单个文件。支持云端及本地同步，支持按卷标定位移动硬盘、字面路径、每组路径临时指定 SFTP/WebDAV 地址、命令预览、重试、试运行和取消操作。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
-| `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />凭据来自环境变量：`ZL-IP-ADDRESS-S3-BUCKET`、`ZL-IP-ADDRESS-S3-ENDPOINT`、`ZL-IP-ADDRESS-S3-ID`、`ZL-IP-ADDRESS-S3-SECRET` | **Python 库：**`boto3` |
+| `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />连接设置和加密凭据来自用户 `config.yaml` 的 `upload-ipaddress` 节 | **Python 库：**`boto3` |
 | `tools/windows/firewall-app-blocker.py` | 仅 Windows，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
 | `tools/network/webserver-run.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |
 

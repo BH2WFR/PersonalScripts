@@ -71,6 +71,14 @@ within the common 512 MiB / 100-page budget. A shared RGB buffer avoids temporar
 image files. No PDF object crosses into the GUI. Geometry and output paper sizes
 remain independent of preview resolution, which uses the common bounded renderer.
 
+The shared icon-and-text **Pause / Resume** and **Stop** buttons stay beside progress
+in the bottom row, disabled when idle and enabled during export.
+Pause waits for a safe processing boundary; the current page or save step may
+finish first. Stop works while paused, removes incomplete output and restores
+editing. Saving stages the PDF before publication, so cancellation during saving
+keeps an existing destination intact. Settings stay locked until resumed/completed
+or stopped. Brief previews remain uninterrupted.
+
 | Module | Responsibility |
 | --- | --- |
 | `model.py` | Pure normalized crop geometry, equal output canvases and rule validation |

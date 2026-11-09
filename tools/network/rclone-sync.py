@@ -8,11 +8,12 @@ linux-gui-required: true requires a Linux GUI via project utils; false imposes n
 The task menu can show the active rclone config path or open its file, then exit.
 Encrypt/Decrypt opens rclone's native config menu, then exits this script.
 Configuration reference: rclone-sync-schema-sample.yaml beside this entry point.
+Default configuration: shared user rclone-sync.yaml, with optional redirect.
 Internal architecture: rclone-sync/README.md. The private package is loaded as
 personal_rclone_sync; internal modules are not standalone scripts.
 
 Requirements:
-    Python 3.13+, project utils, PyYAML, and rclone. Volume endpoints additionally
+    Python 3.13+, project utils, PyYAML, cryptography for encrypted values, and rclone. Volume endpoints additionally
     use Windows PowerShell 7 Storage/CIM, Linux lsblk, or macOS diskutil.
 
 Usage:

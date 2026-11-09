@@ -2,7 +2,7 @@
 """Select and run YAML-defined shell commands, executables, scripts, or code.
 
 Requirements:
-    - pip: PyYAML (already in requirements.txt)
+    - pip: PyYAML; cryptography for encrypted configuration values
     - Only the selected task's runtime/program is required. conda-python uses
       Conda; tsx uses Node and the project's installed tsx package.
 
@@ -12,9 +12,9 @@ Usage:
     conda run -n base python tools/others/run-commands.py --task android/adb-devices --yes
     conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --validate
 
-Interactive startup asks for a configuration path, defaulting to --schema-file
-or ZL_RUN_COMMANDS_SCHEMA_FILE. With --task or redirected stdin, one of those paths
-must be supplied and is used without a path prompt. --yes skips only execution
+Configuration defaults to the shared user run-commands.yaml, which may contain
+tasks or a redirect to another YAML file. --schema-file overrides it.
+The selected file is used without a path prompt. --yes skips only execution
 confirmation. run-commands-schema-sample.yaml is reference documentation for
 users/agents, never an automatic default or fallback configuration.
 Profiles apply once per final task, parents first, with cycle detection.
@@ -43,13 +43,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+COMMANDS_CONFIG = "run-commands.yaml"
+COMMANDS_ENCRYPTION_KEY = b"Gw4Kl4lcHtFyB5XFcjD_E8H4v6cECWjvPzE31LuGXio="
 SCHEMA_SAMPLE = SCRIPT_DIR / "run-commands-schema-sample.yaml"
-SCHEMA_ENV = "ZL_RUN_COMMANDS_SCHEMA_FILE"
 MAX_PROFILE_DEPTH = 64
 TEMP_SCRIPT = "<temporary-command-script>"
-CONDA_PAYLOAD_ENV = "ZL_RUN_COMMANDS_INTERNAL_PAYLOAD"
+TEMP_PAYLOAD = "<temporary-python-payload>"
 CONDA_BOOTSTRAP = (
-    f"import json,os,runpy,sys; p=json.loads(os.environ.pop('{CONDA_PAYLOAD_ENV}')); "
+    "import json,runpy,sys; p=json.load(open(sys.argv[1],encoding='utf-8')); "
     "sys.argv=p['argv']; "
     "sys.path.__setitem__(0,p['import_path']) if not getattr(sys.flags,'safe_path',False) else None; "
     "m=type(sys)('__main__'); sys.modules['__main__']=m; "
@@ -110,6 +111,7 @@ class ExecutionPlan:
     cmd_script: bool = False
     arguments: list[str] = field(default_factory=list)
     script_path: Path | None = None
+    python_payload: dict[str, object] | None = None
 
 
 def _mapping(value: object, where: str) -> dict[str, object]:
@@ -475,12 +477,12 @@ def _build_plan(task: Task, schema_path: Path, invocation_dir: Path, inputs: dic
         if runtime == RuntimeKind.CONDA:
             # Conda's Windows batch wrapper cannot preserve multiline or quoted
             # argv reliably. Only a fixed single-line bootstrap crosses it.
-            env[CONDA_PAYLOAD_ENV] = json.dumps({
+            python_payload = {
                 "kind": kind.value, "code": source,
                 "argv": [str(script) if script is not None else "-c", *args],
                 "import_path": str(script.parent) if script is not None else "",
-            }, ensure_ascii=True)
-            argv.extend(["-c", CONDA_BOOTSTRAP])
+            }
+            argv.extend(["-c", CONDA_BOOTSTRAP, TEMP_PAYLOAD])
         else:
             argv.extend([str(script), *args] if script is not None else ["-c", source, *args])
     elif runtime == RuntimeKind.DENO:
@@ -494,7 +496,8 @@ def _build_plan(task: Task, schema_path: Path, invocation_dir: Path, inputs: dic
             )
             argv.extend(["--import=tsx"])
         argv.extend([str(script), *args] if script is not None else ["-e", source, "--", *args])
-    return ExecutionPlan(task, argv, cwd, env, f"{runtime.value}: {version}", source, command_script, runtime == RuntimeKind.CMD, args, script)
+    return ExecutionPlan(task, argv, cwd, env, f"{runtime.value}: {version}", source, command_script, runtime == RuntimeKind.CMD, args, script,
+                         python_payload if runtime == RuntimeKind.CONDA else None)
 
 
 def _probe_dependency(argv: list[str], cwd: Path, environment: dict[str, str], message: str) -> None:
@@ -521,6 +524,10 @@ def _execute(plan: ExecutionPlan) -> int:
     """
     with tempfile.TemporaryDirectory(prefix="run-commands-") as directory:
         argv = list(plan.argv)
+        if plan.python_payload is not None:
+            payload_path = Path(directory) / "python-payload.json"
+            payload_path.write_text(json.dumps(plan.python_payload, ensure_ascii=True), encoding="utf-8")
+            argv = [str(payload_path) if arg == TEMP_PAYLOAD else arg for arg in argv]
         if plan.command_script is not None:
             script = Path(directory) / "command.cmd"
             # CMD reads the active console code page, not UTF-8 unconditionally.
@@ -597,15 +604,14 @@ def _parser() -> argparse.ArgumentParser:
         description=f"{FLYellow}{'RUN COMMANDS':^60}{CRst}\n\nSelect and execute a YAML task on the current machine.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""Requirements:
-  PyYAML; only the selected task's runtime/program must be installed.
+  PyYAML; cryptography for encrypted values. Only the selected task's runtime/program must be installed.
   conda-python: Conda. tsx: Node and the project's installed tsx package.
   No automatic downloads, installation, or cross-runtime fallback.
 
 Configuration:
-  Interactive startup prompts for the YAML path; its default comes from
-  --schema-file or {SCHEMA_ENV}. Without either, enter a path.
-  With --task or redirected stdin, --schema-file or {SCHEMA_ENV}
-  is required and used directly; --schema-file takes precedence.
+  Default: {ConfigStore(COMMANDS_CONFIG).path}
+  Contains tasks or only redirect: '/path/to/tasks.yaml'. --schema-file overrides it.
+  Relative redirects use the directory containing each redirect file.
   {SCHEMA_SAMPLE.name} is documentation, never an automatic default.
   Relative paths use invocation cwd (or task cwd), not the schema directory.
   --dry-run/--doctor probe runtimes; --validate/--list do not start tasks.
@@ -633,40 +639,22 @@ Examples:
 
 
 def _select_schema_path(cli_path: str | None, *, interactive: bool, invocation_dir: Path) -> Path:
-    """Select a real configuration using the shared interactive path prompt.
+    """Resolve explicit or shared configuration, including relative redirects.
 
-    Args:
-        cli_path: Optional explicit path; takes precedence over SCHEMA_ENV.
-        interactive: Prompt even when a default exists. False uses the chosen
-            path directly and rejects a missing configuration.
-        invocation_dir: Base directory for direct relative configuration paths.
-
-    Returns:
-        Absolute selected path. The sample is never selected automatically.
-
-    Raises:
-        ValueError: A direct path is absent, empty, or has undefined variables.
-        EOFError: The user closes stdin while selecting a path.
-        SystemExit: The shared path prompt's Exit action is selected.
-
-    Side effects:
-        Prints hints and prompts only in interactive mode; checks paths through
-        Input.resolve_input_path, matching the rclone-sync selection workflow.
+    interactive is retained for callers; selecting a default no longer prompts.
+    Explicit relative paths use the invocation directory. Task path semantics
+    remain unchanged, independent of the final YAML file's directory.
     """
-    default = cli_path if cli_path is not None else os.environ.get(SCHEMA_ENV, "")
-    if interactive:
-        if not default:
-            print(f"{FGray}Tip: set {FLCyan}{SCHEMA_ENV}{FGray} to your YAML configuration path.{CRst}")
-            print(f"{FGray}Reference sample (not a default): {SCHEMA_SAMPLE}{CRst}")
-        # The shared prompt normalizes/expands the selected path itself. Do not
-        # template-expand its result a second time.
-        return Path(Input.resolve_input_path(default, prompt="Path to YAML schema file", path_type="file"))
-    if not default:
-        raise ValueError(f"No configuration path supplied; use --schema-file or set {SCHEMA_ENV}")
-    expanded = Paths.expand_template(_string(default, "schema path"), os.environ, {
-        "current_dir": str(invocation_dir), "script_dir": str(SCRIPT_DIR),
-    })
-    return Path(Paths.resolve_path(expanded, invocation_dir, expand_environment=False))
+    if cli_path is None:
+        store = ConfigStore(COMMANDS_CONFIG)
+        store.ensure()
+        selected = store.path
+    else:
+        expanded = Paths.expand_template(_string(cli_path, "schema path"), os.environ, {
+            "current_dir": str(invocation_dir), "script_dir": str(SCRIPT_DIR),
+        })
+        selected = Path(Paths.resolve_path(expanded, invocation_dir, expand_environment=False))
+    return ConfigStore.resolve_file(selected)
 
 
 def main() -> int:
@@ -695,8 +683,7 @@ def main() -> int:
         except EOFError:
             print(f"\n{FGray}Configuration selection cancelled.{CRst}")
             return 0
-        with schema_path.open(encoding="utf-8") as handle:
-            raw: object = yaml.safe_load(handle)
+        raw: object = EncryptedValue.decrypt_tree(ConfigStore.read_file(schema_path), COMMANDS_ENCRYPTION_KEY)
         tasks = _parse_schema(raw)
         if parsed.validate:
             print(f"{FLGreen}Valid schema: {len(tasks)} leaf task(s).{CRst}")

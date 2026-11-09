@@ -17,6 +17,9 @@ the implementation lives in this package, loaded as `personal_pdf_tools.font_rep
    Discovery scope only supplies choices. **Apply to pages** (below the tabs)
    defaults to `all` and accepts `1,2,5-10,-1` or `none` through
    `Input.parse_index_ranges`. **Ignore pages** is subtracted from that selection.
+   Page inputs and the scan dialog offer **All / Odd / Even** radio buttons,
+   synchronized with the `|odd` / `|even` suffixes. All retains every page in
+   the entered range; Odd/Even filter physical page numbers within that range.
    Select fonts from the list, or enter exact PDF font names separated by `;`.
    Columns show bold font names, PDF font type, embedded status and effective
    sizes, with resizable widths and Ctrl/Shift multi-selection. Hover for full
@@ -49,14 +52,29 @@ the implementation lives in this package, loaded as `personal_pdf_tools.font_rep
 5. Toggle **Show original (raw)** to compare against the untouched page. Its
    warning color indicates that replacement results are hidden; the toggle stays
    selected when navigating. Pages and bookmarks are navigation-only.
+   **Mark matches** is an independent current-page diagnostic using the draft
+   **Source fonts**, **Font sizes** and **Match text colors** fields. It needs no
+   Add / Update, target font or committed rule. Selecting a discovered font/color
+   updates immediately; typed filters update on Enter or focus loss. Apply/Ignore
+   page ranges do not restrict this diagnostic. Applied replacement rules still
+   supply the displayed fonts and respect their page scopes; unprocessed text
+   keeps its original font. Matching uses original font, size and color even
+   when a rule replaces them. Marks override only the preview color,
+   temporarily disabling the raw/result switch; turning
+   marking off restores that view. Only the visible page is copied and rendered.
+   The adjacent color picker defaults to magenta and refreshes the current page.
+   Marking and color persist across page turns; each new page renders or uses a
+   cache entry matching the current draft. Invalid filters show a status message.
+   Nothing is committed or exported by marking.
 6. **Export PDF** applies all active rules to a fresh copy of the full document.
    The default is `<source>_fonts.pdf`, numbered when occupied. Existing output
    replacement requires confirmation and uses staged publication; sources cannot
    be overwritten. No matches writes no output. Close discards session state
    after confirmation if committed rules have not been exported.
 
-Rules and editor drafts are session-only, with no project files. Uncommitted
-editor changes do not affect previews or exports. Export progress reports pages;
+Rules and editor drafts are session-only, with no project files. Draft filters
+affect match diagnostics immediately; normal processed previews and exports use
+only committed rules. Export progress reports pages;
 font embedding/cleanup/saving may continue afterward. Initial version waits for
 active operations to finish before closing; it has no mid-export cancellation.
 
@@ -66,6 +84,8 @@ The migrated content-stream engine preserves original character origins,
 advances, text strings and drawing order. Glyph ink bounds can differ; there is
 no reflow, redaction or page rasterization in exported PDFs. Images, links,
 annotations, bookmarks, page labels and unrelated metadata are retained.
+Inserted font/color operations preserve token boundaries in compact content
+streams, including strings immediately following positioning operators.
 The shared save policy removes encryption and PDF/A identification.
 
 Filters use effective page-space sizes, inclusive ranges and 8-bit RGB colors.
@@ -85,10 +105,20 @@ render jobs. Original views render directly from a retained read-only document.
 Processed previews use a fresh one-page copy with physical-page exclusions
 remapped correctly. GUI pixels cross the shared RGB buffer and are cached within
 512 MiB / 100 physical pages, with separate raw and latest-result slots per page.
-Rule revisions invalidate processed reuse. Cache hits are immediate; original
+Rule revisions, current draft filters, marking color and view flags validate result reuse. Plain originals
+remain separate from the latest marked or processed result, within the same
+cache budget. Cache hits are immediate; original
 misses skip debounce, and processed misses use one 300 ms timer. Navigation and
 settings lock during work, while viewer zoom/pan remain available. Previews render
 at 200 DPI subject to the shared pixel cap; export is independent of preview DPI.
+
+The bottom row keeps icon-and-text **Pause / Resume** and **Stop** buttons beside
+progress. They are disabled when idle and enabled during export, PDF font scans
+and font-file/catalog discovery. Pause waits for the current page/file or
+save step, then sleeps; Stop works while paused and restores editing. A cancelled
+catalog is not cached. Exports use shared staged publication, retaining an
+existing output if stopped during saving. See `../common/task_control.py` and
+`../common/task_buttons.py`; preview rendering remains a single uninterrupted task.
 
 | Module | Responsibility |
 | --- | --- |

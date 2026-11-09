@@ -4,7 +4,6 @@ launcher:
         enabled: false
         test-root: "test"
 
-    additional-path-env: "ZL_SCRIPT_ADDITIONAL_PATH"
     requirements-file: "requirements.txt"
     excluded-paths:
         - "run-script.py"

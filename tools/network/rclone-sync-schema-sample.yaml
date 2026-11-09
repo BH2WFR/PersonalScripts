@@ -12,16 +12,12 @@
 # Keep this reference consistent with the script; edit the separately selected
 # personal configuration only when the user requests changes to that file.
 #
-# Select the actual configuration with --schema-file or ZL_RCLONE_SYNC_SCHEMA_FILE
-# (--schema-file takes precedence). Interactive startup prompts for a path,
-# using that selection as the suggested value; with neither set, input is required.
-# With --task, one of those configuration sources is required and used directly.
-# Duplicate keys in a YAML mapping are errors, with both definition locations.
-# YAML anchors/merge keys may still provide defaults overridden by explicit keys.
-#
-# Environment variables recognized by the script:
-#   ZL_RCLONE_SYNC_SCHEMA_FILE   path to the YAML schema file
-#   ZL_RCLONE_CONFIG_PASSWORD    password for an encrypted rclone config
+# Default entry: the shared user rclone-sync.yaml; --schema-file overrides it.
+# The entry contains tasks or only redirect: '/path/to/schema.yaml'. Relative
+# redirects use the entry's directory; schema_dir refers to the final schema.
+# Duplicate explicit keys are errors; YAML merge overrides remain supported.
+# User config.yaml: rclone-sync.config-password supports !encrypted strings.
+# Native rclone environment variables remain supported.
 #
 # ---- Inheritance rules ------------------------------------------------
 # The inheritance chain is:  default → profile(s) → task → sub-task.

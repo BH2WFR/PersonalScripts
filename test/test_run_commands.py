@@ -178,6 +178,7 @@ class ExecutionTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(prefix="run-commands-test-", dir=ROOT / "tmp")
         self.addCleanup(self.directory.cleanup)
         self.work = Path(self.directory.name)
+        self.enterContext(patch.object(runner.ConfigStore, "directory", return_value=self.work / "user-config"))
         self.config = self.work / "configuration" / "config.yaml"
         self.config.parent.mkdir()
 
@@ -188,62 +189,32 @@ class ExecutionTests(unittest.TestCase):
                               cwd=self.work, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", timeout=30,
                               env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
 
-    def test_cli_reads_documented_schema_file_environment_variable(self) -> None:
+    def test_user_redirect_and_explicit_override(self) -> None:
         self.config.write_text(yaml.safe_dump(schema({"run": code_run()})), encoding="utf-8")
-        result = subprocess.run(
-            [sys.executable, str(RUNNER), "--list"],
-            cwd=self.work, stdin=subprocess.DEVNULL, capture_output=True,
-            text=True, encoding="utf-8", timeout=30,
-            env={**os.environ, "ZL_RUN_COMMANDS_SCHEMA_FILE": str(self.config),
-                 "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
-        )
+        runner.ConfigStore(runner.COMMANDS_CONFIG).update({"redirect": str(self.config)})
+        with patch.object(runner.Input, "resolve_input_path") as prompt:
+            self.assertEqual(runner._select_schema_path(None, interactive=True, invocation_dir=self.work), self.config)
+            prompt.assert_not_called()
+        alternative = self.work / "alternative.yaml"
+        alternative.write_text(yaml.safe_dump(schema({"name": "alternative", "run": code_run()})), encoding="utf-8")
+        self.assertEqual(runner._select_schema_path(str(alternative), interactive=False, invocation_dir=self.work), alternative)
+        result = self.invoke(schema({"run": code_run()}), "--list")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("examples/test", result.stdout)
 
-    def test_interactive_schema_uses_environment_default_and_can_be_changed(self) -> None:
-        self.config.write_text(yaml.safe_dump(schema({"run": code_run()})), encoding="utf-8")
-        alternative = self.work / "alternative.yaml"
-        alternative.write_text(yaml.safe_dump(schema({"name": "alternative", "run": code_run()})), encoding="utf-8")
-        for answer, expected in (("", "examples/test"), (str(alternative), "examples/alternative")):
-            with self.subTest(answer=answer), patch.dict(os.environ, {runner.SCHEMA_ENV: str(self.config)}), \
-                    patch.object(runner.sys, "argv", [str(RUNNER), "--list"]), \
-                    patch.object(runner.Console, "has_interactive_input", return_value=True), \
-                    patch("builtins.input", return_value=answer) as prompt, \
-                    contextlib.redirect_stdout(io.StringIO()) as output:
-                self.assertEqual(runner.main(), 0)
-                prompt.assert_called_once()
-                self.assertIn(str(self.config), prompt.call_args.args[0])
-                self.assertIn(expected, output.getvalue())
+    def test_missing_user_config_creates_empty_file_and_never_uses_sample(self) -> None:
+        path = runner._select_schema_path(None, interactive=False, invocation_dir=self.work)
+        self.assertEqual(path, runner.ConfigStore(runner.COMMANDS_CONFIG).path)
+        self.assertEqual(path.read_bytes(), b"")
+        with self.assertRaises(FileNotFoundError):
+            runner._select_schema_path("./missing.yaml", interactive=False, invocation_dir=self.work)
 
-    def test_interactive_schema_cli_overrides_default_and_no_default_requires_input(self) -> None:
+    def test_task_mode_uses_shared_configuration_without_path_prompt(self) -> None:
         self.config.write_text(yaml.safe_dump(schema({"run": code_run()})), encoding="utf-8")
-        with patch.dict(os.environ, {runner.SCHEMA_ENV: "missing.yaml"}), patch("builtins.input", return_value="") as prompt:
-            path = runner._select_schema_path(str(self.config), interactive=True, invocation_dir=self.work)
-            self.assertEqual(path, self.config)
-            self.assertIn(str(self.config), prompt.call_args.args[0])
-        with patch.dict(os.environ, {runner.SCHEMA_ENV: ""}), patch("builtins.input", return_value=str(self.config)), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(runner._select_schema_path(None, interactive=True, invocation_dir=self.work), self.config)
-
-    def test_direct_schema_requires_configuration_and_never_uses_sample(self) -> None:
-        with patch.dict(os.environ, {runner.SCHEMA_ENV: ""}), patch.object(runner.Input, "resolve_input_path") as prompt:
-            with self.assertRaisesRegex(ValueError, "No configuration path"):
-                runner._select_schema_path(None, interactive=False, invocation_dir=self.work)
-            self.assertEqual(runner._select_schema_path("./custom.yaml", interactive=False, invocation_dir=self.work), self.work / "custom.yaml")
-            prompt.assert_not_called()
-        with patch.dict(os.environ, {runner.SCHEMA_ENV: str(self.config)}):
-            self.assertEqual(runner._select_schema_path(None, interactive=False, invocation_dir=self.work), self.config)
-
-    def test_task_mode_skips_path_prompt_and_interactive_eof_cancels(self) -> None:
-        self.config.write_text(yaml.safe_dump(schema({"run": code_run()})), encoding="utf-8")
-        with patch.dict(os.environ, {runner.SCHEMA_ENV: str(self.config)}), \
-                patch.object(runner.sys, "argv", [str(RUNNER), "--task", "examples/test", "--dry-run"]), \
-                patch.object(runner.Console, "has_interactive_input", return_value=True), \
+        runner.ConfigStore(runner.COMMANDS_CONFIG).update({"redirect": str(self.config)})
+        with patch.object(runner.sys, "argv", [str(RUNNER), "--task", "examples/test", "--dry-run"]), \
                 patch("builtins.input", side_effect=AssertionError("unexpected prompt")), \
                 contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(runner.main(), 0)
-        with patch.object(runner.sys, "argv", [str(RUNNER)]), \
-                patch.object(runner.Console, "has_interactive_input", return_value=True), \
-                patch("builtins.input", side_effect=EOFError), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(runner.main(), 0)
 
     def test_execution_separator_follows_confirmation_and_precedes_execution(self) -> None:

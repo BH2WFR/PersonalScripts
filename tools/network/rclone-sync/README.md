@@ -5,7 +5,12 @@ launcher. This directory is a private Python package loaded under the name
 `personal_rclone_sync`; its modules are not standalone commands.
 
 The YAML reference remains `../rclone-sync-schema-sample.yaml`. Existing
-`path1`/`path2` configuration, CLI options, and interactive behavior are retained.
+`path1`/`path2` configuration and task menus are retained. Startup reads the user
+`rclone-sync.yaml` through `utils.ConfigStore`, or an explicit `--schema-file`.
+It accepts a task schema or a redirect-only mapping to another file. Redirects
+resolve relative to their containing file; `schema_dir` uses the final target.
+The shared `config.yaml` can store `rclone-sync.config-password` as !encrypted.
+The native rclone variables still work; custom project environment settings are removed.
 `{{script_dir}}` refers to the entry directory, including after this split.
 Task groups, tasks, and sub-tasks follow schema order; the `ungrouped` section
 keeps its written position rather than being moved to the top.

@@ -96,7 +96,7 @@ class LauncherWorkflowTests(unittest.TestCase):
         data = launcher.read_bytes()
         self.assertFalse(data.startswith(b"\xef\xbb\xbf"))
         self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
-        self.assertIn(b'"%ZL_APP_TARGET%" %*', data)
+        self.assertIn(b'"%_APP_TARGET%" %*', data)
         self.assertIn(str(launcher), output.getvalue())
         self.assertIn("Created:", output.getvalue())
 

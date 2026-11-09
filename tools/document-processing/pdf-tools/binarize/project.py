@@ -203,7 +203,7 @@ class Project:
             raise ValueError("Unknown profile.")
         pages = Input.parse_index_ranges(expression, item_count=self.page_count)
         if not pages:
-            raise ValueError("Enter page numbers or all, for example 1,2,5-10 or all.")
+            raise ValueError("Select at least one page: 1,2,5-10 or all; optionally append |odd or |even.")
         for index in pages:
             self.assignments[index] = identity
         return pages

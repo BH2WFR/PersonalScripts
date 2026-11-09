@@ -20,6 +20,8 @@ from . import schema as schema_ops
 from . import ui as terminal
 from utils import *
 
+RCLONE_CONFIG = models.RCLONE_CONFIG
+
 
 def main(script_dir: str | None = None) -> int:
     """Run task selection, resolution, confirmation, and ordered execution.
@@ -73,6 +75,16 @@ def main(script_dir: str | None = None) -> int:
         else None
     )
     cli_auto = cli_task is not None
+    try:
+        user_settings = ConfigStore().load().get("rclone-sync", {})
+        stored_password = user_settings.get("config-password", "")
+        if isinstance(stored_password, EncryptedValue):
+            stored_password = stored_password.decrypt(models.RCLONE_ENCRYPTION_KEY)
+        if not isinstance(stored_password, str):
+            raise ValueError("rclone-sync config-password must be a string")
+    except (OSError, ValueError, AttributeError) as exc:
+        print(f"{FLRed}Cannot read user configuration: {exc}{CRst}")
+        return 1
 
     # ================================================================
     # Step 1: Check rclone & configure password
@@ -103,11 +115,11 @@ def main(script_dir: str | None = None) -> int:
         if not backend._verify_config_password(rclone_exe):
             Console.print_error_and_exit("rclone config password is incorrect (from --rclone-config-password)")
         config_password = cli_config_password
-    elif models.ENV_CONFIG_PASSWORD in os.environ:
-        config_password = os.environ[models.ENV_CONFIG_PASSWORD]
+    elif stored_password:
+        config_password = str(stored_password)
         os.environ["RCLONE_CONFIG_PASS"] = config_password
         if not backend._verify_config_password(rclone_exe):
-            Console.print_error_and_exit(f"rclone config password is incorrect (from {models.ENV_CONFIG_PASSWORD})")
+            Console.print_error_and_exit("rclone config password is incorrect (from user config.yaml)")
     elif backend._detect_encrypted_config(rclone_exe):
         print(f"{FLYellow}  rclone config is encrypted.{CRst}")
         while True:
@@ -127,29 +139,17 @@ def main(script_dir: str | None = None) -> int:
     # ================================================================
     # Step 2: Resolve YAML schema file path
     # ================================================================
-    default_schema = cli_schema_file or os.environ.get(models.ENV_SCHEMA_FILE, "")
-
-    if cli_auto:
-        if not default_schema:
-            print(f"{FLRed}With --task, specify --schema-file or set {models.ENV_SCHEMA_FILE}. "
-                  f"The bundled sample is documentation only.{CRst}")
-            return 1
-        schema_file = default_schema
-    else:
-        if models.ENV_SCHEMA_FILE not in os.environ:
-            print(f"{FGray}Tip: set {FLCyan}{models.ENV_SCHEMA_FILE}{FGray} to your default YAML schema path.{CRst}")
-        try:
-            schema_file = Input.resolve_input_path(
-                default_schema,
-                prompt="Path to YAML schema file",
-                path_type="file",
-            )
-        except EOFError:
-            print()
-            Console.print_exit_message("Bye.")
-            return 0
-
-    schema_file = os.path.abspath(os.path.expanduser(schema_file))
+    store = ConfigStore(RCLONE_CONFIG)
+    try:
+        if cli_schema_file:
+            selected_schema = Path(cli_schema_file).expanduser()
+        else:
+            store.ensure()
+            selected_schema = store.path
+        schema_file = str(ConfigStore.resolve_file(selected_schema))
+    except (OSError, ValueError) as exc:
+        print(f"{FLRed}Cannot load rclone task configuration: {exc}{CRst}")
+        return 1
     schema_dir = os.path.dirname(schema_file)
 
     if cli_verbose:
@@ -165,7 +165,7 @@ def main(script_dir: str | None = None) -> int:
     try:
         with open(schema_file, "r", encoding="utf-8") as fh:
             schema = schema_ops._load_schema(fh)
-    except (OSError, UnicodeError, yaml_mod.YAMLError) as e:
+    except (OSError, UnicodeError, ValueError, yaml_mod.YAMLError) as e:
         print(f"{FLRed}Failed to read YAML schema:{CRst} {FGray}{schema_file}{CRst}\n{FGray}{e}{CRst}")
         return 1
 

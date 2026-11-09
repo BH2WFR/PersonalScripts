@@ -9,6 +9,17 @@ MAX_SCALE = 16.0
 ZOOM_STEP = 1.2
 
 
+def page_key_step(event: QtGui.QKeyEvent) -> int:
+    """Return a page step for unmodified viewer/Pages navigation keys, else zero."""
+    if event.modifiers() != QtCore.Qt.KeyboardModifier.NoModifier:
+        return 0
+    if event.key() in (QtCore.Qt.Key.Key_PageUp, QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Up):
+        return -1
+    if event.key() in (QtCore.Qt.Key.Key_PageDown, QtCore.Qt.Key.Key_Right, QtCore.Qt.Key.Key_Down):
+        return 1
+    return 0
+
+
 class ViewMode(StrEnum):
     PAGE = "page"
     WIDTH = "width"
@@ -55,7 +66,7 @@ class PageViewer(QtWidgets.QGraphicsView):
     def set_image(self, png: bytes, token: object) -> None:
         """Show encoded PNG bytes; retain zoom/position when comparing the same page."""
         pixmap = QtGui.QPixmap()
-        if not pixmap.loadFromData(png, "PNG"):
+        if not pixmap.loadFromData(png, b"PNG"):
             raise ValueError("The preview worker returned an invalid image.")
         self.set_pixmap(pixmap, token)
 
@@ -160,11 +171,9 @@ class PageViewer(QtWidgets.QGraphicsView):
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """Turn pages only for unmodified navigation keys focused on this viewer."""
-        previous = (QtCore.Qt.Key.Key_PageUp, QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Up)
-        following = (QtCore.Qt.Key.Key_PageDown, QtCore.Qt.Key.Key_Right, QtCore.Qt.Key.Key_Down)
-        if event.modifiers() == QtCore.Qt.KeyboardModifier.NoModifier and event.key() in (*previous, *following):
+        if step := page_key_step(event):
             if self.navigation_enabled:
-                self.pageStepRequested.emit(-1 if event.key() in previous else 1)
+                self.pageStepRequested.emit(step)
             event.accept()
             return
         super().keyPressEvent(event)

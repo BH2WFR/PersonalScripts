@@ -8,6 +8,8 @@ from utils import *
 from ..common.protocol import Json
 from .engine import _Embedding, _Rule, _rgb_key
 
+DEFAULT_MATCH_COLOR = "#ff00a6"
+
 
 def face_data(face: FontFace) -> dict[str, Json]:
     """Encode font metadata for the private worker protocol without ANSI labels."""

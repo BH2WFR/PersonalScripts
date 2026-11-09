@@ -9,14 +9,17 @@ import sys
 from typing import cast
 
 import pymupdf
+import pymupdf.mupdf as mupdf
 from utils import *
 from ..common.pixel_transfer import preview_reply
 from ..common.protocol import Json
+from ..common.task_control import Cancelled, TaskControl
 from .engine import _Engine, _font_name, _page_font_aliases, _pdf_fonts, _rgb_key, _source_names, SUBSET_PREFIX
-from .model import ReplacementRule, face_data
+from .model import DEFAULT_MATCH_COLOR, ReplacementRule, face_data
 
 
-def _font_details(document: pymupdf.Document, pages: Sequence[int], names: list[str]) -> tuple[dict[str, str], list[int]]:
+def _font_details(document: pymupdf.Document, pages: Sequence[int], names: list[str],
+                  checkpoint: Callable[[], None] | None = None) -> tuple[dict[str, str], list[int]]:
     """Describe used source fonts from scanned pages without extracting font files.
 
     Resource metadata comes from the PDF, never a guessed installed-font match.
@@ -31,9 +34,10 @@ def _font_details(document: pymupdf.Document, pages: Sequence[int], names: list[
     types: dict[str, set[str]] = {name: set() for name in names}
     embedded: dict[str, set[str]] = {name: set() for name in names}
     metadata: dict[int, tuple[set[str], str, str, str]] = {}
-    mupdf = pymupdf.mupdf
     native = mupdf.pdf_document_from_fz_document(document.this)
     for index in pages:
+        if checkpoint is not None:
+            checkpoint()
         page = document[index]
         aliases = _page_font_aliases(page)
         used: set[str] = set()
@@ -100,6 +104,7 @@ class Worker:
         self._identity: tuple[str, int, int, str] | None = None
         self.password = ""
         self.progress = progress
+        self.control = TaskControl()
         self.catalog: list[FontFace] | None = None
 
     def close(self) -> None:
@@ -111,6 +116,7 @@ class Worker:
     def _progress(self, done: int, total: int) -> None:
         if self.progress is not None:
             self.progress({"kind": "progress", "done": done, "total": total})
+        self.control.checkpoint()
 
     def run(self, request: dict[str, Json]) -> dict[str, Json]:
         """Execute one request on the worker main thread; errors propagate to UI.
@@ -125,13 +131,22 @@ class Worker:
         Only export writes files, through Pdf.save_new; never modifies the source.
         """
         operation = request["operation"]
+        self.control = TaskControl.from_request(request, self.progress)
+        self.control.checkpoint()
         # ── target discovery does not require a PDF ────────────
         if operation == "catalog":
             if self.catalog is None:
-                self.catalog = Font.read_catalog(Font.system_font_paths())
+                faces: list[FontFace] = []
+                paths = Font.system_font_paths()
+                for index, font_path in enumerate(paths):
+                    self.control.checkpoint()
+                    faces.extend(Font.read_catalog([font_path]))
+                    self._progress(index + 1, len(paths))
+                self.catalog = faces
             return {"kind": "fonts", "faces": [face_data(face) for face in self.catalog]}
         if operation == "font_file":
             faces = Font.read_faces(Path(str(request["font_path"])))
+            self.control.checkpoint()
             return {"kind": "fonts", "faces": [face_data(face) for face in faces]}
 
         # ── keep originals open for fast page turns ────────────
@@ -155,28 +170,39 @@ class Worker:
         if operation == "scan":
             pages = Input.parse_index_ranges(str(request.get("pages", "all")).strip() or "all",
                                              item_count=source.page_count)
-            names = _pdf_fonts(source, pages)
-            details, colors = _font_details(source, pages, names)
+            names = sorted({name for index in pages
+                            for name in self._scan_page(source, index)})
+            details, colors = _font_details(source, pages, names, self.control.checkpoint)
+            self.control.checkpoint()
             return cast(dict[str, Json], {"kind": "scan", "names": names, "colors": colors, "details": details})
 
         page_number = int(cast(int, request.get("page", 1)))
         if not 1 <= page_number <= source.page_count:
             raise ValueError("Page number is outside this PDF.")
         raw = request.get("raw") is True
+        mark_matches = operation == "preview" and request.get("mark_matches") is True
+        mark_color = str(request.get("mark_color", DEFAULT_MATCH_COLOR)) if mark_matches else ""
+        preview_mark = None
+        if mark_matches:
+            draft = ReplacementRule.from_data(cast(dict[str, Json], request["match_rule"]))
+            # Draft matching is current-page only; applied replacements keep
+            # their own page scopes and supply the fonts under the marks.
+            preview_mark = ReplacementRule(names=draft.names, sizes=draft.sizes,
+                source_colors=draft.source_colors, color=mark_color, color_only=True).compile(1)
         rules = [ReplacementRule.from_data(cast(dict[str, Json], row)).compile(source.page_count)
-                 for row in cast(list[Json], request.get("rules", []))] if not raw else []
+                 for row in cast(list[Json], request.get("rules", []))] if not raw or mark_matches else []
 
         # ── previews rewrite only a fresh, isolated page ───────
         if operation == "preview":
             count = 0
             recolored_runs = 0
             with pymupdf.open() as preview:
-                if rules:
+                if rules or preview_mark is not None:
                     preview.insert_pdf(source, from_page=page_number - 1, to_page=page_number - 1)
                     eligible = [replace(rule, ignored=()) for rule in rules
                                 if page_number - 1 not in rule.ignored]
-                    if eligible:
-                        engine = _Engine(preview, eligible)
+                    if eligible or preview_mark is not None:
+                        engine = _Engine(preview, eligible, preview_mark=preview_mark)
                         count = engine.run([0])
                         recolored_runs = engine.recolored_runs
                     page = preview[0]
@@ -184,6 +210,9 @@ class Worker:
                     page = source[page_number - 1]
                 pixmap = Pdf.render_page(page)
                 return preview_reply({"kind": "preview", "page": page_number, "raw": raw,
+                    "mark_matches": mark_matches,
+                    "mark_color": mark_color,
+                    "match_key": request.get("match_key", ""),
                     "count": count, "recolored_runs": recolored_runs,
                     "width": pixmap.width, "height": pixmap.height},
                     pixmap.samples if request.get("pixel_buffer") else pixmap.tobytes("png"), request)
@@ -199,10 +228,14 @@ class Worker:
                 if not count and not engine.recolored_runs:
                     return {"kind": "no_matches"}
                 engine.remove_original_embeddings()
-                Pdf.save_new(document, output, compact=False, overwrite=request.get("overwrite") is True)
+                self.control.save(document, output, path, compact=False, overwrite=request.get("overwrite") is True)
             return {"kind": "exported", "path": str(output), "count": count,
                     "recolored_runs": engine.recolored_runs}
         raise ValueError(f"Unknown operation: {operation}")
+
+    def _scan_page(self, document: pymupdf.Document, index: int) -> list[str]:
+        self.control.checkpoint()
+        return _pdf_fonts(document, [index])
 
 
 def main() -> int:
@@ -217,7 +250,9 @@ def main() -> int:
         for line in sys.stdin:
             try:
                 with redirect_stdout(sys.stderr):
-                    reply = worker.run(json.loads(line))
+                    reply: dict[str, Json] = worker.run(json.loads(line))
+            except Cancelled as exc:
+                reply = {"kind": "cancelled", "message": str(exc)}
             except Exception as exc:
                 reply = {"kind": "error", "message": str(exc),
                          "code": "password" if "password" in str(exc).lower() else "error"}

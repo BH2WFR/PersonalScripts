@@ -30,6 +30,11 @@ class _Popup(QtWidgets.QWidget):
     def show_text(self, text: str, point: QtCore.QPoint) -> None:
         self.document.setDefaultFont(QtWidgets.QToolTip.font())
         self.document.setPlainText(text)
+        cursor = QtGui.QTextCursor(self.document)
+        cursor.select(QtGui.QTextCursor.SelectionType.Document)
+        text_format = QtGui.QTextCharFormat()
+        text_format.setForeground(QtWidgets.QToolTip.palette().brush(QtGui.QPalette.ColorRole.ToolTipText))
+        cursor.mergeCharFormat(text_format)
         self.document.setTextWidth(MAX_TOOLTIP_WIDTH - 2 * _MARGIN)
         width = min(MAX_TOOLTIP_WIDTH, math.ceil(self.document.idealWidth()) + 2 * _MARGIN)
         self.document.setTextWidth(max(1, width - 2 * _MARGIN))
@@ -49,9 +54,7 @@ class _Popup(QtWidgets.QWidget):
         painter.setPen(palette.color(QtGui.QPalette.ColorRole.Mid))
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
         painter.translate(_MARGIN, _MARGIN)
-        context = QtGui.QAbstractTextDocumentLayout.PaintContext()
-        context.palette.setColor(QtGui.QPalette.ColorRole.Text, palette.color(QtGui.QPalette.ColorRole.ToolTipText))
-        self.document.documentLayout().draw(painter, context)
+        self.document.drawContents(painter)
 
 
 class TooltipFilter(QtCore.QObject):

@@ -271,6 +271,48 @@ class FontReplaceTests(unittest.TestCase):
             self.assertEqual([{key: value for key, value in row.items() if key != "seqno"} for row in drawings],
                              [{key: value for key, value in row.items() if key != "seqno"} for row in document[0].get_drawings()])
 
+    def test_compact_text_boundaries_preserve_all_runs_and_colors(self) -> None:
+        # Strings/arrays delimit TD without whitespace. A numeric RGB prefix
+        # must not become TD1; enough runs expose the renderer's error cutoff.
+        for color_only, color in ((True, (1, 0, 1)), (False, (1, 0, 1)), (False, None)):
+            with self.subTest(color_only=color_only, color=color), Pdf.open_document(self.source) as (document, _):
+                content = bytearray(b".4 g .7 G BT /helv 6 Tf ")
+                shows = (b"<41>Tj", b"(B)Tj", b"[(C) -30 <44>]TJ")
+                for index in range(180):
+                    x, y = 10 + (index // 30) * 40, 290 - (index % 30) * 8
+                    content.extend(f"1 0 0 1 {x} {y} Tm 0 0 TD".encode("ascii"))
+                    content.extend(shows[index % len(shows)])
+                    content.extend(b"\n")
+                content.extend(b"/tiro 6 Tf 1 0 0 1 10 20 Tm(Keep)Tj ET 20 5 30 5 re B")
+                stream = app._object(document, "<< >>", bytes(content))
+                document.xref_set_key(document[0].xref, "Contents", f"{stream} 0 R")
+                page = document.reload_page(document[0])
+                before = page.get_texttrace()
+                before_text = page.get_text()
+                drawings = page.get_drawings()
+                pymupdf.TOOLS.mupdf_warnings()  # Clear unrelated fixture warnings.
+                rule = app._Rule({"Helvetica"}, (), (1,), {} if color_only else self.faces,
+                                 app._Embedding.SUBSET, color=color, color_only=color_only)
+                engine = app._Engine(document, (rule,))
+                engine.run([0])
+                page = document.reload_page(page)
+                after = page.get_texttrace()
+                self.assertEqual(page.get_text(), before_text)
+                self.assertEqual([(char[0], char[2]) for span in before for char in span["chars"]],
+                                 [(char[0], char[2]) for span in after for char in span["chars"]])
+                originals = [(span, char) for span in before for char in span["chars"]]
+                changed_chars = [(span, char) for span in after for char in span["chars"]]
+                for (original, first), (changed, second) in zip(originals, changed_chars):
+                    expected = color if original["font"] == "Helvetica" and color is not None else original["color"]
+                    self.assertEqual(changed["color"], expected)
+                    if color_only:
+                        self.assertEqual(first, second)
+                        self.assertEqual(original["font"], changed["font"])
+                self.assertEqual([{key: value for key, value in row.items() if key != "seqno"} for row in drawings],
+                                 [{key: value for key, value in row.items() if key != "seqno"} for row in page.get_drawings()])
+                page.get_pixmap()  # A full render must reach the page end without errors.
+                self.assertEqual(pymupdf.TOOLS.mupdf_warnings(), "")
+
     def test_source_color_discovery(self) -> None:
         with Pdf.open_document(self.source) as (document, _):
             page = document[0]

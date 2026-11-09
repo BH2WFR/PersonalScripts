@@ -4,8 +4,99 @@ import math
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .pdf_images import ImageElement
+from .viewer import page_key_step
 
 PAGE_ROLE = QtCore.Qt.ItemDataRole.UserRole
+COLLAPSED_VISIBLE_LEVELS = 3
+
+
+def set_bookmark_tooltip(item: QtWidgets.QTreeWidgetItem, title: str, level: int, page: int) -> None:
+    """Show the complete title, hierarchy level and target on every column."""
+    tooltip = f"Title: {title}\nPage: {page}\nLevel: {level}"
+    for column in range(item.columnCount()):
+        item.setToolTip(column, tooltip)
+
+
+def compact_bookmark_indentation(tree: QtWidgets.QTreeWidget) -> None:
+    """Reduce the style's tree indentation by one font-relative en space."""
+    baseline = tree.style().pixelMetric(QtWidgets.QStyle.PixelMetric.PM_TreeViewIndentation, None, tree)
+    en_width = tree.fontMetrics().horizontalAdvance("\u2002")
+    tree.setIndentation(max(1, baseline - en_width))
+
+
+def configure_bookmark_columns(tree: QtWidgets.QTreeWidget) -> None:
+    """Give the title all remaining width after compact page/level columns.
+
+    Args:
+        tree: Bookmark tree whose headers have already been assigned.
+    """
+    header = tree.header()
+    header.setStretchLastSection(False)
+    header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+    for column in range(1, tree.columnCount()):
+        header.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+
+
+def add_bookmark_view_actions(menu: QtWidgets.QMenu, tree: QtWidgets.QTreeWidget) -> None:
+    """Append display-only expansion actions without changing bookmark data.
+
+    Args:
+        menu: Context menu receiving Expand all and Collapse over level 3.
+        tree: Target bookmark tree; empty trees disable both actions.
+    """
+    populated = tree.topLevelItemCount() > 0
+    menu.addAction("Expand all", tree.expandAll).setEnabled(populated)
+    # Qt depth is zero-based; expand levels 1 and 2 to leave level 3 visible.
+    menu.addAction(f"Collapse over level {COLLAPSED_VISIBLE_LEVELS}",
+                   lambda: tree.expandToDepth(COLLAPSED_VISIBLE_LEVELS - 2)).setEnabled(populated)
+
+
+class PageTree(QtWidgets.QTreeWidget):
+    """Physical pages with host-confirmed selection and focus-scoped page keys.
+
+    Plain arrow/PgUp/PgDn keys request a page relative to the displayed page.
+    The host confirms navigation through select_page; rejected requests do not
+    move selection. Modified keys retain Qt's normal batch-selection behavior.
+    """
+
+    pageRequested = QtCore.Signal(int)  # Zero-based physical page.
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.displayed_page = -1
+        self._restore_focus = False
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
+        # Disabling the tree during rendering moves Qt's focus elsewhere. Only
+        # recover that involuntary loss; ordinary clicks/Tab remain untouched.
+        self._restore_focus = not self.isEnabled()
+        super().focusOutEvent(event)
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.EnabledChange and self.isEnabled() and self._restore_focus:
+            self._restore_focus = False
+            self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+
+    def select_page(self, index: int, *, preserve_selection: bool = False) -> None:
+        """Select and reveal a displayed page without requesting another render."""
+        if not 0 <= index < self.topLevelItemCount():
+            return
+        self.displayed_page = index
+        flags = (QtCore.QItemSelectionModel.SelectionFlag.NoUpdate if preserve_selection and self.selectedItems()
+                 else QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        item = self.topLevelItem(index)
+        self.setCurrentItem(item, 0, flags)
+        self.scrollToItem(item)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if step := page_key_step(event):
+            target = self.displayed_page + step
+            if self.isEnabled() and self.displayed_page >= 0 and 0 <= target < self.topLevelItemCount():
+                self.pageRequested.emit(target)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class NavigationPane(QtWidgets.QTabWidget):
@@ -22,12 +113,17 @@ class NavigationPane(QtWidgets.QTabWidget):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self.pages = QtWidgets.QTreeWidget()
+        self.pages = PageTree()
+        self.pages.pageRequested.connect(self.pageRequested)
         self.pages.setHeaderLabels(["Page", "Title", "Profile"])
         self.pages.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.pages.setToolTip("Click a page to preview. Ctrl/Shift-select multiple pages for batch actions.")
+        self.pages.setToolTip("Click or use arrow/PgUp/PgDn keys to turn pages. Ctrl/Shift selects multiple pages for batch actions.")
         self.bookmarks = QtWidgets.QTreeWidget()
+        compact_bookmark_indentation(self.bookmarks)
         self.bookmarks.setHeaderLabels(["Bookmark", "Page"])
+        configure_bookmark_columns(self.bookmarks)
+        self.bookmarks.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.bookmarks.customContextMenuRequested.connect(self._bookmark_context_menu)
         self.images = QtWidgets.QTreeWidget()
         self.images.setHeaderLabels(["Image / pixels", "Format", "DPI", "Position (pt)"])
         self.images.setRootIsDecorated(False)
@@ -60,8 +156,8 @@ class NavigationPane(QtWidgets.QTabWidget):
         self.images.itemClicked.connect(self._image_clicked)
         self.images.itemSelectionChanged.connect(self._image_selection_changed)
         self.images.viewport().installEventFilter(self)
-        QtGui.QShortcut(QtCore.Qt.Key.Key_Escape, self.images,
-                        activated=self.images.clearSelection)
+        QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self.images,
+                        self.images.clearSelection)
         self._last_image_click: QtWidgets.QTreeWidgetItem | None = None
         self.setMinimumWidth(190)
 
@@ -78,6 +174,7 @@ class NavigationPane(QtWidgets.QTabWidget):
             if 1 <= number <= len(labels):
                 titles.setdefault(number - 1, []).append(title)
             item = QtWidgets.QTreeWidgetItem([title, str(number) if number > 0 else ""])
+            set_bookmark_tooltip(item, title, level, number)
             if 1 <= number <= len(labels):
                 item.setData(0, PAGE_ROLE, number - 1)
                 self.bookmark_items.append((number - 1, item))
@@ -95,6 +192,12 @@ class NavigationPane(QtWidgets.QTabWidget):
             self.page_items.append(item)
         self.bookmarks.expandToDepth(1)
         self.pages.resizeColumnToContents(0)
+
+    def _bookmark_context_menu(self, point: QtCore.QPoint) -> None:
+        menu = QtWidgets.QMenu(self)
+        add_bookmark_view_actions(menu, self.bookmarks)
+        menu.exec(self.bookmarks.viewport().mapToGlobal(point))
+        menu.deleteLater()
 
     @staticmethod
     def _dpi_text(x: float, y: float) -> str:
@@ -154,6 +257,7 @@ class NavigationPane(QtWidgets.QTabWidget):
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
         if (watched is self.images.viewport()
                 and event.type() == QtCore.QEvent.Type.MouseButtonPress
+                and isinstance(event, QtGui.QMouseEvent)
                 and self.images.itemAt(event.position().toPoint()) is None):
             self.images.clearSelection()
         return super().eventFilter(watched, event)
@@ -169,11 +273,7 @@ class NavigationPane(QtWidgets.QTabWidget):
 
     def select_page(self, index: int, *, preserve_selection: bool = False) -> None:
         """Highlight a host-selected page without emitting a navigation request."""
-        if 0 <= index < len(self.page_items):
-            flags = (QtCore.QItemSelectionModel.SelectionFlag.NoUpdate if preserve_selection and self.pages.selectedItems()
-                     else QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
-            self.pages.setCurrentItem(self.page_items[index], 0, flags)
-            self.pages.scrollToItem(self.page_items[index])
+        self.pages.select_page(index, preserve_selection=preserve_selection)
         matching = [item for page, item in self.bookmark_items if page == index]
         if matching:
             self.bookmarks.setCurrentItem(matching[0])

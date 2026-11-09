@@ -1,40 +1,94 @@
 # PDF bookmarks and page labels
 
 Run `pdf-bookmarks-add.py` from the document-processing directory. Its **Page labels**
-tab provides the integrated label editor; the tool is GUI-only. Dependencies are PySide6, PyMuPDF and PyYAML, already declared in the
+tab provides the integrated label editor; the tool is GUI-only. Dependencies are PySide6, PyMuPDF, PyYAML, cryptography, LiteLLM, OpenAI, HTTPX and truststore, declared in the
 root requirements. Implementation lives here; the entry only loads this package.
+
+The **Pages** context menu groups **Edit label** and **Clear label** separately.
+Edit opens a text dialog for one selected page; with multiple pages it opens
+**Page labels**, fills their range and shows a tooltip. Clear affects only the
+selected rows, regardless of the range entered in the tab. Label edits are
+disabled during processing, including recognition pauses.
+
+The **Bookmarks** context menu includes **Expand all** and **Collapse over level 3**.
+The latter shows levels 1–3 and folds deeper descendants. Both are view-only
+actions, available during recognition pauses and from empty tree space.
 
 ## Workflow
 
 1. Open/drop a PDF, choose its physical TOC page range and click **Mark TOC**.
+   Each click replaces the previous TOC tasks with fresh tasks for that range,
+   resetting crops, rotations, page requirements, drafts, status and recognition
+   context. Existing bookmarks remain; removed TOC sources become manual entries.
+   **Clear TOC** beside **Mark TOC** removes all TOC tasks and recognition settings
+   while keeping existing bookmarks and the current page. It is disabled when
+   no TOC pages are marked or processing is active, including pauses.
+   In **Pages**, select one page and toggle **This page is TOC** in its context
+   menu to mark/unmark just that page while preserving other tasks. The checkbox
+   follows the selected page and is disabled during processing, including pauses.
    **Use current page** beside the first/last TOC page and first body PDF page
    fills that field from the viewer. TOC bounds are applied only by **Mark TOC**;
    the body-page button immediately updates the printed-to-physical mapping.
+   With exactly one row selected in **Pages**, the right-click menu can set
+   either TOC bound or the first body PDF page. The body action asks for that
+   page's printed (logical) number before updating both mapping fields;
+   cancelling leaves the mapping unchanged. TOC bounds still require **Mark TOC**.
    Each marked page gets a red recognition rectangle, initially the whole page.
    **Draw recognition box** enables dragging one replacement rectangle; uncheck
    it to pan. **Whole page** resets the crop; **Unmark** removes the recognition
    task while retaining already accepted bookmarks as manual entries.
 2. Set the first body PDF page and its printed page number. Rotate a tilted TOC
-   page before cropping: changing rotation resets its crop. Rotation/cropping
+   page before cropping: changing rotation resets its crop. Rotation keeps the
+   original canvas dimensions and content scale, turns around the center, fills
+   exposed areas white and clips content outside the page. Rotation/cropping
    affect recognition images only. One PDF page must contain one book page;
    split multi-up scans before using this tool.
 3. Select an API preset or type an OpenAI-compatible base/full chat URL under **API**.
    Enter its key if required and click **Get models**, or type a vision-capable model name.
+   **Vision models only (strict)** filters the next lookup by explicit image-input
+   metadata, excluding unknown capabilities and image-generation-only models.
+   OpenRouter publishes input modalities. SiliconFlow supplements its API list
+   with the official model center's `vlm` metadata and matches exact model IDs;
+   this public request carries no API key. If that website is unavailable or its
+   format changes, lookup reports an error. Some compatible catalogs omit capabilities. An
+   empty filtered list explains this limitation. Uncheck to list all models or
+   enter a model manually; **Test API** verifies actual image access. Changing the
+   filter clears the old list without automatically sending a request.
    Cloud services and local Ollama/LM Studio servers use the same workflow.
    Set temperature, output-token limit, timeout and context-image limit as needed.
    Add book-wide or current-page transcription requirements under **Recognition**.
-4. **Run TOC queue** sends one cropped JPEG at a time, in physical TOC-page order.
+   By default, duplicate numeric/written ordinals for the same entry are simplified:
+   `1. 第一条：xxx` becomes `1. xxx`. Different numbers, distinct hierarchy levels
+   and meaningful title text are retained; explicit user requirements take priority.
+4. **Run TOC** sends one cropped JPEG at a time, in physical TOC-page order.
+   Run/Retry commits the focused editor first. If changing the page or rotation
+   needs a new preview, that single click starts recognition after rendering;
+   repeated clicks do not queue extra runs. Stop or closing cancels the pending start.
    Pending-only mode skips completed/manually applied pages. Browse each page's
    draft and errors with the page navigator after the queue finishes or stops.
-   **Retry this page** replaces that page's entries, preserving other pages and
-   directory-page order. **Retry all TOC pages** resends every marked page in order,
+   **Retry page** replaces that page's entries, preserving other pages and
+   directory-page order. **Retry all** resends every marked page in order,
    ignoring pending-only mode. Both include explicit complete-replacement instructions
    and the latest book-wide/current-page requirements.
    **Clear conversation before this run / retry** clears previous exchanges once,
    before the queue begins; leave it unchecked to retain the book's conversation.
-   Rerunning manually edited results asks before replacing them. **Stop** aborts
+   Recognition and PDF export share the icon-and-text **Pause / Resume** and
+   **Stop** buttons beside progress in the preview area's bottom toolbar. They
+   stay visible and disabled when idle; there are no separate controls on the left.
+   Rerunning manually edited results asks before replacing them. **Pause** waits
+   for the current request to finish before the next TOC page; **Resume** continues
+   the remaining queue. While recognition is paused, Pages and Bookmarks allow
+   scrolling, selection and navigation, including page-number/arrow controls.
+   Bookmark editing, dragging, hierarchy changes and page deletion remain locked.
+   Browsing does not change the queued page; Resume continues from the original
+   position after any preview finishes. Manual pauses keep settings locked.
+   Problem pauses allow clarification on the failed page and API-setting edits.
+   **Stop** also works
+   while paused and aborts
    the current HTTP request and retains completed results in this session.
    Export the PDF to keep the resulting bookmarks before quitting.
+   Page statuses use blue for pending, green for done/modified and red for errors
+   or requests for information.
 5. Edit the current page's YAML draft or edit the final bookmark tree. Valid YAML
    updates the tree after a short editing pause; invalid manual YAML blocks export
    until corrected/reapplied. Each entry's `page` in YAML means a printed page;
@@ -47,6 +101,9 @@ root requirements. Implementation lives here; the entry only loads this package.
    and its target is unchanged. Shared PDF policy removes encryption and PDF/A
    identification; source files are protected and existing outputs require
    explicit overwrite confirmation before staged replacement.
+   During PDF export, the bottom row provides the shared **Pause / Resume** and
+   **Stop** controls. They take effect at safe steps, including after an active
+   MuPDF save returns; cancelling before publication retains an existing output.
 
 Example draft (comments are retained verbatim):
 
@@ -67,11 +124,26 @@ errors:
   - {error_message: "Page number is cut off", location: "Introduction, right edge", needs: "Provide the printed page or a wider crop"}
 ```
 
-Use `errors: []` when all entries are reliable. Missing page numbers, uncertain
+By default, a parent heading without a printed page number inherits its first
+following child's page within that section, including nested parent headings.
+Explicit user rules take priority (for example, child page minus two).
+Unresolved child pages still require clarification; sibling sections are not used.
+
+Use `errors: []` when all entries are reliable. Unresolved page numbers, uncertain
 titles/hierarchy, unreadable content and cropped-off entries must be reported,
 never guessed or silently omitted. A problem marks the source TOC page **needs
-information**, leaves its previous accepted bookmarks unchanged, and lets the
-queue continue. A response with partial entries and errors stays entirely in the
+information**, leaves its previous accepted bookmarks unchanged, and pauses the
+queue on that page. Connection, parsing and incomplete-response errors also pause.
+A warning opens; confirming it focuses **Information**, which displays each issue's
+location, description and requested clarification. Its inline answer editor shares
+the current page's requirements. **Retry & continue** (or the footer **Resume**)
+retries only the blocked page, then continues the original remaining queue after
+success. It preserves earlier results and conversation regardless of the clear-context
+checkbox. Another failure pauses again; no automatic paid retries occur.
+Progress counts successful pages, without counting failed attempts twice.
+Connection failures can be retried without typing an answer. **Stop** discards
+the remaining queue, retaining results and page instructions; use it before changing
+the crop or manually correcting YAML. A response with partial entries and errors stays entirely in the
 draft until resolved. Failed/unfinished drafts block export until corrected,
 successfully retried or explicitly removed with **Unmark** (which keeps previously
 accepted bookmarks). **Clear bookmarks** explicitly discards the final outline
@@ -83,8 +155,9 @@ body mapping, exact text prompt/context, raw reply and failure reason. No image
 payload or API key is logged. History is session-only, limited per page to ten
 records and roughly two million characters; very large records are truncated,
 while the latest full reply remains the draft until edited. **Add page information**
-focuses this page's requirements. Supply the missing details or adjust the crop,
-then click **Retry this page**. The retry includes the previous problem and new
+focuses the inline editor in **Information**. Supply the missing details,
+then click **Retry & continue** while paused, or **Retry page** when idle.
+The retry includes the previous problem and new
 requirements, replacing only this page's entries in TOC order after success.
 Alternatively correct the YAML entries and clear resolved errors, then apply it.
 
@@ -95,7 +168,16 @@ PDF page. Single-click navigates after the double-click interval; **Ctrl/Shift**
 selects multiple bookmarks without navigating. Right-click keeps an existing
 multi-selection. Move, delete, retarget-to-current-page and hierarchy actions
 apply to the selection; parent/descendant overlap is processed only once when
-moving subtrees. Rename and inline target editing affect the current item.
+moving subtrees. Rename and target editing require a single selection; their
+context-menu actions and inline editing are disabled for multiple selections.
+Bookmark tooltips show the full title, level and target page on separate lines.
+**Delete bookmark** offers three radio options when descendants exist: delete only
+the bookmark and keep descendant levels (default), delete only the bookmark and
+move descendants up one level, or include all descendants. Retained levels may
+attach to a preceding parent. Missing required parents reject
+the entire batch instead of silently promoting children. Multi-selection offers
+**Apply to all**, remembering both deletion scope and promotion for that batch. Already removed
+descendants are skipped; Cancel discards the entire batch. Deletion is one undo step.
 
 Drag selected subtrees above/below another item or onto it to become its children;
 drop on blank space to append at the root. Nonconsecutive selections are allowed:
@@ -105,6 +187,13 @@ produces one undo step and preserves bookmark identities/targets.
 
 Toolbar/right-click hierarchy actions include:
 
+- **Set level...** (right-click) accepts an absolute target level. By default,
+  descendants move by the same level difference, preserving relative subtree
+  levels; overlapping parent/child selections are handled once at the parent.
+  Uncheck **Move descendants with selected bookmarks** to set every selected item
+  to that level while leaving unselected levels unchanged. Reading order and
+  target pages stay unchanged; parent relationships may change. Invalid hierarchy
+  changes are rejected as a whole, and a successful batch is one undo step.
 - **Indent (with descendants)** (`→`) increases selected subtree levels together.
 - **Indent (selected items only)** (`→¹`) increases only explicitly selected levels.
   Direct children keep their original level and become peers of the indented item;
@@ -126,11 +215,64 @@ to retain them alongside new entries.
 
 ## API, context and manual interaction
 
+Text and image inference uses `litellm.acompletion` in a cancellable background
+thread. Existing compatible URLs/model IDs and `llm.yaml` profiles remain valid.
+The HTTP client belongs to one request: no automatic retries or redirects, a
+bounded response and an overall timeout. Empty keys send no Authorization header.
+TLS uses native system certificates through `truststore`, with certificate and
+hostname verification enabled by default. **Skip certificate verification** in
+the API tab disables these checks for the selected source, including recognition,
+API tests, model lists and balances. It defaults to off and follows the same
+per-source Save/Load behavior as other API settings. HTTP endpoints such as local
+Ollama/LM Studio work without enabling this option. On Windows/macOS, `SSL_CERT_FILE` / `SSL_CERT_DIR`
+do not replace native trust; Linux follows the system OpenSSL CA locations,
+including its native environment overrides. Normal proxy routing is unchanged. Timeout remains
+in seconds, default 180. Recognition failures open a resizable dialog with complete,
+scrollable plain-text diagnostics and **Copy error**; Information retains the error.
+Error causes are not shortened, and submitted API keys are still redacted.
+LiteLLM uses bundled pricing metadata, does not load `.env`, and has message logging
+disabled. Stop cancels the HTTP operation; the queue advances only after cleanup.
+The first inference lazily initializes the library and can take a few seconds.
+
+Model catalogs retain the existing same-host HTTP adapters, including Alibaba
+pagination and SiliconFlow chat filtering. LiteLLM's current generic discovery
+discards custom path prefixes and turns some failures into empty lists; it does
+not preserve this tool's lookup behavior. Account balances retain native adapters.
+
+Other tools can reuse `Llm.acompletion` without Qt or PDF dependencies:
+
+```python
+from utils import *
+
+# Inside an async function; settings/key belong to the selected source.
+result = await Llm.acompletion(
+    settings, key, messages=history,
+    system_prompt="Transcribe accurately.", prompt="Read this page.",
+    images=[Llm.image_content(png_bytes, mime_type="image/png")],
+)
+text = result.text
+# Check result.finish_reason == "stop" before accepting a complete transcription.
+```
+
+Omit images for text-only prompts, or provide the complete message list directly.
+`max_context_images` limits images across history and current input together,
+retaining the newest N images and all text; 0 means unlimited. History remains
+caller-owned: retain the user message and returned assistant text for the next turn.
+
 The editable API dropdown includes DeepSeek, Kimi, Alibaba Model Studio (Beijing
 and Singapore), OpenRouter, SiliconFlow, Ollama and LM Studio. Selecting a preset fills its URL;
 custom URLs, including Alibaba workspace-specific hosts, remain editable.
-Changing endpoints clears the old model choices; changing hosts also clears the
-key. Settings and keys remain in memory only.
+Settings are stored per source in shared user `llm.yaml`, managed by `utils.Llm`.
+Startup and **Load** read the file; **Save** and closing the window write it.
+Load replaces unsaved API drafts. Editing fields and switching URLs do not write.
+Switching URLs restores that source's in-memory model, parameters, API key and balance key;
+new sources start without keys. Base URLs and their chat-completions URLs identify
+the same source. Read/write locks last only for file I/O. A busy file returns an
+error immediately, shown in the API status, tooltip and console; failed saves
+retain drafts and prevent closing until a retry succeeds. Keys use `!encrypted`
+values; their key is owned by `utils/llm.py`, independent of other modules;
+the bundled fixed key provides obfuscation, not protection against someone who
+has the source code. PDF passwords and recognition conversations stay in memory.
 
 For local inference, start a server with a vision-capable model:
 
@@ -219,29 +361,68 @@ API-reported input tokens, not a percentage of a model's context window.
 
 The default model is `deepseek-flash`; model names are editable. See the provider's
 [vision documentation](https://api-docs.deepseek.com/guides/vision/).
-For the official DeepSeek host, requests disable thinking so temperature applies.
-Other endpoints receive standard fields only. No model calls happen on opening a
+**Reasoning effort** is a per-source dropdown, enabled by default. Switching API
+or model refreshes its choices; Save/Load and window close persist the selection.
+**Server default (no override)** sends no reasoning controls. Known unsupported
+saved levels stay visible with a warning and must be changed before recognition.
+
+| API | Request controls and available effort |
+| --- | --- |
+| DeepSeek | `thinking.type` plus `reasoning_effort`: low/high/max; temperature omitted while explicitly thinking |
+| Kimi | Model-dependent: thinking toggle on K2.6; K3 always thinks with low/high/max; K2.7 Code always thinks |
+| Alibaba / SiliconFlow | `enable_thinking`; token budgets are not treated as effort levels. Alibaba DeepSeek V4 also supports low/high/max |
+| OpenRouter | Nested `reasoning.enabled` or `reasoning.effort`; underlying model decides supported levels |
+| Other compatible endpoints | `reasoning_effort`; enabled defaults to medium; model support is required |
+
+Choices reflect known API/model families, not live capability discovery. For an
+unsupported model or proxy dialect, select Server default to omit the controls.
+No model calls happen on opening a
 PDF, changing settings or navigating. Balance queries may run when credential
 editing finishes as described above. **Run**/**Retry** sends book images.
 **Test API (small image)** sends a generated color square to the configured model,
 even before opening a PDF. It checks authentication, model access and image input,
 reports elapsed time and returned errors, and does not alter book drafts or context.
-It is a small real API request (up to 32 output tokens); **Stop** cancels it.
-Keys and PDF passwords stay in memory.
+It is a real API request using the selected reasoning mode and output-token budget;
+only explicit **Off** caps output at 32 tokens. Testing never silently disables
+mandatory reasoning. **Stop** cancels it.
+API keys persist encrypted per source; PDF passwords stay in memory.
 
 **Copy system prompt** and **Copy recognition image** support manual use with an
 external model; paste its YAML/JSON result into the current page's draft. Responses
 truncated by an output-token limit or rejected by validation remain available for
 inspection without replacing accepted bookmarks. Connection failures mark the
-page failed and allow the queue to continue. The next image is sent only after
-the current response finishes and is validated. A request introduces only one
+page failed and pause the queue for an explicit retry. The next page is sent only
+after the current response finishes and passes validation. A request introduces only one
 new page to recognize; retained historical images are context, not additional
 recognition tasks. No concurrent recognition or automatic paid retry is used.
 
 ## Labels and saving
 
+In **Pages**, select one page or use **Ctrl/Shift** to select multiple pages,
+then choose **Delete selected pages...**, the right-click action, or **Delete**.
+Confirm whether later bookmark targets should follow their original pages or
+keep their numeric targets. Nonconsecutive selections are mapped individually:
+deleting pages 2, 5 and 8 moves old page 7 to 5, and old page 10 to 7.
+Bookmarks targeting removed pages can be deleted or moved to the preceding
+retained page (the first retained page if none precedes it). Children of removed
+bookmarks survive with promoted levels. At least one PDF page must remain.
+
+Deletion cannot be undone and clears bookmark undo history, preview cache and
+recognition conversation. It affects the current session; the source PDF stays
+unchanged, and **Export PDF** writes the remaining pages. Page navigation, new
+bookmarks, TOC tasks and physical page fields use the new numbering immediately.
+Printed-page recognition and generated body labels retain gaps for deleted pages.
+Recognition targeting a removed printed page requires correction before acceptance.
+Retained TOC tasks keep their crops, drafts and requirements; deleted TOC tasks
+are removed, while their surviving accepted bookmarks become manual entries.
+If deleting the body anchor leaves no positive printed body page, choose a new
+body mapping before recognition. Keeping numeric bookmark targets can leave
+out-of-range targets, which must be corrected before export.
+
 **Page labels** edits PDF navigation labels, not printed page content. Enter a
-range such as `1,2,5-10,-1`, or select rows using Ctrl/Shift in **Pages**. Numbered
+range such as `1,2,5-10,-1`, or select rows using Ctrl/Shift in **Pages**. The
+**All / Odd / Even** radio buttons synchronize with `|odd` / `|even` suffixes;
+All retains the entire entered range. Numbered
 labels allow a prefix and signed starting number. Clear selected/all labels, or
 generate C1/C2 labels for TOC pages and consecutive body numbers from the mapping;
 unrelated front matter keeps its current labels.

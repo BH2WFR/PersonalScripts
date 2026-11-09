@@ -799,15 +799,15 @@ def _print_help() -> None:
   time display, or pre-sync check. File endpoint guards still apply.
 
 {FLYellow}Schema selection:{CRst}
-  Interactive startup prompts for the actual configuration path, suggesting
-  --schema-file or {models.ENV_SCHEMA_FILE} when set (CLI takes precedence).
-  With neither set, a path must be entered. With --task, one of them is required.
+  Default: {ConfigStore(models.RCLONE_CONFIG).path}
+  This file contains tasks or only redirect: '/path/to/tasks.yaml'.
+  --schema-file overrides it. Relative redirects use their containing directory.
   rclone-sync-schema-sample.yaml is detailed agent/user documentation, not a
   runtime configuration. The script never uses it as an automatic fallback.
 
-{FLYellow}Environment variables:{CRst}
-  {FLCyan}{models.ENV_SCHEMA_FILE}{CRst}    path to the actual YAML schema file (no bundled default)
-  {FLCyan}{models.ENV_CONFIG_PASSWORD}{CRst}  password for encrypted rclone config
+{FLYellow}Credentials:{CRst}
+  User config.yaml: rclone-sync.config-password (supports !encrypted).
+  --rclone-config-password overrides this value. Native rclone variables remain supported.
 
 {FLYellow}Path variables{CRst} (string endpoints, backup-dir, log-file only):
   {FGray}$VAR / ${{VAR}} / %VAR%{CRst}  environment variable on every platform
@@ -849,6 +849,6 @@ def _print_help() -> None:
   {FLCyan}bisync{CRst}   bidirectional sync between two paths
 
 {FLYellow}Requirements:{CRst}
-  rclone, PyYAML.  pip install pyyaml
+  rclone, PyYAML; cryptography for encrypted values.  pip install pyyaml cryptography
   Volume endpoints: Windows pwsh 7 Storage/CIM; Linux lsblk; macOS diskutil.
 """)

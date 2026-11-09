@@ -182,12 +182,18 @@ class BookmarkEditorTests(unittest.TestCase):
         self.assertLessEqual(tooltips.popup.document.idealWidth(), 234)
         self.load([("A", 1)])
         tree = self.editor.tree
-        self.items()["A"].setToolTip(0, "Cell hint " * 20)
+        # Isolate the tooltip fixture from the editor's automatic bookmark hints.
+        with QtCore.QSignalBlocker(tree):
+            self.items()["A"].setToolTip(0, "Cell hint " * 20)
         point = tree.visualItemRect(self.items()["A"]).center()
         event = QtGui.QHelpEvent(QtCore.QEvent.Type.ToolTip, QtCore.QPoint(20, point.y()), QtCore.QPoint(100, 100))
         self.assertTrue(tooltips.eventFilter(tree.viewport(), event))
         self.assertTrue(tooltips.popup.document.toPlainText().startswith("Cell hint"))
         self.assertLessEqual(tooltips.popup.width(), 250)
+        self.assertFalse(tooltips.popup.grab().isNull())
+        cursor = QtGui.QTextCursor(tooltips.popup.document)
+        self.assertEqual(cursor.charFormat().foreground().color(),
+                         QtWidgets.QToolTip.palette().color(QtGui.QPalette.ColorRole.ToolTipText))
         tooltips.popup.hide()
 
 

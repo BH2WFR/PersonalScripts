@@ -1,5 +1,33 @@
 # PDF desktop tools
 
+PDF tools share `config-pdf-tools.yaml` in the directory returned by
+`ConfigStore.directory()` (all platforms: `~/.config/PersonalScripts`).
+Open/save PDF directories are shared across tools; project, region and font
+dialogs keep separate histories. Missing directories fall back to the current
+document's directory or the native dialog default. Dragged PDFs update history
+after a successful open. Reads/writes lock only during file actions; contention
+returns immediately with console/tooltip feedback. API profiles live separately
+in llm.yaml through utils.Llm: startup/Load reads, Save/window close writes;
+book contents, PDF passwords and recognition conversations are not persisted.
+`common/preferences.py` uses the project's shared locked, atomic YAML store;
+windows never write their own stale full-file snapshots.
+
+All four desktop tools share **Pause / Resume** and **Stop** for PDF export.
+The icon-and-text buttons stay in the preview area's bottom row beside progress;
+they are disabled when idle. Font discovery and PDF font scans use them as well.
+Pause switches to a play icon and Resume label while a pause is requested.
+Pause takes effect at the next safe step and
+clears the busy cursor after acknowledgement. Resume continues the same task;
+Stop also works while paused and restores editing. Settings stay locked during
+pause. A page operation or MuPDF save already in progress finishes first.
+Exports stage their PDF before publication, so cancellation during saving retains
+an existing output. Brief page previews have no pause/stop controls.
+The bookmark recognition queue uses the same footer buttons as PDF export:
+Pause waits for the current HTTP request; Stop aborts it and retains completed pages.
+During a recognition pause, Pages/Bookmarks remain navigable while structural
+editing stays locked; browsing never changes the recognition queue's position.
+The command-line compression/decryption tools are unchanged.
+
 `../pdf-split-pages.py` opens the visual page splitter: two left settings groups,
 colored numbered crop overlays, and read-only pages/bookmarks with output start
 indexes. Move all frames or individual crops, keep pages whole, and export equal
@@ -16,8 +44,11 @@ RGB transport, serial job runner, file dialogs and tooltip handling below.
 `../pdf-bookmarks-add.py` opens the TOC recognition, bookmark editor and page-label
 GUI, including its Page labels tab. See [bookmarks/README.md](bookmarks/README.md)
 for the workflow, API testing, recognition queue and export behavior. This tool
-keeps drafts in memory and saves only PDFs; it has no project files. It requires PySide6, PyMuPDF
-and PyYAML. Shared optional crop and editable-tree widgets live in `common/`;
+keeps recognition drafts in memory and has no project files; API preferences are
+saved separately. It requires PySide6, PyMuPDF, PyYAML, cryptography, LiteLLM,
+OpenAI and HTTPX. Shared `Llm.acompletion` handles text/vision conversations;
+GUI inference runs in a cancellable background thread with bounded image context.
+Shared optional crop and editable-tree widgets live in `common/`;
 the binarizer retains its read-only navigator.
 
 Both GUIs reuse bounded page-cache storage and shared-memory RGB transport;
@@ -25,9 +56,20 @@ bookmark previews retain one latest rotation per page within 512 MiB / 100 pages
 `utils.Pdf` owns bounded RGB rendering and generic bookmark/page-label operations.
 `utils.Llm` owns cloud/local model presets, payloads, context-image limits and a lazily created Qt API client;
 the bookmark package retains only its TOC prompt and book-context construction.
-They also share focus-scoped PgUp/Left/Up and PgDn/Right/Down page shortcuts.
-Clicking the viewer gives it keyboard focus, including while drawing a TOC crop;
-keys in text and settings editors retain their normal editing behavior.
+All four GUIs share focus-scoped PgUp/Left/Up and PgDn/Right/Down page shortcuts
+in both the viewer and **Pages**. Navigation selects and reveals the current
+page in Pages. Plain page keys replace a batch selection with the destination;
+Ctrl/Shift retains normal multi-selection without starting a preview. Rendering
+temporarily blocks navigation, then restores Pages focus for continued key turns.
+`common/navigation.py` owns the shared `PageTree`; `common/viewer.py` owns the
+page-key mapping used by both widgets. Clicking the viewer gives it keyboard
+focus, including while drawing a TOC crop; keys in text and settings editors
+retain their normal editing behavior.
+Shared bookmark lists use the theme's indentation minus one en and give the
+title the remaining column width. Every cell shows Title, Page and Level in its
+tooltip. Right-click offers **Expand all** and **Collapse over level 3** (keep
+the first three levels visible), including in read-only tools; these actions
+only change the displayed tree.
 Both windows install `common/tooltips.py`: widget/action and tree-cell hints wrap
 within 250 logical pixels, including long unbroken URLs. The window-scoped filter
 also covers controls rebuilt by Close and newly created settings.
@@ -38,7 +80,7 @@ Run `../pdf-binarize.py` without arguments to open the PySide6/Fusion desktop
 application.
 
 Dependencies: PySide6, PyMuPDF >= 1.28, pypdf >= 6, Pillow with libtiff, numpy,
-opencv-python and tqdm, already declared in the repository requirements.
+opencv-python, tqdm, PyYAML and cryptography, already declared in the repository requirements.
 See `binarize/README.md` for image algorithms,
 supported PDF constructs, crop codecs and region JSON semantics.
 
@@ -52,7 +94,8 @@ parameter labels for their purpose, tuning direction and suggested starting valu
 One right toolbar groups compact page arrows, a page field/count, zoom controls
 and the original checkbox with vertical separators. Enter or focus loss jumps pages.
 Preview/navigation fill the remaining height; status and export share one bottom row.
-Progress and Cancel appear only during export. Drag in one PDF or project JSON,
+Progress appears during export; Pause/Resume and Stop remain visible, disabled when idle.
+Drag in one PDF or project JSON,
 or use the Open buttons; network-share paths and Unicode filenames are supported.
 
 On Windows, Explorer cannot drop files into a program running as administrator.
@@ -101,6 +144,10 @@ duplicates the current configuration (default when copying no-processing).
 Right-click profiles to rename/delete them or apply them to typed page ranges.
 **Apply to pages…** also appears above the list and accepts `1,2,4-10` through the
 shared page-range parser. Invalid ranges leave all assignments unchanged.
+Page-range fields and dialogs use `common/range_input.py`: **All / Odd / Even**
+radio buttons synchronize with `|odd` / `|even` suffixes. All keeps the entire
+entered range; the other choices filter physical page numbers. The component
+retains each caller's original text field, validation and commit behavior.
 Profiles contain complete settings, so later edits to default do not affect custom
 copies. Editing a profile affects all pages referring to it. Ctrl-click individual
 pages or Shift-click a range in Pages, then click a profile on the left to apply it
@@ -167,8 +214,13 @@ with a separate engine/cache for each configuration. Shared skipped-page resourc
 remain isolated. Final page order and original document-level objects are retained.
 
 Export stages a PDF beside the destination, then publishes it through exclusive
-creation. Cancel is cooperative at page/publication boundaries: the current image
-operation or PDF save may finish first. Partial publication is removed on handled
+creation. Pause and Stop are cooperative at page/publication boundaries: the current
+page's image encoders or PDF save finish first. Pause shows a pending state until
+the worker acknowledges it; once paused, processing sleeps and the busy cursor
+clears. Resume continues the same export. Stop also works while paused, removes
+incomplete output and restores parameter editing so a new export can be started.
+Settings remain locked during pause to keep the running export consistent.
+Partial publication is removed on handled
 failure/cancellation. Optional region/annotation sidecars are published afterwards;
 a sidecar error explicitly reports the already saved PDF.
 
@@ -187,10 +239,12 @@ be overwritten. These shared save-dialog rules live in `common/file_actions.py`.
 | `common/viewer.py` | Raster display, zoom, focus-scoped page keys and red/blue overlays |
 | `common/navigation.py` | Reusable physical-page, bookmark and image trees |
 | `common/pdf_images.py` | Read displayed image placements, encoding and effective DPI |
-| `common/bookmark_editor.py` | Optional batch outline editing, two indent/outdent modes and arbitrary-selection subtree dragging |
+| `common/bookmark_editor.py` | Optional batch outline editing, hierarchy modes and subtree dragging; `show_level=True` adds a derived middle Level column; `set_editing_enabled(False)` locks mutations while preserving scrolling, selection and navigation |
 | `common/tooltips.py` | Window-scoped tooltips with strict width and long-token wrapping |
 | `common/file_drop.py` | Route PDF/project drops from child controls to the owning window |
-| `common/jobs.py` | Single-request subprocess transport, progress and failure recovery |
+| `common/jobs.py` | Single-request subprocess transport, task-private control markers, progress and failure recovery |
+| `common/task_buttons.py` | Reusable Pause/Resume and Stop controls bound to a job runner |
+| `common/task_control.py` | Worker checkpoints, cancellation exception and staged PDF publication without Qt |
 | `common/preview_buffer.py` | Bounded RGB shared-memory transport owned by the GUI |
 | `common/protocol.py` | JSON value types, with no Qt dependency |
 | `binarize/app.py` | Desktop window, project actions and lazy preview scheduling |

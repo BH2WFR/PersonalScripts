@@ -12,6 +12,7 @@ from pathlib import Path
 import datetime
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_widgets import NoWheelComboBox
 from utils import *
 
 from . import USAGE_NOTICE
@@ -131,7 +132,7 @@ class KeyPicker(QtWidgets.QWidget):
         self.allow_disable = allow_disable
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.combo = QtWidgets.QComboBox()
+        self.combo = NoWheelComboBox()
         self.combo.setEditable(True)
         self.combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
         self.combo.setMinimumWidth(420)

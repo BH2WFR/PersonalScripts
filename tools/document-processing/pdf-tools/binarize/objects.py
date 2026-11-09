@@ -16,9 +16,9 @@ from typing import cast
 from PIL import Image
 import numpy as np
 import pymupdf
-from pymupdf import mupdf
+import pymupdf.mupdf as mupdf
 from pypdf import PdfReader
-from pypdf.generic import ArrayObject, ContentStream, DictionaryObject, IndirectObject, NameObject, PdfObject, read_object
+from pypdf.generic import ArrayObject, ContentStream, DictionaryObject, FloatObject, IndirectObject, NameObject, NumberObject, PdfObject, read_object
 from utils import *
 
 from . import raster, regions
@@ -74,6 +74,16 @@ def _parse(data: bytes) -> ContentStream:
     stream = ContentStream(None, None, forced_encoding="bytes")
     stream.set_data(data)
     return stream
+
+
+def _numeric_operands(operands: _Operands) -> list[float]:
+    """Require numeric PDF operands before converting path or matrix coordinates."""
+    values: list[float] = []
+    for value in operands:
+        if not isinstance(value, (NumberObject, FloatObject)):
+            raise ValueError("PDF path and matrix operands must be numbers.")
+        values.append(float(value))
+    return values
 
 
 def _entries(document: pymupdf.Document, owner: int, category: str) -> DictionaryObject:
@@ -340,7 +350,7 @@ class _Engine:
         for box in boxes:
             rect = (pymupdf.Rect(box.rect) * normalized) & pymupdf.Rect(0, 0, 1, 1)
             if not rect.is_empty:
-                mapped.append(replace(box, rect=cast(regions._Rect, tuple(rect))))
+                mapped.append(replace(box, rect=(rect.x0, rect.y0, rect.x1, rect.y1)))
         return tuple(mapped)
 
     def _finish(self) -> None:
@@ -475,6 +485,8 @@ class _Engine:
             initial.ctm = pymupdf.Matrix(*(float(value) for value in matrix.strip("[]").split())) * state.ctm
         own = _object(document, _dictionary(document, target, "Resources"))
         data = document.xref_stream(target)
+        if data is None:
+            raise ValueError("PDF tiling pattern has no content stream.")
         if document.xref_get_key(target, "PaintType")[1] == "2":
             # Turn an uncolored tile into a colored tile, recording its inherited
             # source color so text remains unchanged while paths can turn black.
@@ -528,7 +540,7 @@ class _Engine:
                                  state.stroke.commands(document, resources, True)]
         commands.extend(value for _, value in state.lines)
         for operands, op, matrix in path:
-            values = [float(value) for value in operands]
+            values = _numeric_operands(operands)
             relative = matrix * ~state.ctm
             if op == b"re":
                 x, y, width, height = values
@@ -583,7 +595,7 @@ class _Engine:
         used: set[str] = set()
         path: list[tuple[_Operands, bytes, pymupdf.Matrix]] = []
         for raw_operands, op in stream.operations:
-            operands = cast(_Operands, raw_operands)
+            operands: _Operands = cast(_Operands, raw_operands)
             if op == b"q":
                 stack.append(replace(state))
             elif op == b"Q":
@@ -591,7 +603,7 @@ class _Engine:
                     raise ValueError("Unbalanced PDF graphics-state stack.")
                 state = stack.pop()
             elif op == b"cm":
-                state.ctm = pymupdf.Matrix(*(float(value) for value in operands)) * state.ctm
+                state.ctm = pymupdf.Matrix(*_numeric_operands(operands)) * state.ctm
             elif op in (b"w", b"J", b"j", b"M", b"d", b"i"):
                 command = " ".join(_serialize(value) for value in operands).encode() + b" " + op
                 state.lines = tuple(item for item in state.lines if item[0] != op) + ((op, command),)
@@ -619,15 +631,19 @@ class _Engine:
                     if kind != "null":
                         form_state.ctm = pymupdf.Matrix(*(float(value) for value in matrix.strip("[]").split())) * state.ctm
                     own = _dictionary(document, target, "Resources") if document.xref_get_key(target, "Resources")[0] != "null" else resources
+                    form_data = document.xref_stream(target)
+                    if form_data is None:
+                        raise ValueError("PDF Form XObject has no content stream.")
                     rewritten, own_resource, form_changed = self.rewrite(
-                        document.xref_stream(target), own, form_state, (*ancestors, target))
+                        form_data, own, form_state, (*ancestors, target))
                     if form_changed:
                         replacement = _object(document, document.xref_object(target), rewritten)
                         document.xref_set_key(replacement, "Resources", f"{own_resource} 0 R")
                 if replacement != target or op == b"INLINE IMAGE":
                     name = f"Binary{replacement}"
                     document.xref_set_key(resource, f"XObject/{name}", f"{replacement} 0 R")
-                    operands, op, changed = [NameObject(f"/{name}")], b"Do", True
+                    operands = [NameObject(f"/{name}")]
+                    op, changed = b"Do", True
                 used.add(name)
             elif ((op in _PAINT and (self.processing.vectors or state.fill.pattern or state.stroke.pattern))
                   or (self.processing.vectors and op == b"sh")):
@@ -677,7 +693,7 @@ class _Engine:
         """Process one page in place, retaining its dictionary, geometry and features."""
         page = self.document[index]
         self.page_rect, self.overrides, self.boxes = page.rect, overrides, []
-        initial = _State(ctm=page.transformation_matrix * page.rotation_matrix)
+        initial = _State(ctm=pymupdf.Matrix(page.transformation_matrix) * pymupdf.Matrix(page.rotation_matrix))
         data, resource, changed = self.rewrite(page.read_contents(), _resources(self.document, page), initial)
         while self.pending:
             self._finish()

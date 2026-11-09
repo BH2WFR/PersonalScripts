@@ -1,6 +1,7 @@
 """Shared PDF authentication, bookmarks, labels, rendering and safe new-file output.
 
-PyMuPDF is imported lazily; importing utils never loads PDF or GUI libraries.
+PyMuPDF is imported lazily; fixed-canvas pixmap rotation also lazily uses PySide6.
+Importing utils never loads PDF or GUI libraries.
 Operations on open documents stay in memory until Pdf.save_new is explicitly called.
 """
 
@@ -102,6 +103,56 @@ class _OutputStream:
 
 class Pdf:
     """Common PDF operations used by the document-processing scripts."""
+
+    @staticmethod
+    def rotate_pixmap(pixmap: "pymupdf.Pixmap", angle: float) -> "pymupdf.Pixmap":
+        """Rotate rendered RGB content on a fixed white canvas without shrinking.
+
+        Args:
+            pixmap: Nonempty, opaque RGB pixmap; never modified.
+            angle: Clockwise degrees from -180 to 180; finite. Rotation is
+                around the image center, clipping content beyond the canvas.
+        Returns:
+            RGB pixmap with unchanged dimensions, origin and DPI. Zero degrees
+            returns the input itself; other angles allocate a new pixmap.
+        Raises:
+            ValueError: Angle is invalid or pixmap is not nonempty opaque RGB.
+            ImportError: PyMuPDF or, for nonzero rotation, PySide6 is unavailable.
+        Uses smooth interpolation. Requires no QApplication and performs no
+        PDF edits, file writes or shared-memory operations.
+        """
+        import pymupdf
+
+        if not math.isfinite(angle) or not -180 <= angle <= 180:
+            raise ValueError("Rotation must be between -180 and 180 degrees.")
+        if (pixmap.width <= 0 or pixmap.height <= 0 or pixmap.alpha or pixmap.colorspace is None
+                or pixmap.colorspace.name != pymupdf.csRGB.name):
+            raise ValueError("Rotation requires a nonempty opaque RGB pixmap.")
+        if angle == 0:
+            return pixmap
+        from PySide6 import QtCore, QtGui
+
+        width, height = pixmap.width, pixmap.height
+        samples = pixmap.samples
+        source = QtGui.QImage(samples, width, height, width * 3, QtGui.QImage.Format.Format_RGB888)
+        target = QtGui.QImage(width, height, QtGui.QImage.Format.Format_RGB888)
+        target.fill(QtCore.Qt.GlobalColor.white)
+        painter = QtGui.QPainter(target)
+        try:
+            painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+            painter.translate(width / 2, height / 2)
+            painter.rotate(angle)
+            painter.drawImage(QtCore.QPointF(-width / 2, -height / 2), source)
+        finally:
+            painter.end()
+        # QImage aligns rows to four bytes; PyMuPDF expects packed RGB.
+        pixels = target.constBits()
+        stride = target.bytesPerLine()
+        packed = b"".join(pixels[y * stride:y * stride + width * 3] for y in range(height))
+        result = pymupdf.Pixmap(pymupdf.csRGB, width, height, packed, False)
+        result.set_origin(pixmap.x, pixmap.y)
+        result.set_dpi(pixmap.xres, pixmap.yres)
+        return result
 
     @staticmethod
     def render_page(page: "pymupdf.Page", *, dpi: float = 200, rotation: float = 0,

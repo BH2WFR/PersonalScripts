@@ -81,7 +81,7 @@ def _publish_region_files(
     except OSError as exc:
         raise OSError(f"PDF was saved to {output_path}, but region review output failed: {exc}") from exc
     if settings.active:
-        print(f"{FLCyan}Protected regions: {sum(map(len, records.values()))}; "
+        print(f"{FLCyan}Protected regions: {sum(len(boxes) for boxes in records.values())}; "
               f"background: lossless 1-bit CCITT Group 4.{CRst}")
 
 
@@ -137,7 +137,7 @@ def _binarize_pdf(
                 choice = Menu.select(
                     [MenuOption([default_skip], "Keep cover pages unchanged", default_skip),
                      MenuOption(["none"], "Process every page", "")],
-                    prompt="Physical PDF pages to skip (e.g. 1-3,5,-1; -1 = last)",
+                    prompt="Physical PDF pages to skip (e.g. 1-3,5,-1; -1 = last; append |odd or |even)",
                     default_key=default_skip, required=True, accept_custom_string=True,
                     separator=False,
                 )

@@ -19,6 +19,7 @@ import pymupdf
 
 from utils import *
 from ..common.protocol import Json, MAX_PREVIEW_PIXELS
+from ..common.task_control import Cancelled, TaskControl, publish as _publish
 from ..common.pdf_images import inspect_images
 from ..common.pixel_transfer import preview_reply
 from . import objects, regions, workflow
@@ -27,16 +28,6 @@ from .settings import _Processing
 
 DISPLAY_DPI = 300
 MAX_DISPLAY_PIXELS = MAX_PREVIEW_PIXELS
-COPY_BYTES = 1024 * 1024
-
-
-class Cancelled(RuntimeError):
-    """Cooperative cancellation before publication or at a page boundary."""
-
-
-def _check_cancel(path: Path | None) -> None:
-    if path is not None and path.exists():
-        raise Cancelled("Conversion cancelled.")
 
 
 def _overrides(project: Project, config: Config) -> dict[int, tuple[regions._Region, ...]]:
@@ -86,35 +77,18 @@ def _preview(project: Project, password: str, source: pymupdf.Document, raw: boo
                 page = document[0]
         pixmap = Pdf.render_page(page, dpi=DISPLAY_DPI, max_pixels=MAX_DISPLAY_PIXELS)
         images = inspect_images(page)
-        return {"kind": "preview", "page": project.current_page, "width": pixmap.width, "height": pixmap.height,
+        metadata: dict[str, Json] = {"kind": "preview", "page": project.current_page, "width": pixmap.width, "height": pixmap.height,
                 "page_size": [page.rect.width, page.rect.height],
                 "regions": [list(box.rect) for box in boxes],
                 "images": [image.to_data() for image in images],
-                "regions_available": not original or project.show_regions}, (
-                    pixmap.samples if raw else pixmap.pil_tobytes(format="PNG", compress_level=1))
-
-
-def _publish(staged: Path, output: Path, cancel: Path | None, overwrite: bool = False) -> None:
-    """Publish a completed stage exclusively, or replace an explicitly approved output."""
-    _check_cancel(cancel)
-    if overwrite:
-        staged.replace(output)
-        return
-    with output.open("xb") as destination:
-        try:
-            with staged.open("rb") as source:
-                while chunk := source.read(COPY_BYTES):
-                    _check_cancel(cancel)
-                    destination.write(chunk)
-        except BaseException:
-            destination.close()
-            output.unlink(missing_ok=True)
-            raise
+                "regions_available": not original or project.show_regions}
+        return metadata, pixmap.samples if raw else pixmap.pil_tobytes(format="PNG", compress_level=1)
 
 
 def export_project(project: Project, output: Path, password: str = "", *,
                    progress: Callable[[dict[str, Json]], None] | None = None,
-                   cancel: Path | None = None, one_page: bool = False, overwrite: bool = False) -> None:
+                   cancel: Path | None = None, one_page: bool = False, overwrite: bool = False,
+                   pause: Path | None = None) -> None:
     """Export current profiles while preserving source objects and original order.
 
     Args:
@@ -123,6 +97,8 @@ def export_project(project: Project, output: Path, password: str = "", *,
         password: In-memory input password, never written to project files.
         progress: Optional receiver of page/save stage messages.
         cancel: Optional marker file checked at page and publication boundaries.
+        pause: While this marker exists, wait at safe boundaries; cancellation
+            remains responsive. Current page encoding/PDF save finishes first.
         one_page: Export only the current page, including its chosen viewing mode.
         overwrite: Explicit GUI approval to atomically replace an existing output.
 
@@ -146,14 +122,16 @@ def export_project(project: Project, output: Path, password: str = "", *,
     records: dict[int, tuple[regions._Region, ...]] = {}
     annotations: dict[int, bytes] = {}
     send = progress or (lambda message: None)
-    _check_cancel(cancel)
+
+    checkpoint = TaskControl(cancel, pause, send).checkpoint
+    checkpoint()
     # ── stage the PDF before publishing a new destination ──
     with tempfile.TemporaryDirectory(prefix=".pdf-tools-", dir=output.parent) as directory:
         staged = Path(directory) / "result.pdf"
         if one_page:
             document, boxes = _preview_document(project, password)
             with document:
-                _check_cancel(cancel)
+                checkpoint()
                 if project.assignments[project.current_page] != SKIP_ID and not project.show_original:
                     records[project.current_page] = boxes
                     if review.preview_dir:
@@ -161,6 +139,7 @@ def export_project(project: Project, output: Path, password: str = "", *,
                             pixmap = source[project.current_page].get_pixmap(dpi=100, alpha=False)
                             with Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples) as image:
                                 annotations[project.current_page] = regions._annotation(image, boxes)
+                checkpoint()
                 Pdf.save_new(document, staged)
         else:
             with Pdf.open_document(project.source, password=password, interactive=False) as (document, _):
@@ -180,7 +159,7 @@ def export_project(project: Project, output: Path, password: str = "", *,
                     with closing(objects._Engine(document, config.dpi, config.threshold,
                                                  _processing(project, config), project.output.workers)) as engine:
                         for index in selected:
-                            _check_cancel(cancel)
+                            checkpoint()
                             original: Image.Image | None = None
                             try:
                                 if review.preview_dir:
@@ -195,10 +174,11 @@ def export_project(project: Project, output: Path, password: str = "", *,
                             completed += 1
                             send({"kind": "progress", "done": completed, "total": project.page_count,
                                   "stage": f"Processed page {index + 1}"})
-                _check_cancel(cancel)
+                checkpoint()
                 send({"kind": "progress", "stage": "Writing PDF", "done": project.page_count, "total": project.page_count})
+                checkpoint()
                 Pdf.save_new(document, staged)
-        _publish(staged, output, cancel, overwrite)
+        _publish(staged, output, cancel, overwrite, checkpoint)
     if review.export or review.preview_dir:
         workflow._publish_region_files(project.source, output, project.page_count, review, records, annotations)
 
@@ -252,9 +232,10 @@ class Worker:
             raise ValueError(f"Unknown operation: {operation}")
         output = Path(text_value(request.get("output"), "Output PDF"))
         marker = request.get("cancel")
+        pause = request.get("pause")
         export_project(project, output, password, progress=send,
                        cancel=Path(str(marker)) if marker else None, one_page=operation == "export-page",
-                       overwrite=request.get("overwrite") is True)
+                       overwrite=request.get("overwrite") is True, pause=Path(str(pause)) if pause else None)
         return {"kind": "exported", "path": str(output), "one_page": operation == "export-page",
                 "before_bytes": project.source.stat().st_size, "after_bytes": output.stat().st_size}
 

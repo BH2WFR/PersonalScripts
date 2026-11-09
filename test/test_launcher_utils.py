@@ -20,6 +20,7 @@ from unittest.mock import patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 SPEC = importlib.util.spec_from_file_location("launcher_utils_test_target", ROOT / "run-script.py")
 assert SPEC is not None and SPEC.loader is not None
 launcher = importlib.util.module_from_spec(SPEC)
@@ -36,12 +37,13 @@ class ScratchCase(unittest.TestCase):
         directory = tempfile.TemporaryDirectory(prefix="launcher-utils-", dir=ROOT / "tmp")
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        self.enterContext(patch.object(launcher.ConfigStore, "directory", return_value=self.root / "user-config"))
         (self.root / "tools").mkdir()
         (self.root / "deps").mkdir()
         config: dict[str, object] = {
             "launcher": {
                 "script-root": "tools", "test": {"enabled": False, "test-root": "test"},
-                "additional-path-env": "LAUNCHER_TEST_PATHS", "requirements-file": "requirements.txt",
+                "requirements-file": "requirements.txt",
                 "excluded-paths": [],
                 "script-types": {name: {"extension": extension, "color": "CRst"} for name, extension in (
                     ("python", ".py"), ("bash", ".sh"), ("powershell", ".ps1"))},
@@ -94,7 +96,7 @@ class PathTests(ScratchCase):
         self.assertEqual(config.extra_env_paths, (str(self.root / "deps"),))
         raw = os.pathsep.join([" deps ", "", "./deps", "missing", "./missing", "tools"])
         stderr = io.StringIO()
-        with patch.dict(os.environ, {"LAUNCHER_TEST_PATHS": raw}), contextlib.redirect_stderr(stderr):
+        with patch.object(launcher.ConfigStore, "load", return_value={"additional-paths": ["deps", "./deps", "missing", "./missing", "tools"]}), contextlib.redirect_stderr(stderr):
             paths = launcher._resolve_additional_directories(str(self.root), config)
         self.assertEqual(paths, [str(self.root / "deps"), str(self.root / "tools")])
         self.assertEqual(stderr.getvalue().count("Ignoring missing additional directory:"), 1)
@@ -177,13 +179,13 @@ class LauncherTests(ScratchCase):
     """Protect pass-through arguments, shell policy, stdin support, and exit codes."""
 
     def test_environment_option_precedence_and_argument_passthrough(self) -> None:
-        with patch.dict(os.environ, {"ZL_CONDA_ENV": "from-variable"}):
+        with patch.object(launcher.ConfigStore, "load", return_value={"conda-environment": "from-config"}):
             invocation = launcher._parse_launcher_invocation(["--env=chosen", "--env-info", "tool", "--env=target-argument", "a b"])
             self.assertEqual(launcher._default_conda_env_name(invocation.conda_env_name), "chosen")
             self.assertEqual(invocation.arguments, ("tool", "--env=target-argument", "a b"))
             self.assertTrue(invocation.probe_environment_versions)
-            self.assertEqual(launcher._default_conda_env_name(None), "from-variable")
-        with patch.dict(os.environ, {"ZL_CONDA_ENV": " "}):
+            self.assertEqual(launcher._default_conda_env_name(None), "from-config")
+        with patch.object(launcher.ConfigStore, "load", return_value={}):
             self.assertEqual(launcher._default_conda_env_name(None), "base")
 
     def test_shell_selection_flags_and_exit_codes_are_unchanged(self) -> None:
@@ -204,7 +206,7 @@ class LauncherTests(ScratchCase):
                 patch.object(launcher.Environment, "print_env_info") as info, \
                 patch.object(sys, "argv", ["run-script.py"]), \
                 patch.object(sys, "stdin", io.StringIO("example --env=target-argument value\n")), \
-                patch.object(sys, "path", list(sys.path)), patch.dict(os.environ, {"LAUNCHER_TEST_PATHS": "", "ZL_CONDA_ENV": "base"}), \
+                patch.object(sys, "path", list(sys.path)), patch.object(launcher.ConfigStore, "load", return_value={}), \
                 patch.object(subprocess, "run") as run, contextlib.redirect_stdout(stdout):
             self.assertEqual(launcher.main(), 19)
             resolve.assert_called_once_with("base")

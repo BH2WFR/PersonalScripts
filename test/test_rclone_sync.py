@@ -8,6 +8,7 @@ import contextlib
 import datetime
 import io
 import os
+from pathlib import Path
 import subprocess
 import sys
 import unittest
@@ -27,7 +28,11 @@ class WorkflowTests(unittest.TestCase):
             return True
 
         self.output = io.StringIO()
-        self.enterContext(patch.dict(os.environ, {models.ENV_SCHEMA_FILE: "schema.yaml"}, clear=True))
+        self.enterContext(patch.dict(os.environ, {}, clear=True))
+        self.enterContext(patch.object(utility.ConfigStore, "load", return_value={}))
+        self.enterContext(patch.object(utility.ConfigStore, "ensure"))
+        self.enterContext(patch.object(utility.ConfigStore, "directory", return_value=Path.cwd() / "test-user-config"))
+        self.resolver = self.enterContext(patch.object(utility.ConfigStore, "resolve_file", side_effect=lambda path: path.absolute()))
         self.enterContext(patch.object(utility.Environment, "check_commands", side_effect=locate))
         self.enterContext(patch.object(backend, "_detect_encrypted_config", return_value=False))
         self.enterContext(patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "rclone test", "")))
@@ -374,24 +379,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("--exclude", self.run.call_args.args[0])
         self.assertEqual(self.run.call_args.args[0][:4], ["rclone", "moveto", "b.ini", "a.ini"])
 
-    def test_cli_requires_an_explicit_schema_instead_of_loading_the_sample(self) -> None:
-        os.environ.pop(models.ENV_SCHEMA_FILE)
-        with patch.object(sys, "argv", ["runner", "--task", "test/demo"]), patch("builtins.open") as open_file:
+    def test_missing_redirect_stops_before_any_transfer(self) -> None:
+        self.resolver.side_effect = FileNotFoundError("Missing configured target")
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo"]):
             self.assertEqual(app.main(), 1)
-        self.assertIn("With --task, specify --schema-file", self.output.getvalue())
-        self.assertIn("sample is documentation only", self.output.getvalue())
-        open_file.assert_not_called()
+        self.assertIn("Cannot load rclone task configuration", self.output.getvalue())
         self.run.assert_not_called()
 
-    def test_interactive_startup_has_no_bundled_schema_suggestion(self) -> None:
-        os.environ.pop(models.ENV_SCHEMA_FILE)
+    def test_interactive_startup_loads_user_file_without_path_prompt(self) -> None:
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [{"path1": "local", "path2": "remote:"}]}]}]}}
-        with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(utility.Input, "resolve_input_path", return_value="personal.yaml") as prompt, patch("builtins.input", return_value="q"):
+        with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(utility.Input, "resolve_input_path") as prompt, patch("builtins.input", return_value="q"):
             self.assertEqual(app.main(), 0)
-        self.assertEqual(prompt.call_args.args[0], "")
+        prompt.assert_not_called()
+        self.assertEqual(self.resolver.call_args.args[0], utility.ConfigStore(app.RCLONE_CONFIG).path)
         self.run.assert_not_called()
 
-    def test_cli_schema_takes_precedence_over_the_environment(self) -> None:
+    def test_cli_schema_takes_precedence_over_user_configuration(self) -> None:
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [{"path1": "local", "path2": "remote:"}]}]}]}}
         with patch.object(sys, "argv", ["runner", "--schema-file", "chosen.yaml", "--task", "test/demo"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))) as open_file, patch("builtins.input", return_value="q"):
             self.assertEqual(app.main(), 0)
@@ -419,9 +422,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_path_error_returns_to_menu_without_reloading_schema_or_password(self) -> None:
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [{"path1": "$MISSING/files", "path2": "remote:"}]}]}]}}
-        with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(utility.Input, "resolve_input_path", return_value="schema.yaml") as schema_path, patch.object(schema_ops, "_load_schema", wraps=schema_ops._load_schema) as load, patch.object(backend, "_verify_config_password", return_value=True) as verify, patch.dict(os.environ, {models.ENV_CONFIG_PASSWORD: "test-password"}), patch("builtins.input", side_effect=["0", "q"]):
+        with patch.object(sys, "argv", ["runner"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(utility.Input, "resolve_input_path", return_value="schema.yaml") as schema_path, patch.object(schema_ops, "_load_schema", wraps=schema_ops._load_schema) as load, patch.object(backend, "_verify_config_password", return_value=True) as verify, patch.object(utility.ConfigStore, "load", return_value={"rclone-sync": {"config-password": "test-password"}}), patch("builtins.input", side_effect=["0", "q"]):
             self.assertEqual(app.main(), 0)
-        schema_path.assert_called_once()
+        schema_path.assert_not_called()
         load.assert_called_once()
         verify.assert_called_once()
         self.run.assert_not_called()

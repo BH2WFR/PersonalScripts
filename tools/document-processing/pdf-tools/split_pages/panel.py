@@ -1,6 +1,7 @@
 """Compact global/current-page group boxes; geometry edits commit on editingFinished."""
 
 from PySide6 import QtCore, QtWidgets
+from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
 from .model import Axis, Box, Settings, MAX_PIECES, dividers
 
 NUDGE_POINTS = 10.0
@@ -51,13 +52,13 @@ class SplitPanel(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.general = QtWidgets.QGroupBox("General")
         form = QtWidgets.QFormLayout(self.general)
-        self.count = QtWidgets.QSpinBox()
+        self.count = NoWheelSpinBox()
         self.count.setRange(1, MAX_PIECES)
         self.count.setKeyboardTracking(False)
         self.count.setValue(2)
         self.count.editingFinished.connect(self._global_commit)
         form.addRow("Pieces per page", self.count)
-        self.axis = QtWidgets.QComboBox()
+        self.axis = NoWheelComboBox()
         self.axis.addItem("Left / right", Axis.LEFT_RIGHT)
         self.axis.addItem("Top / bottom", Axis.TOP_BOTTOM)
         self.axis.currentIndexChanged.connect(self._global_commit)
@@ -70,9 +71,9 @@ class SplitPanel(QtWidgets.QWidget):
         self.reverse = QtWidgets.QCheckBox("Reverse order")
         self.reverse.toggled.connect(self._global_commit)
         form.addRow(self.reverse)
-        self.start = QtWidgets.QSpinBox()
+        self.start = NoWheelSpinBox()
         self.start.setRange(1, 1)
-        self.end = QtWidgets.QSpinBox()
+        self.end = NoWheelSpinBox()
         self.end.setRange(0, 1)
         self.end.setSpecialValueText("Last page")
         for title, spin in (("First split page", self.start), ("Last split page", self.end)):
@@ -92,10 +93,10 @@ class SplitPanel(QtWidgets.QWidget):
         self.reset = QtWidgets.QPushButton("Reset to general settings")
         self.reset.clicked.connect(self.resetRequested)
         current_layout.addWidget(self.reset)
-        self.geometry = QtWidgets.QWidget()
-        controls = QtWidgets.QFormLayout(self.geometry)
+        self.geometry_controls = QtWidgets.QWidget()
+        controls = QtWidgets.QFormLayout(self.geometry_controls)
         controls.setContentsMargins(0, 0, 0, 0)
-        self.selection = QtWidgets.QComboBox()
+        self.selection = NoWheelComboBox()
         self.selection.currentIndexChanged.connect(self._select_box)
         self.selection.addItem("All")
         controls.addRow("Crop", self.selection)
@@ -122,7 +123,7 @@ class SplitPanel(QtWidgets.QWidget):
             controls.addRow(label, row)
             spin.setToolTip(TIPS[label])
             self._label_tip(controls, row, TIPS[label])
-        self.divider = QtWidgets.QComboBox()
+        self.divider = NoWheelComboBox()
         self.divider.currentIndexChanged.connect(self._select_divider)
         controls.addRow("Shared divider", self.divider)
         row = QtWidgets.QHBoxLayout()
@@ -143,7 +144,7 @@ class SplitPanel(QtWidgets.QWidget):
         note = QtWidgets.QLabel("Coordinates: top-left origin, in pt (1/72 inch).\nOutside the source: blank. Smaller crops: centered on the same paper size.")
         note.setWordWrap(True)
         controls.addRow(note)
-        current_layout.addWidget(self.geometry)
+        current_layout.addWidget(self.geometry_controls)
         layout.addWidget(self.current)
         layout.addStretch(1)
         for key, editor in (("count", self.count), ("axis", self.axis), ("order", self.order),
@@ -169,7 +170,7 @@ class SplitPanel(QtWidgets.QWidget):
 
     @staticmethod
     def _point_spin() -> QtWidgets.QDoubleSpinBox:
-        spin = QtWidgets.QDoubleSpinBox()
+        spin = NoWheelDoubleSpinBox()
         spin.setRange(0, MAX_PAGE_POINTS)
         spin.setDecimals(3)
         spin.setSingleStep(1)
@@ -208,7 +209,7 @@ class SplitPanel(QtWidgets.QWidget):
             self._boxes, self._axis = boxes, axis
             self._width, self._height = width, height
             self.keep.setChecked(keep)
-            self.geometry.setEnabled(not keep)
+            self.geometry_controls.setEnabled(not keep)
             self.reset.setEnabled(custom)
             self.selection.clear()
             self.selection.addItem("All")

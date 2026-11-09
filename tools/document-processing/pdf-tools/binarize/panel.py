@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import cast
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
 
 from ..common.protocol import Json
 from . import regions
@@ -169,7 +170,7 @@ class SettingsPanel(QtWidgets.QTabWidget):
             original = values[spec.key]
             editor: Editor
             if spec.choices:
-                combo = QtWidgets.QComboBox()
+                combo = NoWheelComboBox()
                 for value, label in spec.choices:
                     combo.addItem(label, value)
                 combo.activated.connect(lambda _, key=spec.key: self._commit(key))
@@ -180,12 +181,12 @@ class SettingsPanel(QtWidgets.QTabWidget):
                 editor = check
             else:
                 if type(original) is float or original is None:
-                    spin = QtWidgets.QDoubleSpinBox()
+                    spin = NoWheelDoubleSpinBox()
                     spin.setDecimals(2)
                     spin.setRange(spec.minimum, spec.maximum)
                     spin.setSingleStep(spec.step)
                 else:
-                    spin = QtWidgets.QSpinBox()
+                    spin = NoWheelSpinBox()
                     spin.setRange(int(spec.minimum), int(spec.maximum))
                     spin.setSingleStep(int(spec.step))
                 spin.setKeyboardTracking(False)

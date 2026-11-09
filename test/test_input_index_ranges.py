@@ -220,5 +220,95 @@ class InputIndexRangesTests(unittest.TestCase):
                 Input.input_index_ranges("Skip", item_count=10)
 
 
+class RangeParityTests(unittest.TestCase):
+    """Keep parity filters compatible with numbering, validation and prompts."""
+
+    def test_integer_suffix_preserves_order_duplicates_and_signed_values(self) -> None:
+        self.assertEqual(Input.parse_integer_ranges("1,2-5|odd"), (1, 3, 5))
+        self.assertEqual(Input.parse_integer_ranges("1,2-5|even"), (2, 4))
+        self.assertEqual(Input.parse_integer_ranges("3--3,1,1 | ODD "), (3, 1, -1, -3, 1, 1))
+        self.assertEqual(Input.parse_integer_ranges("3--3,0|even"), (2, 0, -2, 0))
+
+    def test_explicit_filter_and_matching_suffix(self) -> None:
+        self.assertEqual(Input.parse_integer_ranges("1-5", parity=RangeParity.EVEN), (2, 4))
+        self.assertEqual(Input.parse_integer_ranges("1-5|odd", parity=RangeParity.ODD), (1, 3, 5))
+        self.assertEqual(Input.parse_index_ranges("all", item_count=5, parity=RangeParity.ODD), (0, 2, 4))
+
+    def test_index_filter_uses_displayed_numbers_not_returned_indexes(self) -> None:
+        self.assertEqual(Input.parse_index_ranges("1,2-5|odd", item_count=5), (0, 2, 4))
+        self.assertEqual(Input.parse_index_ranges("1,2-5|even", item_count=5), (1, 3))
+        self.assertEqual(Input.parse_index_ranges("2,5,5|odd", item_count=5), (4,))
+        self.assertEqual(Input.parse_index_ranges("0-4|odd", item_count=5, allow_zero=True), (1, 3))
+        self.assertEqual(Input.parse_index_ranges("all|even", item_count=5, allow_zero=True), (0, 2, 4))
+
+    def test_negative_indexes_are_resolved_before_filtering(self) -> None:
+        self.assertEqual(Input.parse_index_ranges("-3--1|odd", item_count=6), (4,))
+        self.assertEqual(Input.parse_index_ranges("-3--1|even", item_count=6), (3, 5))
+        self.assertEqual(Input.parse_index_ranges("-3--1|even", item_count=5, allow_zero=True), (2, 4))
+
+    def test_all_none_and_empty_results(self) -> None:
+        self.assertEqual(Input.parse_index_ranges(" ALL | EVEN ", item_count=5), (1, 3))
+        for count in (0, 5):
+            self.assertEqual(Input.parse_index_ranges("none|odd", item_count=count), ())
+        self.assertEqual(Input.parse_index_ranges("all|even", item_count=0), ())
+        self.assertEqual(Input.parse_index_ranges("1|even", item_count=1), ())
+        self.assertEqual(Input.parse_integer_ranges("2,4|odd"), ())
+        self.assertEqual(Input.parse_integer_ranges("", parity=RangeParity.ODD), ())
+
+    def test_invalid_selection_cannot_be_filtered_away(self) -> None:
+        for text in ("0|odd", "-1-1|odd"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Input.parse_integer_ranges(text, allow_zero=False)
+        for text in ("0|odd", "6|odd", "-6|even", "3-1|odd", "1-6|odd"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Input.parse_index_ranges(text, item_count=5)
+
+    def test_invalid_suffixes_and_conflicting_arguments(self) -> None:
+        for text in ("1|", "1|other", "1|odd|even", "1|odd,2", "|odd", "|even"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Input.parse_integer_ranges(text)
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Input.parse_index_ranges(text, item_count=5)
+        with self.assertRaises(ValueError):
+            Input.parse_integer_ranges("1-5|odd", parity=RangeParity.EVEN)
+        with self.assertRaises(ValueError):
+            Input.parse_index_ranges("none|even", item_count=5, parity=RangeParity.ODD)
+
+    def test_suffix_switch_does_not_disable_explicit_argument(self) -> None:
+        with self.assertRaises(ValueError):
+            Input.parse_integer_ranges("1-5|odd", allow_parity=False)
+        with self.assertRaises(ValueError):
+            Input.parse_index_ranges("all|even", item_count=5, allow_parity=False)
+        self.assertEqual(Input.parse_integer_ranges("1-5", allow_parity=False, parity=RangeParity.ODD), (1, 3, 5))
+        self.assertEqual(Input.parse_index_ranges("all", item_count=5, allow_parity=False), tuple(range(5)))
+
+    def test_interactive_suffix_retry_and_filtered_empty_selection(self) -> None:
+        output = io.StringIO()
+        with patch("builtins.input", side_effect=["1-5|other", "1-5|odd"]), contextlib.redirect_stdout(output):
+            self.assertEqual(Input.input_integer_ranges("Values"), (1, 3, 5))
+        self.assertIn("|odd", output.getvalue())
+        self.assertIn("|even", output.getvalue())
+        with patch("builtins.input", return_value="1|even"), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(Input.input_index_ranges("Pages", item_count=3), ())
+
+    def test_interactive_defaults_and_explicit_filter(self) -> None:
+        with patch("builtins.input", return_value=""), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(Input.input_integer_ranges("Values", default="1-5|even"), (2, 4))
+            self.assertEqual(Input.input_index_ranges("Pages", item_count=5, default="all|odd"), (0, 2, 4))
+            self.assertEqual(Input.input_index_ranges("Pages", item_count=5, default="all",
+                                                    parity=RangeParity.EVEN), (1, 3))
+        with patch("builtins.input") as prompt, self.assertRaises(ValueError):
+            Input.input_integer_ranges("Values", default="1-5|odd", allow_parity=False)
+        prompt.assert_not_called()
+        with patch("builtins.input") as prompt, self.assertRaises(ValueError):
+            Input.input_index_ranges("Pages", item_count=5, default="all|odd", parity=RangeParity.EVEN)
+        prompt.assert_not_called()
+
+    def test_continuous_real_ranges_remain_unfiltered(self) -> None:
+        for text in ("1-5|odd", "1-5|even"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Input.parse_real_ranges(text)
+
+
 if __name__ == "__main__":
     unittest.main()

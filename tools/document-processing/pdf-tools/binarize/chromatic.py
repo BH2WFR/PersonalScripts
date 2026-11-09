@@ -28,8 +28,8 @@ def _split(mask: Pixels, depth: int = 0) -> list[Box]:
             or depth >= 8 or (max(width, height) < 350 and density >= .06)):
         return [(x0, y0, x1, y1)]
     if depth == 0:
-        horizontal = cv2.morphologyEx(patch, cv2.MORPH_OPEN, np.ones((1, 70), np.uint8))
-        vertical = cv2.morphologyEx(patch, cv2.MORPH_OPEN, np.ones((70, 1), np.uint8))
+        horizontal = np.asarray(cv2.morphologyEx(patch, cv2.MORPH_OPEN, np.ones((1, 70), np.uint8)), dtype=np.uint8)
+        vertical = np.asarray(cv2.morphologyEx(patch, cv2.MORPH_OPEN, np.ones((70, 1), np.uint8)), dtype=np.uint8)
         lines = horizontal | vertical
         if lines.sum() > patch.sum() * .15:
             result: list[Box] = []
@@ -37,12 +37,12 @@ def _split(mask: Pixels, depth: int = 0) -> list[Box]:
                 _, _, stats, _ = cv2.connectedComponentsWithStats(direction, connectivity=8)
                 result.extend((x0 + int(x), y0 + int(y), x0 + int(x + w), y0 + int(y + h))
                               for x, y, w, h, _ in stats[1:])
-            rest = patch & ~cv2.dilate(lines, np.ones((3, 3), np.uint8))
+            rest = patch & ~np.asarray(cv2.dilate(lines, np.ones((3, 3), np.uint8)), dtype=np.uint8)
             _, labels, stats, _ = cv2.connectedComponentsWithStats(rest, connectivity=8)
             for label, (x, y, w, h, area) in enumerate(stats[1:], 1):
                 if area < 6:
                     continue
-                children = _split(np.uint8(labels[y:y + h, x:x + w] == label), depth + 1)
+                children = _split(np.asarray(labels[y:y + h, x:x + w] == label, dtype=np.uint8), depth + 1)
                 result.extend((x0 + int(x) + a, y0 + int(y) + b,
                                x0 + int(x) + c, y0 + int(y) + d) for a, b, c, d in children)
             return result
@@ -99,21 +99,21 @@ def detect(rgb: Pixels, gray: Pixels, cutoff: float) -> list[tuple[Box, bool]]:
     chroma = rgb.max(axis=2).astype(np.int16) - rgb.min(axis=2)
     strong = (chroma >= 35) & ((gray < 210) | (chroma >= 70))
     neutral = (gray < 160) & (chroma < 15)
-    strong &= cv2.dilate(np.uint8(neutral), np.ones((3, 3), np.uint8)) == 0
+    strong &= cv2.dilate(np.asarray(neutral, dtype=np.uint8), np.ones((3, 3), np.uint8)) == 0
     weak = (chroma >= 24) & ((gray < 215) | (chroma >= 65))
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(np.uint8(weak), connectivity=8)
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(np.asarray(weak, dtype=np.uint8), connectivity=8)
     counts = np.bincount(labels[strong], minlength=len(stats))
     selected = (counts >= 8 * cutoff) & (stats[:, 4] >= 12 * cutoff)
     selected[0] = False
-    ink = np.uint8(selected[labels])
-    mask = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, np.ones((5, 11), np.uint8))
+    ink = np.asarray(selected[labels], dtype=np.uint8)
+    mask = np.asarray(cv2.morphologyEx(ink, cv2.MORPH_CLOSE, np.ones((5, 11), np.uint8)), dtype=np.uint8)
     _, labels, stats, _ = cv2.connectedComponentsWithStats(
         cv2.dilate(mask, np.ones((9, 9), np.uint8)), connectivity=8)
     result: list[tuple[Box, bool]] = []
     for label, (x, y, width, height, area) in enumerate(stats[1:], 1):
         if area < 16 * cutoff:
             continue
-        patch = mask[y:y + height, x:x + width] & np.uint8(labels[y:y + height, x:x + width] == label)
+        patch = mask[y:y + height, x:x + width] & np.asarray(labels[y:y + height, x:x + width] == label, dtype=np.uint8)
         for a, b, c, d in _split(patch):
             x0, y0 = max(0, int(x) + a - 3), max(0, int(y) + b - 3)
             x1, y1 = min(gray.shape[1], int(x) + c + 3), min(gray.shape[0], int(y) + d + 3)
