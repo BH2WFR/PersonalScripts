@@ -40,6 +40,7 @@ from .qt_widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
 from .raw_view import DEFAULT_COLUMN_WIDTH
 from .workspace import MatrixEntry
 from .view_scaling import Axis, EqualAxes, FINE_ZOOM_STEP, ZOOM_STEP
+from .view_settings import AppearancePage
 from .matrix_properties import MatrixPropertiesDialog, capture_view_properties
 
 if TYPE_CHECKING:
@@ -188,7 +189,10 @@ class WorkspaceMenus(QtCore.QObject):
     def _show_properties(self, entry: MatrixEntry) -> None:
         """Inspect a snapshot of the chosen channel without activating it."""
         window = self.window
-        settings = dict(window._read_settings() if entry is window._entry() else entry.settings)
+        window._remember_locked_appearance()
+        settings = dict(window._read_settings() if entry is window._entry() else window._effective_settings(entry))
+        settings.update({f"appearance_lock_{page.name.lower()}": lock.isChecked()
+                         for page, lock in window.appearance_locks.items()})
         settings.update({"shared_color_lock": window.color_range_lock.isChecked(),
                          "shared_locked_color_range": str(window._locked_color_limits),
                          "signal_y_lock": window.scaling.y_range_lock,
@@ -418,6 +422,9 @@ class WorkspaceMenus(QtCore.QObject):
         appearance.setToolTipsVisible(True)
         appearance.menuAction().setToolTip("Select a visible matrix/channel to edit its rendering style and markers.")
         is_image = view == FigureView.IMAGE
+        lock = window.appearance_locks[AppearancePage.IMAGE if is_image else AppearancePage.SURFACE]
+        self._add(appearance, "Lock appearance across matrices", lock.toggle, checked=lock.isChecked())
+        appearance.addSeparator()
         self._combo_menu(appearance, "Rendering style", window.image_style if is_image else window.surface_style)
         self._number_menu(appearance, "Point size", window.image_point_size if is_image else window.point_size)
         return appearance
@@ -541,6 +548,9 @@ class WorkspaceMenus(QtCore.QObject):
             appearance = menu.addMenu("Appearance")
             appearance.setEnabled(appearance_ready)
             appearance.menuAction().setToolTip("Appearance of the active matrix/channel; background applies to all plots.")
+            lock = window.appearance_locks[AppearancePage.SIGNAL]
+            self._add(appearance, "Lock appearance across matrices", lock.toggle, checked=lock.isChecked())
+            appearance.addSeparator()
             self._combo_menu(appearance, "Rendering style", profile.style_selector)
             self._number_menu(appearance, "Line width", profile.line_width)
             self._number_menu(appearance, "Point size", profile.point_size)
@@ -554,6 +564,9 @@ class WorkspaceMenus(QtCore.QObject):
 
         if view != FigureView.DERIVATIVE:
             markers = appearance.addMenu("Value markers")
+            lock = window.appearance_locks[AppearancePage.MARKERS]
+            self._add(markers, "Lock marker appearance (all views)", lock.toggle, checked=lock.isChecked())
+            markers.addSeparator()
             if view in (FigureView.IMAGE, FigureView.SIGNAL):
                 self._add(markers, "Show Inf / -Inf / NaN", window.show_nonfinite.toggle,
                           checked=window.show_nonfinite.isChecked())

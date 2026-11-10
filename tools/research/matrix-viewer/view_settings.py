@@ -6,7 +6,9 @@ their signals and per-channel storage without a second copy of settings.
 The sidebar retains data interpretation, cropping, sampling and alignment.
 Changes apply immediately; Close retains them. Opening a page never selects a
 plot tab or calculates derivatives. Background, slice markers and axes options
-are shared; channel colors and point sizes target the visible active entry.
+are shared. Dimension-specific appearance locks default on; locked styles and
+sizes survive matrix/channel switches without replacing saved local settings.
+Value marker flags/sizes have a shared lock; colors and ranges remain separate.
 Dimension pages link to the shared Scaling editor. Hidden 3D/unopened derivative
 scaling is disabled until that view is displayed, retaining lazy rendering.
 """
@@ -54,7 +56,7 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         self.source.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.source.setWordWrap(True)
         layout.addWidget(self.source)
-        note = QtWidgets.QLabel("Changes apply immediately. Background, slice markers and axes options are shared across matrices.")
+        note = QtWidgets.QLabel("Locked appearance is shared; unlock to restore each matrix's styles. Colors and ranges remain independent. Background, slice markers and axes options are shared.")
         note.setWordWrap(True)
         layout.addWidget(note)
         self.tabs = QtWidgets.QTabWidget()
@@ -77,14 +79,16 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         for checkbox in (self.signal_grid, self.derivative_grid, self.y_lock, self.auto_y):
             axes_layout.addWidget(checkbox)
         self.scaling_buttons: dict[FigureView, QtWidgets.QPushButton] = {}
-        self._page("1D", self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)
-        self._page("2D", self._scaling_group(FigureView.IMAGE), window.image_controls)
+        self._page("1D", window.appearance_locks[AppearancePage.SIGNAL],
+                   self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)
+        self._page("2D", window.appearance_locks[AppearancePage.IMAGE], self._scaling_group(FigureView.IMAGE), window.image_controls)
         self.z_lock = QtWidgets.QCheckBox("Lock Z range (expand only)")
         self.z_lock.setToolTip("3D geometry only; independent of the shared 2D/3D color range lock.")
         self.z_lock.toggled.connect(window.scaling.set_z_range_lock)
-        self._page("3D", self._scaling_group(FigureView.SURFACE), self.z_lock, window.surface_controls, window.slice_appearance)
+        self._page("3D", window.appearance_locks[AppearancePage.SURFACE], self._scaling_group(FigureView.SURFACE),
+                   self.z_lock, window.surface_controls, window.slice_appearance)
         self._page("Colors", window.display_box, window.overlay_appearance)
-        self._page("Markers", window.marker_controls)
+        self._page("Markers", window.appearance_locks[AppearancePage.MARKERS], window.marker_controls)
         layout.addWidget(window.background_controls)
         window.background_controls.show()
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)

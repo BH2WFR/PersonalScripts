@@ -86,6 +86,10 @@ View settings beside each plot opens one shared appearance dialog with 1D, 2D,
 display sampling and overlay alignment; it has no standalone style buttons.
 Slice navigation stays beside the profile; its colors/lift/opacity live with
 the relevant 2D/3D settings. Context menus keep consistent Appearance shortcuts.
+Appearance locks default on for 1D/slices, 2D and 3D rendering, with a separate
+shared lock for value marker flags/sizes. Locked styles override saved channel
+settings without overwriting them; unlocking restores the local styles. Colors,
+derivative thresholds, data crops and numerical/scaling ranges are excluded.
 """
 
 from collections import deque
@@ -106,7 +110,7 @@ from .coordinates import AxisMap
 from .channel_tree import ChannelTree
 from .bundle_export import BUNDLE_FORMATS, prepare_bundle, serialize_bundle
 from .context_menus import WorkspaceMenus
-from .view_settings import ViewSettingsDialog
+from .view_settings import AppearancePage, ViewSettingsDialog
 from .view_scaling import Axis, ViewScaling
 from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits, RealArray,
                          Selection, ViewMode, default_selection, prepare_frame, select_image_member)
@@ -150,6 +154,12 @@ SETTINGS: tuple[str, ...] = (
     "show_nonfinite", "highlight_clipped", "nonfinite_size",
 )
 PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size", "profile_line_width")
+APPEARANCE_SETTINGS: dict[AppearancePage, tuple[str, ...]] = {
+    AppearancePage.SIGNAL: ("curve_style", "profile_point_size", "profile_line_width"),
+    AppearancePage.IMAGE: ("image_style", "image_point_size"),
+    AppearancePage.SURFACE: ("surface_style", "point_size"),
+    AppearancePage.MARKERS: ("show_nonfinite", "highlight_clipped", "nonfinite_size"),
+}
 MATRIX_COLUMN_WIDTHS: tuple[int, ...] = (320, 140, 60)
 
 
@@ -226,12 +236,23 @@ class WorkspaceWindow(ViewerWindow):
         self._last_single_view: tuple[int, ViewMode, tuple[int, ...]] | None = None
         self._switch_view: tuple[int, SwitchViewState] | None = None
         self._loading_channel_uid: int | None = None
+        self.appearance_locks: dict[AppearancePage, QtWidgets.QCheckBox] = {}
+        self._locked_appearance: dict[str, Setting] = {}
         super().__init__(max_edge, initial_mode, initial_channel_axis)
         self.overlay_profile = OverlayProfile()
         self.profile_layout.addWidget(self.overlay_profile)
         self.overlay_profile.hide()
         self.overlay_profile.settings_changed.connect(self._profile_settings_changed)
         self._defaults = self._read_settings()
+        for page, names in APPEARANCE_SETTINGS.items():
+            lock = QtWidgets.QCheckBox("Lock appearance across matrices" if page != AppearancePage.MARKERS
+                                      else "Lock value marker appearance across matrices")
+            lock.setChecked(True)
+            lock.setToolTip("Keep rendering styles and sizes when switching matrices/channels. Colors, ranges and data settings are excluded. "
+                            "Unlock to restore each matrix's own appearance. Value marker appearance is shared by all views and has its own lock.")
+            self.appearance_locks[page] = lock
+            self._locked_appearance.update({name: self._defaults[name] for name in names})
+            lock.toggled.connect(partial(self._appearance_lock_changed, page))
         for name in tuple(self._defaults):
             if name.startswith("crop_"):
                 self._defaults.pop(name)
@@ -568,13 +589,64 @@ class WorkspaceWindow(ViewerWindow):
                 "profile_line_width": profile.line_width.value(),
                 "curve_color": self.profile_view.color.name()}
 
+    def _remember_locked_appearance(self) -> None:
+        """Capture live view styles without overwriting per-matrix settings."""
+        if self._restoring or not self.appearance_locks:
+            return
+        settings = self._read_settings()
+        settings.update(self._read_profile_settings())
+        for page, names in APPEARANCE_SETTINGS.items():
+            if self.appearance_locks[page].isChecked():
+                self._locked_appearance.update({name: settings[name] for name in names})
+
+    def _effective_settings(self, entry: MatrixEntry) -> dict[str, Setting]:
+        """Overlay locked appearance on a copy; colors/data settings stay local."""
+        settings = entry.settings.copy()
+        for page, names in APPEARANCE_SETTINGS.items():
+            if self.appearance_locks[page].isChecked():
+                settings.update({name: self._locked_appearance[name] for name in names})
+        return settings
+
+    def _appearance_lock_changed(self, page: AppearancePage, enabled: bool) -> None:
+        """Start sharing current styles, or restore saved styles without refitting."""
+        self._remember_locked_appearance()
+        settings = self._read_settings()
+        settings.update(self._read_profile_settings())
+        if enabled:
+            values = {name: settings[name] for name in APPEARANCE_SETTINGS[page]}
+            self._locked_appearance.update(values)
+            entry = self._entry()
+            if entry is not None:
+                entry.settings.update(values)
+        entry = self._entry()
+        if entry is not None:
+            # Save non-appearance settings/colors before restoring stored styles.
+            self._store_entry_for_appearance_toggle(entry, page, settings)
+            self._restoring = True
+            try:
+                self._restore_settings(entry, restore_views=entry.visible or self._overlay())
+            finally:
+                self._restoring = False
+            self._single_render_key = None
+            self._render_workspace()
+
+    def _store_entry_for_appearance_toggle(self, entry: MatrixEntry, page: AppearancePage,
+                                          settings: dict[str, Setting]) -> None:
+        """Retain unsaved controls while excluding shared/toggled appearance keys."""
+        excluded = {name for group, names in APPEARANCE_SETTINGS.items()
+                    if group == page or self.appearance_locks[group].isChecked() for name in names}
+        entry.settings.update({name: value for name, value in settings.items() if name not in excluded})
+
     def _store_visible_profile_settings(self) -> None:
         """Keep curve settings with the checked source while editing a hidden one."""
         entry = self._entry()
         if entry is not None and not entry.visible and not self._overlay():
             shown = next((member for member in self.entries if member.visible), None)
             if shown is not None and self._last_single_view is not None and shown.uid == self._last_single_view[0]:
-                shown.settings.update(self._read_profile_settings())
+                profile = self._read_profile_settings()
+                if self.appearance_locks[AppearancePage.SIGNAL].isChecked():
+                    profile = {key: value for key, value in profile.items() if key not in APPEARANCE_SETTINGS[AppearancePage.SIGNAL]}
+                shown.settings.update(profile)
 
     def _read_settings(self) -> dict[str, Setting]:
         settings: dict[str, Setting] = {}
@@ -603,7 +675,12 @@ class WorkspaceWindow(ViewerWindow):
         if entry is None or self._restoring or entry.uid == self._loading_channel_uid or not self._channel_loaded(entry):
             return
         self._store_visible_profile_settings()
-        entry.settings = self._read_settings()
+        self._remember_locked_appearance()
+        settings = self._read_settings()
+        for page, names in APPEARANCE_SETTINGS.items():
+            if self.appearance_locks[page].isChecked():
+                settings.update({name: entry.settings.get(name, self._defaults[name]) for name in names})
+        entry.settings = settings
         entry.crop = self._crop
         try:
             selection = self._selection()
@@ -652,6 +729,7 @@ class WorkspaceWindow(ViewerWindow):
         self._expand_channels(entry)
 
     def _restore_settings(self, entry: MatrixEntry, *, restore_views: bool = True) -> None:
+        entry = replace(entry, settings=self._effective_settings(entry))
         for name in SETTINGS:
             if name not in entry.settings:
                 continue
@@ -2038,6 +2116,7 @@ class WorkspaceWindow(ViewerWindow):
         rz = height_bounds(reference.frame, reference_height) if align_heights else (0.0, 0.0)
         layers: list[RenderLayer] = []
         for entry in visible:
+            entry = replace(entry, settings=self._effective_settings(entry))
             frame = entry.frame
             assert frame is not None
             x, y = coordinate_bounds(frame)
@@ -2742,6 +2821,7 @@ class WorkspaceWindow(ViewerWindow):
                     super()._refresh_surface()
 
     def _presentation_changed(self, *, reset: bool = False) -> None:
+        self._remember_locked_appearance()
         self.image_point_size.setEnabled(self.image_style.currentText() == ImageStyle.POINTS)
         if self._overlay():
             if not self._restoring and not self._painting_active:
