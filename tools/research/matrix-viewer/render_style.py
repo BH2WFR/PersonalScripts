@@ -3,7 +3,7 @@
 Requirements: standard library. Usage: CurveStyle defines 1D signal/derivative
 lines and points; ImageStyle and SurfaceStyle define 2D/3D rendering. Views,
 controls and overlays import these canonical definitions. CurveStyle retains
-its integer IDs for existing per-channel settings. Point sizes are screen
+its integer IDs for existing per-channel settings. Line widths and point sizes are screen
 pixels and never change source samples or numeric exports.
 """
 
@@ -12,6 +12,9 @@ from enum import IntEnum, StrEnum
 DEFAULT_POINT_SIZE = 2.0
 MIN_POINT_SIZE = 0.5
 MAX_POINT_SIZE = 64.0
+DEFAULT_LINE_WIDTH = 1.0
+MIN_LINE_WIDTH = 0.5
+MAX_LINE_WIDTH = 20.0
 
 
 class CurveStyle(IntEnum):

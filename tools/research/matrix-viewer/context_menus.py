@@ -542,6 +542,7 @@ class WorkspaceMenus(QtCore.QObject):
             appearance.setEnabled(appearance_ready)
             appearance.menuAction().setToolTip("Appearance of the active matrix/channel; background applies to all plots.")
             self._combo_menu(appearance, "Rendering style", profile.style_selector)
+            self._number_menu(appearance, "Line width", profile.line_width)
             self._number_menu(appearance, "Point size", profile.point_size)
             if window._profile_uses_overlay:
                 self._add(appearance, "Solid color…", window._choose_layer_color)

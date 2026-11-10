@@ -4,8 +4,10 @@ Requirements: the existing viewer dependencies; no additional packages.
 Usage: constructed by app.run. Open and replace resets the session; Open appends one
 file and selects NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
 row/column ranges and headers. Dropping a file into a populated session appends.
-Multi-file drops use the same sequential queue as command-line batches. Duplicate
-source paths/members prompt to open another instance, replace a chosen instance,
+Multi-file drops use the same sequential queue as command-line batches. Entries
+are registered first; activation, tree refresh and view preparation run after
+the batch, so hidden intermediate matrices do not generate disposable frames.
+Duplicate source paths/members prompt to open another instance, replace a chosen instance,
 or skip. Replacement commits only after loading and interpretation succeed.
 Numeric 3D arrays prompt for an axis to split into independent 2D matrices or
 skip that member. Skipping all incoming members retains the existing session.
@@ -130,7 +132,7 @@ from .view_extrema import ViewExtrema
 from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .profile_view import CHANNEL_COLORS, JumpMode
-from .render_style import DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
+from .render_style import DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
 from .surface_view import ProfileStyle
 from .slice_snapshot import freeze_slice
 from .value_markers import DEFAULT_MARKER_SIZE, MarkerStyle
@@ -147,7 +149,7 @@ SETTINGS: tuple[str, ...] = (
     "crop_x_start", "crop_x_end", "crop_y_start", "crop_y_end",
     "show_nonfinite", "highlight_clipped", "nonfinite_size",
 )
-PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size")
+PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size", "profile_line_width")
 MATRIX_COLUMN_WIDTHS: tuple[int, ...] = (320, 140, 60)
 
 
@@ -203,6 +205,8 @@ class WorkspaceWindow(ViewerWindow):
         self._rendering = False
         self._append_pending = False
         self._pending_files: deque[tuple[Path, str | None, ViewMode | None, int | None]] = deque()
+        self._pending_activation: tuple[int, bool] | None = None
+        self._resolved_import_paths: dict[Path, Path] = {}
         self._name_fit_pending = False
         self._opening_modes: dict[tuple[int, int, bool], ViewMode] = {}
         self._split_choices: dict[tuple[SplitAxis, int], bool] = {}
@@ -561,6 +565,7 @@ class WorkspaceWindow(ViewerWindow):
                 "jump_threshold": profile.jump_threshold.value(),
                 "curve_style": profile.style_selector.currentIndex(),
                 "profile_point_size": profile.point_size.value(),
+                "profile_line_width": profile.line_width.value(),
                 "curve_color": self.profile_view.color.name()}
 
     def _store_visible_profile_settings(self) -> None:
@@ -568,7 +573,7 @@ class WorkspaceWindow(ViewerWindow):
         entry = self._entry()
         if entry is not None and not entry.visible and not self._overlay():
             shown = next((member for member in self.entries if member.visible), None)
-            if shown is not None:
+            if shown is not None and self._last_single_view is not None and shown.uid == self._last_single_view[0]:
                 shown.settings.update(self._read_profile_settings())
 
     def _read_settings(self) -> dict[str, Setting]:
@@ -666,11 +671,13 @@ class WorkspaceWindow(ViewerWindow):
         for profile in (self.profile_view, self.overlay_profile) if restore_views else ():
             previous_jump = (profile.jump_mode.currentIndex(), profile.jump_threshold.value())
             with (QtCore.QSignalBlocker(profile.jump_mode), QtCore.QSignalBlocker(profile.jump_threshold),
-                  QtCore.QSignalBlocker(profile.style_selector), QtCore.QSignalBlocker(profile.point_size)):
+                  QtCore.QSignalBlocker(profile.style_selector), QtCore.QSignalBlocker(profile.point_size),
+                  QtCore.QSignalBlocker(profile.line_width)):
                 profile.jump_mode.setCurrentIndex(int(entry.settings.get("jump_mode", JumpMode.GAPS_ONLY)))
                 profile.jump_threshold.setValue(float(entry.settings.get("jump_threshold", 1.0)))
                 profile.style_selector.setCurrentIndex(int(entry.settings.get("curve_style", 0)))
                 profile.point_size.setValue(float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE)))
+                profile.line_width.setValue(float(entry.settings.get("profile_line_width", DEFAULT_LINE_WIDTH)))
                 profile.sync_jump_controls()
             if profile is self.profile_view and previous_jump != (profile.jump_mode.currentIndex(), profile.jump_threshold.value()):
                 profile._invalidate_derivative()
@@ -1021,6 +1028,9 @@ class WorkspaceWindow(ViewerWindow):
         return members[0] if len(members) == 1 else None
 
     def _show_only(self, entry: MatrixEntry) -> None:
+        # Save the currently displayed curve before changing visibility; its
+        # controls must not overwrite the newly selected matrix's appearance.
+        self._store_entry()
         self._raw_matrix_uid = entry.matrix_uid or entry.uid
         for member in self.entries:
             member.visible = member.uid == entry.uid
@@ -1161,6 +1171,8 @@ class WorkspaceWindow(ViewerWindow):
         self._switch_view = None
         self._last_single_view = None
         self._pending_files.clear()
+        self._pending_activation = None
+        self._resolved_import_paths.clear()
         self._opening_modes = {}
         self._split_choices = {}
         self._rebuild.stop()
@@ -1420,9 +1432,12 @@ class WorkspaceWindow(ViewerWindow):
             Starts asynchronous loading and queues the remaining files. Initial
             mode/channel-axis overrides apply to each file's first matrix.
             Failed or canceled imports continue to the next queued file.
+            Activates the last successful file only after the queue drains.
             A subsequent explicit open_path call discards the remaining queue.
         """
         self._pending_files.clear()
+        self._pending_activation = None
+        self._resolved_import_paths.clear()
         if not paths:
             return
         self._opening_modes = {}
@@ -1433,10 +1448,16 @@ class WorkspaceWindow(ViewerWindow):
 
     def _duplicate_entries(self, document: Document) -> list[MatrixEntry]:
         """Find source groups by resolved path and member, independent of aliases."""
-        path = document.path.resolve()
+        # Resolve each distinct path once per import, not once per comparison.
+        paths = self._resolved_import_paths
+        groups = self._groups()
+        for source in (document.path, *(members[0].document.path for members in groups.values())):
+            if source not in paths:
+                paths[source] = source.resolve()
+        path = paths[document.path]
         key = None if document.is_image else document.key
-        return [members[0] for members in self._groups().values()
-                if members[0].document.path.resolve() == path
+        return [members[0] for members in groups.values()
+                if paths[members[0].document.path] == path
                 and members[0].document.transform is None and members[0].document.laplace is None
                 and not members[0].document.complex_provenance and not members[0].document.conversion_provenance
                 and not members[0].document.import_provenance.startswith("Slice snapshot:")
@@ -1475,10 +1496,18 @@ class WorkspaceWindow(ViewerWindow):
         return result
 
     def _open_next_path(self) -> None:
-        """Append the next queued file after the preceding import has finished."""
+        """Continue loading, or activate the last successful import at batch end."""
         if self._closing:
             return
         if not self._pending_files:
+            if self._pending_activation is not None:
+                uid, reset_selection = self._pending_activation
+                self._pending_activation = None
+                entry = self._entry(uid)
+                if entry is not None:
+                    self.matrix_box.setEnabled(True)
+                    self._activate(entry, reset_selection=reset_selection)
+            self._resolved_import_paths.clear()
             if self._name_fit_pending:
                 self._name_fit_pending = False
                 self.matrix_list.resizeColumnToContents(0)
@@ -1503,6 +1532,8 @@ class WorkspaceWindow(ViewerWindow):
             Discards queued imports and batch choices, then starts this file's load.
         """
         self._pending_files.clear()
+        self._pending_activation = None
+        self._resolved_import_paths.clear()
         self._opening_modes = {}
         self._split_choices = {}
         self._start_open_path(path, key, append=append)
@@ -1589,6 +1620,9 @@ class WorkspaceWindow(ViewerWindow):
 
     def _cancel_opening(self) -> None:
         """Restore the unchanged workspace after cancelling an import dialog."""
+        if self._pending_files or self._pending_activation is not None:
+            self._open_next_path()
+            return
         self.matrix_box.setEnabled(True)
         self.controls.setEnabled(self.document is not None and not self.document.is_text)
         self._sync_source_selectors(self.frame_selection.component if self.frame_selection else Component.REAL)
@@ -1781,7 +1815,13 @@ class WorkspaceWindow(ViewerWindow):
         self._initial_mode = None
         self._initial_channel_axis = None
         self._name_fit_pending = True
-        self._activate(added[0], reset_selection=not self._append_pending)
+        # Do not activate every intermediate file: each activation otherwise
+        # rebuilds the entire tree and starts a frame immediately invalidated
+        # by the next file. Keep the last successful import even if later files
+        # fail or are skipped; _open_next_path activates it when the queue drains.
+        reset_selection = not self._append_pending or (
+            self._pending_activation is not None and self._pending_activation[1])
+        self._pending_activation = (added[0].uid, reset_selection)
         if problems:
             QtWidgets.QMessageBox.warning(self, "Some matrices were not displayed", "\n\n".join(problems))
         self._open_next_path()
@@ -2023,7 +2063,8 @@ class WorkspaceWindow(ViewerWindow):
                 image_style=ImageStyle(str(entry.settings.get("image_style", ImageStyle.IMAGE))),
                 image_point_size=float(entry.settings.get("image_point_size", DEFAULT_POINT_SIZE)),
                 surface_style=SurfaceStyle(str(entry.settings.get("surface_style", SurfaceStyle.SURFACE))),
-                profile_point_size=float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE))))
+                profile_point_size=float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE)),
+                profile_line_width=float(entry.settings.get("profile_line_width", DEFAULT_LINE_WIDTH))))
         return tuple(layers)
 
     def _render_workspace(self, reset: bool = False) -> None:
