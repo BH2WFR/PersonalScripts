@@ -88,8 +88,10 @@ Slice navigation stays beside the profile; its colors/lift/opacity live with
 the relevant 2D/3D settings. Context menus keep consistent Appearance shortcuts.
 Appearance locks default on for 1D/slices, 2D and 3D rendering, with a separate
 shared lock for value marker flags/sizes. Locked styles override saved channel
-settings without overwriting them; unlocking restores the local styles. Colors,
-derivative thresholds, data crops and numerical/scaling ranges are excluded.
+settings without overwriting them; unlocking restores the local styles. A
+separate default-on color lock retains line/colormap/value-marker colors only
+in single matrix mode, suspending its snapshot while multiple mode uses local
+colors. Derivative thresholds, data crops and numerical/scaling ranges are excluded.
 """
 
 from collections import deque
@@ -136,7 +138,7 @@ from .view_extrema import ViewExtrema
 from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .profile_view import CHANNEL_COLORS, JumpMode
-from .render_style import DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
+from .render_style import DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
 from .surface_view import ProfileStyle
 from .slice_snapshot import freeze_slice
 from .value_markers import DEFAULT_MARKER_SIZE, MarkerStyle
@@ -158,6 +160,8 @@ APPEARANCE_SETTINGS: dict[AppearancePage, tuple[str, ...]] = {
     AppearancePage.SIGNAL: ("curve_style", "profile_point_size", "profile_line_width"),
     AppearancePage.IMAGE: ("image_style", "image_point_size"),
     AppearancePage.SURFACE: ("surface_style", "point_size"),
+    AppearancePage.COLORS: ("curve_color", "colormap", "clip_color", "nonfinite_positive_color",
+                            "nonfinite_negative_color", "nonfinite_nan_color"),
     AppearancePage.MARKERS: ("show_nonfinite", "highlight_clipped", "nonfinite_size"),
 }
 MATRIX_COLUMN_WIDTHS: tuple[int, ...] = (320, 140, 60)
@@ -238,6 +242,7 @@ class WorkspaceWindow(ViewerWindow):
         self._loading_channel_uid: int | None = None
         self.appearance_locks: dict[AppearancePage, QtWidgets.QCheckBox] = {}
         self._locked_appearance: dict[str, Setting] = {}
+        self._color_lock_single_mode = True
         super().__init__(max_edge, initial_mode, initial_channel_axis)
         self.overlay_profile = OverlayProfile()
         self.profile_layout.addWidget(self.overlay_profile)
@@ -245,11 +250,16 @@ class WorkspaceWindow(ViewerWindow):
         self.overlay_profile.settings_changed.connect(self._profile_settings_changed)
         self._defaults = self._read_settings()
         for page, names in APPEARANCE_SETTINGS.items():
-            lock = QtWidgets.QCheckBox("Lock appearance across matrices" if page != AppearancePage.MARKERS
-                                      else "Lock value marker appearance across matrices")
+            label = ("Lock colors across matrices (single matrix mode)" if page == AppearancePage.COLORS else
+                     "Lock value marker appearance across matrices" if page == AppearancePage.MARKERS else
+                     "Lock appearance across matrices")
+            lock = QtWidgets.QCheckBox(label)
             lock.setChecked(True)
-            lock.setToolTip("Keep rendering styles and sizes when switching matrices/channels. Colors, ranges and data settings are excluded. "
-                            "Unlock to restore each matrix's own appearance. Value marker appearance is shared by all views and has its own lock.")
+            lock.setToolTip("Keep line color, scalar colormap and value-marker colors across matrices/channels in single matrix mode. "
+                            "Multiple matrices always use their own colors. Color range and native RGB channel colors are unchanged."
+                            if page == AppearancePage.COLORS else
+                            "Keep rendering styles and sizes when switching matrices/channels. Ranges and data settings are excluded. "
+                            "Unlock to restore saved per-matrix appearance. Colors and shared value markers have separate locks.")
             self.appearance_locks[page] = lock
             self._locked_appearance.update({name: self._defaults[name] for name in names})
             lock.toggled.connect(partial(self._appearance_lock_changed, page))
@@ -519,6 +529,15 @@ class WorkspaceWindow(ViewerWindow):
         self._switch_view = None
         self._last_single_view = None
         self._store_entry()
+        self._color_lock_single_mode = not multiple
+        self.appearance_locks[AppearancePage.COLORS].setEnabled(not multiple)
+        entry = self._entry()
+        if entry is not None:
+            self._restoring = True
+            try:
+                self._restore_settings(entry, restore_views=entry.visible or self._overlay())
+            finally:
+                self._restoring = False
         self.add_overlay.setText("Open…")
         if not multiple:
             selected = self._entry()
@@ -589,6 +608,10 @@ class WorkspaceWindow(ViewerWindow):
                 "profile_line_width": profile.line_width.value(),
                 "curve_color": self.profile_view.color.name()}
 
+    def _appearance_lock_enabled(self, page: AppearancePage) -> bool:
+        """Suspend color sharing in multiple mode without losing its snapshot."""
+        return self.appearance_locks[page].isChecked() and (page != AppearancePage.COLORS or self._color_lock_single_mode)
+
     def _remember_locked_appearance(self) -> None:
         """Capture live view styles without overwriting per-matrix settings."""
         if self._restoring or not self.appearance_locks:
@@ -596,14 +619,14 @@ class WorkspaceWindow(ViewerWindow):
         settings = self._read_settings()
         settings.update(self._read_profile_settings())
         for page, names in APPEARANCE_SETTINGS.items():
-            if self.appearance_locks[page].isChecked():
+            if self._appearance_lock_enabled(page):
                 self._locked_appearance.update({name: settings[name] for name in names})
 
     def _effective_settings(self, entry: MatrixEntry) -> dict[str, Setting]:
-        """Overlay locked appearance on a copy; colors/data settings stay local."""
+        """Overlay applicable style/color locks on a copy; data settings stay local."""
         settings = entry.settings.copy()
         for page, names in APPEARANCE_SETTINGS.items():
-            if self.appearance_locks[page].isChecked():
+            if self._appearance_lock_enabled(page):
                 settings.update({name: self._locked_appearance[name] for name in names})
         return settings
 
@@ -634,7 +657,7 @@ class WorkspaceWindow(ViewerWindow):
                                           settings: dict[str, Setting]) -> None:
         """Retain unsaved controls while excluding shared/toggled appearance keys."""
         excluded = {name for group, names in APPEARANCE_SETTINGS.items()
-                    if group == page or self.appearance_locks[group].isChecked() for name in names}
+                    if group == page or self._appearance_lock_enabled(group) for name in names}
         entry.settings.update({name: value for name, value in settings.items() if name not in excluded})
 
     def _store_visible_profile_settings(self) -> None:
@@ -646,6 +669,8 @@ class WorkspaceWindow(ViewerWindow):
                 profile = self._read_profile_settings()
                 if self.appearance_locks[AppearancePage.SIGNAL].isChecked():
                     profile = {key: value for key, value in profile.items() if key not in APPEARANCE_SETTINGS[AppearancePage.SIGNAL]}
+                if self._appearance_lock_enabled(AppearancePage.COLORS):
+                    profile.pop("curve_color", None)
                 shown.settings.update(profile)
 
     def _read_settings(self) -> dict[str, Setting]:
@@ -678,7 +703,7 @@ class WorkspaceWindow(ViewerWindow):
         self._remember_locked_appearance()
         settings = self._read_settings()
         for page, names in APPEARANCE_SETTINGS.items():
-            if self.appearance_locks[page].isChecked():
+            if self._appearance_lock_enabled(page):
                 settings.update({name: entry.settings.get(name, self._defaults[name]) for name in names})
         entry.settings = settings
         entry.crop = self._crop
@@ -767,7 +792,7 @@ class WorkspaceWindow(ViewerWindow):
             self._set_color_icon(self.nonfinite_color_buttons[kind], color)
         self._sync_marker_controls()
         if restore_views:
-            self.profile_view.color = QtGui.QColor(str(entry.settings.get("curve_color", "#48b9ff")))
+            self.profile_view.color = QtGui.QColor(str(entry.settings.get("curve_color", DEFAULT_LINE_COLOR)))
             self.image_view.set_marker_style(self._marker_style())
             self.profile_view.set_marker_style(self._marker_style())
             self.image_view.set_clip_color(self._clip_color)

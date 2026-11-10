@@ -8,7 +8,8 @@ Changes apply immediately; Close retains them. Opening a page never selects a
 plot tab or calculates derivatives. Background, slice markers and axes options
 are shared. Dimension-specific appearance locks default on; locked styles and
 sizes survive matrix/channel switches without replacing saved local settings.
-Value marker flags/sizes have a shared lock; colors and ranges remain separate.
+Value marker flags/sizes have a shared lock. Colors have a separate single-mode
+lock, suspended during multiple mode; ranges remain independent of appearance.
 Dimension pages link to the shared Scaling editor. Hidden 3D/unopened derivative
 scaling is disabled until that view is displayed, retaining lazy rendering.
 """
@@ -56,7 +57,7 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         self.source.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.source.setWordWrap(True)
         layout.addWidget(self.source)
-        note = QtWidgets.QLabel("Locked appearance is shared; unlock to restore each matrix's styles. Colors and ranges remain independent. Background, slice markers and axes options are shared.")
+        note = QtWidgets.QLabel("Unlock appearance to restore each matrix's styles. Colors can be locked in single matrix mode; ranges stay independent. Background, slice markers and axes options are shared.")
         note.setWordWrap(True)
         layout.addWidget(note)
         self.tabs = QtWidgets.QTabWidget()
@@ -87,7 +88,7 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         self.z_lock.toggled.connect(window.scaling.set_z_range_lock)
         self._page("3D", window.appearance_locks[AppearancePage.SURFACE], self._scaling_group(FigureView.SURFACE),
                    self.z_lock, window.surface_controls, window.slice_appearance)
-        self._page("Colors", window.display_box, window.overlay_appearance)
+        self._page("Colors", window.appearance_locks[AppearancePage.COLORS], window.display_box, window.overlay_appearance)
         self._page("Markers", window.appearance_locks[AppearancePage.MARKERS], window.marker_controls)
         layout.addWidget(window.background_controls)
         window.background_controls.show()
@@ -173,7 +174,7 @@ class ViewSettingsDialog(QtWidgets.QDialog):
             available = (mode != ViewMode.POINTS if page == AppearancePage.SIGNAL else
                          matrix if page == AppearancePage.IMAGE else
                          spatial if page == AppearancePage.SURFACE else
-                         spatial or overlay if page == AppearancePage.COLORS else True)
+                         True)
             self.tabs.setTabEnabled(page, ready and available)
         # Scalar coloring is shared by 2D and 3D. Image composites keep their
         # original colors; overlay color/opacity belong to the active entry.

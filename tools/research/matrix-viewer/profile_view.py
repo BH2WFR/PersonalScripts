@@ -52,7 +52,7 @@ from .profile_legend import ProfileLegend
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .value_markers import MarkerStyle, curve_markers
 from .render_style import (DEFAULT_POINT_SIZE, MIN_POINT_SIZE, MAX_POINT_SIZE, CurveStyle,
-                           DEFAULT_LINE_WIDTH, MIN_LINE_WIDTH, MAX_LINE_WIDTH)
+                           DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, MIN_LINE_WIDTH, MAX_LINE_WIDTH)
 
 WHEEL_ZOOM_FACTOR = 1.15
 DERIVATIVE_DELAY_MS = 70
@@ -392,7 +392,7 @@ class ProfileView(QtWidgets.QWidget):
         self.clip_color = QtGui.QColor(DEFAULT_CLIP_COLOR)
         self.marker_style = MarkerStyle()
         self._nonfinite_items: list[pg.PlotDataItem] = []
-        self.color = QtGui.QColor("#48b9ff")
+        self.color = QtGui.QColor(DEFAULT_LINE_COLOR)
         self._has_data = False
         self._external_tabs = False
         self._derivative_reset = True

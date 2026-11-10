@@ -436,6 +436,9 @@ class WorkspaceMenus(QtCore.QObject):
         colors = menu.addMenu("Color / color range")
         colors.setEnabled(editable)
         colors.setToolTipsVisible(True)
+        lock = window.appearance_locks[AppearancePage.COLORS]
+        self._add(colors, "Lock colors (single matrix mode)", lock.toggle,
+                  checked=lock.isChecked(), enabled=lock.isEnabled())
         colors.menuAction().setToolTip("Colors of the active channel; color range is shared by 2D/3D. Background applies to all plots.")
         colors.addSection("Scalar colors")
         overlay = window._overlay()
@@ -554,6 +557,9 @@ class WorkspaceMenus(QtCore.QObject):
             self._combo_menu(appearance, "Rendering style", profile.style_selector)
             self._number_menu(appearance, "Line width", profile.line_width)
             self._number_menu(appearance, "Point size", profile.point_size)
+            lock = window.appearance_locks[AppearancePage.COLORS]
+            self._add(appearance, "Lock colors (single matrix mode)", lock.toggle,
+                      checked=lock.isChecked(), enabled=lock.isEnabled())
             if window._profile_uses_overlay:
                 self._add(appearance, "Solid color…", window._choose_layer_color)
             else:
