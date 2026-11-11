@@ -7,17 +7,15 @@ import json
 from pathlib import Path
 import sys
 import threading
+from typing import cast
 import xml.etree.ElementTree as ET
 from .models import (
     DEFAULT_SIZE,
     DEFAULT_UNCHECKED_EVENT_KINDS,
-    DIAGNOSTIC_EVENT_KINDS,
     EventKind,
     EVENT_FILTER_GROUPS,
     EVENT_FILTER_LABELS,
     GUI_STYLE,
-    LOGIN_EVENT_KINDS,
-    MODERN_EVENT_KINDS,
     PLATFORM_EVENT_KINDS,
     PowerEvent,
     QueryResult,
@@ -27,6 +25,31 @@ from .models import (
     UTC,
 )
 from . import history
+
+
+MAX_STRUCTURED_NODES = 10_000
+QUERY_DEBOUNCE_MS = 250
+
+
+def _json_evidence(event: PowerEvent) -> list[tuple[str, object]]:
+    """Decode native JSON evidence, including the metadata/body pair of an IPS report.
+
+    Returns no documents for plain text. Invalid JSON raises ValueError, keeping
+    the original evidence available instead of silently showing a partial parse.
+    """
+    payload = event.raw.strip()
+    is_ips = event.source == "DiagnosticReports / .ips"
+    if is_ips and payload.startswith("Report: "):
+        payload = payload.partition("\n\n")[2].lstrip()
+    if not payload.startswith(("{", "[")):
+        return []
+    if not is_ips:
+        return [("JSON", json.loads(payload))]
+    header, end = json.JSONDecoder().raw_decode(payload)
+    remaining = payload[end:].strip()
+    if remaining:
+        return [("Metadata", header), ("Report", json.loads(remaining))]
+    return [("JSON", header)]
 
 
 def _launch_gui() -> int:
@@ -41,15 +64,18 @@ def _launch_gui() -> int:
         failed = QtCore.Signal(str)
         progress = QtCore.Signal(str)
 
-        def __init__(self, start: dt.datetime, end: dt.datetime, parent: QtCore.QObject) -> None:
+        def __init__(self, start: dt.datetime, end: dt.datetime, selected_kinds: frozenset[EventKind],
+                     parent: QtCore.QObject) -> None:
             super().__init__(parent)
             self.start_time, self.end_time = start, end
+            self.selected_kinds = selected_kinds
             self.cancelled = threading.Event()
 
         def run(self) -> None:
             """Emit a complete result or failure; exceptions never escape the worker thread."""
             try:
-                result = history.query_events(self.start_time, self.end_time, self.cancelled, self.progress.emit)
+                result = history.query_events(self.start_time, self.end_time, self.cancelled, self.progress.emit,
+                                              selected_kinds=self.selected_kinds)
                 self.completed.emit(result)
             except Exception as exc:
                 self.failed.emit(str(exc))
@@ -126,12 +152,19 @@ def _launch_gui() -> int:
             self.result: QueryResult | None = None
             self.status_message = ""
             self.closing = False
+            self.initializing = True
+            self.query_succeeded = False
+            self.query_timer = QtCore.QTimer(self)
+            self.query_timer.setSingleShot(True)
+            self.query_timer.setInterval(QUERY_DEBOUNCE_MS)
+            self.query_timer.timeout.connect(self._query)
             self.available_kinds = PLATFORM_EVENT_KINDS.get(sys.platform, frozenset())
             self.checkboxes: dict[EventKind, QtWidgets.QCheckBox] = {}
             self._build_ui()
             self._restore_settings()
             self._apply_range()
-            QtCore.QTimer.singleShot(0, self._query)
+            self.initializing = False
+            self._set_status("Select event types to query history.")
 
         def _build_ui(self) -> None:
             """Build native Qt controls and connect query/filter/export actions."""
@@ -183,7 +216,7 @@ def _launch_gui() -> int:
             filter_bar = QtWidgets.QHBoxLayout()
             filter_bar.setSpacing(3)
             filter_title = QtWidgets.QLabel("Show events")
-            filter_title.setToolTip("Filters apply instantly to loaded events, without querying again.")
+            filter_title.setToolTip("Changing event selections refreshes history automatically.")
             filter_bar.addWidget(filter_title)
             self.select_all_button = QtWidgets.QToolButton()
             self.select_none_button = QtWidgets.QToolButton()
@@ -215,7 +248,7 @@ def _launch_gui() -> int:
                     checkbox.setToolTip("This event type is not collected on the current platform.")
                 elif len(members) > 1:
                     checkbox.setToolTip("Includes: " + ", ".join(value.value for value in EventKind if value in available))
-                checkbox.toggled.connect(self._filter)
+                checkbox.toggled.connect(self._types_changed)
                 self.checkboxes[kind] = checkbox
             layout.addWidget(self.filter_panel)
             self._layout_filters()
@@ -243,26 +276,27 @@ def _launch_gui() -> int:
             self.detail = QtWidgets.QPlainTextEdit()
             self.detail.setReadOnly(True)
             self.detail.setPlaceholderText("Select an event to inspect its original evidence.")
-            xml_page = QtWidgets.QWidget()
-            xml_layout = QtWidgets.QVBoxLayout(xml_page)
-            xml_layout.setContentsMargins(0, 0, 0, 0)
-            self.xml_notice = QtWidgets.QLabel("Select an event to inspect its XML.")
-            self.xml_notice.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            self.xml_notice.setWordWrap(True)
-            self.xml_tree = QtWidgets.QTreeWidget()
-            self.xml_tree.setHeaderLabels(["Node", "Value", "Attributes"])
-            self.xml_tree.setAlternatingRowColors(True)
-            self.xml_tree.setUniformRowHeights(True)
-            self.xml_tree.setColumnWidth(0, 240)
-            self.xml_tree.setColumnWidth(1, 280)
-            self.xml_tree.hide()
-            xml_layout.addWidget(self.xml_notice)
-            xml_layout.addWidget(self.xml_tree, 1)
+            structured_page = QtWidgets.QWidget()
+            structured_layout = QtWidgets.QVBoxLayout(structured_page)
+            structured_layout.setContentsMargins(0, 0, 0, 0)
+            self.structured_notice = QtWidgets.QLabel("Select an event to inspect its XML or JSON.")
+            self.structured_notice.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.structured_notice.setWordWrap(True)
+            self.structured_tree = QtWidgets.QTreeWidget()
+            self.structured_tree.setHeaderLabels(["Node", "Value", "Attributes / Type"])
+            self.structured_tree.setAlternatingRowColors(True)
+            self.structured_tree.setUniformRowHeights(True)
+            self.structured_tree.setColumnWidth(0, 240)
+            self.structured_tree.header().setStretchLastSection(False)
+            self.structured_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            self.structured_tree.hide()
+            structured_layout.addWidget(self.structured_notice)
+            structured_layout.addWidget(self.structured_tree, 1)
             self.sources = QtWidgets.QPlainTextEdit()
             self.sources.setReadOnly(True)
             tabs = QtWidgets.QTabWidget()
             tabs.addTab(self.detail, "Event details")
-            tabs.addTab(xml_page, "XML")
+            tabs.addTab(structured_page, "Structured view")
             tabs.addTab(self.sources, "Sources and coverage")
             splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
             splitter.addWidget(self.table)
@@ -272,6 +306,12 @@ def _launch_gui() -> int:
             self.summary = QtWidgets.QLabel("Ready")
             self.summary.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             self.summary.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
+            self.progress_bar = QtWidgets.QProgressBar()
+            self.progress_bar.setRange(0, 1)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setTextVisible(False)
+            self.progress_bar.setFixedWidth(140)
+            self.progress_bar.setAccessibleName("Query progress")
             self.export_button = QtWidgets.QPushButton("Export CSV...")
             self.export_button.setEnabled(False)
             self.export_button.clicked.connect(lambda: self._export(".csv"))
@@ -280,6 +320,7 @@ def _launch_gui() -> int:
             self.export_json_button.clicked.connect(lambda: self._export(".json"))
             footer = QtWidgets.QHBoxLayout()
             footer.addWidget(self.summary, 1)
+            footer.addWidget(self.progress_bar)
             footer.addWidget(self.export_button)
             footer.addWidget(self.export_json_button)
             layout.addLayout(footer)
@@ -307,7 +348,7 @@ def _launch_gui() -> int:
                 self._layout_filters()
 
         def _restore_settings(self) -> None:
-            """Restore presentation preferences; relative date ranges are not stored as fixed dates."""
+            """Restore layout/date preferences, always leaving event selections cleared."""
             geometry = self.settings.value("geometry")
             if isinstance(geometry, QtCore.QByteArray):
                 self.restoreGeometry(geometry)
@@ -320,35 +361,20 @@ def _launch_gui() -> int:
             value = str(self.settings.value("range", TimeRange.DAY.value))
             index = self.range_box.findText(value)
             self.range_box.setCurrentIndex(max(0, index))
-            selected = self.settings.value("types")
-            # Use category defaults for new filters; explicit saved choices survive.
-            known = self.settings.value("knownTypes", [kind.value for kind in EventKind
-                                        if kind not in MODERN_EVENT_KINDS | LOGIN_EVENT_KINDS | DIAGNOSTIC_EVENT_KINDS | {EventKind.DEVICE_EJECT_BLOCKED}])
-            enabled = set(self.available_kinds - DEFAULT_UNCHECKED_EVENT_KINDS)
-            if isinstance(selected, list) and isinstance(known, list):
-                for kind in self.available_kinds:
-                    if kind.value in known:
-                        if kind.value in selected:
-                            enabled.add(kind)
-                        else:
-                            enabled.discard(kind)
-            # Keep a merged group enabled if either previously separate type was on.
-            for kind, checkbox in self.checkboxes.items():
-                checkbox.setChecked(bool(EVENT_FILTER_GROUPS[kind] & enabled))
             if value == TimeRange.CUSTOM.value:
                 for key, editor in (("start", self.start_edit), ("end", self.end_edit)):
                     saved = str(self.settings.value(key, ""))
                     parsed = QtCore.QDateTime.fromString(saved, QtCore.Qt.DateFormat.ISODate)
                     if parsed.isValid():
                         editor.setDateTime(parsed)
-            self._filter()
+            self._reset_types()
 
         def _apply_range(self) -> None:
             """Update date controls for relative ranges; retain custom selections."""
             selected = TimeRange(self.range_box.currentText())
             custom = selected == TimeRange.CUSTOM
-            self.start_edit.setEnabled(custom)
-            self.end_edit.setEnabled(custom)
+            self.start_edit.setEnabled(custom and self.worker is None)
+            self.end_edit.setEnabled(custom and self.worker is None)
             now = QtCore.QDateTime.currentDateTime()
             if custom:
                 if self.start_edit.date().year() < 2001:
@@ -370,7 +396,13 @@ def _launch_gui() -> int:
 
         def _query(self) -> None:
             """Start a new worker; reject reversed ranges and overlapping queries."""
-            if self.worker is not None:
+            self.query_timer.stop()
+            if self.worker is not None or self.closing:
+                return
+            if not self._selected_types():
+                self.query_succeeded = False
+                self._set_query_busy(False)
+                self._set_status("Select event types to query history.")
                 return
             self._apply_range()
             start = dt.datetime.fromtimestamp(self.start_edit.dateTime().toSecsSinceEpoch(), UTC)
@@ -378,17 +410,33 @@ def _launch_gui() -> int:
             if start >= end:
                 QtWidgets.QMessageBox.warning(self, "Invalid range", "Choose an end time after the start time.")
                 return
-            self.worker = QueryWorker(start, end, self)
+            self.worker = QueryWorker(start, end, frozenset(self._selected_types()), self)
             self.worker.completed.connect(self._loaded)
             self.worker.failed.connect(self._failed)
             self.worker.progress.connect(self._set_status)
             self.worker.finished.connect(self._finished)
-            self.query_button.setEnabled(False)
-            self.cancel_button.setEnabled(True)
-            self.export_button.setEnabled(False)
-            self.export_json_button.setEnabled(False)
+            self.query_succeeded = False
+            self._set_query_busy(True)
             self._set_status("Querying...")
             self.worker.start()
+
+        def _set_query_busy(self, busy: bool) -> None:
+            """Lock query inputs and animate progress; restore platform/date restrictions when idle."""
+            for kind, checkbox in self.checkboxes.items():
+                checkbox.setEnabled(not busy and bool(EVENT_FILTER_GROUPS[kind] & self.available_kinds))
+            for button in (self.select_all_button, self.select_none_button, self.reset_types_button):
+                button.setEnabled(not busy)
+            self.range_box.setEnabled(not busy)
+            custom = self.range_box.currentText() == TimeRange.CUSTOM.value
+            self.start_edit.setEnabled(not busy and custom)
+            self.end_edit.setEnabled(not busy and custom)
+            self.query_button.setEnabled(not busy)
+            self.cancel_button.setEnabled(busy)
+            self.export_button.setEnabled(not busy and self.proxy.rowCount() > 0)
+            self.export_json_button.setEnabled(not busy and self.proxy.rowCount() > 0)
+            self.progress_bar.setRange(0, 0 if busy else 1)
+            if not busy:
+                self.progress_bar.setValue(0)
 
         def _cancel(self) -> None:
             """Request cancellation without blocking the GUI thread."""
@@ -401,6 +449,7 @@ def _launch_gui() -> int:
             """Install a completed result and display all source errors alongside successful sources."""
             if not isinstance(result, QueryResult):
                 return
+            self.query_succeeded = True
             self.result = result
             self._clear_details()
             self.model.replace(result.events)
@@ -423,33 +472,46 @@ def _launch_gui() -> int:
             worker, self.worker = self.worker, None
             if worker is not None:
                 worker.deleteLater()
-            self.query_button.setEnabled(True)
-            self.cancel_button.setEnabled(False)
-            self.export_button.setEnabled(self.proxy.rowCount() > 0)
-            self.export_json_button.setEnabled(self.proxy.rowCount() > 0)
+            self._set_query_busy(False)
+            self._filter()
+            self.progress_bar.setToolTip("Query complete." if self.query_succeeded else self.status_message)
             if self.closing:
                 self.close()
 
         def _select_types(self, checked: bool) -> None:
-            """Toggle all event types with one final proxy refresh."""
+            """Toggle all event types and schedule one refresh for the batch."""
+            before = self._selected_types()
             for checkbox in self.checkboxes.values():
                 blocker = QtCore.QSignalBlocker(checkbox)
                 checkbox.setChecked(checked and checkbox.isEnabled())
                 del blocker
-            self._filter()
+            if self._selected_types() != before:
+                self._types_changed()
+            else:
+                self._filter()
 
         def _reset_types(self) -> None:
-            """Restore category defaults without changing query bounds or loaded records."""
+            """Restore category defaults, coalescing changes into one refresh."""
+            before = self._selected_types()
             for kind, checkbox in self.checkboxes.items():
                 blocker = QtCore.QSignalBlocker(checkbox)
                 checkbox.setChecked(bool((EVENT_FILTER_GROUPS[kind] & self.available_kinds) - DEFAULT_UNCHECKED_EVENT_KINDS))
                 del blocker
+            if self._selected_types() != before:
+                self._types_changed()
+            else:
+                self._filter()
+
+        def _types_changed(self) -> None:
+            """Filter immediately and debounce checkbox changes before querying."""
             self._filter()
+            if not self.initializing and not self.closing and self.worker is None:
+                self.query_timer.start()
 
         def _selected_types(self) -> set[EventKind]:
-            """Expand grouped controls to supported event types for filtering and persistence."""
+            """Expand checked groups, retaining selections while controls are disabled for a query."""
             return {member for kind, checkbox in self.checkboxes.items()
-                    if checkbox.isEnabled() and checkbox.isChecked()
+                    if checkbox.isChecked()
                     for member in EVENT_FILTER_GROUPS[kind] if member in self.available_kinds}
 
         def _filter(self) -> None:
@@ -466,6 +528,7 @@ def _launch_gui() -> int:
         def _set_status(self, message: str) -> None:
             """Show query/export feedback in the same footer as the result count."""
             self.status_message = message
+            self.progress_bar.setToolTip(message)
             self._update_summary()
 
         def _update_summary(self) -> None:
@@ -491,25 +554,47 @@ def _launch_gui() -> int:
         def _clear_details(self) -> None:
             """Clear both evidence views when the selection or query changes."""
             self.detail.clear()
-            self.xml_tree.clear()
-            self.xml_tree.hide()
-            self.xml_notice.setText("Select an event to inspect its XML.")
-            self.xml_notice.show()
+            self.structured_tree.clear()
+            self.structured_tree.hide()
+            self.structured_notice.setText("Select an event to inspect its XML or JSON.")
+            self.structured_notice.show()
 
-        def _show_xml(self, event: PowerEvent) -> None:
-            """Display XML structure as plain text, preserving child order and namespaces in tooltips."""
-            self.xml_tree.clear()
-            self.xml_tree.hide()
-            self.xml_notice.show()
-            if not event.xml:
-                self.xml_notice.setText("This event has no XML record. See Event details for its original evidence.")
-                return
+        def _show_structured(self, event: PowerEvent) -> None:
+            """Show XML or JSON as plain-text nodes without modifying original evidence."""
+            self.structured_tree.clear()
+            self.structured_tree.hide()
+            self.structured_notice.show()
+            format_name = "XML" if event.xml else "JSON"
+            self.structured_tree.setHeaderLabels(["Node", "Value", "Attributes" if event.xml else "Type"])
+            self.structured_tree.setColumnWidth(2, 260 if event.xml else 100)
             try:
-                root = ET.fromstring(event.xml)
-            except ET.ParseError as exc:
-                self.xml_notice.setText(f"Cannot display this XML: {exc}. See Event details for the original record.")
+                if event.xml:
+                    self._populate_xml(event.xml)
+                    complete = True
+                else:
+                    documents = _json_evidence(event)
+                    if not documents:
+                        self.structured_notice.setText(
+                            "This event has no XML or JSON record. See Event details for its original evidence.")
+                        return
+                    complete = self._populate_json(documents)
+            except (ET.ParseError, ValueError, RecursionError) as exc:
+                self.structured_tree.clear()
+                self.structured_notice.setText(
+                    f"Cannot display this {format_name}: {exc}. See Event details for the original record.")
                 return
-            pending = [(root, self.xml_tree.invisibleRootItem())]
+            self.structured_tree.expandToDepth(1)
+            if complete:
+                self.structured_notice.hide()
+            else:
+                self.structured_notice.setText(
+                    f"Showing the first {MAX_STRUCTURED_NODES:,} nodes. Event details retains the complete record.")
+            self.structured_tree.show()
+
+        def _populate_xml(self, text: str) -> None:
+            """Preserve XML child order, attributes and namespace tooltips."""
+            root = ET.fromstring(text)
+            pending = [(root, self.structured_tree.invisibleRootItem())]
             while pending:
                 element, parent = pending.pop()
                 name = element.tag.rsplit("}", 1)[-1]
@@ -524,9 +609,33 @@ def _launch_gui() -> int:
                 item.setToolTip(2, "\n".join(f"{key}={value}" for key, value in element.attrib.items()))
                 parent.addChild(item)
                 pending.extend((child, item) for child in reversed(element))
-            self.xml_tree.expandToDepth(1)
-            self.xml_notice.hide()
-            self.xml_tree.show()
+
+        def _populate_json(self, documents: list[tuple[str, object]]) -> bool:
+            """Render ordered objects/arrays and explicit scalar types within a node budget."""
+            pending: list[tuple[str, object, QtWidgets.QTreeWidgetItem]] = [
+                (name, value, self.structured_tree.invisibleRootItem()) for name, value in reversed(documents)
+            ]
+            count = 0
+            while pending and count < MAX_STRUCTURED_NODES:
+                name, value, parent = pending.pop()
+                children: list[tuple[str, object]] = []
+                if isinstance(value, dict):
+                    children = list(cast(dict[str, object], value).items())
+                    text, kind = f"{len(children):,} fields", "object"
+                elif isinstance(value, list):
+                    children = [(f"[{index}]", child) for index, child in enumerate(cast(list[object], value))]
+                    text, kind = f"{len(children):,} items", "array"
+                else:
+                    text = json.dumps(value, ensure_ascii=False)
+                    kind = ("null" if value is None else "boolean" if isinstance(value, bool)
+                            else "string" if isinstance(value, str) else "number")
+                item = QtWidgets.QTreeWidgetItem([name, text, kind])
+                item.setToolTip(0, name)
+                item.setToolTip(1, text)
+                parent.addChild(item)
+                count += 1
+                pending.extend((key, child, item) for key, child in reversed(children))
+            return not pending
 
         def _show_detail(self) -> None:
             """Show the selected row's metadata and original evidence without interpreting it as HTML."""
@@ -541,7 +650,7 @@ def _launch_gui() -> int:
                 f"Boot ID: {event.boot_id or 'Not recorded'}\nRecord ID: {event.record_id or 'Not recorded'}\n"
                 f"\n{event.summary}\n\nOriginal evidence:\n{event.raw}"
             )
-            self._show_xml(event)
+            self._show_structured(event)
 
         def _export(self, suffix: str) -> None:
             """Save visible rows in display order using the requested .csv or .json format."""
@@ -574,17 +683,17 @@ def _launch_gui() -> int:
 
         def closeEvent(self, event: QtGui.QCloseEvent) -> None:
             """Cancel active collection before closing, then persist presentation preferences."""
+            self.closing = True
+            self.query_timer.stop()
             if self.worker is not None:
-                self.closing = True
                 self._cancel()
                 event.ignore()
                 return
             self.settings.setValue("geometry", self.saveGeometry())
             self.settings.setValue("columns", self.table.horizontalHeader().saveState())
             self.settings.setValue("range", self.range_box.currentText())
-            selected = self._selected_types()
-            self.settings.setValue("types", [kind.value for kind in EventKind if kind in selected])
-            self.settings.setValue("knownTypes", [kind.value for kind in EventKind if kind in self.available_kinds])
+            self.settings.remove("types")
+            self.settings.remove("knownTypes")
             for key, editor in (("start", self.start_edit), ("end", self.end_edit)):
                 self.settings.setValue(key, editor.dateTime().toString(QtCore.Qt.DateFormat.ISODate))
             super().closeEvent(event)

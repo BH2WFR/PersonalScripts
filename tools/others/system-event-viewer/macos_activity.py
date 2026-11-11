@@ -21,6 +21,7 @@ class ActivityRule:
     processes: tuple[str, ...]
     keywords: tuple[str, ...]
     pattern: str
+    exclude_pattern: str = ""
 
 
 ACTIVITY_RULES: tuple[ActivityRule, ...] = (
@@ -43,27 +44,31 @@ ACTIVITY_RULES: tuple[ActivityRule, ...] = (
     ActivityRule(EventKind.SERVICE, ("launchd",), ("exited", "spawn", "service", "throttl"),
                  r"(?:service exited|exited (?:with|due to)|spawn.*(?:fail|error)|service.*(?:fail|crash)|throttling respawn)"),
     ActivityRule(EventKind.FILESYSTEM, ("kernel", "fsck_apfs", "fsck_hfs", "diskarbitrationd"),
-                 ("I/O", "corrupt", "space", "filesystem", "mount", "apfs", "hfs"),
+                 ("I/O", "corrupt", "space", "filesystem", "mount", "apfs", "hfs", "volume"),
                  r"(?:I/O error|no space left|filesystem.*(?:error|corrupt)|"
                  r"(?:apfs|hfs).*?(?:error|corrupt)|(?:mount|unmount).*fail|volume.*(?:corrupt|could not be verified))"),
     ActivityRule(EventKind.DEVICE_CHANGE, ("kernel", "diskarbitrationd", "bluetoothd"),
                  ("USB", "disk", "device"), r"(?:USB.*(?:disconnect|attach|detach|enumerat)|"
-                 r"disk.*(?:appeared|disappeared)|device.*(?:connected|disconnected|attached|detached))"),
+                 r"disk.*(?:appeared|disappeared)|device.*(?:connected|disconnected|attached|detached))",
+                 r"\bcallbacks?\b"),
     ActivityRule(EventKind.NETWORK, ("airportd", "wifid", "configd", "nesessionmanager", "pppd"),
                  ("link", "connect", "associat", "disconnect", "terminated"),
-                 r"(?:link (?:up|down)|\b(?:disconnected|associated|disassociated)\b|"
-                 r"connection (?:established|failed|terminated)|status changed.*(?:connected|disconnected))"),
+                 r"(?:(?:^\s*|:\s*|\]\s*)(?:link (?:up|down)|disconnected|associated|disassociated)\b|"
+                 r"\bconnection (?:established|failed|terminated)\b|"
+                 r"\bstatus changed\b.*\b(?:connected|disconnected)\b)"),
 )
 
 
-def activity_predicate() -> str:
-    """Filter at the log source using static process names and message keywords."""
+def activity_predicate(selected_kinds: frozenset[EventKind] | None = None) -> str:
+    """Filter selected activity categories at the source; an empty selection matches nothing."""
     clauses = []
     for rule in ACTIVITY_RULES:
+        if selected_kinds is not None and rule.kind not in selected_kinds:
+            continue
         processes = " OR ".join(f'process == "{process}"' for process in rule.processes)
         words = " OR ".join(f'eventMessage CONTAINS[c] "{word}"' for word in rule.keywords)
         clauses.append(f"(({processes}) AND ({words}))")
-    return " OR ".join(clauses)
+    return " OR ".join(clauses) or "FALSEPREDICATE"
 
 
 def parse_activity(text: str) -> list[PowerEvent]:
@@ -74,6 +79,8 @@ def parse_activity(text: str) -> list[PowerEvent]:
         message = str(record.get("eventMessage", ""))
         for rule in ACTIVITY_RULES:
             if process not in rule.processes or not re.search(rule.pattern, message, re.IGNORECASE):
+                continue
+            if rule.exclude_pattern and re.search(rule.exclude_pattern, message, re.IGNORECASE):
                 continue
             # The collector reports malformed records as an unavailable source.
             timestamp = common._timestamp(str(record.get("timestamp", "")))

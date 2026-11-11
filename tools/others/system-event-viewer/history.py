@@ -24,6 +24,7 @@ from . import windows, macos, linux
 def query_events(
     start: dt.datetime, end: dt.datetime, cancelled: threading.Event,
     progress: Callable[[str], None] = lambda _message: None,
+    *, selected_kinds: frozenset[EventKind] | None = None,
 ) -> QueryResult:
     """Read local event and diagnostic history without changing settings or escalating privileges.
 
@@ -32,6 +33,8 @@ def query_events(
         end: Exclusive timezone-aware end timestamp, after start.
         cancelled: Cancellation flag shared with the GUI worker.
         progress: Optional callback receiving short English progress messages.
+        selected_kinds: Requested categories, or all when omitted. macOS skips
+            unrelated sources; other platforms retain their existing source queries.
 
     Returns:
         Sorted events and per-source diagnostics, including partial failures.
@@ -47,17 +50,23 @@ def query_events(
     if start.tzinfo is None or end.tzinfo is None or start >= end:
         raise ValueError("Choose an end time after the start time, with a timezone.")
     result = QueryResult(start.astimezone(UTC), end.astimezone(UTC))
+    if cancelled.is_set():
+        raise InterruptedError("Query cancelled.")
+    if selected_kinds == frozenset():
+        return result
     collectors = {"darwin": macos._collect_macos, "win32": windows._collect_windows, "linux": linux._collect_linux}
     collector = collectors.get(sys.platform)
     if collector is None:
         result.statuses.append(SourceStatus("Platform", SourceState.ERROR, f"Unsupported platform: {sys.platform}"))
+    elif sys.platform == "darwin" and selected_kinds is not None:
+        macos._collect_macos(result, cancelled, progress, selected_kinds=selected_kinds)
     else:
         collector(result, cancelled, progress)
     if cancelled.is_set():
         raise InterruptedError("Query cancelled.")
     unique: dict[tuple[dt.datetime, EventKind, str, str, str], PowerEvent] = {}
     for event in result.events:
-        if result.start <= event.timestamp < result.end:
+        if result.start <= event.timestamp < result.end and (selected_kinds is None or event.kind in selected_kinds):
             unique[(event.timestamp, event.kind, event.source, event.record_id, event.session)] = event
     result.events = sorted(unique.values(), key=lambda event: event.timestamp, reverse=True)
     if len(result.events) > MAX_EVENTS:

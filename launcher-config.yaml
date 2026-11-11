@@ -98,7 +98,7 @@ ignore-list:
             # 暂无
 
 gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no-gui 下也会被隐藏
-    - "others/system-event-viewer.py" # Grouped system history with F5 refresh; noisy filters default off
+    - "others/system-event-viewer.py"
     - "document-processing/document-screenshot.py"
     - "document-processing/pdf-binarizer.py"
     - "document-processing/pdf-bookmark-editor.py"

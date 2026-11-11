@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime as dt
 import json
 import os
@@ -12,7 +13,9 @@ import threading
 import time
 from typing import cast
 from .models import (
+    ACTIVITY_EVENT_KINDS,
     COMMAND_TIMEOUT,
+    DIAGNOSTIC_EVENT_KINDS,
     EventKind,
     MAC_REPORT_SUFFIXES,
     MAX_REPORT_BYTES,
@@ -20,6 +23,7 @@ from .models import (
     MAX_REPORT_TOTAL_BYTES,
     MAX_EVENTS,
     MONTHS,
+    PLATFORM_EVENT_KINDS,
     PowerEvent,
     QueryResult,
     SSH_PROCESSES,
@@ -32,12 +36,16 @@ from . import common
 from .macos_activity import activity_predicate, parse_activity
 
 
+ACTIVITY_QUERY_WORKERS = 4
+ACTIVITY_QUERY_MIN_SPAN = dt.timedelta(hours=6)
+
+
 def _parse_pmset(text: str) -> list[PowerEvent]:
     """Parse actual pmset state records, excluding Wake Requests and client acknowledgements."""
     events: list[PowerEvent] = []
-    pattern = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4})\s+(Sleep|Wake|DarkWake|Hibernate)\s{2,}(.+)$")
+    pattern = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4})\s+(Sleep|Wake|DarkWake)\s{2,}(.+)$")
     kinds = {"Sleep": EventKind.SLEEP, "Wake": EventKind.WAKE,
-             "DarkWake": EventKind.DARK_WAKE, "Hibernate": EventKind.HIBERNATE}
+             "DarkWake": EventKind.DARK_WAKE}
     for line in text.splitlines():
         match = pattern.match(line)
         if match is None:
@@ -230,26 +238,8 @@ def _collect_mac_reports(result: QueryResult, cancelled: threading.Event, direct
 
 
 
-def _collect_macos(result: QueryResult, cancelled: threading.Event, progress: Callable[[str], None]) -> None:
-    """Collect independent macOS power, screen-session and startup sources."""
-    progress("Reading sleep and wake history...")
-    common._collect_source(result, "Power history", ["/usr/bin/pmset", "-g", "log"], _parse_pmset, cancelled)
-    progress("Reading lock and unlock notifications...")
-    predicate = 'process == "loginwindow" AND eventMessage CONTAINS "sendDistributedNotification: com.apple.screenIs"'
-    common._collect_source(result, "Screen sessions", [
-        "/usr/bin/log", "show", "--style", "ndjson", "--info",
-        "--start", result.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
-        "--end", result.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", predicate,
-    ], _parse_mac_sessions, cancelled)
-    progress("Reading incoming SSH history...")
-    ssh_predicate = " OR ".join(f'process == "{process}"' for process in sorted(SSH_PROCESSES))
-    common._collect_source(result, "OpenSSH server", [
-        "/usr/bin/log", "show", "--style", "ndjson", "--info",
-        "--start", result.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
-        "--end", result.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", ssh_predicate,
-    ], _parse_mac_ssh, cancelled)
-    progress("Reading startup and shutdown history...")
-    common._collect_source(result, "Boot history", ["/usr/bin/last", "-y", "reboot", "shutdown"], _parse_mac_last, cancelled)
+def _collect_current_boot(result: QueryResult, cancelled: threading.Event) -> None:
+    """Read precise current boot time and replace its minute-resolution last record."""
     try:
         text, _ = common._run_command(["/usr/sbin/sysctl", "-n", "kern.boottime"], cancelled)
         match = re.search(r"sec\s*=\s*(\d+)", text)
@@ -265,18 +255,106 @@ def _collect_macos(result: QueryResult, cancelled: threading.Event, progress: Ca
         result.statuses.append(SourceStatus("Current startup", SourceState.OK, "Current boot only; older startup records come from last."))
     except (RuntimeError, ValueError) as exc:
         result.statuses.append(SourceStatus("Current startup", SourceState.ERROR, str(exc)))
-    progress("Reading crash, hang and diagnostic reports...")
-    _collect_mac_reports(result, cancelled, (Path.home() / "Library/Logs/DiagnosticReports",
-                                           Path("/Library/Logs/DiagnosticReports")))
+
+
+def _collect_mac_activity(
+    result: QueryResult, cancelled: threading.Event, progress: Callable[[str], None],
+    selected_kinds: frozenset[EventKind],
+) -> None:
+    """Read long activity ranges in up to four independent, cancellable time slices.
+
+    Each slice retains its own source limits and status, so a failed or truncated
+    period cannot hide readable periods. Half-open filtering removes records at
+    the next slice's boundary even if log show includes its end timestamp.
+    """
+    duration = result.end - result.start
+    workers = max(1, min(ACTIVITY_QUERY_WORKERS, duration // ACTIVITY_QUERY_MIN_SPAN))
+    predicate = activity_predicate(selected_kinds)
+    # Whole-second internal boundaries match log show's command-line precision.
+    seconds = int(duration.total_seconds())
+    boundaries = [result.start] + [
+        (result.start + dt.timedelta(seconds=seconds * index // workers)).replace(microsecond=0)
+        for index in range(1, workers)
+    ] + [result.end]
+
+    def collect_slice(index: int) -> QueryResult:
+        """Keep each subprocess's events and availability diagnostics isolated."""
+        part = QueryResult(boundaries[index], boundaries[index + 1])
+        source = "System activity"
+        if workers > 1:
+            source += f" [{part.start:%Y-%m-%d %H:%M:%S} / {part.end:%Y-%m-%d %H:%M:%S} UTC)"
+        common._collect_source(part, source, [
+            "/usr/bin/log", "show", "--style", "ndjson", "--info",
+            "--start", part.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
+            "--end", part.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", predicate,
+        ], parse_activity, cancelled, record_limit=MAX_EVENTS, stream_ndjson=True)
+        return part
+
     progress("Reading system activity and maintenance history...")
-    common._collect_source(result, "System activity", [
-        "/usr/bin/log", "show", "--style", "ndjson", "--info",
-        "--start", result.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
-        "--end", result.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", activity_predicate(),
-    ], parse_activity, cancelled, record_limit=MAX_EVENTS)
+    if workers == 1:
+        parts = [collect_slice(0)]
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="macos-log") as pool:
+            futures = [pool.submit(collect_slice, index) for index in range(workers)]
+            try:
+                for completed, future in enumerate(as_completed(futures), 1):
+                    future.result()
+                    if cancelled.is_set():
+                        raise InterruptedError("Query cancelled.")
+                    progress(f"Reading system activity: {completed}/{workers} time ranges complete...")
+                parts = [future.result() for future in futures]
+            except BaseException:
+                cancelled.set()
+                raise
+    for part in parts:
+        result.events.extend(part.events)
+        result.statuses.extend(part.statuses)
+
+
+def _collect_macos(
+    result: QueryResult, cancelled: threading.Event, progress: Callable[[str], None],
+    *, selected_kinds: frozenset[EventKind] | None = None,
+) -> None:
+    """Read only sources needed by selected categories; omitted selection retains full coverage."""
+    available = PLATFORM_EVENT_KINDS["darwin"]
+    selected = available if selected_kinds is None else selected_kinds & available
+    if not selected:
+        return
+    if selected & {EventKind.SLEEP, EventKind.WAKE, EventKind.DARK_WAKE}:
+        progress("Reading sleep and wake history...")
+        common._collect_source(result, "Power history", ["/usr/bin/pmset", "-g", "log"], _parse_pmset, cancelled)
+    if selected & {EventKind.LOCK, EventKind.UNLOCK}:
+        progress("Reading lock and unlock notifications...")
+        predicate = 'process == "loginwindow" AND eventMessage CONTAINS "sendDistributedNotification: com.apple.screenIs"'
+        common._collect_source(result, "Screen sessions", [
+            "/usr/bin/log", "show", "--style", "ndjson", "--info",
+            "--start", result.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
+            "--end", result.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", predicate,
+        ], _parse_mac_sessions, cancelled, record_limit=MAX_EVENTS, stream_ndjson=True)
+    if selected & {EventKind.SSH_CONNECT, EventKind.SSH_DISCONNECT, EventKind.AUTHENTICATION}:
+        progress("Reading incoming SSH history...")
+        ssh_predicate = " OR ".join(f'process == "{process}"' for process in sorted(SSH_PROCESSES))
+        common._collect_source(result, "OpenSSH server", [
+            "/usr/bin/log", "show", "--style", "ndjson", "--info",
+            "--start", result.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
+            "--end", result.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", ssh_predicate,
+        ], _parse_mac_ssh, cancelled, record_limit=MAX_EVENTS, stream_ndjson=True)
+    if selected & {EventKind.STARTUP, EventKind.SHUTDOWN}:
+        progress("Reading startup and shutdown history...")
+        common._collect_source(result, "Boot history", ["/usr/bin/last", "-y", "reboot", "shutdown"], _parse_mac_last, cancelled)
+        if EventKind.STARTUP in selected:
+            _collect_current_boot(result, cancelled)
+    if selected & DIAGNOSTIC_EVENT_KINDS:
+        progress("Reading crash, hang and diagnostic reports...")
+        _collect_mac_reports(result, cancelled, (Path.home() / "Library/Logs/DiagnosticReports",
+                                               Path("/Library/Logs/DiagnosticReports")))
+    if selected & ACTIVITY_EVENT_KINDS:
+        _collect_mac_activity(result, cancelled, progress, selected)
     result.statuses.append(SourceStatus("Coverage", SourceState.LIMITED,
+        "Only sources needed by the selected event types were queried. "
         "Lock/unlock uses explicit loginwindow notifications; macOS versions and log retention vary. "
         "Older boot records have minute precision. Background wakes do not imply user activity. "
+        "Separate hibernation transitions are not collected; HibernateStats alone is not a transition. "
         "SSH requires retained sshd unified logs; private/redacted fields may prevent recognition. "
         "RDP and general desktop logon/logoff history are only collected on Windows. "
         "Diagnostics cover the current user's and system DiagnosticReports (including Retired), not other users, "

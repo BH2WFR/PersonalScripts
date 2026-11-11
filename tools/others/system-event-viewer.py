@@ -17,19 +17,16 @@ from utils import *  # noqa: E402
 
 HELP = f"""{FLYellow}SYSTEM EVENT VIEWER{CRst}
 
-Inspect and export power, login, failure and system activity history, including
-devices, networks, updates and resource/service problems. Includes incoming SSH,
-Windows RDP, SMB/share auditing, Modern Standby and blocked device ejections.
-Coverage depends on retained logs; diagnostic reports alone do not establish a
-crash or its cause.
+Inspect and export power, session, failure and system activity history, including
+incoming SSH and Windows RDP/SMB auditing. Coverage depends on retained logs;
+diagnostic reports alone do not establish a crash or its cause.
 
 {FLYellow}Requirements:{CRst}
   PySide6; Windows PowerShell, macOS log/pmset/last/sysctl, or Linux journalctl.
-  Security log access and prior auditing for Windows lock/logon/authentication history.
-  File Share / Detailed File Share auditing for Windows shared-object access logs.
-  OpenSSH server logs for SSH; file-only SSH logs are not read. Linux locks and
-  hang detection are limited; macOS diagnostics require readable report files.
-  Activity coverage varies with OS version, services and retained native logs.
+  Windows Security/share history requires access and prior corresponding auditing.
+  SSH requires native OpenSSH server logs; file-only logs are not read.
+  macOS diagnostics require readable reports; separate hibernation transitions
+  are not collected. Linux lock and hang detection is limited.
 
 {FLYellow}Usage:{CRst}
   python system-event-viewer.py

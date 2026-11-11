@@ -29,7 +29,8 @@ After context compaction, reread this file before project work.
   choices and extra script roots.
 - Whenever adding a feature, renaming a tool, or converting a tool to a GUI,
   update `launcher-config.yaml` in the same change, including affected discovery,
-  platform exclusions and `gui-tools-list` entries.
+  platform exclusions and `gui-tools-list` entries. Do not automatically add unrelevant
+  comments to this file.
 - Read the affected module/package's README and sample configuration as needed.
   Keep implementation details there rather than expanding this project prompt.
 

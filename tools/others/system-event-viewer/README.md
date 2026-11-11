@@ -17,7 +17,7 @@ modules. `compile-script.py` stages this alias for Nuitka and PyInstaller.
 | `macos_activity.py` | Source-qualified unified-log activity patterns and predicates |
 | `linux.py` | systemd journal collection and decoding |
 | `history.py` | Query dispatch, time bounds, deduplication and CSV/JSON exports |
-| `ui.py` | Lazy Qt loading, query worker, table, filters and XML tree |
+| `ui.py` | Lazy Qt loading, query worker, table, filters and XML/JSON structured view |
 | `app.py` | Desktop/platform checks and application startup |
 
 The entry owns CLI help. Preserve the `PersonalScripts/PowerEvents` QSettings
@@ -25,22 +25,53 @@ identity, the `powerEventsWindow` application property and existing export field
 when refactoring. These retain display preferences and integration compatibility.
 `PowerEvent` remains the internal event model name.
 
-Available event filters default on except Application crash, Application
-unresponsive, the nine activity categories below and Windows SMB/network
-authentication. Saved selections take
-precedence. All selects supported categories; None clears them; Reset restores
-defaults without changing dates or querying again. Filter columns adapt to window
-width. All categories are collected during a query so filtering remains immediate.
+Every launch starts with all event filters unchecked and does not query logs.
+Event selections are not saved or restored; layout and date preferences remain
+persistent. Changing event selections automatically refreshes history after a
+250 ms debounce; All/None/Reset batch their checkbox changes into one request.
+With nothing selected, the refresh does not read logs. All selects supported
+categories; None and Reset clear them. Filter columns adapt to window width.
+Checkboxes immediately filter loaded results while scheduling a fresh query
+with a snapshot of the selected categories. macOS reads only the necessary
+sources: Sleep/Wake/Background wake share one `pmset` call, without unified-log
+queries or diagnostic-report scans. Activity predicates include only selected
+activity categories; Authentication also needs sshd for SSH failures. Shared
+sources can contain other categories, which are removed before the result limit
+is applied. Windows/Linux retain their existing source queries, with returned
+events restricted to selected categories.
+
+Long macOS activity queries split the requested interval into up to four parallel
+time ranges, with at least six hours per range (short queries use one reader).
+Each range retains its own source status and limits; half-open boundaries prevent
+duplicate boundary events. Progress reports completed ranges, and cancellation
+stops and joins every reader. Lock/SSH queries and diagnostic-report scans retain
+their direct reads. Every refresh reads native sources again; no cached history
+is substituted for a fresh query.
+
+During a query, event checkboxes, selection buttons and time-range inputs are
+disabled. The progress bar immediately left of Export CSV shows an indeterminate
+animation; its tooltip follows the current log source. Completion, cancellation
+and failure clear the progress bar and restore the controls with their platform and
+custom-range restrictions. Closing the window discards pending refreshes.
+
 F5 triggers Query / Refresh throughout the window; it is ignored while a query
 is running and does not repeat when held down.
 Combined controls cover Startup / Shutdown, Sleep / Wake (including Modern
 Standby entry/exit), Logon / Logoff, Lock / Unlock, all RDP connection/reconnection/disconnection
 events, and SSH connection/disconnection. Rows and exports retain their original
-event types. When restoring older settings, a merged checkbox is enabled if any
-of its supported member types was enabled. Hibernate, Background wake and power
+event types. Older saved event selections are ignored. Hibernate, Background wake and power
 session transitions remain separate.
+Hibernate is disabled on macOS because the collector does not identify separate
+hibernation transitions. `HibernateStats` is statistical evidence, and
+`Wake from Hibernate` remains a wake record.
 Filters are ordered by power, sessions/authentication, network/devices/maintenance,
 then failures/diagnostics; their ordering is independent of persisted event names.
+
+Structured view displays Windows XML and native JSON evidence as expandable
+trees. JSON retains object order, array indices and scalar types; macOS IPS
+metadata and report bodies appear as separate roots. JSON trees display at most
+10,000 nodes with an explicit notice. Event details and exports retain the
+complete original evidence, including unsupported or malformed structures.
 
 ## Source coverage
 
@@ -90,6 +121,10 @@ Windows type-3 authentication appears in its own optional category; interactive
 logon/logoff filtering remains separate. Distribution/version-specific wording,
 privacy redaction and absent services can leave gaps. Package-manager log files
 and macOS installation-history databases are not collected.
+macOS device callback bookkeeping and Wi-Fi association-state snapshots are
+excluded; network recognition requires explicit transition messages. Query
+keywords must cover every corresponding parser pattern, including volume
+verification failures.
 
 Windows mappings follow provider manifests and Microsoft's
 [audit event reference](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/Appendix-L--Events-to-Monitor).
@@ -135,7 +170,17 @@ into unique session counts. RDP requires remote-address or RDP-station evidence.
 
 Queries use a half-open UTC interval and show local times with offsets. Commands
 time out after 90 seconds and cancellation kills and reaps their child process.
-The newest 50,000 normalized events are displayed; source truncation is reported.
+The newest 50,000 collected normalized events are displayed; source truncation
+is reported. Each macOS unified-log command stops after detecting more than
+50,000 JSON records, 64 MiB of stdout, a 1 MiB line or 64 KiB of stderr. Complete
+records read before the limit remain available with a Limited source status;
+these are the beginning of that command's chronological range, so later events
+in that range may be missing. Narrow the time range to inspect the omitted period. Limits apply to
+screen sessions, SSH and activity logs whenever those sources are requested.
+Parallel activity ranges have separate command limits and are identified in
+Sources. At most four log processes run together; their stdout budgets total
+at most 256 MiB before parsing. The final display still retains the newest
+50,000 normalized events across all ranges and reports truncation.
 macOS report reads are capped at 8 MiB per file, 64 MiB total, 5,000 files and
 90 seconds. Symlinks, binary dumps, archives and sysdiagnose bundles are excluded.
 

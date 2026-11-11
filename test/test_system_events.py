@@ -8,6 +8,7 @@ Fixtures and settings are isolated inside the repository's tmp directory.
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 import csv
 import datetime as dt
 import importlib.util
@@ -64,10 +65,14 @@ class ParserTests(unittest.TestCase):
             "2026-10-10 20:00:02 +0800 Kernel Client Acks  \tDelays to Wake notifications",
             "2026-10-10 20:01:00 +0800 DarkWake            \tDarkWake from Deep Idle",
             "2026-10-10 20:02:00 +0800 Wake                \tWake from Deep Idle",
+            "2026-10-10 20:02:00 +0800 HibernateStats      \thibmode=3 rd=737 ms",
         ))
         events = macos._parse_pmset(text)
         self.assertEqual([event.kind for event in events], [app.EventKind.SLEEP, app.EventKind.DARK_WAKE, app.EventKind.WAKE])
         self.assertEqual(events[0].timestamp, STAMP)
+        hibernate_wake = macos._parse_pmset("2026-10-10 20:03:00 +0800 Wake                \tWake from Hibernate")
+        self.assertEqual(hibernate_wake[0].kind, app.EventKind.WAKE)
+        self.assertNotIn(app.EventKind.HIBERNATE, app.PLATFORM_EVENT_KINDS["darwin"])
 
     def test_mac_unlock_request_and_locked_snapshot_are_not_transitions(self) -> None:
         """State snapshots and failed/started authentication must not become lock events."""
@@ -528,6 +533,131 @@ class ParserTests(unittest.TestCase):
             result = history.query_events(STAMP, STAMP + dt.timedelta(hours=1), threading.Event())
         self.assertEqual(len(result.events), 1)
 
+    def test_macos_power_selection_skips_unrelated_sources(self) -> None:
+        """Sleep/wake/background wake read pmset once and never launch unified-log scans."""
+        text = "\n".join((
+            "2026-10-10 20:00:00 +0800 Sleep               \tEntering Sleep state due to 'Idle Sleep'",
+            "2026-10-10 20:01:00 +0800 DarkWake            \tDarkWake from Deep Idle",
+            "2026-10-10 20:02:00 +0800 Wake                \tWake from Deep Idle",
+        ))
+        cases = (frozenset({app.EventKind.SLEEP, app.EventKind.WAKE}),
+                 frozenset({app.EventKind.DARK_WAKE}),
+                 frozenset({app.EventKind.SLEEP, app.EventKind.WAKE, app.EventKind.DARK_WAKE}))
+        for selected in cases:
+            with self.subTest(selected=selected), patch.object(sys, "platform", "darwin"), patch.object(
+                common, "_run_command", return_value=(text, ""),
+            ) as command, patch.object(macos, "_collect_mac_reports") as reports:
+                result = history.query_events(STAMP, STAMP + dt.timedelta(hours=1), threading.Event(),
+                                              selected_kinds=selected)
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(command.call_args.args[0], ["/usr/bin/pmset", "-g", "log"])
+            reports.assert_not_called()
+            expected = [event for event in reversed(macos._parse_pmset(text)) if event.kind in selected]
+            self.assertEqual(result.events, expected)
+            self.assertEqual({status.source for status in result.statuses}, {"Power history", "Coverage"})
+
+    def test_macos_selected_source_dependencies_and_activity_predicates(self) -> None:
+        """Other categories keep their necessary sources without adding unrelated queries."""
+        from personal_system_event_viewer import macos_activity
+        cases = ((app.EventKind.LOCK, ["/usr/bin/log"], False, 'process == "loginwindow"'),
+                 (app.EventKind.SSH_CONNECT, ["/usr/bin/log"], False, 'process == "sshd"'),
+                 (app.EventKind.AUTHENTICATION, ["/usr/bin/log", "/usr/bin/log"], False, 'process == "authd"'),
+                 (app.EventKind.NETWORK, ["/usr/bin/log"], False, 'process == "airportd"'),
+                 (app.EventKind.APP_CRASH, [], True, ""),
+                 (app.EventKind.STARTUP, ["/usr/bin/last", "/usr/sbin/sysctl"], False, ""),
+                 (app.EventKind.SHUTDOWN, ["/usr/bin/last"], False, ""))
+        for kind, executables, scans_reports, predicate in cases:
+            with self.subTest(kind=kind), patch.object(common, "_run_command", return_value=("", "")) as command, patch.object(
+                macos, "_collect_mac_reports",
+            ) as reports:
+                macos._collect_macos(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1)), threading.Event(),
+                                     lambda _text: None, selected_kinds=frozenset({kind}))
+            self.assertEqual([call.args[0][0] for call in command.call_args_list], executables)
+            self.assertEqual(reports.called, scans_reports)
+            if predicate:
+                native_predicate = command.call_args.args[0][-1]
+                self.assertIn(predicate, native_predicate)
+                self.assertNotIn('process == "softwareupdated"', native_predicate)
+        self.assertEqual(macos_activity.activity_predicate(frozenset()), "FALSEPREDICATE")
+
+    def test_empty_selection_performs_no_collection_and_honors_cancellation(self) -> None:
+        with patch.object(macos, "_collect_macos") as collector, patch.object(sys, "platform", "darwin"):
+            result = history.query_events(STAMP, STAMP + dt.timedelta(hours=1), threading.Event(),
+                                          selected_kinds=frozenset())
+            self.assertEqual(result.events, [])
+            collector.assert_not_called()
+            cancelled = threading.Event()
+            cancelled.set()
+            with self.assertRaises(InterruptedError):
+                history.query_events(STAMP, STAMP + dt.timedelta(hours=1), cancelled, selected_kinds=frozenset())
+
+    def test_macos_parallel_activity_covers_boundaries_without_duplicates(self) -> None:
+        """Concurrent native queries retain each boundary event exactly once."""
+        boundary = threading.Barrier(4)
+        stamps = [STAMP + dt.timedelta(hours=6 * index) for index in range(5)]
+        records = "\n".join(json.dumps({
+            "process": "launchd", "eventMessage": "service exited with code 1",
+            "timestamp": stamp.isoformat(), "machTimestamp": index,
+        }) for index, stamp in enumerate(stamps))
+
+        def read(command: list[str], cancelled: threading.Event, **_kwargs: object) -> tuple[str, str]:
+            boundary.wait(timeout=3)
+            return records, ""
+
+        result = app.QueryResult(STAMP, STAMP + dt.timedelta(days=1))
+        progress: list[str] = []
+        with patch.object(common, "_run_command", side_effect=read) as command:
+            macos._collect_mac_activity(result, threading.Event(), progress.append, frozenset({app.EventKind.SERVICE}))
+        self.assertEqual(command.call_count, 4)
+        self.assertEqual([event.timestamp for event in result.events], stamps[:-1])
+        self.assertEqual(len(result.statuses), 4)
+        self.assertTrue(all(status.state == app.SourceState.OK for status in result.statuses))
+        self.assertIn("4/4", progress[-1])
+        self.assertTrue(all(call.kwargs == {"ndjson_limit": app.MAX_EVENTS} for call in command.call_args_list))
+
+    def test_macos_parallel_activity_preserves_failed_and_limited_periods(self) -> None:
+        """One failed slice cannot discard another slice's partial evidence or warning."""
+        def read(command: list[str], cancelled: threading.Event, **_kwargs: object) -> tuple[str, str]:
+            start = common._timestamp(command[command.index("--start") + 1])
+            if start == STAMP:
+                raise RuntimeError("fixture source unavailable")
+            record = json.dumps({"process": "launchd", "eventMessage": "service exited with code 1",
+                                 "timestamp": start.isoformat()})
+            return record, "Source record limit reached." if start == STAMP + dt.timedelta(hours=6) else ""
+
+        result = app.QueryResult(STAMP, STAMP + dt.timedelta(days=1))
+        with patch.object(common, "_run_command", side_effect=read):
+            macos._collect_mac_activity(result, threading.Event(), lambda _text: None, frozenset({app.EventKind.SERVICE}))
+        self.assertEqual(len(result.events), 3)
+        self.assertEqual([status.state for status in result.statuses],
+                         [app.SourceState.ERROR, app.SourceState.LIMITED, app.SourceState.OK, app.SourceState.OK])
+        self.assertIn("Source record limit", result.statuses[1].message)
+        self.assertIn("2026-10-10 18:00:00", result.statuses[1].source)
+
+    def test_macos_parallel_activity_cancellation_joins_all_readers(self) -> None:
+        """Cancellation reaches every concurrent source and leaves no reader running."""
+        cancelled = threading.Event()
+        boundary = threading.Barrier(4)
+        finished: list[str] = []
+
+        def read(command: list[str], flag: threading.Event, **_kwargs: object) -> tuple[str, str]:
+            boundary.wait(timeout=3)
+            flag.wait(timeout=3)
+            finished.append(command[command.index("--start") + 1])
+            raise InterruptedError("Query cancelled.")
+
+        timer = threading.Timer(.15, cancelled.set)
+        timer.start()
+        started = time.monotonic()
+        try:
+            with patch.object(common, "_run_command", side_effect=read), self.assertRaises(InterruptedError):
+                macos._collect_mac_activity(app.QueryResult(STAMP, STAMP + dt.timedelta(days=1)), cancelled,
+                                            lambda _text: None, frozenset({app.EventKind.SERVICE}))
+        finally:
+            timer.cancel()
+        self.assertEqual(len(finished), 4)
+        self.assertLess(time.monotonic() - started, 3)
+
     def test_cancellation_reaps_a_running_child(self) -> None:
         """Cancellation stops a waiting native-source process promptly."""
         cancelled = threading.Event()
@@ -540,6 +670,75 @@ class ParserTests(unittest.TestCase):
         finally:
             timer.cancel()
         self.assertLess(time.monotonic() - started, 3)
+
+    @unittest.skipIf(os.name == "nt", "macOS log streaming uses POSIX pipe selectors")
+    def test_streaming_log_limits_retain_complete_records_and_reap_child(self) -> None:
+        """Real child output is stopped at the cap, not buffered until it exits."""
+        command = [sys.executable, "-u", "-c",
+                   "import json,time; [print(json.dumps({'n': n})) for n in range(100)]; time.sleep(10)"]
+        started = time.monotonic()
+        with patch.object(common, "_read_bounded_ndjson", wraps=common._read_bounded_ndjson) as read:
+            output, errors = common._run_command(command, threading.Event(), ndjson_limit=3)
+        self.assertEqual(list(common._json_records(output)), [{"n": 0}, {"n": 1}, {"n": 2}])
+        self.assertIn("Source record limit", errors)
+        self.assertIn("later records may be missing", errors)
+        self.assertIsNotNone(read.call_args.args[0].returncode)
+        self.assertLess(time.monotonic() - started, 3)
+
+    @unittest.skipIf(os.name == "nt", "macOS log streaming uses POSIX pipe selectors")
+    def test_streaming_log_byte_limits_and_stderr_do_not_break_json(self) -> None:
+        """Discard incomplete lines and bound both pipes, including newline-free output."""
+        cases = (("MAX_LOG_BYTES", 20, "import os; os.write(1, b'{}\\n' + b'{'+b'x'*100)", "output byte"),
+                 ("MAX_LOG_LINE_BYTES", 20, "import os; os.write(1, b'{}\\n' + b'{'+b'x'*100)", "line byte"),
+                 ("MAX_LOG_ERROR_BYTES", 20, "import os; os.write(2, b'x'*100)", "stderr byte"))
+        for constant, limit, script, warning in cases:
+            with self.subTest(limit=constant), patch.object(common, constant, limit):
+                output, errors = common._run_command([sys.executable, "-c", script], threading.Event(), ndjson_limit=10)
+            self.assertEqual(list(common._json_records(output)), [] if "stderr" in warning else [{}])
+            self.assertIn(warning, errors)
+
+    @unittest.skipIf(os.name == "nt", "macOS log streaming uses POSIX pipe selectors")
+    def test_streaming_log_exact_limit_utf8_and_exit_errors(self) -> None:
+        """A final record without newline survives; split UTF-8 and stderr stay intact."""
+        script = ("import os,time; data='演示'.encode(); "
+                  "os.write(1,b'{\\\"name\\\":\\\"'+data[:1]); time.sleep(.02); "
+                  "os.write(2,b'notice'); os.write(1,data[1:]+b'\\\"}')")
+        output, errors = common._run_command([sys.executable, "-c", script], threading.Event(), ndjson_limit=1)
+        self.assertEqual(json.loads(output), {"name": "演示"})
+        self.assertEqual(errors, "notice")
+        with self.assertRaisesRegex(RuntimeError, "denied"):
+            common._run_command([sys.executable, "-c", "import sys; sys.stderr.write('denied'); sys.exit(2)"],
+                                threading.Event(), ndjson_limit=1)
+
+    @unittest.skipIf(os.name == "nt", "macOS log streaming uses POSIX pipe selectors")
+    def test_streaming_log_cancellation_and_timeout_reap_child(self) -> None:
+        """Even a child with no output can be cancelled or timed out promptly."""
+        for cancel in (True, False):
+            cancelled = threading.Event()
+            timer = threading.Timer(.15, cancelled.set)
+            with self.subTest(cancel=cancel), patch.object(common, "COMMAND_TIMEOUT", 1 if cancel else .15), patch.object(
+                common, "_read_bounded_ndjson", wraps=common._read_bounded_ndjson,
+            ) as read:
+                if cancel:
+                    timer.start()
+                try:
+                    with self.assertRaises(InterruptedError if cancel else RuntimeError):
+                        common._run_command([sys.executable, "-c", "import time; time.sleep(10)"],
+                                            cancelled, ndjson_limit=1)
+                finally:
+                    timer.cancel()
+                self.assertIsNotNone(read.call_args.args[0].returncode)
+
+    def test_streaming_source_preserves_partial_events_and_coverage(self) -> None:
+        """Truncation is Limited with usable events, rather than an unavailable source."""
+        result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1))
+        with patch.object(common, "_run_command", return_value=("{}\n", "Source record limit reached.")) as command:
+            common._collect_source(result, "System activity", ["log"],
+                                   lambda _text: [app.PowerEvent(STAMP, app.EventKind.NETWORK, "link up", "fixture")],
+                                   threading.Event(), record_limit=1, stream_ndjson=True)
+        self.assertEqual(command.call_args.kwargs, {"ndjson_limit": 1})
+        self.assertEqual(len(result.events), 1)
+        self.assertEqual(result.statuses[0].state, app.SourceState.LIMITED)
 
     def test_exports_preserve_evidence_and_escape_csv_formulas(self) -> None:
         """JSON keeps source coverage/raw evidence; CSV neutralizes formula-like log fields."""
@@ -632,6 +831,7 @@ class ActivityTests(unittest.TestCase):
                  ("kernel", "memorystatus: killing process 43 due to memory limit", app.EventKind.RESOURCE),
                  ("launchd", "demo: service exited with code 1", app.EventKind.SERVICE),
                  ("kernel", "apfs: I/O error on disk1", app.EventKind.FILESYSTEM),
+                 ("fsck_apfs", "volume could not be verified", app.EventKind.FILESYSTEM),
                  ("diskarbitrationd", "disk appeared: disk3", app.EventKind.DEVICE_CHANGE),
                  ("airportd", "link down: en0", app.EventKind.NETWORK))
         predicate = macos_activity.activity_predicate()
@@ -644,9 +844,30 @@ class ActivityTests(unittest.TestCase):
                 self.assertEqual(event.summary, message)
                 self.assertEqual(json.loads(event.raw), record)
                 self.assertIn(f'process == "{process}"', predicate)
+                rule = next(rule for rule in macos_activity.ACTIVITY_RULES if rule.kind == kind)
+                self.assertTrue(any(word.casefold() in message.casefold() for word in rule.keywords))
                 record["processImagePath"] = "/usr/bin/unrelated"
                 self.assertEqual(macos_activity.parse_activity(json.dumps(record)), [])
         self.assertEqual(macos_activity.parse_activity(json.dumps({"process": "airportd", "eventMessage": "connection requested"})), [])
+
+    def test_macos_activity_rejects_callbacks_and_connection_snapshots(self) -> None:
+        """Native callback bookkeeping and current state do not establish transitions."""
+        from personal_system_event_viewer import macos_activity
+        cases = (("diskarbitrationd", "registered callback, id = 1, kind = disk appeared."),
+                 ("diskarbitrationd", "dispatched callback, id = 1, kind = disk appeared, disk = <private>."),
+                 ("airportd", "[corewifi] AUTO-JOIN: Already associated and network transition is not allowed"),
+                 ("airportd", "WiFi is associated to a network, will not show available networks UI"),
+                 ("airportd", "Currently disconnected from the network"),
+                 ("airportd", "not associated"))
+        for process, message in cases:
+            with self.subTest(message=message):
+                record = {"process": process, "timestamp": STAMP.isoformat(), "eventMessage": message}
+                self.assertEqual(macos_activity.parse_activity(json.dumps(record)), [])
+        for message in ("  link down", "en0: link up", "[wifi] associated with network", "status changed to disconnected",
+                        "connection established", "disassociated from network"):
+            with self.subTest(message=message):
+                record = {"process": "airportd", "timestamp": STAMP.isoformat(), "eventMessage": message}
+                self.assertEqual(macos_activity.parse_activity(json.dumps(record))[0].kind, app.EventKind.NETWORK)
 
     def test_unix_activity_queries_and_ssh_failure_classification(self) -> None:
         result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1))
@@ -656,6 +877,9 @@ class ActivityTests(unittest.TestCase):
             macos._collect_macos(result, threading.Event(), lambda _text: None)
         self.assertTrue(any("--predicate" in call.args[0] and 'process == "softwareupdated"' in call.args[0][-1]
                             for call in command.call_args_list))
+        log_calls = [call for call in command.call_args_list if call.args[0][0] == "/usr/bin/log"]
+        self.assertEqual(len(log_calls), 3)
+        self.assertTrue(all(call.kwargs.get("ndjson_limit") == app.MAX_EVENTS for call in log_calls))
         with patch.object(Environment, "which", return_value="journalctl"), patch.object(
             common, "_run_command", return_value=("", ""),
         ) as command:
@@ -848,8 +1072,137 @@ class EntryIntegrationTests(unittest.TestCase):
 class GuiTests(unittest.TestCase):
     """Exercise actual Qt controls with fixture history and isolated settings."""
 
-    def test_platform_filter_defaults_and_saved_choices(self) -> None:
-        """Disabled types stay off through All, saved preferences and platform changes."""
+    def test_auto_query_progress_and_input_locking(self) -> None:
+        """Debounce selections and restore controls after success, cancellation and failure."""
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6 import QtCore, QtWidgets
+
+        application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        release = threading.Event()
+        mode = "success"
+        selections: list[frozenset[app.EventKind]] = []
+
+        def collect(start: dt.datetime, end: dt.datetime, cancelled: threading.Event,
+                    progress: Callable[[str], None], *, selected_kinds: frozenset[app.EventKind]) -> app.QueryResult:
+            selections.append(selected_kinds)
+            progress("Reading fixture logs...")
+            while not release.is_set():
+                if cancelled.wait(.01):
+                    raise InterruptedError("Query cancelled.")
+            if mode == "failure":
+                raise RuntimeError("Fixture failure")
+            return app.QueryResult(start, end, [app.PowerEvent(start, app.EventKind.WAKE, "wake", "fixture")])
+
+        def wait_for(predicate: Callable[[], bool]) -> None:
+            deadline = time.monotonic() + 3
+            while not predicate():
+                application.processEvents()
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.005)
+            application.processEvents()
+
+        original = QtCore.QSettings.defaultFormat()
+        QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp", prefix="system-auto-query-") as directory:
+            QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QSettings.Scope.UserScope, directory)
+            window = None
+            try:
+                with patch.object(history, "query_events", side_effect=collect) as query, patch.object(
+                    sys, "platform", "darwin",
+                ), patch.object(QtWidgets.QMessageBox, "warning") as warning:
+                    self.assertEqual(ui._launch_gui(), 0)
+                    window = application.property("powerEventsWindow")
+                    window.query_timer.setInterval(20)
+                    application.processEvents()
+                    self.assertFalse(window.query_timer.isActive())
+                    query.assert_not_called()
+                    window.range_box.setCurrentText(app.TimeRange.CUSTOM.value)
+                    window.checkboxes[app.EventKind.LOCK].click()
+                    window.checkboxes[app.EventKind.SLEEP].click()
+                    window.checkboxes[app.EventKind.SLEEP].click()
+                    window.checkboxes[app.EventKind.SLEEP].click()
+                    wait_for(lambda: query.call_count == 1 and "Reading fixture" in window.progress_bar.toolTip())
+                    self.assertEqual(selections[0], frozenset({app.EventKind.LOCK, app.EventKind.UNLOCK,
+                                                               app.EventKind.SLEEP, app.EventKind.WAKE}))
+                    self.assertEqual((window.progress_bar.minimum(), window.progress_bar.maximum()), (0, 0))
+                    self.assertLess(window.progress_bar.geometry().right(), window.export_button.geometry().left())
+                    self.assertTrue(all(not checkbox.isEnabled() for checkbox in window.checkboxes.values()))
+                    for widget in (window.select_all_button, window.select_none_button, window.reset_types_button,
+                                   window.range_box, window.start_edit, window.end_edit, window.query_button):
+                        self.assertFalse(widget.isEnabled())
+                    self.assertTrue(window.cancel_button.isEnabled())
+                    window.checkboxes[app.EventKind.LOCK].click()
+                    self.assertTrue(window.checkboxes[app.EventKind.LOCK].isChecked())
+                    self.assertIn(app.EventKind.WAKE, window._selected_types())
+                    window.refresh_shortcut.activated.emit()
+                    self.assertEqual(query.call_count, 1)
+                    release.set()
+                    wait_for(lambda: window.worker is None)
+                    self.assertEqual(window.proxy.rowCount(), 1)
+                    self.assertEqual((window.progress_bar.maximum(), window.progress_bar.value()), (1, 0))
+                    self.assertTrue(window.start_edit.isEnabled())
+                    self.assertTrue(window.end_edit.isEnabled())
+                    self.assertTrue(window.range_box.isEnabled())
+                    self.assertTrue(window.select_all_button.isEnabled())
+                    for kind, checkbox in window.checkboxes.items():
+                        self.assertEqual(checkbox.isEnabled(), bool(app.EVENT_FILTER_GROUPS[kind] & window.available_kinds))
+                    self.assertFalse(window.checkboxes[app.EventKind.HIBERNATE].isEnabled())
+
+                    # Unchecking also refreshes. Cancellation restores relative-range restrictions.
+                    release.clear()
+                    window.range_box.setCurrentText(app.TimeRange.DAY.value)
+                    window.checkboxes[app.EventKind.LOCK].click()
+                    wait_for(lambda: query.call_count == 2)
+                    window.cancel_button.click()
+                    wait_for(lambda: window.worker is None)
+                    self.assertEqual((window.progress_bar.maximum(), window.progress_bar.value()), (1, 0))
+                    self.assertTrue(window.range_box.isEnabled())
+                    self.assertFalse(window.start_edit.isEnabled())
+                    self.assertFalse(window.end_edit.isEnabled())
+                    self.assertTrue(window.checkboxes[app.EventKind.SLEEP].isEnabled())
+                    self.assertIn("Cancelled", window.summary.text())
+                    warning.assert_not_called()
+
+                    # Clearing the last selection requests an empty refresh with no native work.
+                    window.checkboxes[app.EventKind.SLEEP].click()
+                    wait_for(lambda: not window.query_timer.isActive())
+                    self.assertEqual(query.call_count, 2)
+                    self.assertIn("Select event types", window.summary.text())
+                    self.assertEqual(window.proxy.rowCount(), 0)
+
+                    # All is one refresh; failures stop progress and unlock every usable input.
+                    mode = "failure"
+                    release.set()
+                    window.select_all_button.click()
+                    wait_for(lambda: query.call_count == 3 and window.worker is None)
+                    warning.assert_called_once()
+                    self.assertEqual((window.progress_bar.maximum(), window.progress_bar.value()), (1, 0))
+                    self.assertTrue(window.query_button.isEnabled())
+                    self.assertTrue(window.select_none_button.isEnabled())
+                    self.assertTrue(window.reset_types_button.isEnabled())
+                    self.assertFalse(window.cancel_button.isEnabled())
+                    self.assertIn("Query failed", window.summary.text())
+                    window.reset_types_button.click()
+                    wait_for(lambda: not window.query_timer.isActive())
+                    self.assertEqual(query.call_count, 3)
+
+                    # Closing before the debounce expires must not start a hidden query.
+                    window.select_all_button.click()
+                    self.assertTrue(window.query_timer.isActive())
+                    window.close()
+                    self.assertFalse(window.query_timer.isActive())
+                    pause_until = time.monotonic() + .05
+                    wait_for(lambda: time.monotonic() >= pause_until)
+                    self.assertEqual(query.call_count, 3)
+            finally:
+                release.set()
+                if window is not None:
+                    window.close()
+                    wait_for(lambda: window.worker is None)
+                QtCore.QSettings.setDefaultFormat(original)
+
+    def test_platform_filter_defaults_and_manual_startup(self) -> None:
+        """Every platform starts idle and unchecked, including with legacy selections."""
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6 import QtCore, QtWidgets
 
@@ -861,11 +1214,7 @@ class GuiTests(unittest.TestCase):
                   app.EventKind.BATTERY, app.EventKind.TIME_CHANGE, app.EventKind.AUTHENTICATION,
                   app.EventKind.UPDATE, app.EventKind.RESOURCE, app.EventKind.SERVICE,
                   app.EventKind.FILESYSTEM, app.EventKind.DEVICE_CHANGE, app.EventKind.NETWORK}
-        default_off = {app.EventKind.APP_CRASH, app.EventKind.APP_HANG, app.EventKind.BATTERY,
-                       app.EventKind.TIME_CHANGE, app.EventKind.AUTHENTICATION, app.EventKind.UPDATE,
-                       app.EventKind.RESOURCE, app.EventKind.SERVICE, app.EventKind.FILESYSTEM,
-                       app.EventKind.DEVICE_CHANGE, app.EventKind.NETWORK, app.EventKind.NETWORK_AUTH, app.EventKind.SMB}
-        expected = {"linux": common, "darwin": common | {app.EventKind.DARK_WAKE},
+        expected = {"linux": common, "darwin": (common - {app.EventKind.HIBERNATE}) | {app.EventKind.DARK_WAKE},
                     "win32": set(app.EventKind) - {app.EventKind.DARK_WAKE}}
         original = QtCore.QSettings.defaultFormat()
         QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
@@ -877,18 +1226,40 @@ class GuiTests(unittest.TestCase):
                                                 str(Path(directory) / platform_name))
                         events = [app.PowerEvent(STAMP, kind, kind.value, "fixture") for kind in app.EventKind]
                         result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), events)
-                        with patch.object(history, "query_events", return_value=result), patch.object(sys, "platform", platform_name):
+                        settings = QtCore.QSettings(QtCore.QSettings.Format.IniFormat, QtCore.QSettings.Scope.UserScope,
+                                                    "PersonalScripts", "PowerEvents")
+                        settings.setValue("types", [kind.value for kind in app.EventKind])
+                        settings.setValue("knownTypes", [kind.value for kind in app.EventKind])
+                        settings.sync()
+                        with patch.object(history, "query_events", return_value=result) as query, patch.object(sys, "platform", platform_name):
                             self.assertEqual(ui._launch_gui(), 0)
                             window = application.property("powerEventsWindow")
+                            # This test isolates platform/filter state; automatic timing is covered separately.
+                            window.query_timer.setInterval(60_000)
+                            application.processEvents()
+                            query.assert_not_called()
+                            self.assertIsNone(window.worker)
+                            self.assertIsNone(window.result)
+                            for kind, checkbox in window.checkboxes.items():
+                                self.assertEqual(checkbox.isEnabled(), kind in available)
+                                self.assertFalse(checkbox.isChecked())
+                            window.query_button.click()
+                            window.refresh_shortcut.activated.emit()
+                            application.processEvents()
+                            query.assert_not_called()
+                            self.assertIsNone(window.worker)
+                            self.assertIn("Select event types", window.summary.text())
+                            window._select_types(True)
+                            application.processEvents()
+                            query.assert_not_called()
+                            window.query_button.click()
                             deadline = time.monotonic() + 5
                             while window.result is None or window.worker is not None:
                                 application.processEvents()
                                 self.assertLess(time.monotonic(), deadline)
                                 time.sleep(0.01)
-                        for kind, checkbox in window.checkboxes.items():
-                            self.assertEqual(checkbox.isEnabled(), kind in available)
-                            self.assertEqual(checkbox.isChecked(), kind in available - default_off)
-                        self.assertEqual(window.proxy.rowCount(), len(available - default_off))
+                            query.assert_called_once()
+                        self.assertEqual(window.proxy.rowCount(), len(available))
                         window._select_types(False)
                         self.assertEqual(window.proxy.rowCount(), 0)
                         window._select_types(True)
@@ -896,7 +1267,8 @@ class GuiTests(unittest.TestCase):
                         # Reset uses defaults without querying or changing the date range.
                         bounds = (window.start_edit.dateTime(), window.end_edit.dateTime())
                         window.reset_types_button.click()
-                        self.assertEqual(window.proxy.rowCount(), len(available - default_off))
+                        self.assertEqual(window.proxy.rowCount(), 0)
+                        self.assertFalse(any(checkbox.isChecked() for checkbox in window.checkboxes.values()))
                         self.assertEqual((window.start_edit.dateTime(), window.end_edit.dateTime()), bounds)
                         self.assertIs(window.result, result)
                         window.resize(1000, 700)
@@ -928,37 +1300,29 @@ class GuiTests(unittest.TestCase):
                             self.assertEqual(window.proxy.rowCount(), len(members))
                             window.checkboxes[primary].setChecked(False)
                             self.assertEqual(window.proxy.rowCount(), 0)
-                            # A previously selected stop/disconnect member must survive migration.
-                            window.settings.setValue("knownTypes", [kind.value for kind in app.EventKind])
-                            for legacy_member in members:
-                                window.settings.setValue("types", [legacy_member.value])
-                                window._restore_settings()
-                                self.assertEqual(window._selected_types(), members)
-                        # Either old member being selected enables the combined group.
-                        window.settings.setValue("knownTypes", [kind.value for kind in app.EventKind])
-                        window.settings.setValue("types", [app.EventKind.STANDBY_ENTER.value, app.EventKind.WAKE.value])
-                        window._restore_settings()
-                        merged = {app.EventKind.SLEEP, app.EventKind.WAKE, app.EventKind.STANDBY_ENTER,
-                                  app.EventKind.STANDBY_EXIT} & available
-                        self.assertEqual(window._selected_types(), merged)
-                        # Old/cross-platform settings cannot select unsupported categories.
+                        # Older saved choices never override the unchecked startup state.
                         window.settings.setValue("types", [kind.value for kind in app.EventKind])
                         window.settings.setValue("knownTypes", [kind.value for kind in app.EventKind])
                         window._restore_settings()
-                        self.assertEqual(window._selected_types(), available)
-                        window.checkboxes[app.EventKind.SLEEP].setChecked(False)
+                        self.assertEqual(window._selected_types(), set())
+                        window._select_types(True)
                         window.close()
                         application.processEvents()
-                        self.assertEqual(set(window.settings.value("knownTypes")), {kind.value for kind in available})
-                        window._restore_settings()
-                        self.assertFalse(window.checkboxes[app.EventKind.SLEEP].isChecked())
-                        for member in merged:
-                            self.assertNotIn(member.value, window.settings.value("types"))
-                        self.assertTrue(window.checkboxes[app.EventKind.NETWORK].isChecked())
+                        self.assertIsNone(window.settings.value("types"))
+                        self.assertIsNone(window.settings.value("knownTypes"))
+                        with patch.object(history, "query_events") as query, patch.object(sys, "platform", platform_name):
+                            self.assertEqual(ui._launch_gui(), 0)
+                            reopened = application.property("powerEventsWindow")
+                            application.processEvents()
+                            self.assertEqual(reopened._selected_types(), set())
+                            self.assertIsNone(reopened.result)
+                            query.assert_not_called()
+                            reopened.close()
+                            application.processEvents()
         finally:
             QtCore.QSettings.setDefaultFormat(original)
 
-    def test_gui_filters_without_requery_and_shows_original_evidence(self) -> None:
+    def test_gui_filters_and_shows_original_evidence(self) -> None:
         """Load history asynchronously, filter checkboxes, select details and close cleanly."""
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6 import QtCore, QtWidgets
@@ -975,6 +1339,12 @@ class GuiTests(unittest.TestCase):
                 with patch.object(history, "query_events", return_value=result) as query, patch.object(sys, "platform", "win32"):
                     self.assertEqual(ui._launch_gui(), 0)
                     window = application.property("powerEventsWindow")
+                    window.query_timer.setInterval(60_000)
+                    application.processEvents()
+                    query.assert_not_called()
+                    window.checkboxes[app.EventKind.LOCK].setChecked(True)
+                    window.checkboxes[app.EventKind.SLEEP].setChecked(True)
+                    window.query_button.click()
                     deadline = time.monotonic() + 5
                     while window.result is None or window.worker is not None:
                         application.processEvents()
@@ -1012,36 +1382,24 @@ class GuiTests(unittest.TestCase):
                     self.assertEqual(window.proxy.rowCount(), 0)
                     self.assertFalse(window.export_button.isEnabled())
                     self.assertFalse(window.export_json_button.isEnabled())
-                    # Legacy filters must not hide newly supported Modern Standby records.
-                    window.settings.setValue("types", [app.EventKind.LOCK.value, app.EventKind.WAKE.value])
-                    window.settings.remove("knownTypes")
-                    window._restore_settings()
+                    # Explicit selection still includes Modern Standby and login groups.
+                    window._select_types(True)
                     modern_events = [windows._parse_windows_xml(_windows_xml("Microsoft-Windows-Kernel-Power", event_id))[0]
                                      for event_id in (506, 507, 566)]
                     window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), modern_events))
                     self.assertEqual(window.proxy.rowCount(), 3)
-                    self.assertFalse(window.checkboxes[app.EventKind.STARTUP].isChecked())
+                    self.assertTrue(window.checkboxes[app.EventKind.STARTUP].isChecked())
                     self.assertTrue(app.LOGIN_EVENT_KINDS.issubset(window._selected_types()))
                     for kind in app.DIAGNOSTIC_EVENT_KINDS:
-                        self.assertEqual(window.checkboxes[kind].isChecked(), kind not in
-                                         {app.EventKind.APP_CRASH, app.EventKind.APP_HANG})
+                        self.assertTrue(window.checkboxes[kind].isChecked())
                     self.assertTrue(window.checkboxes[app.EventKind.DEVICE_EJECT_BLOCKED].isChecked())
                     window.checkboxes[app.EventKind.POWER_SESSION].setChecked(False)
                     self.assertEqual(window.proxy.rowCount(), 2)
                     self.assertEqual(query.call_count, 1)
-                    window.close()
-                    application.processEvents()
                     window._restore_settings()
                     self.assertFalse(window.checkboxes[app.EventKind.POWER_SESSION].isChecked())
-                    self.assertTrue(window.checkboxes[app.EventKind.SLEEP].isChecked())
-                    # Settings from the immediately preceding release know Modern Standby,
-                    # but must still expose new login categories and let users persist filters.
-                    window.settings.setValue("knownTypes", [kind.value for kind in app.EventKind
-                                                           if kind not in app.LOGIN_EVENT_KINDS | app.DIAGNOSTIC_EVENT_KINDS])
-                    window._restore_settings()
-                    for kind in app.DIAGNOSTIC_EVENT_KINDS:
-                        self.assertEqual(window.checkboxes[kind].isChecked(), kind not in
-                                         {app.EventKind.APP_CRASH, app.EventKind.APP_HANG})
+                    self.assertFalse(window.checkboxes[app.EventKind.SLEEP].isChecked())
+                    window._select_types(True)
                     login_events = [app.PowerEvent(STAMP, kind, kind.value, "fixture") for kind in app.LOGIN_EVENT_KINDS]
                     window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), login_events))
                     self.assertEqual(window.proxy.rowCount(), len(app.LOGIN_EVENT_KINDS))
@@ -1058,7 +1416,9 @@ class GuiTests(unittest.TestCase):
                     window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), [xml_event]))
                     window.table.selectRow(0)
                     application.processEvents()
-                    root_item = window.xml_tree.topLevelItem(0)
+                    tabs = window.findChild(QtWidgets.QTabWidget)
+                    self.assertEqual(tabs.tabText(1), "Structured view")
+                    root_item = window.structured_tree.topLevelItem(0)
                     self.assertEqual(root_item.text(0), "Event")
                     self.assertIn("schemas.microsoft.com", root_item.toolTip(0))
                     data_item = root_item.child(1)
@@ -1069,17 +1429,63 @@ class GuiTests(unittest.TestCase):
                     self.assertEqual(data_item.child(2).text(1), "second")
                     self.assertIn('Name="Note"', data_item.child(1).text(2))
                     self.assertIn("Localized description", window.detail.toPlainText())
-                    # Changing to non-XML evidence or clearing the filter removes stale XML.
+                    self.assertEqual(window.structured_tree.headerItem().text(2), "Attributes")
+                    # Native macOS JSON preserves object order, arrays and scalar types.
+                    record = {"timestamp": STAMP.isoformat(),
+                              "eventMessage": "sendDistributedNotification: com.apple.screenIsLocked, with object:501",
+                              "nested": {"values": ["<b>literal</b>", True, None, 42, "", [], {}]}}
+                    json_event = macos._parse_mac_sessions(json.dumps(record))[0]
+                    window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), [json_event]))
+                    window.table.selectRow(0)
+                    application.processEvents()
+                    root_item = window.structured_tree.topLevelItem(0)
+                    self.assertEqual(root_item.text(0), "JSON")
+                    self.assertEqual(root_item.child(0).text(0), "timestamp")
+                    self.assertEqual(root_item.child(1).text(0), "eventMessage")
+                    values = root_item.child(2).child(0)
+                    self.assertEqual(values.text(0), "values")
+                    self.assertEqual(values.text(2), "array")
+                    self.assertEqual(values.child(0).text(0), "[0]")
+                    self.assertEqual(values.child(0).text(1), '"<b>literal</b>"')
+                    self.assertEqual([values.child(i).text(2) for i in range(values.childCount())],
+                                     ["string", "boolean", "null", "number", "string", "array", "object"])
+                    self.assertEqual([values.child(i).text(1) for i in (1, 2, 3, 4)], ["true", "null", "42", '""'])
+                    self.assertEqual(window.structured_tree.headerItem().text(2), "Type")
+                    self.assertIn(json_event.raw, window.detail.toPlainText())
+                    # IPS contains separate JSON metadata/body documents after its path.
+                    ips_text = json.dumps({"bug_type": "309", "timestamp": STAMP.isoformat()}) + "\n" + json.dumps(
+                        {"procName": "Demo", "threads": [{"id": 12}]})
+                    ips_event = macos._parse_mac_report(ips_text, Path("Demo.ips"), STAMP)
+                    window._show_structured(ips_event)
+                    self.assertEqual(window.structured_tree.topLevelItemCount(), 2)
+                    self.assertEqual(window.structured_tree.topLevelItem(0).text(0), "Metadata")
+                    report = window.structured_tree.topLevelItem(1)
+                    self.assertEqual(report.text(0), "Report")
+                    self.assertEqual(report.child(1).child(0).child(0).text(1), "12")
+                    with patch.object(ui, "MAX_STRUCTURED_NODES", 2):
+                        window._show_structured(json_event)
+                    self.assertIn("first 2 nodes", window.structured_notice.text())
+                    self.assertFalse(window.structured_tree.isHidden())
+                    # Changing format restores XML headers; plain text removes stale nodes.
+                    window._show_structured(xml_event)
+                    self.assertEqual(window.structured_tree.headerItem().text(2), "Attributes")
+                    self.assertEqual(window.structured_tree.topLevelItem(0).text(0), "Event")
                     window._loaded(result)
                     window.table.selectRow(0)
                     application.processEvents()
-                    self.assertEqual(window.xml_tree.topLevelItemCount(), 0)
-                    self.assertIn("no XML record", window.xml_notice.text())
-                    window._show_xml(app.PowerEvent(STAMP, app.EventKind.LOCK, "bad", "fixture", xml="<broken>"))
-                    self.assertIn("Cannot display", window.xml_notice.text())
+                    self.assertEqual(window.structured_tree.topLevelItemCount(), 0)
+                    self.assertIn("no XML or JSON record", window.structured_notice.text())
+                    window._show_structured(app.PowerEvent(STAMP, app.EventKind.LOCK, "bad", "fixture", xml="<broken>"))
+                    self.assertIn("Cannot display this XML", window.structured_notice.text())
+                    for raw in ('{"broken":', '{"valid":true}\n{"unexpected":true}'):
+                        window._show_structured(app.PowerEvent(STAMP, app.EventKind.LOCK, "bad", "fixture", raw=raw))
+                        self.assertIn("Cannot display this JSON", window.structured_notice.text())
+                        self.assertEqual(window.structured_tree.topLevelItemCount(), 0)
                     window._select_types(False)
-                    self.assertEqual(window.xml_tree.topLevelItemCount(), 0)
-                    self.assertIn("Select an event", window.xml_notice.text())
+                    self.assertEqual(window.structured_tree.topLevelItemCount(), 0)
+                    self.assertIn("Select an event", window.structured_notice.text())
+                    window.close()
+                    application.processEvents()
             finally:
                 QtCore.QSettings.setDefaultFormat(original)
 

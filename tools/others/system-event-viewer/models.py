@@ -11,6 +11,9 @@ UTC = dt.timezone.utc
 COMMAND_TIMEOUT = 90.0
 POLL_SECONDS = 0.2
 MAX_EVENTS = 50_000
+MAX_LOG_BYTES = 64 * 1024 * 1024
+MAX_LOG_LINE_BYTES = 1024 * 1024
+MAX_LOG_ERROR_BYTES = 64 * 1024
 DEFAULT_SIZE = (1200, 800)
 GUI_STYLE = "Fusion"
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S %z"
@@ -116,9 +119,7 @@ ACTIVITY_EVENT_KINDS: frozenset[EventKind] = frozenset({
     EventKind.UPDATE, EventKind.RESOURCE, EventKind.SERVICE, EventKind.FILESYSTEM,
     EventKind.DEVICE_CHANGE, EventKind.NETWORK,
 })
-DEFAULT_UNCHECKED_EVENT_KINDS: frozenset[EventKind] = ACTIVITY_EVENT_KINDS | frozenset({
-    EventKind.APP_CRASH, EventKind.APP_HANG, EventKind.NETWORK_AUTH, EventKind.SMB,
-})
+DEFAULT_UNCHECKED_EVENT_KINDS: frozenset[EventKind] = frozenset(EventKind)
 COMMON_EVENT_KINDS: frozenset[EventKind] = frozenset({
     EventKind.STARTUP, EventKind.SHUTDOWN, EventKind.SLEEP, EventKind.WAKE,
     EventKind.LOCK, EventKind.UNLOCK, EventKind.HIBERNATE,
@@ -127,7 +128,7 @@ COMMON_EVENT_KINDS: frozenset[EventKind] = frozenset({
 # Collector capabilities, not a guarantee that the host retained matching records.
 PLATFORM_EVENT_KINDS: dict[str, frozenset[EventKind]] = {
     "win32": frozenset(EventKind) - {EventKind.DARK_WAKE},
-    "darwin": COMMON_EVENT_KINDS | {EventKind.DARK_WAKE},
+    "darwin": (COMMON_EVENT_KINDS - {EventKind.HIBERNATE}) | {EventKind.DARK_WAKE},
     "linux": COMMON_EVENT_KINDS,
 }
 SECURITY_PROVIDER = "Microsoft-Windows-Security-Auditing"
