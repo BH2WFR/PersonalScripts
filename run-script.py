@@ -1,35 +1,10 @@
 #!/usr/bin/env python3
-"""Discover and run PersonalScripts tools from configured directories.
+"""Implementation notes.
 
-The primary script directory, display highlighting, supported script types, and Gitignore-style
-exclusions are defined in ``launcher-config.yaml``. Exclusions can depend on
-the operating system, normalized processor architecture, and Linux display
-environment. Existing configured dependency directories are prepended to
-``PATH`` for launched tools. Listed scripts matching the Linux ``no-gui``
-exclusions carry a yellow ``[GUI]`` suffix wherever they are available.
-Bare script names are matched recursively; multiple eligible matches are
-presented as a numbered selection before the original arguments are passed
-through. An optional
-``launcher-config.patch.yaml`` overrides personal settings only when present.
-Normal startup displays resolved environment paths and, on Linux, the detected
-display environment without starting external tools for version discovery;
-``--env-info`` enables those slower probes.
-Python targets use the Conda environment selected by a leading ``--env=NAME``,
-then ``conda-environment`` in the shared user launcher.yaml, and finally ``base``.
-Additional script roots come from its ``additional-paths`` list. The launcher remains in its
-bootstrap environment.
-The script list shows the user configuration path; enter ``c`` in the
-interactive selector to open its directory and exit the launcher.
-
-Requirements:
-    - pip: pathspec, PyYAML
-
-Usage:
-    python run-script.py                  # interactive: list & select
-    python run-script.py --list           # list scripts and exit
-    python run-script.py --env-info        # interactive with tool versions
-    python run-script.py --env=test tool   # run tool with Conda env "test"
-    python run-script.py <script-name> [args...]  # run by path or basename
+Read launcher-config.yaml, then its optional patch; personal roots/environment
+choices come from ConfigStore's launcher.yaml. Keep bootstrap Python separate
+from the selected child environment. Discovery must preserve context-aware
+ignore rules, recursive matching and untouched argument forwarding.
 """
 
 import sys
@@ -42,6 +17,24 @@ from dataclasses import dataclass
 from typing import Optional, Protocol
 
 from utils import *
+
+HELP = f"""{FLYellow}PERSONAL SCRIPT LAUNCHER{CRst}
+
+Discover and run tools by name or number across configured script directories,
+with platform filtering and selectable Conda environments.
+
+{FLYellow}Requirements:{CRst}
+  Python 3.13+, PyYAML, pathspec; the selected tool's runtime and dependencies.
+
+{FLYellow}Usage:{CRst}
+  python run-script.py [--env-info] [--env=NAME] [--list | SCRIPT [ARGS...]]
+  Omit SCRIPT for interactive selection. Launcher options precede SCRIPT.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 CONFIG_FILE_NAME = "launcher-config.yaml"
 LAUNCHER_CONFIG = "launcher.yaml"
@@ -1091,64 +1084,8 @@ def run_ps1_script(script_path: str, args: list[str]) -> int:
 # ============ Main ============
 
 def _print_help(config: _LauncherConfig) -> None:
-    """Print launcher usage, configuration, and dependency information."""
-    path_separator = os.pathsep
-    project_dir = _get_project_dir()
-    script_root = os.path.relpath(config.script_root, project_dir).replace("\\", "/")
-    requirements_file = os.path.relpath(
-        config.requirements_file,
-        project_dir,
-    ).replace("\\", "/")
-    print(f"""
-{FLYellow}PERSONAL SCRIPT LAUNCHER{CRst}
-
-{FLYellow}Usage:{CRst}
-  python run-script.py
-  python run-script.py --list
-  python run-script.py --env-info [--list | <script-name> [args...]]
-  python run-script.py --env=<name> [<number> | <script-name> [args...]]
-  python run-script.py <script-name> [args...]
-  python run-script.py @N:<script-name> [args...]
-  python run-script.py @test:<script-name> [args...]
-
-{FLYellow}Description:{CRst}
-  Lists runnable scripts from {FGray}{script_root}{CRst} and optional additional
-  directories, then runs a selection by number or name. A bare name searches
-  every eligible subdirectory and supported extension. Multiple matches are
-  shown as a numbered selection before arguments are passed through. When the
-  configured Test group is enabled, its scripts participate in the same lookup.
-  Ignore rules can depend on the OS, normalized processor architecture, and
-  whether Linux uses X11, Wayland, or no GUI; this detected value is also shown
-  at startup. Listed scripts matching the Linux no-gui exclusions carry a
-  yellow [GUI] suffix wherever they are available.
-  Existing dependency directories configured under extra-env-paths
-  are prepended to PATH without warnings for missing directories.
-  The script list shows the user configuration path. Enter c at the interactive
-  selector to open its directory and exit the launcher.
-
-{FLYellow}Options:{CRst}
-  {FLCyan}--list{CRst}                   List scripts and exit.
-  {FLCyan}{ENV_INFO_FLAG}{CRst}               Probe and show Conda, PowerShell, and Bash versions.
-                             Must precede the script selector.
-  {FLCyan}{CONDA_ENV_FLAG_PREFIX}<name>{CRst}             Run the selected Python script in this Conda environment.
-                             Must precede the script selector and overrides
-                             {FLCyan}{LAUNCHER_CONFIG}{CRst}.
-  {FLCyan}--help, -h{CRst}               Show this help message and exit.
-
-{FLYellow}Configuration:{CRst}
-  {FLCyan}{CONFIG_FILE_NAME}{CRst}         Paths, script types, colors, and context-aware ignore rules.
-  {FLCyan}{PATCH_CONFIG_FILE_NAME}{CRst}   Optional personal overrides; ignored when absent.
-  {FLCyan}{ConfigStore(LAUNCHER_CONFIG).path}{CRst}
-                             additional-paths: list of extra script directories.
-                             Relative paths use the project root.
-                             conda-environment: default environment for Python targets.
-                             Empty or unset selects {FGray}{DEFAULT_CONDA_ENV}{CRst}.
-
-{FLYellow}Requirements:{CRst}
-  Python 3.13+, PyYAML, pathspec
-  Install dependencies with:
-    {FGray}python -m pip install -r {requirements_file}{CRst}
-""")
+    """Display the entry HELP without probing runtime or user configuration."""
+    print(HELP)
 
 
 def _resolve_additional_directories(

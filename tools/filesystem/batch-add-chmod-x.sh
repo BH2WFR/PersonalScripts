@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -eu
 
+HELP='BATCH EXECUTABLE PERMISSIONS
+
+Recursively mark selected file extensions executable, with exclusion patterns.
+Changes filesystem permissions, not Git index metadata.
+
+Requirements:
+  Bash, chmod and a filesystem supporting executable permissions.
+
+Usage:
+  bash batch-add-chmod-x.sh [TARGET] [--suffix "py;sh"] [--ignore "PATTERN;..."]
+  Defaults to py/sh files. Patterns match names or relative paths.
+'
+
 FLYellow="\033[33m"
 FLCyan="\033[36m"
 FLGreen="\033[32m"
@@ -10,45 +23,7 @@ CRst="\033[0m"
 
 # ============ 帮助文本 ============
 show_help() {
-    cat << 'EOF'
-Usage: batch-add-chmod-x.sh [TARGET] [--suffix EXT[;EXT...]] [--ignore PATTERN [...]]
-
-Recursively add chmod +x to files by extension.
-
-Arguments:
-  TARGET                File or directory path. If not provided, prompts interactively.
-                        (default: .)
-
-Options:
-  --suffix EXT ...      File extensions to process (without leading dot).
-                        Semicolons split into multiple values.
-                        Can be specified multiple times.
-                        After --suffix, all following non-option arguments are consumed
-                        as extensions until the next flag or end of arguments.
-                        (default: py;sh)
-
-  --ignore PATTERN ...  Ignore files matching PATTERN. PATTERN is relative to TARGET.
-                        Semicolons in PATTERN split into multiple patterns.
-                        Can be specified multiple times.
-                        After --ignore, all following non-option arguments are consumed
-                        as patterns until the next flag or end of arguments.
-
-                        Pattern types:
-                          name                e.g. "*.png"       → matches any file named *.png
-                          relative-path       e.g. "test/*"      → matches under test/ subdirectory
-                          anchored-path       e.g. "/test/*"     → matches under TARGET's test/ dir
-
-  --help, -h            Show this help message and exit.
-
-Examples:
-  batch-add-chmod-x.sh /path/to/project
-  batch-add-chmod-x.sh . --suffix "py;sh;pl"
-  batch-add-chmod-x.sh . --suffix "py" --suffix "sh"
-  batch-add-chmod-x.sh . --ignore "*.png"
-  batch-add-chmod-x.sh . --ignore "*.png;/test/*"
-  batch-add-chmod-x.sh /path --ignore "*.png" --ignore "/test/*"
-  batch-add-chmod-x.sh /path --suffix "py" --ignore "*.png"
-EOF
+    printf '%s\n' "$HELP"
     exit 0
 }
 

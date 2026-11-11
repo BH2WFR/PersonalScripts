@@ -2,7 +2,8 @@
 
 Run the sibling `../rclone-sync.py` entry, directly or through the project
 launcher. This directory is a private Python package loaded under the name
-`personal_rclone_sync`; its modules are not standalone commands.
+`personal_rclone_sync`; its modules are not standalone commands. The entry owns `HELP` and handles
+help before loading the private application.
 
 The YAML reference remains `../rclone-sync-schema-sample.yaml`. Existing
 `path1`/`path2` configuration and task menus are retained. Startup reads the user
@@ -42,7 +43,7 @@ apply the same filter before resolving paths or executing commands.
 | `schema.py` | YAML loading, strict validation, task settings, profile inheritance, and machine matching. |
 | `endpoints.py` | Template/literal resolution, volume discovery and guards, remote prefixes, and address validation. |
 | `rclone.py` | Command construction, comparison rules, cancellable subprocesses, metadata queries, and exact-file guards. |
-| `ui.py` | Help, arguments, menus, address prompts, time notices, and shell-quoted command previews. |
+| `ui.py` | Arguments, menus, address prompts, time notices, and shell-quoted command previews. |
 | `execution.py` | Ordered batches, pre-checks, guarded transfers, retry boundaries, and post-transfer actions. |
 | `app.py` | Application flow: configuration selection through confirmation and execution. |
 

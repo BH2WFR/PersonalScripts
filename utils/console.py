@@ -1,5 +1,6 @@
 """Console formatting and terminal interaction helpers."""
 
+import argparse
 import datetime
 import os
 import sys
@@ -8,7 +9,31 @@ import typing
 from .ansi import *
 
 
+class _HelpArgumentParser(argparse.ArgumentParser):
+    """Keep authored help separate from argparse's validation and error usage."""
+
+    _help_text: str | None = None
+
+    def format_help(self) -> str:
+        """Return the entry's help verbatim, with one trailing newline."""
+        if self._help_text is None:
+            return super().format_help()
+        return self._help_text.rstrip() + "\n"
+
+
 class Console:
+    @staticmethod
+    def argument_parser(help_text: str) -> argparse.ArgumentParser:
+        """Create a parser whose -h/--help displays the supplied HELP string.
+
+        Argument registration, validation, error usage and exit statuses retain
+        argparse behavior. This method performs no parsing or I/O; callers add
+        their arguments and call parse_args normally.
+        """
+        parser = _HelpArgumentParser()
+        parser._help_text = help_text
+        return parser
+
     @staticmethod
     def has_interactive_input() -> bool:
         """Return whether stdin can receive interactive terminal input.
@@ -169,7 +194,7 @@ class Console:
     def print_keyboard_interrupt_message_and_exit(key : str = "Ctrl+C") -> None:
         """Print a standardized message for KeyboardInterrupt exceptions."""
         print(f"\n{FLGreen}[Exit by {FLYellow}{key}{FLGreen}]{CRst}")
-    
+
 
     @staticmethod
     def print_exit_message(msg: str = "Bye.") -> None:
@@ -187,7 +212,7 @@ class Console:
             color_ansi_esc = ""
         print(f"{color_ansi_esc}{msg}{CRst}")
         sys.exit(exit_code)
-    
+
 
     @staticmethod
     def set_locale_utf8() -> None:

@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Compile any Python script in the project into a standalone executable.
+"""Implementation notes.
 
-Usage:
-    python compile-script.py
-
-Lists all Python scripts in the project, lets you choose one by number,
-then compiles it with Nuitka or PyInstaller. Output goes to BUILD/ with
-directory structure preserved (e.g. BUILD/link-create_nuitka/).
-The rclone-sync, pdf-tools, keyboard-remap and keyboard-hook-viewer packages are excluded from script
-selection and staged under their Python import names when compiling their entries.
+Keep private packages out of script selection and stage their import aliases
+when compiling entries. Preserve the BUILD directory structure for outputs.
 """
 
 import sys
@@ -18,6 +12,20 @@ import shutil
 import tempfile
 
 from utils import *
+
+HELP = f"""{FLYellow}SCRIPT COMPILER{CRst}
+
+Build project Python tools as standalone applications with Nuitka or PyInstaller.
+Outputs are placed under BUILD; private implementation packages are staged with
+their entry scripts.
+
+{FLYellow}Requirements:{CRst}
+  The selected tool's dependencies and Nuitka or PyInstaller.
+  Nuitka also requires a supported native compiler/toolchain.
+
+{FLYellow}Usage:{CRst}
+  python compile-script.py
+"""
 
 
 # ============ Helpers ============
@@ -360,6 +368,9 @@ def build_script(script_dir: str, script_rel: str, tool: str) -> int:
 # ============ Main ============
 
 def main() -> int:
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(HELP)
+        return 0
     Console.print_banner("SCRIPT COMPILER")
     Environment.print_env_info()
 

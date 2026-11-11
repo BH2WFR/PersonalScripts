@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Implementation notes.
+
+Measure encoded bytes, not code points. Budget the extension and collision
+suffix before truncating the stem; never split a multibyte character.
+"""
+
 import os
 import sys
 from typing import Optional
@@ -6,12 +12,23 @@ from typing import Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-# 用于在 NAS 等设备上, 截断过长的文件名 (UTF-8 字节长度)
-# 如在群晖的加密文件夹中, 文件名长度限制为 143 字节 (UTF-8), 此工具可检查并截断超长的文件名 (保留扩展名)
-# 如截断后有重名, 则会在扩展名前加入 "_1" 等数字后缀
+HELP = f"""{FLYellow}FILENAME LENGTH CHECK{CRst}
+
+Find and shorten filenames exceeding an encoded byte limit, useful for encrypted
+NAS folders. Preserves extensions and avoids name collisions with numeric suffixes.
+
+{FLYellow}Requirements:{CRst}
+  Project runtime only.
+
+{FLYellow}Usage:{CRst}
+  python check-filename-overlong.py [PATH] [--limit=143] [--encoding=utf-8]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
-#* 自动截断文件名，并保留扩展名
 def get_truncated_filename(name, limit, encoding, de_dupe_idx=0):
     stem, ext = os.path.splitext(name)
 
@@ -41,30 +58,8 @@ def main() -> int:
     Console.print_banner("FILENAME LENGTH CHECKING AND TRUNCATING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-FILENAME LENGTH CHECKING AND TRUNCATING TOOL
-============================================
 
-Usage:
-  python {script_name} <path>        specify path, limit/encoding interactive
-  python {script_name} --limit=143 --encoding=utf-8
-  python {script_name} <path> --limit=143 --encoding=utf-8
-  python {script_name}                no arguments, interactive mode
-  python {script_name} --help         show this help
-
-{FLYellow}Arguments:{CRst}
-  <path>              directory path to scan
-  --limit=N           filename UTF-8 byte length limit (default: 143)
-  --encoding=ENC      encoding (default: utf-8)
-
-{FLYellow}Description:{CRst}
-  Recursively scan directory for filenames whose UTF-8 byte length exceeds
-  the limit, then truncate them while preserving the file extension.
-  When truncation produces a name collision, appends _1, _2, etc. before
-  the extension to avoid duplicates. Commonly used for NAS devices
-  (e.g., Synology encrypted shared folder has a 143-byte filename limit).
-""")
+        print(HELP)
         return 0
 
     ROOT = "/volumeUSB1/usbshare1-2"   # ← 改成要检查的目录
@@ -108,7 +103,6 @@ Usage:
     except LookupError:
         print(f"{FLRed}Invalid encoding. EXIT...{CRst}\n")
         return 1
-
 
 
     #* 用户确认

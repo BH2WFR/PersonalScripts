@@ -1,12 +1,14 @@
-"""Interactive terminal workflow for the hook viewer.
+"""Implementation notes.
 
-Private implementation; launch ../keyboard-hook-viewer.py.
-Platform dependencies are loaded only when the backend is used.
+Private lifecycle coordinator. User help belongs to ../keyboard-hook-viewer.py;
+load platform backends only when monitoring starts.
 """
 
 from __future__ import annotations
 
 from utils import *
+
+
 import threading
 from typing import cast
 from .models import EventSink
@@ -16,53 +18,10 @@ from .devices import enumerate_devices
 _OS = sys.platform
 
 
-def print_help() -> None:
-    """Print usage and platform requirements without creating native hooks."""
-    Console.print_banner("KEYBOARD & MOUSE HOOK MONITOR")
-    print(f"""
-Usage:
-  python keyboard-hook-viewer.py
-  python keyboard-hook-viewer.py --help
-
-Description:
-  Monitor global keyboard and mouse events; input passes through unchanged.
-  Windows displays scan codes and preserves sided keys and keypad Enter.
-  Scroll shows one (x, y) pair with cyan up/down/left/right labels.
-  Windows displays raw wheel deltas: 120 units per notch, right/up positive.
-  macOS uses precise NSEvent scrolling deltas, preserving fractional movement;
-  precise devices use point deltas, ordinary wheels use line deltas.
-  macOS/X11 are left/up positive; X11 and callback step values are unchanged.
-  Zero native scroll deltas are not printed (for example, phase boundaries).
-  Diagonal events show both directions; values are not physical distances.
-  macOS pinch: magnify (+0.025) zoom in phase=changed; negative means zoom out.
-  Pinch begin/end phases remain visible even with zero magnification delta.
-  This per-event delta is not the target application's current zoom level.
-  On a Windows remote host, pinch appears only if delivered as wheel input;
-  run this viewer on the Mac to inspect native pinch events.
-  macOS can display the physical HID device identity when available.
-
-Options:
-  -h, --help   Show this help and exit.
-
-Requirements:
-  Windows 10+: standard-library ctypes; no additional package.
-  macOS: pyobjc-framework-Quartz; Accessibility/Input Monitoring permission.
-  Linux X11: python-xlib and XRecord. Wayland is unsupported.
-
-{FLYellow}Responsible use:{CRst}
-{USAGE_NOTICE}
-
-{FGray}Shared key names and scan codes: utils.Keyboard and WindowsScanCode.
-Private implementation: keyboard-hook-viewer/.{CRst}
-""")
-
-
 def main() -> int:
 
     """Run the viewer; return zero after a clean stop or help display."""
-    if "--help" in sys.argv or "-h" in sys.argv:
-        print_help()
-        return 0
+
     Console.set_locale_utf8()
 
     print()

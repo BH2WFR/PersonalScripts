@@ -1,20 +1,8 @@
 #!/usr/bin/env python3
-"""Interactively select, confirm, and forcibly restart a Windows service.
+"""Implementation notes.
 
-Provides a documented global service catalog with a Windows Audio preset and
-two final custom lookup choices: exact service name and exact display name.
-The selected service is resolved through Windows before confirmation. It can
-then be forcibly restarted either while monitoring it until running or by
-launching the restart operation without waiting for completion.
-
-Requirements:
-    - Windows 10 or later
-    - Administrator privileges
-    - system: Windows PowerShell (built into Windows)
-
-Usage:
-    python restart-windows-service.py
-    python restart-windows-service.py --help
+Resolve exact service/display names through Windows before acting. Waiting
+mode verifies Running status; asynchronous mode reports only command launch.
 """
 
 from __future__ import annotations
@@ -29,6 +17,22 @@ from typing import TypedDict
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
+
+HELP = f"""{FLYellow}RESTART WINDOWS SERVICE{CRst}
+
+Restart a preset or custom Windows service, optionally waiting for it to reach
+Running status. Restarting can interrupt applications using the service.
+
+{FLYellow}Requirements:{CRst}
+  Windows 10+, administrator privileges and built-in Windows PowerShell.
+
+{FLYellow}Usage:{CRst}
+  python restart-service.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 class LookupMode(StrEnum):
@@ -164,31 +168,8 @@ class ServiceIdentity:
 
 def _print_help() -> None:
     """Print command usage, behavior, options, and requirements."""
-    script_name = os.path.basename(sys.argv[0])
-    print(
-        f"""{FLYellow}RESTART WINDOWS SERVICE{CRst}
 
-{FLYellow}Usage:{CRst}
-  {FGray}python {script_name}{CRst}
-  {FGray}python {script_name} --help{CRst}
-
-{FLYellow}Description:{CRst}
-  Select a documented preset service or find a custom service by its exact
-  service name or display name. After Windows resolves the service, review its
-  canonical names and current state, confirm the action, and forcibly restart
-  it. The confirmation menu can wait for Running status or launch the restart
-  without waiting for completion.
-
-  In waiting mode, the script verifies that the selected service returns to
-  the Running state before reporting success.
-
-{FLYellow}Options:{CRst}
-  {FGray}-h, --help{CRst}  Show this help message and exit.
-
-{FLYellow}Requirements:{CRst}
-  Windows 10 or later; administrator privileges; built-in Windows PowerShell.
-"""
-    )
+    print(HELP)
 
 
 def _powershell_command(

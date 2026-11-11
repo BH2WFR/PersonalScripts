@@ -1,25 +1,9 @@
 #!/usr/bin/env python3
-"""Run YAML-defined rclone tasks through the sibling rclone-sync private package.
+"""Implementation notes.
 
-Supports directory/file actions, ordered path1/path2 pairs, literal paths,
-mounted-volume selection, temporary SFTP/WebDAV addresses, checks, and retries.
-Task groups and their tasks are displayed in schema order, including ungrouped.
-linux-gui-required: true requires a Linux GUI via project utils; false imposes no requirement.
-The task menu can show the active rclone config path or open its file, then exit.
-Encrypt/Decrypt opens rclone's native config menu, then exits this script.
-Configuration reference: rclone-sync-schema-sample.yaml beside this entry point.
-Default configuration: shared user rclone-sync.yaml, with optional redirect.
-Internal architecture: rclone-sync/README.md. The private package is loaded as
-personal_rclone_sync; internal modules are not standalone scripts.
-
-Requirements:
-    Python 3.13+, project utils, PyYAML, cryptography for encrypted values, and rclone. Volume endpoints additionally
-    use Windows PowerShell 7 Storage/CIM, Linux lsblk, or macOS diskutil.
-
-Usage:
-    python rclone-sync.py --help
-    python rclone-sync.py
-    python rclone-sync.py --schema-file /path/to/schema.yaml --task group/name
+Load rclone-sync as personal_rclone_sync and keep its modules out of launcher/
+compiler discovery. Preserve the entry directory as the script_dir placeholder.
+Architecture: rclone-sync/README.md; schema: rclone-sync-schema-sample.yaml.
 """
 
 import importlib
@@ -35,6 +19,23 @@ IS_FROZEN = bool(getattr(sys, "frozen", False) or "__compiled__" in globals())
 if not IS_FROZEN:
     sys.path.insert(0, str(PROJECT_ROOT))
 from utils import *
+
+HELP = f"""{FLYellow}RCLONE SYNC RUNNER{CRst}
+
+Run YAML-defined copy, move, sync, bisync and comparison tasks across local or
+remote paths, with ordered batches and mounted-volume checks. Sync can delete
+destination files; move deletes sources. Bisync initialization requires --resync.
+
+{FLYellow}Requirements:{CRst}
+  rclone, PyYAML, cryptography for encrypted settings.
+  Volume endpoints: Windows PowerShell 7 Storage/CIM, Linux lsblk or macOS diskutil.
+
+{FLYellow}Usage:{CRst}
+  python rclone-sync.py [--schema-file FILE] [--task GROUP/NAME] [--dry-run]
+  python rclone-sync.py --task GROUP/NAME --action ACTION [--comparison MODE]
+  Actions/schema options: rclone-sync-schema-sample.yaml beside the entry.
+"""
+
 
 PACKAGE_NAME = "personal_rclone_sync"
 
@@ -75,6 +76,9 @@ def main() -> int:
     Returns:
         Application exit status; synchronization follows its explicit task flow.
     """
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(HELP)
+        return 0
     application = load_app()
     run = cast(Callable[[str | None], int], application.main)
     directory = Path(sys.executable).resolve().parent if IS_FROZEN else SCRIPT_DIR

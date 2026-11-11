@@ -1,20 +1,9 @@
 #!/usr/bin/env python3
-"""Repair macOS clipboard images received through Windows App / RDP.
+"""Implementation notes.
 
-Shows advertised image types, the first 16 file-header bytes, actual encoding
-and dimensions. After Proceed? confirmation, decodes the image bytes and writes
-real PNG representations to the clipboard. --force skips confirmation. This is
-a one-shot operation, not a background listener. Other clipboard representations
-are removed; multiple readable image items are retained as separate PNG items.
-Text, file references without embedded image data, and unreadable images fail
-without clearing the clipboard. A change during confirmation cancels the write.
-
-Requirements:
-    - macOS: built-in /usr/bin/osascript and AppKit; no third-party packages.
-
-Usage:
-    conda run --no-capture-output -n base python tools/macos/rdp-clipboard-image-fix.py
-    conda run -n base python tools/macos/rdp-clipboard-image-fix.py --force
+Preserve pasteboard change-count validation between inspection and write.
+Bound decoding to 16 items, 64 formats per item and 128 MiB per representation.
+Inspect/convert with AppKit through the existing osascript bridge.
 """
 
 import base64
@@ -28,14 +17,30 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
+HELP = f"""{FLYellow}RDP CLIPBOARD IMAGE REPAIR{CRst}
+
+Re-encode clipboard images as PNG to repair Windows App / RDP image pasting.
+Replaces all clipboard representations with image items; non-image data is left
+unchanged, and concurrent clipboard changes abort the repair.
+
+{FLYellow}Requirements:{CRst}
+  macOS with built-in osascript and AppKit.
+
+{FLYellow}Usage:{CRst}
+  python rdp-clipboard-image-fix.py [--force]
+  --force skips confirmation.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 OSASCRIPT = "/usr/bin/osascript"
 BACKEND_TIMEOUT_SECONDS = 60
 HEADER_BYTES = 16
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
-# AppKit performs decoding/encoding entirely inside this child process. Only
-# metadata and a 16-byte header cross stdout, never complete image data.
 JXA_SOURCE = r"""
 ObjC.import('AppKit');
 const HEADER_BYTES = 16;
@@ -283,24 +288,7 @@ def main() -> int:
     arguments = sys.argv[1:]
     if "--help" in arguments or "-h" in arguments:
         Console.print_banner("RDP CLIPBOARD IMAGE FIX")
-        print(f"""{FGray}Usage:
-  python rdp-clipboard-image-fix.py [--force]
-
-Description:
-  Show current clipboard image formats, actual encoding and first 16 header
-  bytes, then re-encode images as PNG to repair Windows App / RDP pasting.
-  Asks Proceed? [y/N] by default. Replaces all clipboard representations with
-  PNG image items. Non-image/unreadable content returns exit code 1 unchanged.
-  Aborts if the clipboard changes before writing. Runs once; does not monitor.
-  Limits: 16 items, 64 formats per item, 128 MiB per image representation.
-
-Options:
-  --force      Skip confirmation and repair automatically.
-  --help, -h   Show this help without accessing the clipboard.
-
-Requirements:
-  macOS; built-in /usr/bin/osascript and AppKit. No third-party packages.
-{CRst}""")
+        print(HELP)
         return 0
     Console.print_banner("RDP CLIPBOARD IMAGE FIX")
     if sys.platform != "darwin":

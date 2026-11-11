@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Upload local network information using the upload-ipaddress user config section.
+"""Implementation notes.
 
-Requirements: boto3, PyYAML, cryptography for encrypted credentials.
-Usage: python upload-ipaddress.py [--help]
+Read module-owned credentials through ConfigStore/EncryptedValue; never
+include secrets in the uploaded diagnostic output or console messages.
 """
+
+
 import sys
 import os
 import socket
@@ -11,31 +13,32 @@ import subprocess
 import platform
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *
+
+HELP = f"""{FLYellow}UPLOAD NETWORK INFORMATION{CRst}
+
+Upload local network-interface information to an S3-compatible bucket.
+The upload includes network addresses and interface details.
+
+{FLYellow}Requirements:{CRst}
+  boto3, PyYAML, cryptography; ipconfig, ip or ifconfig for the current OS.
+  Configure the upload-ipaddress section in the shared user config.yaml.
+
+{FLYellow}Usage:{CRst}
+  python upload-ipaddress.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 from datetime import datetime
 
 UPLOAD_ENCRYPTION_KEY = b"PwMoFseUfbszDg3JsbCkGEvKgvFbW9uWKOwmkD-sMZ8="
 
 def main() -> int:
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-{FLYellow}UPLOAD IP ADDRESS INFO TO S3 BUCKET{CRst}
-========================================
 
-Usage:
-  python {script_name}          upload current network info to S3
-  python {script_name} --help   show this help
-
-{FLYellow}Description:{CRst}
-  Collect network info (ipconfig / ip addr / ifconfig) and upload to an
-  S3-compatible bucket. Configuration:
-    {FLCyan}{ConfigStore().path}{CRst}, upload-ipaddress section:
-      bucket, endpoint, access-id, secret (supports !encrypted).
-
-{FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install boto3 PyYAML cryptography{CRst}
-  All other tools (ipconfig / ip / ifconfig) are platform built-ins.
-""")
+        print(HELP)
         return 0
 
     Console.print_banner("UPLOAD IP ADDRESS INFO TO S3 BUCKET")

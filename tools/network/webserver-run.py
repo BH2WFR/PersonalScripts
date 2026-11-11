@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run a local HTTP server to serve static web tools."""
+"""Implementation notes.
+
+Keep serving and browser-launch behavior separate. The URL suffix affects
+the opened browser URL, not filesystem routing in the HTTP handler.
+"""
+
 
 import os
 import sys
@@ -10,6 +15,23 @@ from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}LOCAL HTTP SERVER{CRst}
+
+Serve a local directory through a threaded HTTP server for previews or file access.
+This is not a production server; files are accessible to clients that can reach it.
+
+{FLYellow}Requirements:{CRst}
+  Project runtime only.
+
+{FLYellow}Usage:{CRst}
+  python webserver-run.py [PATH] [--bind IP --port PORT]
+      [--url-path SUFFIX] [--no-open] [--quiet]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 def _resolve_dir(path_str):
@@ -112,31 +134,10 @@ def _prompt_quiet():
 
 
 def main():
-    script_name = os.path.basename(sys.argv[0])
+
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        print(f"""
-{FLYellow}========== WEBSERVER RUNNING TOOL ========={CRst}
-==============
-
-{FLYellow}Usage:{CRst}
-  python {script_name}                  interactive mode
-  python {script_name} <PATH>           serve directory or index.html
-  python {script_name} <PATH> --bind <IP> --port <PORT>
-  python {script_name} --help           show this help
-
-{FLYellow}Description:{CRst}
-  Serve a local folder (or a web directory containing index.html) as an HTTP
-  service. Uses Python's built-in http.server with threading enabled.
-
-{FLYellow}Options:{CRst}
-  <PATH>             Directory or index.html file to serve (positional)
-  --bind <IP>        Bind address; with --port, enables non-interactive mode
-  --port <PORT>      Port number; with --bind, enables non-interactive mode
-  --url-path <PATH>  URL path suffix appended after port (e.g. /#/setup?host=...)
-  --no-open          Do not open the URL in the default browser
-  --quiet            Suppress HTTP request log output
-""")
+        print(HELP)
         sys.exit(0)
 
     Console.print_banner("WEBSERVER RUNNING TOOL")

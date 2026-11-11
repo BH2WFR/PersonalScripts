@@ -1,12 +1,33 @@
 #!/usr/bin/env python3
-# 递归删除操作系统生成的垃圾文件（.DS_Store / __MACOSX__ / Thumbs.db 等）
+"""Implementation notes.
+
+Keep the deletion-name allowlist explicit and scope traversal to the
+selected tree; changes to that allowlist alter the tool's deletion policy.
+"""
+
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-# OS junk files to remove
+HELP = f"""{FLYellow}REMOVE OS JUNK FILES{CRst}
+
+Remove known OS-generated metadata and cache files recursively, such as .DS_Store,
+Thumbs.db and desktop.ini. Deletion affects the selected directory tree.
+
+{FLYellow}Requirements:{CRst}
+  Project runtime only; permission to delete matching files.
+
+{FLYellow}Usage:{CRst}
+  python remove-os-junk-files.py [PATH]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
+
 JUNK_NAMES = {".DS_Store", "__MACOSX__", "Thumbs.db", ".AppleDouble", ".Spotlight-V100", ".Trashes", "desktop.ini"}
 
 
@@ -14,24 +35,8 @@ def main() -> int:
     Console.print_banner("OS JUNK FILE REMOVAL TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-OS JUNK FILE REMOVAL TOOL
-=========================
 
-Usage:
-  python {script_name} <path>       specify path, skip interaction
-  python {script_name}              no arguments, interactive mode
-  python {script_name} --help       show this help
-
-{FLYellow}Description:{CRst}
-  Recursively remove all OS-generated junk files from a directory:
-    .DS_Store, __MACOSX__, Thumbs.db, .AppleDouble,
-    .Spotlight-V100, .Trashes, desktop.ini
-
-{FLYellow}Requirements:{CRst}
-  No external dependencies.
-""")
+        print(HELP)
         return 0
 
 

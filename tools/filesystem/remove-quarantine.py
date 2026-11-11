@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
+"""Implementation notes.
+
+Pass xattr paths as arguments. Provenance removal remains an explicit
+option, separate from the default quarantine removal.
+"""
+
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *
 
-# Remove macOS quarantine attribute from files/folders to
-# bypass "unidentified developer cannot be opened" warning.
+HELP = f"""{FLYellow}REMOVE MACOS QUARANTINE{CRst}
+
+Remove quarantine attributes that prevent trusted downloaded files from opening.
+Optionally remove provenance attributes; use only for files you trust.
+
+{FLYellow}Requirements:{CRst}
+  macOS with built-in xattr.
+
+{FLYellow}Usage:{CRst}
+  python remove-quarantine.py [PATH ...] [-r] [--provenance]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 def _remove_attrs(file_path: str, clear_provenance: bool) -> tuple[bool, bool]:
@@ -25,26 +44,8 @@ def main() -> int:
     Console.print_banner("REMOVE QUARANTINE ATTRIBUTE TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-REMOVE QUARANTINE ATTRIBUTE TOOL
-================================
 
-Usage:
-  python {script_name} <path1> <path2> ...    specify multiple paths, skip interaction
-  python {script_name} <path> -r              specify path, recursive for directories
-  python {script_name} <path> --provenance    also remove com.apple.provenance
-  python {script_name}                        no arguments, interactive mode
-  python {script_name} --help                 show this help
-
-{FLYellow}Description:{CRst}
-  macOS only. Remove quarantine attribute from files/folders to
-  bypass "unidentified developer cannot be opened" warning.
-  For directories, supports recursive or non-recursive processing.
-
-{FLYellow}Requirements:{CRst}
-  macOS only. Uses xattr (built-in). No external dependencies.
-""")
+        print(HELP)
         return 0
 
     #============ system check ===========

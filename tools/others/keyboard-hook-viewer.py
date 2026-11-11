@@ -1,31 +1,9 @@
 #!/usr/bin/env python3
-"""Monitor global keyboard and mouse events without suppressing input.
+"""Implementation notes.
 
-Windows events retain virtual keys, scan codes and low-level hook flags.
-Scroll output shows one (x, y) pair and cyan up/down/left/right labels.
-Windows displays raw wheel deltas (120 per notch, right/up positive); macOS
-shows precise NSEvent scrolling deltas, including fractional trackpad movement.
-X11 and callback step values remain unchanged. Zero native deltas are not printed.
-macOS also shows native pinch magnification deltas, zoom direction and phase;
-zero-delta pinch start/end events remain visible. On a Windows remote host,
-pinch is visible only when translated to wheel input; these are not physical
-touchpad distances or an application's current zoom level.
-macOS supports CGEvent/IOHID device identity; Linux requires an X11 session.
-Implementation modules live in keyboard-hook-viewer/ and are not commands.
-
-Responsible use:
-    Only for legitimate keyboard testing, custom hotkeys and authorized
-    automation. Obtain permission from affected users; do not use for covert
-    surveillance, credential collection or other unauthorized activity.
-    Users are responsible for their use and its consequences.
-
-Requirements:
-    Windows: standard-library ctypes. macOS: pyobjc-framework-Quartz.
-    Linux X11: python-xlib. Wayland is unsupported.
-
-Usage:
-    python tools/others/keyboard-hook-viewer.py
-    python tools/others/keyboard-hook-viewer.py --help
+Load keyboard-hook-viewer as personal_keyboard_hook_viewer; preserve compiler
+staging and the valid package alias. Runtime/backend ownership and code-space
+distinctions: keyboard-hook-viewer/README.md.
 """
 
 """
@@ -45,6 +23,20 @@ IS_FROZEN = bool(getattr(sys, "frozen", False) or "__compiled__" in globals())
 if not IS_FROZEN:
     sys.path.insert(0, str(PROJECT_ROOT))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}KEYBOARD AND MOUSE MONITOR{CRst}
+
+Inspect global keyboard/mouse events, key codes and scroll input without blocking
+input; macOS also reports native pinch gestures. For authorized input testing only.
+
+{FLYellow}Requirements:{CRst}
+  Windows: built-in APIs. macOS: pyobjc-framework-Quartz and input permissions.
+  Linux X11: python-xlib and XRecord; Wayland is unsupported.
+
+{FLYellow}Usage:{CRst}
+  python keyboard-hook-viewer.py
+"""
+
 
 PACKAGE_NAME = "personal_keyboard_hook_viewer"
 
@@ -82,6 +74,9 @@ def load_app() -> ModuleType:
 
 def main() -> int:
     """Run the viewer and return its exit status; help never starts a hook."""
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(HELP)
+        return 0
     return cast(Callable[[], int], load_app().main)()
 
 

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-#* 文档（PDF）自动截图工具，适用于有 DRM 保护或加密 U 盘中的 PDF 文档
-# 原理：通过发送 `PgDn` 键翻页，配合鼠标点击激活窗口，自动截图并保存到指定文件夹。
-# 依赖库：mss、pynput、Pillow
+"""Implementation notes.
+
+Coordinate capture and input threads so cancellation releases hooks and
+capture resources. Use shared macOS permission checks before enabling input.
+"""
+
 
 import os
 import sys
@@ -9,6 +12,24 @@ import threading
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}DOCUMENT SCREENSHOT{CRst}
+
+Capture successive document pages as images when direct export is unavailable.
+Uses the visible desktop and sends page-turn input to the selected window.
+
+{FLYellow}Requirements:{CRst}
+  mss, pynput, Pillow; Windows, macOS or Linux X11 desktop.
+  macOS requires Accessibility and Screen Recording permission; no Wayland.
+
+{FLYellow}Usage:{CRst}
+  python document-screenshot.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 import mss # pip install mss
 import mss.tools
@@ -22,27 +43,8 @@ from PIL import Image # pip install Pillow
 def main() -> int:
     Console.print_banner("Automatic Screen Capturing Tool for Document")
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-    AUTOMATIC SCREEN CAPTURING TOOL FOR DOCUMENT
-    ============================================
 
-    Usage:
-      python {script_name}                enter interactive mode
-      python {script_name} --help         show this help
-
-    {FLYellow}Description:{CRst}
-      Auto-capture screenshots of DRM-protected or encrypted-USB PDF documents.
-      Works by sending PgDn key to flip pages, clicking to activate the window,
-      and auto-saving screenshots to a folder.
-
-    {FLYellow}Requirements:{CRst}
-      Windows, macOS, or Linux with X11. Wayland and headless sessions are not
-      supported.
-      Python: {FGray}pip install mss pynput Pillow{CRst}
-      On macOS, startup waits for Accessibility, Screen Recording, and the
-      direct-screen-capture confirmation before enabling input control.
-    """)
+        print(HELP)
         return 0
 
 
@@ -56,7 +58,7 @@ def main() -> int:
         top: int = 15
         width: int = 300
         height: int = 300
-    
+
         center_x: int = 250
         center_y: int = 250
 
@@ -160,8 +162,6 @@ def main() -> int:
         return result["pos"]
 
 
-
-
     Config.capture_interval_s = float(Input.input_number(
         "Enter capturing interval in seconds",
         default=Config.capture_interval_s,
@@ -254,8 +254,6 @@ def main() -> int:
         return 0
 
 
-
-
     def image_color_processing(image: Image.Image, mode: ImageCompressMode) -> Image.Image:
         if mode == ImageCompressMode.grayscale:
             image = image.convert("L")
@@ -337,9 +335,6 @@ def main() -> int:
                 click_and_send_pagedown(Region.center_x, Region.center_y, Config.sleep_time_ms / 1000)
     finally:
         stop_listener.stop()
-
-
-
 
 
     if stop_event.is_set():

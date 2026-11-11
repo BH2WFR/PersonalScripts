@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
-"""Interactively block or unblock Windows executables with firewall rules.
+"""Implementation notes.
 
-The tool accepts one ``.exe``/``.com`` file or a directory to scan recursively.
-Directory symlinks and junctions are never followed silently. Existing complete
-block rules are skipped, and removal only targets enabled local persistent rules
-that block every profile, protocol, port, and address for the selected program.
-
-Requirements:
-    - Windows 10 or later
-    - administrator privileges
-    - system: PowerShell with the built-in NetSecurity module
-
-Usage:
-    python firewall-app-blocker.py
-    python firewall-app-blocker.py --help
+Retain only enabled local persistent block rules with complete profile,
+protocol, port and address coverage as removable matches. Do not silently
+follow directory symlinks/junctions or duplicate equivalent block rules.
 """
 
 from __future__ import annotations
@@ -33,6 +23,22 @@ from typing import Optional, Sequence, cast
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
+
+HELP = f"""{FLYellow}WINDOWS FIREWALL APP BLOCKER{CRst}
+
+Block or unblock executable network access, individually or across a directory.
+Supports outbound-only or both inbound/outbound blocking.
+
+{FLYellow}Requirements:{CRst}
+  Windows 10+, administrator privileges, PowerShell with NetSecurity.
+
+{FLYellow}Usage:{CRst}
+  python firewall-app-blocker.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 SUPPORTED_SUFFIXES = frozenset({".exe", ".com"})
@@ -363,23 +369,7 @@ ConvertTo-Json -InputObject $results.ToArray() -Depth 3 -Compress
 
 def _build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for this interactive tool."""
-    return argparse.ArgumentParser(
-        description=(
-            f"{FLYellow}WINDOWS FIREWALL APP BLOCKER{CRst}\n\n"
-            "Interactively add complete outbound or inbound/outbound block "
-            "rules for one executable or every .exe/.com file under a directory."
-        ),
-        epilog=(
-            f"{FLYellow}Usage:{CRst}\n"
-            f"  {FGray}python firewall-app-blocker.py{CRst}\n"
-            f"  {FGray}python firewall-app-blocker.py --help{CRst}\n\n"
-            f"{FLYellow}Requirements:{CRst}\n"
-            "  Windows 10 or later; administrator privileges; PowerShell "
-            "with the built-in NetSecurity module."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        add_help=True,
-    )
+    return Console.argument_parser(HELP)
 
 
 def _parse_args(argv: Optional[Sequence[str]]) -> None:

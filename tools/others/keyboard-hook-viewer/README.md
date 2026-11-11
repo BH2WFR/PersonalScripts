@@ -6,13 +6,14 @@ covert surveillance, credential collection or other unauthorized activity.
 Users are responsible for their use and its consequences.
 
 Run `../keyboard-hook-viewer.py` directly or select it in `run-script.py`.
+The entry owns `HELP` and handles help before loading the package.
 The entry loads this package as `personal_keyboard_hook_viewer`; the launcher
 and compiler list only that entry. Nuitka/PyInstaller stage the package using
 the same alias. No new dependencies are introduced by the split.
 
 | Module | Responsibility |
 | --- | --- |
-| `app.py` | Help, device display and the interactive monitor lifecycle |
+| `app.py` | Device display and the interactive monitor lifecycle |
 | `models.py` | Event/device/window dataclasses, hotkeys and backend protocols |
 | `runtime.py` | Event dispatch, callback registration and held/toggled state |
 | `ui.py` | Terminal formatting, device labels and foreground-window display |

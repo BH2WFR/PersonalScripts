@@ -1,20 +1,9 @@
 #!/usr/bin/env python3
-"""Build and incrementally install the Windows MatrixViewer directory release.
+"""Implementation notes.
 
-Run with Conda Python. The interactive destination is the directory containing
-MatrixViewer.exe, not its parent; Enter reuses the last successful destination.
-The first default is D:/Portable_Programs/MatrixViewer. The build environment is
-also prompted, initially defaulting to base; both choices are remembered after
-a successful install. --output and --environment skip their respective prompts.
---clean clears PyInstaller's build cache. No dependencies are installed here.
-
-Requirements: Windows 10+, Python 3.13+, Conda, and PyInstaller plus the viewer's
-runtime dependencies in the selected environment. The driver uses only the
-standard library and project utils. Base builds may use the current user's
-site-packages, matching ordinary base Python. Other Conda environments use -I
-isolation. PYTHONPATH/PYTHONHOME are removed from the build process in both modes;
-the spec audits package origins and excludes unused optional integrations.
-
+Base builds may use user-site packages; other environments use isolated Python.
+Remove PYTHONPATH/PYTHONHOME in both modes and retain the spec's dependency-origin
+audit. Store successful environment/destination choices only after installation.
 Builds finish in BUILD/MatrixViewer/install-stage before touching the release.
 SHA-256 comparisons preserve identical destination files, including timestamps;
 changed files are replaced individually through temporary sibling files. Only
@@ -27,13 +16,6 @@ A failed build leaves the installed release intact. Deployment is not a whole-
 directory transaction: an I/O failure during copying is reported, and rerunning
 repairs the release. The install inventory is committed after all file changes.
 Build artifacts and remembered settings remain under the Gitignored BUILD tree.
-
-Usage:
-    In an activated Conda PowerShell:
-    & "$env:CONDA_PREFIX/python.exe" tools/research/_matrix_viewer_install.py
-    Noninteractive:
-    conda run -n base python tools/research/_matrix_viewer_install.py --environment base --output D:/Portable_Programs/MatrixViewer
-    conda run -n base python tools/research/_matrix_viewer_install.py --help
 """
 
 import argparse
@@ -50,6 +32,21 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_DIR))
 from utils import *  # noqa: E402
 
+HELP = f"""{FLYellow}MATRIX VIEWER BUILD AND INSTALL{CRst}
+
+Build and update a MatrixViewer directory release, preserving unchanged installed
+libraries. Close the installed viewer before updating it.
+
+{FLYellow}Requirements:{CRst}
+  Windows 10+, Conda, Python 3.13+, PyInstaller and viewer dependencies.
+
+{FLYellow}Usage:{CRst}
+  python _matrix_viewer_install.py [--output DIR] [--environment NAME] [--clean]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 APP_NAME = "MatrixViewer"
 EXECUTABLE = f"{APP_NAME}.exe"
@@ -63,7 +60,6 @@ INSTALL_RECORD = ".matrix-viewer-install.json"
 BUILD_RECORD = "_internal/build-manifest.json"
 RECORD_VERSION = 1
 
-
 @dataclass(frozen=True)
 class InstallResult:
     """File counts from a completed release update; unchanged files were not written."""
@@ -72,12 +68,10 @@ class InstallResult:
     unchanged: int
     removed: int
 
-
 def _file_hash(path: Path) -> str:
     """Read a file and return its SHA-256 digest, propagating I/O errors."""
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
-
 
 def _release_path(root: Path, name: str) -> Path:
     """Validate a managed release path and reject traversal, links and junctions."""
@@ -97,7 +91,6 @@ def _release_path(root: Path, name: str) -> Path:
     # and every component above was checked for links before filesystem writes.
     return target
 
-
 def _inventory(root: Path) -> dict[str, Path]:
     """List release-owned files, checking directory links before traversal."""
     files: dict[str, Path] = {}
@@ -116,7 +109,6 @@ def _inventory(root: Path) -> dict[str, Path]:
                 files[path.relative_to(root).as_posix()] = path
     return files
 
-
 def _read_record(path: Path) -> dict[str, object]:
     """Read an application-owned JSON object, rejecting malformed/foreign data."""
     if path.is_symlink() or path.is_junction():
@@ -125,7 +117,6 @@ def _read_record(path: Path) -> dict[str, object]:
     if not isinstance(value, dict) or value.get("application") != APP_NAME:
         raise ValueError(f"Not a {APP_NAME} record: {path}")
     return value
-
 
 def _managed_files(destination: Path) -> set[str]:
     """Load the install inventory, or adopt an existing verified onedir release."""
@@ -153,7 +144,6 @@ def _managed_files(destination: Path) -> set[str]:
         raise ValueError("Choose an empty directory or an existing MatrixViewer release directory.")
     return set()
 
-
 def _replace_file(source: Path, target: Path) -> None:
     """Copy to a temporary sibling and replace one file; clean up on failure."""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -165,7 +155,6 @@ def _replace_file(source: Path, target: Path) -> None:
         os.replace(temporary_path, target)
     finally:
         temporary_path.unlink(missing_ok=True)
-
 
 def install_release(source: Path, destination: Path) -> InstallResult:
     """Synchronize a finished build without rewriting unchanged runtime libraries.
@@ -228,7 +217,6 @@ def install_release(source: Path, destination: Path) -> InstallResult:
             _replace_file(staged_record, inventory_path)
     return InstallResult(len(changed), len(files) - len(changed), len(obsolete))
 
-
 @contextmanager
 def _build_lock() -> Iterator[None]:
     """Hold a Windows byte-range lock until this build/deployment finishes."""
@@ -250,7 +238,6 @@ def _build_lock() -> Iterator[None]:
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
-
 def _output_path(text: str) -> Path:
     """Resolve the requested directory, protecting source, build and root paths."""
     destination = Path(Paths.resolve_vars(text.strip().strip('"').strip("'"))).resolve()
@@ -263,7 +250,6 @@ def _output_path(text: str) -> Path:
     _managed_files(destination)
     return destination
 
-
 def main() -> int:
     """Prompt, build in the selected Conda environment, then publish changed files.
 
@@ -274,11 +260,7 @@ def main() -> int:
         Prompts for unspecified output/environment choices, runs PyInstaller,
         updates the release and remembers both. KeyboardInterrupt propagates.
     """
-    parser = argparse.ArgumentParser(
-        description=f"{FLYellow}MatrixViewer build and install{CRst}\nBuild an onedir release; preserve unchanged installed libraries.",
-        epilog="Requirements: Windows 10+, Conda, Python 3.13+; PyInstaller and viewer dependencies. Base may use user-site packages; other environments are isolated.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = Console.argument_parser(HELP)
     parser.add_argument("--output", help="Install directory containing MatrixViewer.exe; otherwise prompt")
     parser.add_argument("--environment", help=f"Existing Conda build environment; otherwise prompt (initial default: {DEFAULT_ENVIRONMENT})")
     parser.add_argument("--clean", action="store_true", help="Clear PyInstaller's cache before building")
@@ -356,7 +338,6 @@ def main() -> int:
         if isinstance(exc, PermissionError):
             print(f"{FYellow}Close MatrixViewer and check directory permissions, then rerun this script.{CRst}")
         return 1
-
 
 if __name__ == "__main__":
     try:

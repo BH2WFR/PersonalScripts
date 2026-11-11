@@ -1,11 +1,42 @@
 #!/usr/bin/env python3
-"""Browse NPY, NPZ, MAT, Excel, CSV/TXT and images in a linked Qt matrix/signal viewer.
 
-This module docstring serves as the matrix viewer project's AGENTS.md:
-the detailed notes below provide project instructions for maintainers and
-coding agents. Keep the CLI description a concise user-facing overview;
-document implementation behavior and detailed defaults here instead of
-expanding command-line help.
+
+import argparse
+import importlib
+import importlib.util
+import os
+from pathlib import Path
+import sys
+from typing import Callable, cast
+
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}MATRIX AND SIGNAL VIEWER{CRst}
+
+Explore arrays, tables and images in linked raw-data, 1D, 2D and 3D views.
+Supports complex data, slices, derivatives, transforms and numeric/figure exports.
+Plain array exports do not retain inverse-transform metadata.
+
+{FLYellow}Requirements:{CRst}
+  numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph, pyvista,
+  pyvistaqt, vtk, scipy, h5py, openpyxl; xlrd only for legacy XLS input.
+
+{FLYellow}Usage:{CRst}
+  python matrix-viewer.py [FILE ...] [--key NAME] [--mode MODE]
+      [--channel-axis AXIS] [--max-edge SIZE]
+  MODE: matrix, signal, xy or points; indices and axes are zero-based.
+  Inputs: NPY/NPZ/MAT, Excel, CSV/TXT and images.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
+"""Implementation notes.
+
+These implementation notes guide maintenance of the private matrix-viewer package.
 
 Windows directory releases use matrix-viewer/packaging/MatrixViewer.spec with
 PyInstaller in the selected build environment. The spec stages this private
@@ -364,37 +395,13 @@ matrices. Complex data remain intact. Ordinary exported array files do not retai
 external IFFT requires specifying spectrum order, frequency spacing and normalization.
 Windowing, mean removal and value bounds cannot be undone by IFFT.
 
-Requirements:
-    Python 3.13+; numpy, opencv-python, Pillow, matplotlib, PySide6, pyqtgraph,
-    pyvista, pyvistaqt, vtk, scipy, h5py and openpyxl (requirements-research.txt).
-    xlrd is required for legacy .xls input; other formats do not require it.
-
 Command-line files load sequentially into one workspace in argument order.
 Import errors or canceled selections skip that file and continue with the next.
 --key, --mode and --channel-axis apply to each command-line file; mode/axis
 overrides select the first imported matrix in each file. Single matrix mode
 displays the last successfully added file's first matrix and retains the others.
-
-Usage:
-    python matrix-viewer.py [file ...] [--key NAME] [--max-edge 512]
-    python matrix-viewer.py first.npy second.npy --mode matrix
-    python matrix-viewer.py data.npy --mode signal --channel-axis 1
-    python matrix-viewer.py measurements.csv --mode xy
-    python matrix-viewer.py coordinates.npy --mode points
-    python matrix-viewer.py measurements.mat --key signal
 """
 
-import argparse
-import importlib
-import importlib.util
-import os
-from pathlib import Path
-import sys
-from typing import Callable, cast
-
-if not getattr(sys, "frozen", False):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from utils import *  # noqa: E402
 
 PACKAGE_NAME = "personal_matrix_viewer"
 DEPENDENCIES = "numpy opencv-python Pillow matplotlib PySide6 pyqtgraph pyvista pyvistaqt vtk scipy h5py openpyxl xlrd"
@@ -407,48 +414,7 @@ def main() -> int:
         Selects PySide6 for this process, imports the viewer package, opens
         a Qt window and runs its event loop. Prints dependency errors.
     """
-    parser = argparse.ArgumentParser(
-        description=(
-            "Browse NPY/NPZ/MAT/Excel/CSV/TXT and images in linked raw-data, 2D image, 3D surface/point-cloud and 1D/XY/"
-            " views, with slices and lazy derivatives. "
-            "Open one or more files from the command line, loaded in order into one workspace, or use the matrix panel. "
-            "Failed or canceled imports are skipped. Single matrix mode displays the last added file and retains the others. "
-            "Open and replace (Ctrl+O) replaces the session; Open (Ctrl+Shift+O) or dropping"
-            " another file adds it. Single matrix mode shows one channel; Multiple matrices mode overlays compatible data with"
-            " separate colors, settings and a selectable alignment reference. Right-click matrices or plots for appearance, processing, "
-            "fitting and export actions, grouped by purpose. Close / Close all release session data. View settings beside each plot groups styles, colors and markers. "
-            "Numeric files support dense 1D/2D boolean, integer, real and complex arrays; 3D NPY/NPZ/MAT arrays ask for a channel axis to split into 2D matrices or skip. MAT supports legacy and v7.3 files. "
-            "NPZ import offers optional filename prefixes. Matrix-list columns resize manually and scroll horizontally. "
-            "1D/2D NPY/NPZ strings and MAT character arrays open in Raw data only; object arrays remain unsupported. "
-            "NPZ/MAT/Excel files offer member/sheet selection; Excel and CSV/TXT imports allow ranges and header handling. "
-            "Two-row/column arrays can open as XY signals, and three-row/column arrays as XYZ point clouds. Ambiguous shapes "
-            "prompt for a choice. Unsupported data and unreadable files show an error dialog. "
-            "Images expose bit depth, individual channels, grayscale combinations and RGB/RGBA/monochrome color views. "
-            "Complex data offer Real, Imaginary, Magnitude, Phase (rad) and Magnitude (dB). Raw data can copy selections; "
-            "8-bit image values also support hexadecimal display. "
-            "Crop by source indices or value bounds, select a slice, and adjust sampling, height, point rendering and 1D/2D/3D point sizes. "
-            "Scaling menus offer manual ranges, per-axis x2/x1.2 zoom and Reset, one-shot auto scaling, XY equality and 3D XY/YZ/ZX/XYZ equality; 3D Z ticks label their multiplier. Slice plots auto-fit Y by default; manual Y ranges disable it. "
-            "Optional Inf/-Inf/NaN markers have configurable colors and 1D size. Clipped-value highlighting is enabled by "
-            "default and can be disabled. Derivatives compute only when requested and reuse unchanged results. "
-            "Transform tools create new matrices: Fourier FFT/IFFT, 1D Laplace and its inverse, data conversions (dB, angles, "
-            "logs, magnitude, scale/offset), and complex merging from real/imaginary or magnitude/phase channels. "
-            "Conversion and Laplace ask channel/complex for complex sources; inverse transforms require full complex input. "
-            "Fourier supports full/cropped matrices and slices, with separate complex/channel handling of invalid values. "
-            "Full complex and phase inputs ignore value bounds. Fourier/Laplace require uniform XY sampling; no point clouds. "
-            "Review sampling and preprocessing in each dialog. Plain array exports do not retain transform metadata. "
-            "Export original matrices, processed results or slices as NPY, MAT, XLSX, CSV or TXT; choose a whole matrix, "
-            "one channel or all visible results. Complex sources ask for channel or complex data; text splits real/imaginary files. "
-            "A slice menu keeps independent in-memory 1D matrices, asking channel/complex for complex sources. "
-            "Export > All matrices as packs checked and hidden originals into NPZ/MAT/XLSX. "
-            "Signals can export as XY tables and matrices as XYZ point clouds. Real 2D arrays also export as normalized grayscale PNG/BMP. "
-            "Export figure opens a preview dialog for the current 2D, 3D, 1D or derivative view. Save PNG/TIFF/JPEG, or "
-            "SVG for 2D/1D; set image dimensions, DPI, transparency, title and legend. Zoom, camera and visible styling "
-            "are retained. Separate numeric outputs receive suggested filenames."
-        ),
-        epilog=(f"Dependencies: {DEPENDENCIES} (xlrd only for XLS input). Indices and axis numbers are zero-based. "
-                "1D wheel zooms X (XY while 1:1 is locked); Ctrl+wheel zooms XY. 3D middle drag or Ctrl+left drag orbits; "
-                "right drag or Alt+middle drag rolls the view."),
-    )
+    parser = Console.argument_parser(HELP)
     parser.add_argument("files", nargs="*", type=Path, metavar="file", help="Files to open in argument order; omit for an empty GUI")
     parser.add_argument("--key", help="Initial MAT variable, NPZ member, Excel worksheet or image matrix label for each file (e.g. R, G, B, A, Monochrome)")
     parser.add_argument("--mode", choices=("matrix", "signal", "xy", "points"),

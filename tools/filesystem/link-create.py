@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-# 软链接/硬链接 创建工具
-# Linux/macos 中，使用 ln 命令创建软链接（符号链接）或硬链接。
-# Windows 中，使用 mklink 命令创建符号链接或硬链接；如目标为文件夹，则支持 symlinkd 和 junction
-# 如果输入的路径中只有一个目录，则会提供额外选项：链接目录本身，还是链接目录内的内容（展平或递归镜像）
+"""Implementation notes.
+
+Keep link-type dispatch platform-specific. Windows directory symlinks and
+junctions must use the appropriate mklink flags; preserve the selected target
+path representation when constructing links.
+"""
+
 
 import os
 import sys
@@ -13,46 +16,30 @@ import enum
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
+HELP = f"""{FLYellow}LINK CREATE{CRst}
+
+Create symbolic links or hard links, including flat links and mirrored directory
+trees. Windows also supports directory junctions.
+
+{FLYellow}Requirements:{CRst}
+  Project runtime and OS link support; Windows symlinks may require elevation.
+
+{FLYellow}Usage:{CRst}
+  python link-create.py [PATH ...]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 def main() -> int:
     Console.print_banner("LINK CREATION TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-    {FLYellow}LINK CREATION TOOL{CRst}
-    ==================
 
-    Usage:
-      python {script_name} <path1> <path2> ...   specify paths, skip interaction
-      python {script_name}                        no arguments, interactive mode
-      python {script_name} --help                 show this help
-
-    {FLYellow}Supported Link Types:{CRst}
-      Windows:
-        Files   - Symlink (absolute or ..\\ relative path) / Hardlink (absolute path)
-        Dirs    - SymlinkD (absolute, ..\\ relative, or \\ root-relative path) / Junction (absolute path)
-      Linux/macOS:
-        Files   - Symlink (absolute or ../ relative path) / Hardlink (absolute path)
-        Dirs    - Symlink (absolute or ../ relative path)
-
-    {FLYellow}Single Directory Mode{CRst} (when only one directory is provided):
-      0  Link the directory itself
-      1  Flat-link contents inside the directory (files/subdirs, same level)
-      2  Recursively mirror directory structure (real dirs, linked files)
-
-    {FLYellow}Interactive Workflow:{CRst}
-      1. Enter source paths (multi-line, Ctrl+Z/Ctrl+D to end)
-      2. Choose link type (separately for files and directories)
-      3. Enter target directory
-      4. Choose how target paths are stored in symlinks
-      5. Confirm and execute; conflicts can be skip/skip all/overwrite/overwrite all
-
-    {FLYellow}Requirements:{CRst}
-      No external dependencies. Uses built-in os.symlink/os.link; Windows uses mklink (cmd built-in).
-    """)
+        print(HELP)
         return 0
-
 
 
     IS_WIN = os.name == "nt"

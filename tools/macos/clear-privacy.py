@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clear privacy traces on macOS with explicit per-section confirmation."""
+
 
 import argparse
 import os
@@ -13,51 +13,32 @@ from typing import Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
 
+HELP = f"""{FLYellow}CLEAR PRIVACY - MACOS{CRst}
+
+Clear recent-item history, browser data, caches and selected system/application
+traces. Cleanup can permanently remove saved data and sign-in state.
+
+{FLYellow}Requirements:{CRst}
+  macOS built-in tools; root for system cleanup. trash is optional.
+
+{FLYellow}Usage:{CRst}
+  python clear-privacy.py [--force] [--skip-recent] [--skip-caches]
+      [--skip-browsers] [--skip-system] [--skip-apps]
+  --force skips section confirmations.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 HOME = Path.home()
 LIB = HOME / "Library"
 
 
 def print_help() -> None:
-    script_name = os.path.basename(sys.argv[0])
-    print(
-        f"""
-{FLYellow}CLEAR PRIVACY - macOS{CRst}
-=====================
 
-Usage:
-  python3 {script_name}
-  python3 {script_name} --force
-  sudo python3 {script_name} --skip-system
-
-Description:
-  Clears recent items, Finder and shell traces, browser data, caches,
-  temp files, and selected system traces from a macOS machine.
-
-Options:
-  -f, --force          Run enabled sections without confirmation.
-  --skip-recent        Skip recent items / Finder / shell section.
-  --skip-caches        Skip caches and temp files section.
-  --skip-browsers      Skip browser data section.
-  --skip-system        Skip system traces section.
-  --skip-apps          Skip application MRU and developer traces section.
-  -h, --help           Show this help message.
-
-Notes:
-  - Root is only needed for some system-level cleanup.
-  - Elevation order: sudo -> continue without elevation.
-  - Each enabled section asks for confirmation unless --force is used.
-
-Disclaimer:
-  This script clears system and application usage traces. The author
-  assumes no responsibility for any system damage, data loss, or
-  application malfunction resulting from its use. Use at your own risk.
-
-{FLYellow}Requirements:{CRst}
-  macOS only. All tools are built-in (defaults, killall, qlmanage, dscacheutil, etc.).
-  Optional: {FGray}brew install trash{CRst} (for Trash emptying)
-"""
-    )
+    print(HELP)
 
 
 def run(

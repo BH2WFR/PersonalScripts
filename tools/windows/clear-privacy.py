@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clear privacy traces on Windows with explicit section confirmation."""
+
 
 import argparse
 import ctypes
@@ -14,50 +14,32 @@ from typing import Callable, Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
 
+HELP = f"""{FLYellow}CLEAR PRIVACY - WINDOWS{CRst}
+
+Clear Explorer history, browser data, event logs, caches and local usage traces.
+Cleanup can permanently remove saved data and sign-in state.
+
+{FLYellow}Requirements:{CRst}
+  Windows built-in tools; administrator privileges for protected system traces.
+  sudo or gsudo is optional for elevation.
+
+{FLYellow}Usage:{CRst}
+  python clear-privacy.py [--force] [--skip-shell-history] [--skip-event-logs]
+      [--skip-dns-cache] [--skip-additional] [--skip-browsers]
+  --force skips section confirmations.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 SectionFunc = Callable[[], None]
 
 
 def print_help() -> None:
-    script_name = os.path.basename(sys.argv[0])
-    print(
-        f"""
-{FLYellow}CLEAR PRIVACY - Windows{CRst}
-=======================
 
-Usage:
-  python {script_name}
-  python {script_name} --force
-  python {script_name} --skip-browsers --skip-event-logs
-
-Description:
-  Clears Windows Explorer traces, event logs, DNS cache, browser data,
-  temp files, credential traces, and other local privacy artifacts.
-
-Options:
-  -f, --force          Run enabled sections without confirmation.
-  --skip-shell-history Skip Explorer / Shell history section.
-  --skip-event-logs    Skip Windows Event Logs section.
-  --skip-dns-cache     Skip DNS cache section.
-  --skip-additional    Skip additional cleanup section.
-  --skip-browsers      Skip browser data cleanup.
-  -h, --help           Show this help message.
-
-Notes:
-  - Elevation order: sudo -> gsudo -> continue without elevation.
-  - Each enabled section asks for confirmation unless --force is used.
-  - Browser cleanup is a separate confirmation inside the additional section.
-
-Disclaimer:
-  This script clears system and application usage traces. The author
-  assumes no responsibility for any system damage, data loss, or
-  application malfunction resulting from its use. Use at your own risk.
-
-{FLYellow}Requirements:{CRst}
-  Windows only. All tools are built-in (reg, wevtutil, ipconfig, powershell, etc.).
-  Optional elevation helpers: {FGray}scoop install sudo gsudo{CRst}
-"""
-    )
+    print(HELP)
 
 
 def is_windows() -> bool:

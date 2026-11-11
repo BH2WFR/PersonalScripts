@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
-"""Display detailed information about all connected monitors on Windows.
+"""Implementation notes.
 
-Uses Win32 native APIs (EnumDisplayMonitors, GetMonitorInfo, EnumDisplaySettings,
-GetDpiForMonitor) via ctypes to report accurate values regardless of DPI
-virtualization.  Reports actual (physical pixel) resolution, DPI scale ratio,
-effective resolution, monitor device name, and primary status.
-
-Requirements:
-    - Windows only (ctypes Win32 API)
-    - No third-party packages required
-
-Usage:
-    python windows/show-screen-resolution.py
-    python windows/show-screen-resolution.py --help
+Use EnumDisplayMonitors, GetMonitorInfo, EnumDisplaySettings and GetDpiForMonitor
+through ctypes; distinguish physical pixels from effective dimensions.
 """
 
 import os
@@ -22,6 +12,23 @@ from ctypes import wintypes
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}WINDOWS DISPLAY INFORMATION{CRst}
+
+Show physical/effective resolution, DPI scaling and layout for connected monitors,
+using native APIs to avoid DPI-virtualized measurements.
+
+{FLYellow}Requirements:{CRst}
+  Windows; project runtime only.
+
+{FLYellow}Usage:{CRst}
+  python show-screen-resolution.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 # ============ platform guard ============
 if sys.platform != "win32":
@@ -275,29 +282,8 @@ def _extract_display_index(device_name: str, fallback: int) -> int:
 def main() -> int:
     # ── help text ──────────────────────────────────────────
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-{FLYellow}SHOW SCREEN RESOLUTION{CRst}
-=======================
 
-Usage:
-  python {script_name}
-  python {script_name} --help
-
-{FLYellow}Description:{CRst}
-  Displays detailed information about all connected monitors:
-    - Actual (physical pixel) resolution via EnumDisplaySettings
-    - DPI scale ratio and percentage
-    - Effective resolution (actual / scale)
-    - Monitor device name, position, and primary status
-
-  Uses Windows native APIs (EnumDisplayMonitors, GetMonitorInfo,
-  EnumDisplaySettings, GetDpiForMonitor) to report accurate values
-  regardless of DPI virtualization.
-
-{FLYellow}Requirements:{CRst}
-  Windows only.  No third-party packages required.
-""")
+        print(HELP)
         return 0
 
     Console.print_banner("SHOW SCREEN RESOLUTION")

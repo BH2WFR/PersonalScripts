@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""View historical power and session events in a PySide6 GUI with the Fusion theme.
+"""Implementation notes.
 
 Choose a relative or custom local-time range, query in a cancellable worker,
 and toggle event checkboxes without rescanning logs. Select a row for its raw
@@ -32,15 +32,6 @@ Limits:
     Source commands time out after 90 seconds. At most 50,000 normalized events
     are displayed; narrow the query when the limit is reached. No usage-duration
     inference or background recording is performed in this version.
-
-Requirements:
-    - pip: PySide6 (GUI runtime).
-    - System: graphical desktop; macOS built-ins, Windows PowerShell, or Linux
-      journalctl. Additional log privileges may be needed for some sources.
-
-Usage:
-    conda run --no-capture-output -n base python tools/others/power-events.py
-    conda run -n base python tools/others/power-events.py --help
 """
 
 from __future__ import annotations
@@ -64,6 +55,24 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}POWER EVENT HISTORY{CRst}
+
+Inspect and export startup, shutdown, sleep, wake and lock history, including
+Windows Modern Standby. Missing logs do not prove an event did not occur;
+session transitions alone do not establish low-power residency or Wake-on-LAN.
+
+{FLYellow}Requirements:{CRst}
+  PySide6; Windows PowerShell, macOS log/pmset/last/sysctl, or Linux journalctl.
+  Log access and retained records are required; Linux lock history is limited.
+
+{FLYellow}Usage:{CRst}
+  python power-events.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 UTC = dt.timezone.utc
@@ -1047,34 +1056,7 @@ def main() -> int:
     """
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         Console.print_banner("POWER EVENTS")
-        print(f"""{FGray}Usage:
-  python power-events.py
-  python power-events.py --help
-
-Description:
-  PySide6 / Fusion GUI for startup, shutdown, sleep, wake, lock and unlock.
-  Choose a local date/time range; check event types to show or hide loaded rows.
-  Supports cancellation, raw evidence and saved display preferences.
-  Export CSV / Export JSON saves visible rows in their current display order.
-  CSV uses UTF-8 without BOM and local timestamps with UTC offsets.
-  Queries the last 24 hours initially. No monitoring service is installed.
-  Availability depends on retained logs and permissions; missing events are not
-  proof of absence. Linux lock history is limited.
-  Windows includes Modern Standby entry/exit (506/507) and auxiliary power-session
-  transitions (566), with reported reasons, sleep/DRIPS durations and session IDs.
-  These have separate event filters, enabled on upgrade from older versions.
-  Entry alone does not prove low-power residency; exit may be internal and does
-  not by itself prove Wake-on-LAN. Unavailable metrics remain absent, not zero.
-
-Options:
-  --help, -h   Show this help without opening the GUI or reading logs.
-
-Requirements:
-  Python package: PySide6.
-  macOS: built-in pmset, log, last and sysctl.
-  Windows 10+: PowerShell; Security log access/auditing for lock events.
-  Linux desktop: systemd journalctl; access to system logs.
-{CRst}""")
+        print(HELP)
         return 0
     if sys.argv[1:]:
         print(f"{FLRed}Unknown arguments: {sys.argv[1:]!r}. Use --help.{CRst}", file=sys.stderr)

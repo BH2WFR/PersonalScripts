@@ -1,8 +1,21 @@
-﻿$ErrorActionPreference = "Stop"
-#* 给本仓库所有 .sh .py 文件（递归查找），通过 git update-index 添加 chmod +x 权限，方便在 linux 下拉取时自带 +x 权限
-# 参数：
-#   argv[1] 目录路径（可选，默认当前目录）
-# 如无参数，则会进入交互输入模式，输入上述参数
+$ErrorActionPreference = "Stop"
+$HELP = @'
+GIT EXECUTABLE PERMISSIONS
+
+Mark Python and shell files executable in the Git index so checkouts on Unix
+retain executable permissions. Commit the index changes to persist them.
+
+Requirements:
+  PowerShell, Git and a Git working tree.
+
+Usage:
+  pwsh -File git-batch-add-chmod-x.ps1 [DIRECTORY]
+'@
+
+if ($args -contains '--help' -or $args -contains '-h') {
+    Write-Output $HELP
+    exit 0
+}
 
 Write-Host "=========== GIT BATCH ADD CHMOD +X ===========" -ForegroundColor Yellow
 

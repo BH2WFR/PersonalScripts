@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Compress PDFs with Ghostscript after shared opening-password authentication.
+"""Implementation notes.
 
-Requires Ghostscript and PyMuPDF. Writes a new PDF without password or permission
-restrictions. Temporary decrypted input and compressed output are cleaned up on
-success, failure, or interruption; existing files are never overwritten.
-
-Usage: python pdf-compress.py
+Authenticate through Pdf.open_document, stage decrypted input in the private
+temporary directory, and publish validated Ghostscript output via Pdf.save_new.
+Clean up staging files on success, failure and cancellation.
 """
 
 import os
@@ -18,6 +16,24 @@ from typing import TYPE_CHECKING, Callable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
+HELP = f"""{FLYellow}PDF COMPRESS{CRst}
+
+Compress PDFs with Ghostscript using a preset or custom image-quality settings.
+Protected inputs require their opening password. Writes a new, unrestricted PDF
+without PDF/A identification; existing files are not overwritten.
+
+{FLYellow}Requirements:{CRst}
+  Ghostscript, PyMuPDF.
+
+{FLYellow}Usage:{CRst}
+  python pdf-compress.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
+
 if TYPE_CHECKING:
     import pymupdf
 
@@ -25,34 +41,8 @@ if TYPE_CHECKING:
 # ============ help ============
 def _print_help() -> None:
     """Print usage without probing external dependencies."""
-    script_name = os.path.basename(sys.argv[0])
-    print(f"""
-{FLYellow}PDF COMPRESS{CRst}
-============
 
-Usage:
-  python {script_name}                interactive mode
-  python {script_name} --help         show this help
-
-{FLYellow}Description:{CRst}
-  Compress PDF files using Ghostscript.
-  Opens protected PDFs through the shared password prompt, with retry/cancellation.
-  Writes a new PDF without password or editing restrictions; never overwrites files.
-  Temporary decrypted input and compressed output are removed after processing.
-
-  Two compression modes:
-    [E] Ebook    — standard compression, balanced quality/size (gs -dPDFSETTINGS=/ebook)
-    [C] Custom   — fine-tune image DPI, compression quality, and downsampling
-
-{FLYellow}Options:{CRst}
-  -h, --help       show this help
-
-{FLYellow}Requirements:{CRst}
-  Python:          {FGray}pip install PyMuPDF{CRst}
-  Windows (scoop):  {FGray}scoop install ghostscript{CRst}
-  Linux (apt):      {FGray}sudo apt install ghostscript{CRst}
-  macOS (brew):     {FGray}brew install ghostscript{CRst}
-""")
+    print(HELP)
 
 
 # ============ helpers ============

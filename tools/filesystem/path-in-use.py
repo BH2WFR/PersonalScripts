@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find processes using a file or directory on Windows, Linux, and macOS.
+"""Implementation notes.
 
 Directories include themselves and all reported descendant paths. Drive roots
 and mount points are ordinary directories; there is no volume/device query.
@@ -36,19 +36,6 @@ Windows queries run in a private worker, which is stopped on timeout while
 preserving completed records. A stuck handle/map query is skipped by restarting
 only our worker; diagnostics are summarized. The worker's internal CLI is not
 a public API. --verbose expands incomplete-query diagnostics.
-
-Requirements:
-    Python 3.13+, project utils, psutil (pip install psutil).
-    Windows 10+: built-in Kernel32/Ntdll APIs via standard-library ctypes.
-    Linux/macOS: lsof on PATH (Linux: install with your package manager;
-        macOS: /usr/sbin/lsof); sudo for elevation when not already root.
-    Administrator/root privileges for scans; elevation is requested automatically.
-
-Usage:
-    python path-in-use.py
-    python path-in-use.py "D:/Data" --process editor
-    python path-in-use.py /mnt/data --pid 1234 --timeout 120
-    /path/to/conda/bin/python path-in-use.py /path/to/file
 """
 
 import argparse
@@ -71,6 +58,23 @@ from typing import cast
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}PATH IN USE{CRst}
+
+Find processes referencing a file or directory tree without terminating them.
+A reference does not prove a lock; no matches do not prove availability.
+Restricted processes and alternate hard links may be missed.
+
+{FLYellow}Requirements:{CRst}
+  psutil; administrator/root privileges. Linux/macOS also require lsof and sudo.
+
+{FLYellow}Usage:{CRst}
+  python path-in-use.py [PATH] [--pid PID] [--process NAME] [--timeout SECONDS]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 DEFAULT_TIMEOUT = 60.0
@@ -148,27 +152,7 @@ def _timeout(value: str) -> float:
 
 def _parser() -> argparse.ArgumentParser:
     """Build help without requiring psutil, querying processes, or elevating."""
-    parser = argparse.ArgumentParser(
-        description=f"{FLYellow}{'PATH IN USE':^60}{CRst}\n\n"
-        "Description:\n  Find processes referencing a file or directory (recursively).\n"
-        "  Print PID, process name, full executable path, and referenced paths.\n"
-        "  Drive roots and mount points are treated as directories (D: means D:/).",
-        epilog=f"{FGray}Requirements:\n"
-        "  psutil (pip install psutil); Windows 10+: built-in APIs, no external tool.\n"
-        "  Linux/macOS: lsof on PATH; sudo for elevation when not already root.\n"
-        "  Scans automatically request administrator/root privileges.\n"
-        "  Linux/macOS restart in the current terminal; sudo may prompt for a password.\n\n"
-        "Examples:\n  python path-in-use.py D:/Data --process editor\n"
-        "  /path/to/conda/bin/python path-in-use.py /mnt/data --pid 1234\n\n"
-        "Notes:\n  No disk/volume-specific scanning. Uses reported paths, not file identity.\n"
-        "  Windows checks file handles and mapped files/modules using NT names.\n"
-        "  Alternate hard links and restricted processes may still be missed.\n"
-        "  A reference does not prove a lock; no matches do not prove availability.\n"
-        "  Exit: 0 completed, 1 failed/incomplete, 2 invalid arguments.\n"
-        "  Queries are read-only. Target processes/handles are never terminated/closed.\n"
-        f"  Windows skips stalled queries after {HANDLE_STALL_SECONDS:g}s; --timeout caps the scan.{CRst}",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = Console.argument_parser(HELP)
     parser.add_argument("path", nargs="?", help="File or directory; prompt if omitted")
     parser.add_argument("--pid", type=_positive_pid, help="Only include this PID")
     parser.add_argument("--process", help="Case-insensitive substring of the process name")
@@ -818,7 +802,7 @@ def _print_results(scan: Scan, target: str, directory: bool, pid_filter: int | N
     status = " (scan incomplete)" if scan.warnings else ""
     print(f"\n{FLCyan}Matched processes{CRst}: {FLYellow}{matched}{CRst}{FGray}{status}{CRst}")
     print("")
-    
+
     warnings = list(dict.fromkeys(scan.warnings))
     shown = warnings if verbose else warnings[:3]
     for warning in shown:

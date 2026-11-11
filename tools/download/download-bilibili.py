@@ -1,42 +1,39 @@
 #!/usr/bin/env python3
+"""Implementation notes.
+
+Construct BBDown arguments as a sequence; keep authentication and media
+selection delegated to the external tool.
+"""
+
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-# 基于 BBDown 的 Bilibili 视频下载器
-# 要求先使用 scoop 安装 BBDown, aria2 和 ffmpeg 三个包
+HELP = f"""{FLYellow}BILIBILI DOWNLOAD{CRst}
+
+Download Bilibili videos, audio, subtitles or danmaku through BBDown, including
+multi-part videos and quality selection.
+
+{FLYellow}Requirements:{CRst}
+  BBDown, ffmpeg; aria2 is optional for faster downloads.
+
+{FLYellow}Usage:{CRst}
+  python download-bilibili.py [URL ...]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 def main() -> int:
     Console.print_banner("BBDOWN TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-BBDOWN TOOL - Bilibili Video Downloader
-========================================
 
-Usage:
-  python {script_name} <url1> <url2> ...    specify URLs, skip URL input
-  python {script_name}                       no arguments, interactive mode
-  python {script_name} --help                show this help
-
-{FLYellow}Description:{CRst}
-  BBDown-based Bilibili video downloader.
-
-{FLYellow}Requirements:{CRst}
-  Windows (scoop):  {FGray}scoop install BBDown ffmpeg aria2{CRst}
-  Linux (apt):      {FGray}sudo apt install ffmpeg aria2{CRst}
-  macOS (brew):     {FGray}brew install ffmpeg aria2{CRst}
-  (BBDown must be installed manually from GitHub on Linux/macOS; aria2 is optional for faster downloads)
-
-{FLYellow}Interactive Options:{CRst}
-  Output directory, video URLs (multi-line EOF input), download mode
-  (quality/audio-only/subtitles/danmaku), part selection, API type
-  (default/TV/APP/international).
-""")
+        print(HELP)
         return 0
 
     _ffmpeg = CmdCheck("ffmpeg", hints={

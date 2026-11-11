@@ -8,6 +8,7 @@ Implementation: [console.py](../console.py), [input.py](../input.py), [menu.py](
 
 | Need | Use |
 | --- | --- |
+| Create a CLI parser with authored help | `Console.argument_parser(help_text) -> argparse.ArgumentParser`; pass the entry's top-level HELP, then add arguments and parse normally. -h/--help prints that text verbatim; validation, error usage and exit statuses retain argparse behavior |
 | Print a box-drawing banner | `Console.print_banner("TITLE")` |
 | Print a horizontal separator | `Console.print_separator(width=..., color_ansi_esc=...)` |
 | Resolve an ANSI color constant name | `Console.resolve_ansi_color("FLYellow")` |
@@ -153,10 +154,14 @@ before prompts or work. Missing hard dependencies should produce an actionable
 install hint; optional dependencies are checked when their feature is selected.
 
 Use `Input.input_password()` for masked password prompts and the existing Input
-path/range helpers for interactive validation. Keep authored CLI help limited to
-the feature's purpose, capabilities, problem solved, distinguishing features and
-essential caveats. When editing a script, rewrite excessive or nonconforming entry
-help in the same change; see [AGENTS.md](../../AGENTS.md).
+path/range helpers for interactive validation. Keep authored help in a top-level
+`HELP` string: short functional introduction, Requirements and Usage. Separate
+maintainer notes from that user-facing text. When editing a script, rewrite
+excessive or nonconforming help; see [AGENTS.md](../../AGENTS.md).
+
+The internal `_HelpArgumentParser` overrides only `format_help()`. Use the public
+`Console.argument_parser(HELP)` factory rather than duplicating parser subclasses. Subparsers without authored
+help retain native argparse help formatting.
 
 `Console.set_locale_utf8()` runs the shared Windows code-page/locale setup and
 prints a Unicode diagnostic line on all platforms. It is useful for encoding

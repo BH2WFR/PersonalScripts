@@ -1,10 +1,33 @@
 #!/usr/bin/env python3
-# Parse and display Unicode character info for each character in the input string
+"""Implementation notes.
+
+Keep invisible/control-character rendering distinct from the original
+character value. Clipboard retrieval must remain platform-specific.
+"""
+
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}UNICODE STRING INSPECTOR{CRst}
+
+Inspect character code points and names, including invisible and control characters.
+Accepts text or clipboard input.
+
+{FLYellow}Requirements:{CRst}
+  Project runtime. Clipboard: PowerShell on Windows, pbpaste on macOS,
+  wl-paste on Linux Wayland or xclip on X11.
+
+{FLYellow}Usage:{CRst}
+  python parse-unicode-string.py [TEXT | --clip] [--pause]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 try:
     import unicodedata
@@ -12,7 +35,6 @@ except ImportError:
     unicodedata = None
 import subprocess
 
-# Character display names for special/whitespace/control characters
 REPLACE_MAP = {
     "\x00":"[NUL]",  "\x01":"[SOH]",  "\x02":"[STX]",  "\x03":"[ETX]",
     "\x04":"[EOT]",  "\x05":"[ENQ]",  "\x06":"[ACK]",  "\x07":"[\\a]",
@@ -94,29 +116,8 @@ def main() -> int:
     sys.argv = [a for a in sys.argv if a not in CLIP_FLAGS and a != "--pause"]
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-{FLYellow}UNICODE STRING PARSER{CRst}
-=====================
 
-Usage:
-  python {script_name} <string>        parse the given string
-  python {script_name}                 no arguments, interactive multi-line input
-  python {script_name} --clip          read text from clipboard
-  python {script_name} --from-clipboard  same as --clip
-  python {script_name} --pause           wait for Enter before exiting
-  python {script_name} --help            show this help
-
-{FLYellow}Description:{CRst}
-  Print each character's Unicode info: index, char, hex, decimal, and description.
-  Special characters (spaces, control chars, zero-width chars) are shown in brackets.
-
-{FLYellow}Requirements:{CRst}
-  No external dependencies. Clipboard mode uses platform built-ins:
-    Windows — PowerShell Get-Clipboard (built-in)
-    macOS   — pbpaste (built-in)
-    Linux   — wl-paste (Wayland) or xclip (X11); {FGray}sudo apt install wl-clipboard xclip{CRst}
-""")
+        print(HELP)
         return 0
 
 

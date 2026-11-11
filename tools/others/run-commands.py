@@ -1,28 +1,11 @@
 #!/usr/bin/env python3
-"""Select and run YAML-defined shell commands, executables, scripts, or code.
+"""Implementation notes.
 
-Requirements:
-    - pip: PyYAML; cryptography for encrypted configuration values
-    - Only the selected task's runtime/program is required. conda-python uses
-      Conda; tsx uses Node and the project's installed tsx package.
-
-Usage:
-    conda run --no-capture-output -n base python tools/others/run-commands.py
-    conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --list
-    conda run -n base python tools/others/run-commands.py --task android/adb-devices --yes
-    conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --validate
-
-Configuration defaults to the shared user run-commands.yaml, which may contain
-tasks or a redirect to another YAML file. --schema-file overrides it.
-The selected file is used without a path prompt. --yes skips only execution
-confirmation. run-commands-schema-sample.yaml is reference documentation for
-users/agents, never an automatic default or fallback configuration.
-Profiles apply once per final task, parents first, with cycle detection.
-Environment and interactive-inputs merge by name; later definitions overwrite.
-Relative paths use the invocation directory or the task's cwd, never implicitly
-the YAML directory. Command/code text and interactive values remain literal.
---dry-run builds a plan and probes runtimes but never runs the configured task.
-No automatic installation, shell fallback, or abort-on-error policy is applied.
+The selected schema may redirect relative to its containing file; sample YAML
+is documentation, never a fallback. Profiles apply parents first with cycle
+checks. Environment/input mappings merge by name. Runtime cwd is independent
+of the schema directory, and command/input values remain literal. Validation
+does not probe runtimes; dry-run and doctor resolve plans without executing tasks.
 """
 
 import argparse
@@ -41,6 +24,26 @@ from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}YAML COMMAND RUNNER{CRst}
+
+Run configured tasks with explicit runtimes, working directories and inputs.
+Supports validation and command previews; no automatic runtime installation.
+
+{FLYellow}Requirements:{CRst}
+  PyYAML, cryptography for encrypted settings; the selected task's runtime/tools.
+  Tasks are configured in shared user run-commands.yaml or --schema-file.
+
+{FLYellow}Usage:{CRst}
+  python run-commands.py [--schema-file FILE] [--list | --validate | --doctor]
+  python run-commands.py --task GROUP/NAME [--dry-run] [--yes]
+  --yes skips confirmation, not required input prompts.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 COMMANDS_CONFIG = "run-commands.yaml"
@@ -600,31 +603,7 @@ def _select_task(tasks: list[Task], task_id: str | None, sub_name: str | None) -
 
 def _parser() -> argparse.ArgumentParser:
     """Build the colored command-line interface, including dependency help."""
-    parser = argparse.ArgumentParser(
-        description=f"{FLYellow}{'RUN COMMANDS':^60}{CRst}\n\nSelect and execute a YAML task on the current machine.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"""Requirements:
-  PyYAML; cryptography for encrypted values. Only the selected task's runtime/program must be installed.
-  conda-python: Conda. tsx: Node and the project's installed tsx package.
-  No automatic downloads, installation, or cross-runtime fallback.
-
-Configuration:
-  Default: {ConfigStore(COMMANDS_CONFIG).path}
-  Contains tasks or only redirect: '/path/to/tasks.yaml'. --schema-file overrides it.
-  Relative redirects use the directory containing each redirect file.
-  {SCHEMA_SAMPLE.name} is documentation, never an automatic default.
-  Relative paths use invocation cwd (or task cwd), not the schema directory.
-  --dry-run/--doctor probe runtimes; --validate/--list do not start tasks.
-  Inputs are literal child environment values, never command substitution.
-  --yes skips confirmation, not required input prompts.
-
-Examples:
-  conda run --no-capture-output -n base python tools/others/run-commands.py
-  conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --list
-  conda run -n base python tools/others/run-commands.py --task android/adb-devices --yes
-  conda run -n base python tools/others/run-commands.py --schema-file ./commands.yaml --validate
-""",
-    )
+    parser = Console.argument_parser(HELP)
     parser.add_argument("--schema-file", help="YAML path; prompt default interactively, direct selection with --task or redirected stdin")
     parser.add_argument("--task", help="Exact GROUP/NAME task identifier")
     parser.add_argument("--sub-task", help="Exact child name (requires --task)")

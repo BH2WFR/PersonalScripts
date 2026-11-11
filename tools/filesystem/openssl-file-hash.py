@@ -1,19 +1,8 @@
 #!/usr/bin/env python3
-"""Calculate file hashes through the OpenSSL command-line tool.
+"""Implementation notes.
 
-Accepts multiple paths through the project's multiline input helper, validates
-regular files and symbolic links, and calculates one or more requested digest
-algorithms. Common algorithms supported by the current OpenSSL installation are
-shown before input. Directories, broken links, missing paths, and non-regular
-files are reported and skipped. Symbolic links to regular files hash the target
-content.
-
-Requirements:
-    - system: OpenSSL (required)
-
-Usage:
-    python file-hash.py
-    python file-hash.py --help
+Query supported algorithms from the installed OpenSSL and pass arguments
+without shell interpolation. Retain per-file failure reporting.
 """
 
 from __future__ import annotations
@@ -29,6 +18,22 @@ from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
+
+HELP = f"""{FLYellow}FILE HASH{CRst}
+
+Calculate one or more OpenSSL digest algorithms for multiple files.
+Follows symbolic links to regular files and identifies them in the results.
+
+{FLYellow}Requirements:{CRst}
+  OpenSSL command-line tool.
+
+{FLYellow}Usage:{CRst}
+  python openssl-file-hash.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 DEFAULT_ALGORITHM = "sha256,sha1,md5"
@@ -82,27 +87,7 @@ class HashResult:
 
 def _build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for the interactive hash calculator."""
-    return argparse.ArgumentParser(
-        description=(
-            f"{FLYellow}FILE HASH - OpenSSL{CRst}\n\n"
-            "Calculate one or more OpenSSL digest algorithms for multiple files. "
-            "File paths are entered one per line; symbolic links to regular files "
-            "are followed and clearly identified."
-        ),
-        epilog=(
-            f"{FLYellow}Interaction:{CRst}\n"
-            "  1. Enter file paths, one per line, then finish multiline input.\n"
-            "  2. Review common algorithms supported by the installed OpenSSL.\n"
-            f"  3. Enter comma-separated algorithms (default: {DEFAULT_ALGORITHM}).\n"
-            "  4. Review results grouped by input file.\n\n"
-            f"{FLYellow}Examples of algorithms:{CRst}\n"
-            f"  {FGray}sha256{CRst}\n"
-            f"  {FGray}sha256,md5,sha3-256{CRst}\n\n"
-            f"{FLYellow}Requirements:{CRst}\n"
-            "  OpenSSL command-line tool (required)."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    return Console.argument_parser(HELP)
 
 
 def _run_openssl(

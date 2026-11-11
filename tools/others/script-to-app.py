@@ -1,50 +1,11 @@
 #!/usr/bin/env python3
-"""Create a Windows, macOS or Linux desktop Open With Python launcher.
+"""Implementation notes.
 
-Windows creates a UTF-8 CMD launcher in %ProgramFiles%/PersonalScripts and
-tries same-terminal elevation before prompting. A writable `--output-dir` works
-when elevation is unavailable. macOS creates an AppleScript application in
-`~/Applications/PersonalScripts`, runs the script in Terminal, and requires no
-elevation. Linux X11/Wayland desktops create a .desktop entry and a companion
-.desktop.sh runner in $XDG_DATA_HOME/applications/PersonalScripts (default:
-~/.local/share/applications/PersonalScripts), without elevation. Entries use
-Terminal=true and %F for local file arguments; a desktop terminal is required.
-Linux offers explicit MIME types (semicolon-separated, with examples) or an
-attempt to offer the launcher for all files (not guaranteed). CLI equivalents
-are repeated --mime-type options or --all-files, which are mutually exclusive.
-All-files mode omits MimeType; it is an unrestricted manual candidate, not a
-standard wildcard association. Look under Other Applications / All Applications;
-visibility and recommendations depend on the file manager. No MIME definitions
-or defaults are changed. This tool makes no assumptions about the target script.
-An optional update-desktop-database refreshes application recommendations.
---output-dir overrides the destination on every platform; Linux entries outside
-an XDG applications directory are not automatically discovered by the desktop.
-Keep Linux runners at their recorded paths; regenerate after moving them.
-
-Choose current Python, a named environment from a chosen Conda installation,
-or a custom Python executable. The launcher records and validates that exact
-environment and passes opened file paths as command-line arguments. The target
-script must accept those arguments. Python and dependencies are not bundled.
-The target script and interpreter must remain at their recorded locations.
-macOS supports Unicode names and paths, and its .app can be moved or renamed.
-Regenerate existing launchers to apply changes. Creation prints the destination
-and instructions for selecting the launcher as a file's Open With application;
-it does not change default file associations automatically.
-
-Requirements:
-    - Windows 10+, macOS or a Linux X11/Wayland desktop; Python 3.13+.
-    - macOS: osacompile and Terminal (built in).
-    - Windows: gsudo or sudo (optional, for same-terminal elevation).
-    - Linux: /bin/bash and a desktop terminal; update-desktop-database from
-      desktop-file-utils (optional, for refreshing MIME recommendations).
-    - Conda executable (only when selecting a Conda Python).
-
-Usage:
-    python script-to-app.py
-    python script-to-app.py --target-script /path/to/tool.py --app-name MyTool
-    python script-to-app.py --target-script /path/to/tool.py --output-dir /path/to/launchers
-    python script-to-app.py --target-script /path/to/tool.py --mime-type text/plain --mime-type text/csv
-    python script-to-app.py --target-script /path/to/tool.py --all-files
+Windows uses a UTF-8 CMD runner; macOS uses an AppleScript app; Linux uses
+a desktop entry plus a companion shell runner. Preserve shell quoting, %F
+file forwarding and exact interpreter identity. Linux all-files mode omits
+MimeType, not a wildcard association; never change MIME defaults automatically.
+Only managed launcher files are created, and Linux runners stay at recorded paths.
 """
 
 import argparse
@@ -60,6 +21,27 @@ from uuid import NAMESPACE_URL, uuid5
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
+HELP = f"""{FLYellow}SCRIPT TO DESKTOP APP{CRst}
+
+Create an Open With launcher tied to a selected Python interpreter on Windows,
+macOS or Linux. Passes file paths to the script; Python and dependencies are not
+bundled. The target script and interpreter must remain at their recorded paths.
+
+{FLYellow}Requirements:{CRst}
+  Windows, macOS or Linux desktop; target Python environment and dependencies.
+  macOS: osacompile/Terminal. Linux: Bash/desktop terminal. Conda when selected.
+  Optional: Windows gsudo; Linux update-desktop-database.
+
+{FLYellow}Usage:{CRst}
+  python script-to-app.py [--target-script FILE] [--app-name NAME] [--output-dir DIR]
+  Linux file types: --mime-type TYPE (repeatable) or --all-files.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
+
 SUBDIR = "PersonalScripts"
 DESKTOP_CACHE_TIMEOUT = 15
 LINUX_ALL_FILES_DESCRIPTION = "All files attempt (not guaranteed; no MIME restriction declared)"
@@ -71,58 +53,10 @@ class LinuxFileScope(StrEnum):
     MIME_TYPES = "mime-types"
     ALL_FILES = "all-files"
 
-help_message = f'''
-{FLYellow}Description:{CRst}
-  Create a file's Open With launcher using a selected Python environment.
-  Windows: `.cmd` in `%ProgramFiles%/PersonalScripts`; tries elevation first.
-  macOS: `.app` in `~/Applications/PersonalScripts`; opens Terminal, no elevation.
-  Linux desktop: .desktop and .desktop.sh in
-  $XDG_DATA_HOME/applications/PersonalScripts (default ~/.local/share/...);
-  opens the desktop's terminal, without elevation. Requires X11 or Wayland.
-  Override the destination with --output-dir. Creation prints the full path.
-  Choose current Python, custom Conda Python, custom Python, or exit.
-  Custom Conda selection asks for its executable and an environment name.
-  Invalid selections return to the menu; missing runtime/script errors remain
-  visible when opening a generated launcher. Bundled apps need external Python.
-  File paths are passed as arguments; the target script must accept them.
-  Python and dependencies are referenced, not packaged. The target script and
-  interpreter must stay in place. macOS app names and paths support Unicode;
-  its .app can be moved or renamed. Regenerate launchers to apply fixes.
-  Default file associations are chosen manually after creation.
-  Linux offers: enter one or more MIME types, or try all files (not guaranteed).
-  MIME examples: text/plain; text/csv; image/png; application/pdf.
-  CLI: repeat --mime-type, or use --all-files; these options cannot be combined.
-  All-files mode declares no MIME restriction. Choose it under Other / All
-  Applications; availability and recommendations depend on the file manager.
-  No wildcard type, MIME definitions or default associations are installed.
-  Linux .desktop entries outside XDG applications directories may not appear
-  in Open With. Keep companion runners in place or regenerate the launcher.
-
-{FLYellow}Usage:{CRst}
-  python script-to-app.py
-  python script-to-app.py --target-script /path/to/tool.py --app-name MyTool
-  python script-to-app.py --target-script /path/to/tool.py --output-dir /path/to/launchers
-  python script-to-app.py --target-script /path/to/tool.py --mime-type text/plain --mime-type text/csv
-  python script-to-app.py --target-script /path/to/tool.py --all-files
-
-{FLYellow}Requirements:{CRst}
-  Windows 10+, macOS or a Linux X11/Wayland desktop; Python 3.13+.
-  macOS: osacompile and Terminal (included with macOS).
-  Windows: gsudo or sudo (optional, for elevation); if unavailable, choose a
-  writable `--output-dir` or run as Administrator.
-  Conda executable (required only when selecting a Conda Python).
-  Linux: /bin/bash and a desktop terminal; update-desktop-database from
-  desktop-file-utils (optional, for refreshing MIME recommendations).
-'''
-
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     """Return the shared CLI parser, including platform defaults in its help."""
-    parser = argparse.ArgumentParser(
-        description=f"{FLYellow}SCRIPT TO APP{CRst}",
-        epilog=help_message,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = Console.argument_parser(HELP)
     parser.add_argument("--target-script", help="Python script to wrap; prompts when omitted")
     parser.add_argument("--app-name", help="Launcher filename; defaults to the script name")
     parser.add_argument(

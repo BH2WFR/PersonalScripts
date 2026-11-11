@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Restart Tailscale subnet routes by toggling --accept-routes off then on."""
+"""Implementation notes.
+
+Keep the two tailscale setting changes ordered and surface command failures.
+"""
+
 
 import os
 import subprocess
@@ -8,27 +12,27 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
+HELP = f"""{FLYellow}RESTART TAILSCALE ROUTES{CRst}
+
+Toggle Tailscale subnet-route acceptance off and on to recover routes after
+network changes. Route connectivity is briefly interrupted.
+
+{FLYellow}Requirements:{CRst}
+  Tailscale CLI and permission to change its settings.
+
+{FLYellow}Usage:{CRst}
+  python tailscale-restart-accept-routes.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 def main() -> int:
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-{FLYellow}TAILSCALE RESTART ACCEPT ROUTES{CRst}
-==================================
 
-Usage:
-  python {script_name}          restart subnet routes acceptance
-  python {script_name} --help   show this help
-
-{FLYellow}Description:{CRst}
-  Restart Tailscale subnet routes by toggling --accept-routes off then on.
-  Useful when subnet routes stop working after network changes.
-
-{FLYellow}Requirements:{CRst}
-  Windows (scoop):  {FGray}scoop install tailscale{CRst}
-  Linux (apt):      {FGray}sudo apt install tailscale{CRst}
-  macOS (brew):     {FGray}brew install tailscale{CRst}
-""")
+        print(HELP)
         return 0
 
     if not Environment.check_commands(CmdCheck("tailscale", hints={

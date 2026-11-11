@@ -1,31 +1,10 @@
 #!/usr/bin/env python3
-"""Open the PDF binarizer desktop application.
+"""Implementation notes.
 
-Images use fixed/Sauvola thresholding, optional denoising and separate illustration
-crops. The binary background uses CCITT Group 4; crops support keep, gray8,
-gray2/4 and color2/4. Optional vector conversion maps non-white paint to black.
-Text, OCR, links, annotations, geometry and bookmark destinations are retained.
-Drag in a PDF or open a JSON project. Assign reusable profiles to physical pages,
-preview originals/results, and export beside the source. All pages start with
-default; Ctrl/Shift-select pages to apply a profile together. Completed previews
-are cached for immediate revisits; original views skip the navigation delay.
-The viewer supports auto-fit on page turns, editable zoom, focused page keys and
-optional red region outlines that stay out of exported PDFs.
-Grouped controls have tuning tooltips wrapped within 250 logical pixels; low-resolution images retain native DPI
-by default, with optional upsampling. Profiles show assigned pages and offer
-input-dialog creation/batch assignment plus rename/delete context actions.
-Close releases the PDF and resets the window. Export suggests numbered filenames,
-requires confirmation to replace an output, and reports before/after file sizes.
-On Windows, start without administrator rights to accept Explorer file drops;
-Open PDF also works when launched by an elevated terminal/editor.
-See pdf-tools/README.md for processing, project and navigation details.
-
-Requirements:
-    - pip: PySide6, PyMuPDF>=1.28, Pillow with libtiff, numpy, opencv-python,
-      tqdm, pypdf>=6, PyYAML, cryptography.
-
-Usage:
-    conda run -n base python tools/document-processing/pdf-binarize.py
+Load pdf-tools as personal_pdf_tools; keep private modules out of launcher
+and compiler discovery. Stage the package recursively for bundled builds.
+Processing ownership and invariants: pdf-tools/binarize/README.md and the
+shared pdf-tools/README.md.
 """
 
 import importlib
@@ -41,6 +20,25 @@ IS_FROZEN = bool(getattr(sys, "frozen", False) or "__compiled__" in globals())
 if not IS_FROZEN:
     sys.path.insert(0, str(PROJECT_ROOT))
 from utils import *
+
+HELP = f"""{FLYellow}PDF BINARIZE{CRst}
+
+Reduce scanned PDF size with binary text images and separate illustration settings,
+while retaining native text, OCR, links and bookmarks. Supports per-page profiles.
+Output removes encryption and PDF/A identification; source PDFs are preserved.
+
+{FLYellow}Requirements:{CRst}
+  PySide6, PyMuPDF>=1.28, pypdf>=6, Pillow with libtiff, numpy,
+  opencv-python, tqdm, PyYAML, cryptography.
+
+{FLYellow}Usage:{CRst}
+  python pdf-binarize.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 PACKAGE_NAME = "personal_pdf_tools"
 WORKER_ARGUMENT = "--pdf-tools-worker"
@@ -83,24 +81,7 @@ def main() -> int:
     """Start the desktop app or its private worker, returning an exit status."""
     if "--help" in sys.argv or "-h" in sys.argv:
         Console.print_banner("PDF BINARIZE")
-        print("""Usage:
-  python pdf-binarize.py
-
-Description:
-  Compress image objects to 1-bit text and optional illustration crops while
-  retaining native text, OCR, links and bookmarks. Grouped controls include tuning
-  tooltips (maximum width 250 px) and a low-resolution DPI policy (keep native DPI by default).
-  Assign profiles by page selection or typed ranges; preview and save JSON projects.
-  Close releases the PDF and resets the window. Output names use numbered suffixes;
-  replacing an output requires confirmation. Completion reports before/after sizes.
-
-Options:
-  -h, --help  Show this help; processing is configured in the GUI.
-
-Requirements:
-  pip: PySide6, PyMuPDF>=1.28, pypdf>=6, Pillow with libtiff,
-       numpy, opencv-python, tqdm, PyYAML, cryptography.
-""")
+        print(HELP)
         return 0
     try:
         if WORKER_ARGUMENT in sys.argv:

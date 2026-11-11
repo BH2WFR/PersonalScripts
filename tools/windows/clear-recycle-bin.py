@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Clear Windows Recycle Bin on all drives, with forceful fallback for stuck items.
+"""Implementation notes.
 
-Use case:
-    OneDrive "always keep on device" folders may not be fully removed by the
-    normal shell API.  This tool first empties via ``SHEmptyRecycleBinW`` and
-    then walks ``$Recycle.Bin`` directly for any drives that still have content.
+Try SHEmptyRecycleBinW first, rescan each drive, then remove remaining
+Recycle.Bin entries. Delete junctions/symlinks themselves, never their targets.
 """
 
 import os
@@ -17,6 +15,24 @@ from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}CLEAR RECYCLE BIN{CRst}
+
+Empty Recycle Bins across fixed/removable drives, including stuck contents that
+normal emptying leaves behind. Permanently deletes recycled files.
+
+{FLYellow}Requirements:{CRst}
+  Windows; administrator privileges recommended for protected contents.
+
+{FLYellow}Usage:{CRst}
+  python clear-recycle-bin.py [--force-run]
+  --force-run skips all prompts.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 # ============ platform guard ============
 if sys.platform != "win32":
@@ -265,32 +281,8 @@ def main() -> int:
     sys.argv = [a for a in sys.argv if a != "--force-run"]
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-{FLYellow}CLEAR RECYCLE BIN{CRst}
-================
 
-Usage:
-  python {script_name}              interactive mode
-  python {script_name} --force-run  skip all prompts, auto-confirm
-  python {script_name} --help       show this help
-
-{FLYellow}Description:{CRst}
-  Empty Recycle Bin across all fixed / removable drives on Windows.
-
-  Phase 1 – normal empty via the shell API (SHEmptyRecycleBinW).
-            After this pass the script re-scans each drive so you can
-            see whether items were partially removed or remain untouched.
-
-  Phase 2 – for any drive that still has leftover content (e.g. stuck
-            OneDrive folders), forcefully deletes items directly from
-            $Recycle.Bin.  Junctions and symlinks inside the recycle
-            bin are deleted in-place — the link target is never followed.
-
-{FLYellow}Requirements:{CRst}
-  Windows only.  Administrator privileges are strongly recommended; the
-  script will offer to elevate if not already running elevated.
-""")
+        print(HELP)
         return 0
 
     Console.print_banner("CLEAR RECYCLE BIN")

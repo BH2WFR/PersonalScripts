@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
-"""Remove PDF encryption, permission restrictions, and PDF/A identification.
+"""Implementation notes.
 
-Permission-only protection opens automatically; opening passwords are requested
-privately. Retains pages, bookmarks, named destinations, metadata and attachments.
-Unencrypted, unrestricted PDFs with PDF/A identification are also supported;
-the script explains that only this identification will be removed. Other metadata
-is retained. If none of these features is present, choose another input or exit
-without requesting an output path or writing a copy.
-Existing output files are never overwritten. Requires PyMuPDF (including AES).
-
-Usage:
-    python pdf-decrypt.py input.pdf -o output.pdf
+Use the shared PDF authentication and save helpers. When the input has no
+encryption, restrictions or PDF/A identification, do not request an output path.
+Retain unrelated XMP and document-level objects.
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}PDF DECRYPT / PDF-A REMOVAL{CRst}
+
+Remove PDF encryption, editing restrictions and PDF/A identification while
+retaining document structure and other metadata. Opening passwords are required
+when applicable. Writes a new file without overwriting existing PDFs.
+
+{FLYellow}Requirements:{CRst}
+  PyMuPDF.
+
+{FLYellow}Usage:{CRst}
+  python pdf-decrypt.py [INPUT.pdf] [-o OUTPUT.pdf]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 import pymupdf
 from pymupdf.mupdf import FzErrorBase
@@ -33,32 +44,8 @@ def main() -> int:
     Console.print_banner("PDF DECRYPT / PDF/A REMOVAL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-PDF DECRYPT / PDF/A REMOVAL
 
-Usage:
-  python {script_name} <input.pdf>                     specify input PDF, output interactive
-  python {script_name} <input.pdf> -o <output.pdf>     specify both input and output
-  python {script_name} --help                          show this help
-
-{FLYellow}Arguments:{CRst}
-  <input.pdf>          input PDF file path
-  -o, --output <path>  output PDF file path
-  -h, --help           show this help
-
-{FLYellow}Description:{CRst}
-  Decrypt password-protected PDFs (including permission-only protection).
-  Also removes PDF/A identification from PDFs with no encryption or restrictions.
-  When only PDF/A identification is present, prints an informational message.
-  When none of these features is present, warns and offers another input or exit;
-  no output is requested or written for that file.
-  Preserves document structure (pages, bookmarks, named destinations, attachments)
-  and other metadata. Saves a new PDF without encryption or PDF/A identification.
-
-{FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install PyMuPDF{CRst}
-""")
+        print(HELP)
         return 0
 
     #============ 命令行参数解析 ===========

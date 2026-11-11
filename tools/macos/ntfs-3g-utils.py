@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""NTFS-3G mount/unmount utility for macOS."""
+"""Implementation notes.
+
+Keep native read-only mounting and ntfs-3g invocation separate. Resolve
+existing mounts before selecting a destination or ejecting the parent disk.
+"""
+
 
 import os
 import sys
@@ -7,6 +12,22 @@ import subprocess
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}NTFS MOUNT MANAGER{CRst}
+
+Mount NTFS partitions read-write through ntfs-3g or read-only through macOS,
+and safely eject disks.
+
+{FLYellow}Requirements:{CRst}
+  macOS; ntfs-3g and macFUSE for read-write mounts; required mount privileges.
+
+{FLYellow}Usage:{CRst}
+  python ntfs-3g-utils.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 # ============ system checks ============
@@ -21,27 +42,7 @@ if not Environment.check_commands(CmdCheck("ntfs-3g", hints={
 
 if "--help" in sys.argv or "-h" in sys.argv:
     script_name = os.path.basename(sys.argv[0])
-    print(f"""
-{FLYellow}NTFS-3G UTILS{CRst}
-==============
-
-Usage:
-  python {script_name}                interactive NTFS mount manager
-  python {script_name} --help         show this help
-
-{FLYellow}Description:{CRst}
-  Interactive NTFS partition manager for macOS.
-  Scans for NTFS partitions then offers three operations:
-    [N] Mount by ntfs-3g    — read-write mount via ntfs-3g (macFUSE),
-                              auto-detects existing mounts and suggests
-                              alternative directories
-    [S] Mount by system     — read-only mount via macOS built-in driver
-    [E] Eject disk          — safely eject the entire disk
-
-{FLYellow}Requirements:{CRst}
-  macOS only.
-  macOS (brew):     {FGray}brew install ntfs-3g macfuse{CRst}
-""")
+    print(HELP)
     sys.exit(0)
 
 

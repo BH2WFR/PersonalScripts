@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Implementation notes.
+
+Windows FILETIME handling uses ctypes; keep platform timestamp capabilities
+separate. Preserve original values in timestamp backup records.
+"""
+
 import os
 import sys
 
@@ -8,32 +14,30 @@ from typing import Final, Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-# 文件/文件夹 时间修改器，支持加抖动
+HELP = f"""{FLYellow}FILE TIMESTAMPS{CRst}
+
+Change file and directory timestamps, add random time offsets, or back up and
+restore timestamps as JSON. Available timestamp fields depend on the platform.
+
+{FLYellow}Requirements:{CRst}
+  Project runtime only; write permission for the selected files.
+
+{FLYellow}Usage:{CRst}
+  python modify-file-time.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 def main() -> int:
     Console.print_banner("FILE TIME MODIFICATION TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-    FILE TIME MODIFICATION TOOL
-    ===========================
 
-    Usage:
-      python {script_name}            enter interactive mode
-      python {script_name} --help     show this help
-
-    {FLYellow}Description:{CRst}
-      Modify file/folder timestamps (created, modified, accessed).
-      Supports random jitter (+Ns/-Ns/Ns format, in seconds).
-      Supports backup and restore of original timestamps (JSON format).
-
-    {FLYellow}Requirements:{CRst}
-      No external dependencies. Uses ctypes for Windows file-time APIs.
-    """)
+        print(HELP)
         return 0
-
-
 
 
     g_path = ""
@@ -87,7 +91,6 @@ def main() -> int:
         openedTime : Optional[datetime.datetime] = None
         createdTime : Optional[datetime.datetime] = None
         modifiedTime : Optional[datetime.datetime] = None
-
 
 
     g_newTimeConfig = newTimeConfig()
@@ -172,8 +175,6 @@ def main() -> int:
         return j
 
 
-
-
     if sys.platform.startswith("win"):
         class _FILETIME(ctypes.Structure):
             _fields_ = [("dwLowDateTime", ctypes.c_uint32),
@@ -222,7 +223,6 @@ def main() -> int:
                     raise OSError(f"SetFileTime failed for: {path}")
             finally:
                 k32.CloseHandle(handle)
-
 
 
     class FileNode():
@@ -322,7 +322,6 @@ def main() -> int:
             return ret
 
 
-
     def load_file_nodes_from_directory(directory:str, recursive:bool) -> list[FileNode]:
         fileNodes = []
         if not os.path.lexists(directory):
@@ -401,8 +400,6 @@ def main() -> int:
                 continue
 
         return succeedCnt
-
-
 
 
     #============ 用户交互 ===========
@@ -502,7 +499,6 @@ def main() -> int:
 
         node.print_times()
         return 0
-
 
 
     #============ 代码主体部分 ===========

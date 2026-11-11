@@ -1,19 +1,8 @@
 #!/usr/bin/env python3
-"""Clear every registered Windows Event Log channel in one operation.
+"""Implementation notes.
 
-Enumerates channels with ``wevtutil el`` and attempts to clear each one with
-``wevtutil cl``. The script requires administrator privileges, asks for an
-explicit irreversible-action confirmation unless ``--force`` is supplied, and
-reports channels that Windows refused to clear. Clearing does not disable
-logging, so new events may appear immediately.
-
-Requirements:
-    - Windows 10 or later
-    - system: wevtutil (built into Windows)
-
-Usage:
-    python clear-all-event-logs.py
-    python clear-all-event-logs.py --force
+Enumerate channels with wevtutil el and clear each with wevtutil cl.
+Retain per-channel failures and a nonzero status if any channel fails.
 """
 
 from __future__ import annotations
@@ -28,6 +17,23 @@ from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
+
+HELP = f"""{FLYellow}CLEAR WINDOWS EVENT LOGS{CRst}
+
+Clear all registered Windows Event Log channels. Deletion is irreversible;
+logging remains enabled and Windows may record that a log was cleared.
+
+{FLYellow}Requirements:{CRst}
+  Windows 10+, administrator privileges and built-in wevtutil.
+
+{FLYellow}Usage:{CRst}
+  python clear-all-event-logs.py [--force]
+  --force skips confirmation.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 PROGRESS_INTERVAL = 25
@@ -60,25 +66,7 @@ class ClearSummary:
 
 def _build_argument_parser() -> argparse.ArgumentParser:
     """Build the colored command-line parser for the cleanup tool."""
-    return argparse.ArgumentParser(
-        description=(
-            f"{FLYellow}CLEAR ALL WINDOWS EVENT LOGS{CRst}\n\n"
-            "Enumerate every Windows Event Log channel registered with the "
-            "system and attempt to clear it. This operation is irreversible."
-        ),
-        epilog=(
-            f"{FLYellow}Examples:{CRst}\n"
-            f"  {FGray}python clear-all-event-logs.py{CRst}\n"
-            f"  {FGray}python clear-all-event-logs.py --force{CRst}\n\n"
-            f"{FLYellow}Notes:{CRst}\n"
-            "  Clearing does not disable event logging; new events may appear immediately.\n"
-            "  Windows may record an audit event stating that the Security log was cleared.\n"
-            "  A non-zero exit code means at least one channel could not be cleared.\n\n"
-            f"{FLYellow}Requirements:{CRst}\n"
-            "  Windows 10 or later; administrator privileges; built-in wevtutil."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    return Console.argument_parser(HELP)
 
 
 def _parse_args(argv: Optional[list[str]]) -> CliArgs:

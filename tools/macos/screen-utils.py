@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""Inspect and manage displays on Apple Silicon macOS.
+"""Implementation notes.
 
-Uses built-in CoreGraphics, DisplayServices, CoreDisplay, and IOKit APIs for
-display listing, rotation, resolution, brightness, DDC/CI, and read-only IOAV
-color-mode reporting. PyObjC is optional and only enriches NSScreen geometry.
-
-Usage:
-    conda run -n base python tools/macos/screen-utils.py
-    conda run -n base python tools/macos/screen-utils.py --list
+Native integration uses CoreGraphics, DisplayServices, CoreDisplay and IOKit.
+Keep IOAV color-mode queries read-only; PyObjC only enriches NSScreen geometry.
 """
 
 import sys
@@ -21,9 +16,24 @@ from typing import Optional, Union, Tuple
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *
 
-# macOS 显示器工具：旋转 / 亮度 / toggle 内建显示器
+HELP = f"""{FLYellow}MACOS DISPLAY MANAGER{CRst}
 
-#============ 系统检查 ===========
+Adjust display rotation, resolution and brightness; inspect color modes and DDC/CI.
+Can disable the built-in display only while an external display is active.
+
+{FLYellow}Requirements:{CRst}
+  Apple Silicon macOS; DDC/CI-capable monitor for external brightness control.
+  PyObjC is optional for additional display information.
+
+{FLYellow}Usage:{CRst}
+  python screen-utils.py [--list | --ddc-ci-info | --toggle-built-in]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
+
 if sys.platform != "darwin":
     print(f"{FLRed}ERROR: This script only runs on macOS. Current platform: {sys.platform}{CRst}\n")
     sys.exit(1)
@@ -35,46 +45,9 @@ if os.uname().machine != "arm64":
 
 if "--help" in sys.argv or "-h" in sys.argv:
     script_name = os.path.basename(sys.argv[0])
-    print(f"""
-{FLYellow}SCREEN UTILS{CRst}
-============
-
-Usage:
-  python {script_name}                    interactive display manager
-  python {script_name} --list             list displays and exit
-  python {script_name} --ddc-ci-info      show DDC/CI info and exit
-  python {script_name} --toggle-built-in  toggle built-in display and exit
-  python {script_name} --help             show this help
-
-{FLYellow}Description:{CRst}
-  macOS display management tool for Apple Silicon.
-  Supports screen rotation, brightness control (built-in via
-  DisplayServices, external via DDC/CI), resolution switching, and read-only
-  reporting of current and available IOAV color modes.
-  Highlight: toggle the MacBook built-in display on/off when external
-  monitors are connected — refuses to disable if no external display
-  is active, and auto-restores brightness when re-enabling.
-
-{FLYellow}CLI options:{CRst}
-  --list, --list-only       print display list and exit
-  --info, --ddc-ci-info     dump DDC/CI capabilities and exit
-  --toggle, --toggle-built-in
-                            toggle built-in display on/off and exit
-
-{FLYellow}Interactive menu:{CRst}
-  [L] List displays    [R] Rotate (0/90/180/270)
-  [S] Set resolution   [B] Brightness
-  [C] Inspect color modes (read-only RGB/YCbCr report)
-  [D] DDC/CI info      [T] Toggle built-in
-  [Q] Quit
-
-{FLYellow}Requirements:{CRst}
-  macOS on Apple Silicon. Uses CoreGraphics / DisplayServices / IOKit (built-in).
-  Optional PyObjC for NSScreen info: {FGray}pip install pyobjc{CRst}
-""")
+    print(HELP)
     sys.exit(0)
 
-#============ 加载 API ===========
 libc = ctypes.CDLL('/usr/lib/libSystem.dylib')
 libc.dlopen.argtypes = [ctypes.c_char_p, ctypes.c_int]
 libc.dlopen.restype = ctypes.c_void_p
@@ -1105,7 +1078,7 @@ def print_display_list(displays: list[int]):
         print(f"  {FGray}(no displays found){CRst}")
         return
     color_mode_map = _get_ioav_color_mode_map(displays)
-    
+
     print(f"{FLCyan}────────────────────────────────────────────────────{CRst}")
     print(f"\n{FLYellow}  All displays ({len(displays)} total, {len(active_set)} active):{CRst}\n")
 
@@ -1121,7 +1094,7 @@ def print_display_list(displays: list[int]):
         else:
             tags.append(f"{FLCyan}[EXTERNAL]{CRst}")
         tag_str = " " + " ".join(tags)
-        
+
         idx_str = f"{FLYellow if is_active else FGray}[{idx}]{CRst}"
         print(f"  {idx_str} Display ID: {FLYellow}{info['id']}{CRst}{tag_str}  {status}")
         if info['product_name']:

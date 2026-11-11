@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Cross-platform charger and instantaneous power reader.
+"""Implementation notes.
 
-Supported platforms:
-  - macOS: ioreg AppleSmartBattery
-  - Windows: PowerShell CIM/WMI battery classes
-  - Linux: /sys/class/power_supply when available
+Keep rated/negotiated adapter power distinct from measured input, system and
+battery power. Missing native fields remain unknown rather than zero.
 """
 
 import json
@@ -21,45 +19,26 @@ from typing import Any, Optional, Union
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
 
+HELP = f"""{FLYellow}CURRENT POWER{CRst}
 
-def print_help() -> None:
-    script_name = os.path.basename(sys.argv[0])
-    print(f"""
-{FLYellow}POWER CURRENT{CRst}
-=============
-
-Usage:
-  python {script_name}             live update until any key is pressed
-  python {script_name} --once      print once and exit
-  python {script_name} -v          live update with detailed source fields
-  python {script_name} --verbose   live update with detailed source fields
-  python {script_name} -i 0.5      set live refresh interval in seconds
-  python {script_name} --help      show this help
-
-{FLYellow}Description:{CRst}
-  Cross-platform power reader for showing:
-    - charger connection state
-    - charger rated/negotiated wattage when available
-    - adapter input power when available
-    - system load power when available
-    - battery charge/discharge power when available
-    - battery percentage and charging state
-
-{FLYellow}Platform data sources:{CRst}
-  macOS   : ioreg -r -c AppleSmartBattery -a
-  Windows : Get-CimInstance BatteryStatus / Win32_Battery / Win32_PowerSupply
-  Linux   : /sys/class/power_supply
-
-{FLYellow}Notes:{CRst}
-  Charger rated wattage is not exposed on all platforms/devices.
-  Linux support depends on what the kernel driver exports under power_supply.
+Show charger status, available power readings and battery charge state.
+Reported wattage depends on hardware/driver support and may be unavailable.
 
 {FLYellow}Requirements:{CRst}
-  No external dependencies. Uses platform built-ins:
-    Windows — PowerShell Get-CimInstance (built-in)
-    macOS   — ioreg (built-in)
-    Linux   — reads /sys/class/power_supply (kernel interface)
-""")
+  Windows: PowerShell. macOS: ioreg. Linux: /sys/class/power_supply.
+
+{FLYellow}Usage:{CRst}
+  python power-current.py [--once] [--verbose] [-i SECONDS]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
+
+def print_help() -> None:
+
+    print(HELP)
 
 
 def first_number(*values: Any) -> Optional[float]:

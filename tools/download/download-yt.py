@@ -1,40 +1,38 @@
 #!/usr/bin/env python3
+"""Implementation notes.
+
+Keep format selection and subtitle/audio modes in yt-dlp arguments rather
+than implementing media extraction locally.
+"""
+
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
-# 基于 yt-dlp 的 YouTube 视频下载器
-# 要求先使用 scoop 安装 yt-dlp, ffmpeg 和 deno 三个包
+
+HELP = f"""{FLYellow}YOUTUBE DOWNLOAD{CRst}
+
+Download YouTube videos, audio or subtitles through yt-dlp with quality selection.
+
+{FLYellow}Requirements:{CRst}
+  yt-dlp, ffmpeg; deno is optional for JavaScript-dependent extraction.
+
+{FLYellow}Usage:{CRst}
+  python download-yt.py [URL ...]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 def main() -> int:
     Console.print_banner("YT-DLP TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-YT-DLP TOOL - YouTube Video Downloader
-=======================================
 
-Usage:
-  python {script_name} <url1> <url2> ...    specify URLs, skip URL input
-  python {script_name}                       no arguments, interactive mode
-  python {script_name} --help                show this help
-
-{FLYellow}Description:{CRst}
-  yt-dlp-based YouTube video downloader.
-
-{FLYellow}Requirements:{CRst}
-  Windows (scoop):  {FGray}scoop install yt-dlp ffmpeg deno{CRst}
-  Linux (apt):      {FGray}sudo apt install yt-dlp ffmpeg{CRst}
-  macOS (brew):     {FGray}brew install yt-dlp ffmpeg{CRst}
-  (deno is optional)
-
-{FLYellow}Interactive Options:{CRst}
-  Output directory, video URLs (multi-line EOF input), download mode
-  (quality/audio-only/subtitles only).
-""")
+        print(HELP)
         return 0
 
 

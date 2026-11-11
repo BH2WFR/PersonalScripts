@@ -1,21 +1,8 @@
 #!/usr/bin/env python3
-"""Remove stale Android USB tethering (RNDIS) network records.
+"""Implementation notes.
 
-Windows stores network connection names and network adapter instances in
-separate registry locations. Android USB tethering usually appears as a USB
-Remote NDIS device. This script lists all registered network connections,
-marks records that look like RNDIS by inspecting adapter metadata, then deletes
-the selected records after confirmation.
-
-Requirements:
-    - Windows only (winreg)
-    - Administrator privileges (HKLM write access)
-    - No third-party packages required
-
-Usage:
-    python windows/clear-android-rndis-record.py
-    python windows/clear-android-rndis-record.py --force
-    python windows/clear-android-rndis-record.py --match "Ethernet 2"
+Connection names and adapter instances live in separate registry locations.
+Resolve RNDIS candidates through adapter metadata before selecting exact keys.
 """
 
 import argparse
@@ -27,6 +14,23 @@ from typing import Pattern
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}CLEAR ANDROID RNDIS RECORDS{CRst}
+
+Find stale Android USB-tethering network records and delete selected registry
+entries. Deletion changes system network configuration.
+
+{FLYellow}Requirements:{CRst}
+  Windows; administrator privileges for deletion. No extra Python packages.
+
+{FLYellow}Usage:{CRst}
+  python clear-android-rndis-record.py [--match TEXT] [--force]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 if sys.platform != "win32":
     Console.print_error_and_exit(
@@ -410,18 +414,7 @@ def _build_parser() -> argparse.ArgumentParser:
     Returns:
         Configured ``ArgumentParser``.
     """
-    return argparse.ArgumentParser(
-        description=(
-            f"{FLYellow}CLEAR ANDROID RNDIS NETWORK RECORDS{CRst}\n\n"
-            "List Windows network connection records, mark USB Remote NDIS "
-            "records, and delete selected registry records after confirmation."
-        ),
-        epilog=(
-            f"{FGray}Requirements: Windows only; Administrator privileges are "
-            f"required for deletion. No third-party packages required.{CRst}"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    return Console.argument_parser(HELP)
 
 
 def main() -> int:

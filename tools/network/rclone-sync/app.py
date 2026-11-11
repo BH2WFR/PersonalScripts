@@ -36,14 +36,10 @@ def main(script_dir: str | None = None) -> int:
 
     Side effects:
         Reads YAML, prompts in interactive mode, and executes only selected tasks.
-        The --help branch performs no discovery or rclone subprocess calls.
+        CLI help is handled by the entry before this workflow is loaded.
     """
     Console.print_banner("RCLONE SYNC RUNNER")
 
-    # ---- help (works without any dependencies) ----
-    if "--help" in sys.argv or "-h" in sys.argv:
-        terminal._print_help()
-        return 0
 
     try:
         import yaml as yaml_mod

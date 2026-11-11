@@ -1,30 +1,9 @@
 #!/usr/bin/env python3
-"""Print connected disks, partitions, volumes, mount points, and native IDs.
+"""Implementation notes.
 
-Windows uses PowerShell 7 Storage/CIM, Linux uses util-linux lsblk, and macOS
-uses diskutil. Includes internal/external and OS-visible virtual devices, plus
-unmounted partitions. APFS containers retain physical-store references because
-their space is shared. APFS volume headings identify shared container capacity
-when known; otherwise they explicitly show only reported filesystem capacity.
-Disk/partition/container/volume IDs are distinguished without duplicate APFS IDs;
-device names and labels are not unique persistent identifiers.
-
-Run once, print a tree, and exit. Select ID text directly in your terminal.
-There is no clipboard operation, interactive menu, or JSON output. Queries are
-read-only, never mount/unlock disks, and never request elevation. Optional query
-failures retain partial results with warnings; a failed inventory exits with 1.
-Each native query times out after 60 seconds. Hardware can change during a scan.
-
-Requirements:
-    Python standard library and project utils; no additional Python packages.
-    Windows: PowerShell 7 (pwsh) and Windows Storage/CIM providers.
-    Linux: lsblk (util-linux). macOS: built-in diskutil.
-    Restricted permissions can hide some metadata; unknown values are not IDs.
-
-Usage:
-    python list-disks.py
-    python list-disks.py --no-color
-    python list-disks.py --help
+System.scan_disks owns native discovery. Preserve partial-scan warnings and
+unknown values; keep hardware, partition, container and volume ID namespaces
+distinct. Return a nonzero status for failed inventory.
 """
 
 import os
@@ -32,6 +11,24 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}DISK INVENTORY{CRst}
+
+Show disks, partitions, volumes, mount points, capacities and native IDs read-only.
+Unavailable metadata remains unknown; device paths and labels are not unique IDs,
+and APFS volumes can share capacity that must not be summed.
+
+{FLYellow}Requirements:{CRst}
+  Windows: PowerShell 7 Storage/CIM. Linux: lsblk. macOS: diskutil.
+  OS permissions may limit metadata or topology completeness.
+
+{FLYellow}Usage:{CRst}
+  python list-disks.py [--no-color]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 def _display_text(value: str) -> str:
@@ -103,40 +100,7 @@ def main() -> int:
     # ── help and arguments ──────────────────────────
     if "--help" in sys.argv or "-h" in sys.argv:
         Console.print_banner("LIST DISKS")
-        print("""
-Usage:
-  python list-disks.py [--no-color]
-
-Description:
-  Print disks -> partitions -> volumes, mount points/drive letters, labels,
-  capacities, filesystems, and full native IDs for terminal text selection.
-  Includes internal/external disks, unmounted partitions, and virtual devices
-  visible to the OS. Linux shows block dependencies (including LVM/RAID).
-  macOS shows synthesized APFS containers with physical-store references.
-  APFS volumes show shared container capacity when known, with any different
-  reported filesystem capacity separately. Shared capacities cannot be summed.
-  APFS UUIDs are labeled by object type, without duplicate partition UUIDs.
-  Reads information only; does not mount, unlock, elevate, or modify disks.
-  Prints once and exits; no menu, clipboard integration, or JSON output.
-
-Options:
-  --no-color  Disable ANSI colors (also disabled when stdout is redirected).
-  --help, -h  Show help without scanning.
-
-Requirements:
-  No additional Python packages beyond project utils.
-  Windows: PowerShell 7 (pwsh), Storage/CIM providers.
-  Linux: lsblk from util-linux. macOS: built-in diskutil.
-  Some metadata may be unavailable without sufficient OS permissions.
-  Dynamic disk topology may be incomplete on Windows; warnings explain gaps.
-  Each native query has a 60-second timeout.
-
-Identifiers:
-  Hardware serial identifies a disk; UUID/GUID/serial fields identify the
-  indicated partition, container, or volume. They are different namespaces.
-  Device paths, drive letters, and labels can change or be duplicated.
-  Unknown IDs are omitted; zero free space is displayed as zero.
-""")
+        print(HELP)
         return 0
     invalid = [arg for arg in sys.argv[1:] if arg != "--no-color"]
     if invalid:

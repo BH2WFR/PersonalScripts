@@ -1,23 +1,9 @@
 #!/usr/bin/env python3
-"""Diagnose and repair Windows networking through an interactive menu.
+"""Implementation notes.
 
-Actions: DHCP IPv4 renewal (without releasing the lease), read-only network
-checks, WinHTTP proxy inspection/reset, and Winsock/TCP-IP/DNS reset. Only
-repair actions request administrator privileges and confirmation. The menu
-returns after each action, including an administrator relaunch. No action
-reboots Windows. WinHTTP proxy actions do not change browser, current-user,
-PAC, VPN, or environment-variable proxy settings.
-
-Requirements:
-    - Windows 10+; administrator privileges for repair actions
-    - system: ipconfig, netsh; diagnosis also uses route, ping, nslookup,
-      and PowerShell 7 (pwsh). All except pwsh are built into Windows.
-    - pip: no additional dependencies beyond the project's utils package
-
-Usage:
-    conda run -n base python tools/windows/fix-network-issue.py
-    conda run -n base python tools/windows/fix-network-issue.py --action diagnose
-    conda run -n base python tools/windows/fix-network-issue.py --action reset --dry-run
+Keep diagnosis/proxy inspection read-only. Repairs use shared elevation and
+explicit confirmation. Continue reporting subsequent steps after a failed
+command; command success alone does not establish network connectivity.
 """
 
 import argparse
@@ -32,6 +18,26 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402,F403
 
+HELP = f"""{FLYellow}WINDOWS NETWORK REPAIR{CRst}
+
+Diagnose connectivity, renew DHCP leases, inspect/reset WinHTTP proxy settings,
+or reset the network stack. Resets may affect static IP/DNS settings and require
+a restart; WinHTTP actions do not change browser or VPN proxy settings.
+
+{FLYellow}Requirements:{CRst}
+  Windows 10+ built-in network tools; PowerShell 7 for diagnosis.
+  Administrator privileges for repairs.
+
+{FLYellow}Usage:{CRst}
+  python fix-network-issue.py [--action ACTION] [--dry-run]
+  python fix-network-issue.py --action renew --adapter Wi-Fi
+  ACTION: diagnose, renew, proxy-check, proxy-reset or reset.
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 COMMAND_TIMEOUT_SECONDS = 120
 DIAGNOSTIC_TIMEOUT_SECONDS = 30
@@ -42,7 +48,6 @@ REPAIR_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("netsh", "int", "ip", "reset"),
     ("ipconfig", "/flushdns"),
 )
-# Fixed PowerShell code: user input is never interpolated into shell source.
 GATEWAY_PROBE = r"""
 $ErrorActionPreference = 'Stop'
 try {
@@ -118,29 +123,7 @@ class Step:
 
 def _parse_args() -> Options:
     """Parse and validate CLI options before any commands or elevation."""
-    parser = argparse.ArgumentParser(
-        description=f"{FLYellow}{'FIX NETWORK ISSUE':^60}{CRst}\n\n"
-                    "Open the repair menu, or run one --action. Diagnosis and proxy inspection\n"
-                    "are read-only; repairs request elevation and confirmation.",
-        epilog=f"{FGray}Requirements:\n"
-               "  Windows 10+; built-in ipconfig/netsh. Diagnosis also requires\n"
-               "  route/ping/nslookup and PowerShell 7 (pwsh). Administrator rights\n"
-               "  are needed for repairs. No additional pip dependencies.\n\n"
-               "Notes:\n"
-               "  Proxy actions cover WinHTTP only, not browser/PAC/user/VPN/env settings.\n"
-               "  Renewal covers IPv4 DHCP adapters, without releasing addresses first.\n"
-               "  Diagnosis sends probes to gateways, --test-ip and --host. ICMP may be blocked.\n"
-               "  Network reset may affect static IP/DNS settings; restart Windows manually.\n"
-               "  Each repair command has a 120-second timeout; diagnostic steps use 30 seconds.\n"
-               "  Failed steps do not skip later steps. Review output for partial reset errors.\n"
-               "  Exit: 0 = success/preview/cancel, 1 = failed step, 2 = invalid input.\n"
-               "  A successful command does not prove connectivity is restored.\n\n"
-               "Examples:\n"
-               "  python tools/windows/fix-network-issue.py\n"
-               "  python tools/windows/fix-network-issue.py --action renew --adapter Wi-Fi\n"
-               f"  python tools/windows/fix-network-issue.py --action reset --dry-run{CRst}",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = Console.argument_parser(HELP)
     parser.add_argument("--action", type=Action, choices=list(Action), help="run this action directly")
     parser.add_argument("--dry-run", action="store_true", help="preview without commands/elevation; defaults to reset")
     parser.add_argument("-y", "--yes", action="store_true", help="confirm the explicit --action without prompting")

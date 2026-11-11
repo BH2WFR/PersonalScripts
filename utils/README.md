@@ -41,6 +41,10 @@ from utils import *  # noqa: E402
 Adjust the parent depth for other locations; a file directly inside `tmp/`
 uses `parents[1]`. Private packages follow their entry's existing loader.
 
+CLI entries keep authored help in a top-level `HELP` string. Use
+`Console.argument_parser(HELP)` for argument parsing with that exact help text;
+see the [terminal reference](docs/terminal.md).
+
 ## Maintenance
 
 Reuse existing helpers before adding new ones. Shared behavior belongs in the

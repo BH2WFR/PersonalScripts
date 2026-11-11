@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
-"""Inspect and manage Windows file-association entries for one extension.
+"""Implementation notes.
 
-The interactive menu inspects registry locations that can contribute handlers
-for a file extension, removes a selected source entry, or registers a new EXE
-through a supported Open With entry point. It shows ProgIDs, application
-identifiers, resolved commands, and whether referenced executables exist.
-
-Requirements:
-    - Windows 10 or later
-    - Python standard library only (winreg, ctypes)
-
-Usage:
-    python file-association.py
-    python file-association.py --view .txt
+Keep registry source entries distinct when resolving handlers; deletion must
+target the selected source rather than all registrations for the extension.
 """
 
 from __future__ import annotations
@@ -32,6 +22,22 @@ from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}WINDOWS FILE ASSOCIATIONS{CRst}
+
+Inspect Open With registrations for an extension, remove selected entries or
+register an executable for the current user or machine.
+
+{FLYellow}Requirements:{CRst}
+  Windows 10+; administrator privileges for machine-wide changes.
+
+{FLYellow}Usage:{CRst}
+  python file-association.py [--view EXTENSION]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 CLASSES_PATH = r"Software\Classes"
@@ -181,25 +187,7 @@ def _combined_registry_view(views: set[RegistryView]) -> RegistryView:
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for interactive association management."""
-    return argparse.ArgumentParser(
-        description=(
-            f"{FLYellow}WINDOWS FILE ASSOCIATION MANAGER{CRst}\n\n"
-            "Inspect every known registry entry that can advertise an Open With "
-            "handler for one file extension. Interactively remove an exact source "
-            "entry or register an EXE for the current user or local machine."
-        ),
-        epilog=(
-            f"{FLYellow}Options:{CRst}\n"
-            f"  {FLCyan}--view EXTENSION{CRst}  Manage an extension without the first menu.\n"
-            f"  {FLCyan}--help, -h{CRst}       Show this help message.\n\n"
-            f"{FLYellow}Examples:{CRst}\n"
-            f"  {FGray}python file-association.py{CRst}\n"
-            f"  {FGray}python file-association.py --view .txt{CRst}\n\n"
-            f"{FLYellow}Requirements:{CRst}\n"
-            "  Windows 10 or later; Python standard library only."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    return Console.argument_parser(HELP)
 
 
 def _root_for_scope(scope: RegistryScope) -> int:

@@ -8,11 +8,14 @@ Implementation: [qt_widgets.py](../qt_widgets.py).
 
 | Need | Use |
 | --- | --- |
-| GUI inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
+| Qt inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
 
 ## GUI conventions
 
-Use PySide6 with Fusion. After creating or obtaining a QApplication, call
+Simple GUI tools may use Tkinter; reserve PySide6 for complex interfaces.
+The following conventions apply only to PySide6 tools.
+
+Use Fusion. After creating or obtaining a QApplication, call
 `application.setStyle("Fusion")` before creating widgets, including when reusing
 an application instance.
 

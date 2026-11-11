@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-platform SMART disk info viewer using smartmontools."""
+
 
 import os
 import subprocess
@@ -8,6 +8,22 @@ from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}DISK SMART HEALTH{CRst}
+
+Inspect physical-disk health and SMART attributes through smartmontools.
+Available data depends on the disk, enclosure and access permissions.
+
+{FLYellow}Requirements:{CRst}
+  smartmontools; administrator/root privileges may be needed.
+
+{FLYellow}Usage:{CRst}
+  python disk-smart-info.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 # ============ smartctl check ============
@@ -20,24 +36,7 @@ if not Environment.check_commands(CmdCheck("smartctl", hints={
 
 if "--help" in sys.argv or "-h" in sys.argv:
     script_name = os.path.basename(sys.argv[0])
-    print(f"""
-{FLYellow}SMART DISK INFO{CRst}
-===============
-
-Usage:
-  python {script_name}                list SMART-capable disks and view details
-  python {script_name} --help         show this help
-
-{FLYellow}Description:{CRst}
-  Cross-platform SMART disk health viewer using smartmontools.
-  Lists all SMART-capable physical disks and displays detailed
-  SMART attributes for the selected disk.
-
-{FLYellow}Requirements:{CRst}
-  Windows (scoop):  {FGray}scoop install smartmontools{CRst}
-  Linux (apt):      {FGray}sudo apt install smartmontools{CRst}
-  macOS (brew):     {FGray}brew install smartmontools{CRst}
-""")
+    print(HELP)
     sys.exit(0)
 
 

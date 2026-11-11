@@ -1,29 +1,10 @@
 #!/usr/bin/env python3
-"""Show Windows event logs identifying processes that blocked device ejection.
+"""Implementation notes.
 
-Reads System / Microsoft-Windows-Kernel-PnP / event 225 through the built-in
-Windows Event Log API. Displays local time (with UTC offset), recorded PID,
-executable path, device instance and affected devices, newest first. Fields
-come from named XML event data, independent of Windows display language.
-These historical records also cover non-USB devices; they do not prove that
-the same process still holds the device. PIDs may have been reused. Executable
-paths are preserved as recorded, including NT device paths. No current-process
-lookup, drive-letter mapping, device ejection or log modification is performed.
-
-Defaults: last 60 minutes, at most 50 matching records. Optional --pid,
---process and --device filters combine with AND; text filters are literal,
-case-insensitive substrings. --device searches device IDs, not drive letters.
-No matches is a successful query, not proof that a device is safe to remove.
-Exit codes: 0 completed (possibly limited), 1 failed/partial, 2 invalid arguments.
-
-Requirements:
-    Windows 10+, Python 3.13+, project utils; administrator privileges.
-    Standard-library ctypes / built-in Wevtapi.dll; no extra packages or tools.
-
-Usage:
-    python usb-eject-log.py
-    python usb-eject-log.py --minutes 1440 --limit 100
-    python usb-eject-log.py --device 'VID_1234' --process explorer
+Read provider-qualified System/Kernel-PnP event 225 and named XML fields.
+Keep recorded NT paths rather than resolving through current PIDs. Filters
+combine with AND; device matching uses instance IDs. Preserve partial-query
+status and locale-independent parsing.
 """
 
 import argparse
@@ -39,6 +20,24 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}DEVICE EJECTION HISTORY{CRst}
+
+Find historical events identifying processes that blocked device removal.
+Includes non-USB devices; recorded PIDs may have been reused. No matches do not
+prove safe removal. Devices and logs are not modified.
+
+{FLYellow}Requirements:{CRst}
+  Windows 10+, administrator privileges; built-in event-log APIs.
+
+{FLYellow}Usage:{CRst}
+  python usb-eject-log.py [--minutes 60] [--limit 50]
+      [--pid PID] [--process NAME] [--device INSTANCE_ID]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 PROVIDER = "Microsoft-Windows-Kernel-PnP"
@@ -177,22 +176,7 @@ def _positive_int(value: str) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     """Build platform-independent help without querying logs or elevating."""
-    parser = argparse.ArgumentParser(
-        description=f"{FLYellow}{'USB EJECT LOG':^60}{CRst}\n\n"
-        "Description:\n  Show processes recorded as blocking device removal/ejection.\n"
-        "  Reads System / Kernel-PnP / event 225, newest first, in local time.",
-        epilog=f"{FGray}Requirements:\n  Windows 10+, administrator privileges, project utils.\n"
-        "  Uses built-in Windows APIs; no extra packages or tools.\n\n"
-        "Examples:\n  python usb-eject-log.py\n"
-        "  python usb-eject-log.py --minutes 1440 --limit 100\n"
-        "  python usb-eject-log.py --device VID_1234 --process explorer\n\n"
-        "Notes:\n  Historical events, including non-USB devices; PIDs may have been reused.\n"
-        "  Paths are shown as recorded (possibly NT paths), not resolved via current PIDs.\n"
-        "  Device filters use instance IDs, not drive letters. Filters combine with AND.\n"
-        "  No records does not prove safe removal. No devices or logs are modified.\n"
-        f"  Exit: 0 completed, 1 failed/partial, 2 invalid arguments.{CRst}",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = Console.argument_parser(HELP)
     parser.add_argument("--minutes", type=_positive_int, default=DEFAULT_MINUTES,
                         help=f"Look back this many minutes (default: {DEFAULT_MINUTES})")
     parser.add_argument("--limit", type=_positive_int, default=DEFAULT_LIMIT,

@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
-"""Generate structured-light projector patterns.
+"""Implementation notes.
 
-This script provides an interactive terminal workflow for generating
-structured-light projector images. It currently supports sinusoidal stripe
-patterns with selectable pixel sampling positions, and standard Gray-code
-patterns, including complementary inverse Gray-code images for phase
-unwrapping workflows.
-
-Requirements:
-    - pip: opencv-python, numpy
-
-Usage:
-    python research/pattern-generator.py
-    python research/pattern-generator.py --help
+Keep projector-coordinate sampling and Gray-code bit ordering explicit.
+Complementary inverse Gray-code images must use the same dimensions/order.
 """
 
 import enum
@@ -27,6 +17,23 @@ from typing import Literal, Protocol, Sequence, cast
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}STRUCTURED-LIGHT PATTERNS{CRst}
+
+Generate sinusoidal stripes with selectable pixel sampling or standard Gray-code
+sequences for projector-coordinate and phase-unwrapping workflows.
+
+{FLYellow}Requirements:{CRst}
+  opencv-python, numpy.
+
+{FLYellow}Usage:{CRst}
+  python pattern-generator.py
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 
 try:
     import cv2  # noqa: E402
@@ -1167,34 +1174,8 @@ def _run_gray_code_workflow(projector: ProjectorSpec) -> None:
 
 def main() -> int:
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-{FLYellow}STRUCTURED LIGHT PATTERN GENERATOR{CRst}
-==================================
 
-Usage:
-  python {script_name}          interactive structured-light pattern generator
-  python {script_name} --help   show this help
-
-{FLYellow}Description:{CRst}
-  Interactive generator for structured-light projector images. It can create
-  single sinusoidal stripe patterns with selectable left/top-edge, center, or
-  right/bottom-edge pixel sampling, or full standard Gray-code image sequences
-  for projector-coordinate / sinusoidal-cycle indexing.
-
-{FLYellow}Options:{CRst}
-  -h, --help                    show this help
-
-{FLYellow}Implemented:{CRst}
-  Patterns:       sinusoidal stripes; standard Gray code
-  Coordinates:    Cartesian projector coordinates
-  Sampling:       left/top edge; pixel center; right/bottom edge (sinusoidal)
-  Preview:        optional detached OpenCV window; terminal confirms save/discard
-  Output:         8-bit grayscale image; PNG uses lossless compression level 9
-
-{FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install opencv-python numpy{CRst}
-""")
+        print(HELP)
         return 0
 
     Console.print_banner("STRUCTURED LIGHT PATTERN GENERATOR")

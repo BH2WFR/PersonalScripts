@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Implementation notes.
+
+Distinguish reparse points and hard-link counts from ordinary paths. Operate
+on the link itself during cleanup/repair, without recursively modifying its target.
+"""
+
 import os
 import sys
 import stat
@@ -7,36 +13,30 @@ from typing import Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-# 扫描某个路径下所有的符号链接、Junction 和 Hard Link 文件，并打印出来，同时还会识别是否指向一个无效地址。
-# 列举后，可自动删除所有指向地址无效的链接
-# 列举后，Windows 下，可将指向文件夹的错误 symlink 修复成 symlinkd
-#
+HELP = f"""{FLYellow}LINK SCAN{CRst}
+
+Find symbolic links, junctions and hard links in a directory tree. Detect broken
+targets, optionally remove broken links, and repair directory symlinks on Windows.
+
+{FLYellow}Requirements:{CRst}
+  Project runtime only; repairs require permission to modify the links.
+
+{FLYellow}Usage:{CRst}
+  python link-scan.py [PATH]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 def main() -> int:
     #* 交互输入或 argv[1] 读取
     Console.print_banner("LINK SCANNING TOOL")
 
-    script_name = os.path.basename(sys.argv[0])
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        print(f"""
-LINK SCANNING TOOL
-==================
-
-Usage:
-  python {script_name} <path>       specify path, skip interaction
-  python {script_name}              no arguments, interactive mode
-  python {script_name} --help       show this help
-
-{FLYellow}Description:{CRst}
-  Recursively scan directories, printing all symlinks, symlinkd, Junctions and hardlinks.
-  Detect broken links (dead targets) and Windows file symlinks incorrectly pointing
-  to directories. Optionally auto-delete broken links or convert incorrect symlinks to symlinkd.
-
-{FLYellow}Requirements:{CRst}
-  No external dependencies. On Windows uses ctypes for reparse-point detection.
-""")
+        print(HELP)
         return 0
 
     IS_SCAN_JUNCTION = os.name == "nt"  # Windows 默认启用 Junction 扫描

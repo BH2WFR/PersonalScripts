@@ -4,6 +4,22 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+
+HELP = f"""{FLYellow}VIDEO TIME TRIM{CRst}
+
+Trim time ranges from video files with ffmpeg. This trims duration, not image edges.
+
+{FLYellow}Requirements:{CRst}
+  ffmpeg.
+
+{FLYellow}Usage:{CRst}
+  python ffmpeg-crop-video.py [VIDEO ...]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 # 基于 ffmpeg 的视频裁剪工具
 # 需要先安装 ffmpeg，推荐使用 `scoop install ffmpeg` 安装
 
@@ -18,24 +34,8 @@ def main() -> int:
     Console.print_banner("FFMPEG VIDEO CROP TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-FFMPEG VIDEO CROP TOOL
-======================
 
-Usage:
-  python {script_name} <video1> <video2> ...    specify video paths, skip interaction
-  python {script_name}                          no arguments, interactive mode
-  python {script_name} --help                   show this help
-
-{FLYellow}Description:{CRst}
-  ffmpeg-based video time-cropping tool (time trimming, not frame cropping).
-
-{FLYellow}Requirements:{CRst}
-  Windows (scoop):  {FGray}scoop install ffmpeg{CRst}
-  Linux (apt):      {FGray}sudo apt install ffmpeg{CRst}
-  macOS (brew):     {FGray}brew install ffmpeg{CRst}
-""")
+        print(HELP)
         return 0
 
     if not Environment.check_commands(CmdCheck("ffmpeg", hints={

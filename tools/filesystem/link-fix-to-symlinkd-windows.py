@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
-# Windows 下，将指向目录的 symlink 转换为 symlinkd （为了修复某些工具将文件夹链接成了 symlink 导致链接失效的问题）
-#* Windows Only !!!
+"""Implementation notes.
+
+Inspect native reparse metadata before recreating a link. Preserve its target
+and do not recurse into that target during the directory walk.
+"""
+
 
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *
+
+HELP = f"""{FLYellow}DIRECTORY SYMLINK REPAIR{CRst}
+
+Repair Windows file-type symlinks that target directories so other tools can
+traverse them correctly.
+
+{FLYellow}Requirements:{CRst}
+  Windows; project runtime and permission to recreate symbolic links.
+
+{FLYellow}Usage:{CRst}
+  python link-fix-to-symlinkd-windows.py [PATH]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
 from typing import Optional
 
 
@@ -19,26 +40,8 @@ def main() -> int:
     Console.print_banner("SYMLINK TO SYMLINKD CONVERTING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-SYMLINK TO SYMLINKD CONVERTING TOOL
-====================================
 
-Usage:
-  python {script_name} <path>    specify path, skip interaction
-  python {script_name}           no arguments, interactive mode
-  python {script_name} --help    show this help
-
-{FLYellow}Description:{CRst}
-  Windows only. Scan a directory tree for file-type symlinks (IO_REPARSE_TAG_SYMLINK)
-  that point to directories, and convert them to directory-type symlinks
-  (symlinkd / IO_REPARSE_TAG_SYMLINKD). On Windows, file symlinks and directory
-  symlinks are distinct reparse point types; some tools incorrectly create file
-  symlinks for directory targets, causing traversal failures in other tools.
-
-{FLYellow}Requirements:{CRst}
-  Windows only. Uses ctypes for reparse-point detection.
-""")
+        print(HELP)
         return 0
 
     ROOT = "D:/test"   # ← 改成要检查的目录
@@ -120,7 +123,7 @@ Usage:
             os.symlink(info.dest, info.path, target_is_directory=True)
         except Exception as e:
             print(f"{FLRed}    ERROR: {str(e)}{CRst}")
-        
+
     return 0
 
 

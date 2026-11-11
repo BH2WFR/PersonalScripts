@@ -4,6 +4,22 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *
 
+HELP = f"""{FLYellow}BATCH IMAGE CROP{CRst}
+
+Apply a selected crop region to all images in one or more directories.
+
+{FLYellow}Requirements:{CRst}
+  opencv-python, numpy; a desktop session for crop selection.
+
+{FLYellow}Usage:{CRst}
+  python batch-crop-images.py [DIRECTORY ...]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
+
+
 import cv2
 import locale
 from pathlib import Path
@@ -106,24 +122,8 @@ def main() -> int:
     Console.print_banner("BATCH IMAGE CROPPING TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-BATCH IMAGE CROPPING TOOL
-=========================
 
-Usage:
-  python {script_name} <dir1> <dir2> ...    specify directory paths, skip interaction
-  python {script_name}                      no arguments, interactive mode
-  python {script_name} --help               show this help
-
-{FLYellow}Description:{CRst}
-  Batch image cropping tool. Based on OpenCV (cv2).
-  Interactively select input/output directories and crop region,
-  then batch-crop all images.
-
-{FLYellow}Requirements:{CRst}
-  Python: {FGray}pip install opencv-python numpy{CRst}
-""")
+        print(HELP)
         return 0
 
     input_directory = "E:/!重建问题测试/HDR_金属件/HDR"

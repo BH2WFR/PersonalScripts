@@ -1,39 +1,37 @@
 #!/usr/bin/env python3
+"""Implementation notes.
+
+Keep request headers and output templates as separate yt-dlp arguments.
+"""
+
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
-# 基于 yt-dlp 的 m3u8 流媒体视频下载器
-# 要求先使用 scoop 安装 yt-dlp, ffmpeg
+
+HELP = f"""{FLYellow}HLS STREAM DOWNLOAD{CRst}
+
+Download m3u8/HLS streams through yt-dlp, with custom request headers and filenames.
+
+{FLYellow}Requirements:{CRst}
+  yt-dlp, ffmpeg.
+
+{FLYellow}Usage:{CRst}
+  python download-m3u8.py [URL ...]
+"""
+
+if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
+    print(HELP)
+    raise SystemExit(0)
 
 
 def main() -> int:
     Console.print_banner("M3U8 DOWNLOAD TOOL")
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        script_name = os.path.basename(sys.argv[0])
-        print(f"""
-M3U8 DOWNLOAD TOOL - m3u8 Stream Downloader
-============================================
 
-Usage:
-  python {script_name} <url1> <url2> ...    specify URLs, skip URL input
-  python {script_name}                       no arguments, interactive mode
-  python {script_name} --help                show this help
-
-{FLYellow}Description:{CRst}
-  yt-dlp-based m3u8/HLS stream video downloader.
-
-{FLYellow}Requirements:{CRst}
-  Windows (scoop):  {FGray}scoop install yt-dlp ffmpeg{CRst}
-  Linux (apt):      {FGray}sudo apt install yt-dlp ffmpeg{CRst}
-  macOS (brew):     {FGray}brew install yt-dlp ffmpeg{CRst}
-
-{FLYellow}Interactive Options:{CRst}
-  Output directory, m3u8 URLs (multi-line EOF input), output filename template,
-  custom referer/header.
-""")
+        print(HELP)
         return 0
 
 

@@ -2,6 +2,23 @@
 
 set -euo pipefail
 
+HELP='PDF TRANSLATION LAUNCHER
+
+Start PDF2ZH for bilingual PDF translation, using a dedicated data directory.
+With no arguments, opens the PDF2ZH GUI; other arguments are forwarded.
+
+Requirements:
+  Bash and an installed pdf2zh or pdf2zh_next executable.
+
+Usage:
+  bash run-pdf2zh.sh [PDF2ZH_ARGUMENTS...]
+'
+
+if [[ "$*" == "--help" || "$*" == "-h" ]]; then
+    printf '%s\n' "$HELP"
+    exit 0
+fi
+
 WORK_DIR="$HOME/Data"
 FILES_DIR="pdf2zh_files"
 

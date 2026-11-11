@@ -85,9 +85,8 @@ arguments, dependency/platform checks and processing as needed:
 
 ```python
 #!/usr/bin/env python3
-"""Describe the core outcome, required dependencies and a minimal invocation."""
+"""Implementation notes for maintainers, when needed; do not repeat HELP."""
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -95,8 +94,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
 
 
+HELP = """TOOL NAME
+
+One sentence about the core task.
+
+Requirements:
+  Required Python packages or external tools.
+
+Usage:
+  python script.py
+"""
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="One sentence about the core task.")
+    parser = Console.argument_parser(HELP)
     parser.parse_args()  # Help exits before operational checks or work.
     Console.print_banner("TOOL NAME")
     # Check platform/dependencies/privileges, then gather inputs and process.
@@ -110,8 +121,8 @@ if __name__ == "__main__":
         Console.print_keyboard_interrupt_message_and_exit()
 ```
 
-Use `argparse` or the existing lightweight help pattern; a fixed five-section
-help template is unnecessary. Private implementation modules do not need a CLI.
+For argparse-based entries use `Console.argument_parser(HELP)`; simple entries
+can print `HELP` directly. Private implementation modules do not need a CLI.
 
 ## Console, input and GUI conventions
 
@@ -134,9 +145,10 @@ help template is unnecessary. Private implementation modules do not need a CLI.
   setup or call it unconditionally in every entry.
 - For PDF tools follow the [shared PDF policy](utils/docs/pdf.md): use
   `Pdf.open_document()` for existing inputs and `Pdf.save_new()` for output.
-- GUI tools use PySide6 with Fusion and the shared no-wheel form controls;
-  follow [Qt conventions](utils/docs/qt.md). Qt-only APIs are imported explicitly
-  from `utils.qt_widgets`.
+- Simple GUI tools may use Tkinter; reserve PySide6 for complex interfaces.
+  PySide6 tools use Fusion and the shared no-wheel form controls; follow
+  [Qt conventions](utils/docs/qt.md) and import Qt-only APIs explicitly from
+  `utils.qt_widgets`.
 
 ## Code and module documentation
 
@@ -146,9 +158,14 @@ help template is unnecessary. Private implementation modules do not need a CLI.
 - Public APIs use concise Google-style or NumPy-style docstrings, consistently
   within a module. Explain non-obvious arguments, returns, deliberate errors
   and side effects; do not repeat obvious signatures or implementation steps.
-- A runnable script's module docstring states its core purpose, hard requirements
-  (with optional dependencies labeled) and one or two minimal invocation examples.
-  Put technical detail in the owning module/package documentation.
+- Put user-facing help in a module-level `HELP` string near the top of the file,
+  after only the imports needed to construct it. `main()` and help handlers
+  reference that string; do not embed another help document in functions.
+  Thin runtime wrappers forward help to the canonical entry without copying it.
+- Put extra agent/maintainer instructions in a separate top-of-file multiline
+  comment or module docstring. Keep it focused on implementation/maintenance,
+  without repeating HELP's introduction, requirements or usage. Private package
+  documentation can hold longer architecture notes.
 
 ## README and help writing
 
@@ -159,12 +176,14 @@ help template is unnecessary. Private implementation modules do not need a CLI.
   Exclude menus, buttons, gestures, preview controls, confirmations, retries,
   exit behavior, implementation details and exhaustive feature inventories.
   A UI-only improvement does not warrant a root README change.
-- Whenever editing a script, review its entry help text (usually in `main()`).
+- Whenever editing a script, review its top-level `HELP` and help entry point.
   If it is too long or violates these rules, rewrite it in the same change,
   even when the requested edit does not otherwise affect help.
-- Authored help text retains only what the feature is, what it can do, the
-  problem it solves, its distinguishing capabilities and essential caveats.
-  Keep it as short as possible; do not force separate sections for these points.
+- HELP contains a short functional introduction, `Requirements` and `Usage`.
+  The introduction covers what the feature does, the problem it solves,
+  distinguishing capabilities and essential caveats, in as few sentences as
+  possible. Requirements names hard dependencies/platforms and labels optional
+  ones; Usage gives minimal invocations and necessary argument guidance.
   Remove interaction tutorials, incidental UI/implementation details, repeated
   explanations and exhaustive feature inventories.
 - Keep both README languages, module docstrings, help and dependency declarations
