@@ -65,6 +65,7 @@ class UnicodeInspector:
         ttk.Button(header, text="Analyze", command=self.analyze).grid(row=0, column=3, padx=(4, 0))
         self.original = ScrolledText(body, height=6, wrap="word", font="TkDefaultFont", undo=True)
         self.original.grid(row=1, column=0, sticky="ew", pady=(6, 12))
+        self._text_input = TkTextInput(self.original)
 
         summary = ttk.Frame(body)
         summary.grid(row=2, column=0, sticky="ew", pady=(0, 12))

@@ -13,14 +13,22 @@ installed and no auditing, logging or power settings are changed.
 Sources:
     macOS: pmset sleep/wake history, explicit loginwindow lock notifications,
         last reboot/shutdown records (minute precision), current kern.boottime.
-    Windows 10+: PowerShell Get-WinEvent; provider-qualified System events and
-        Security 4800/4801. Includes Modern Standby entry/exit (506/507) and
-        auxiliary power-session transitions (566), with reported reasons,
+    Windows 10+: PowerShell Get-WinEvent; provider-qualified System, Security,
+        TerminalServices-LocalSessionManager and OpenSSH records. Includes
+        Modern Standby entry/exit (506/507) and auxiliary power-session
+        transitions (566), with reported reasons,
         sleep/DRIPS durations and session identifiers when available.
-        Security access and prior auditing are required for lock/unlock.
+        Security access and prior auditing are required for lock/unlock and
+        interactive logon/logoff. RDP connections require explicit remote
+        address or RDP station evidence; console switches are not RDP.
     Linux: systemd journal kernel/logind/sleep/shutdown records. Lock history
         is limited to explicit logind session transitions; desktop support and
         journal persistence/permissions vary. Non-systemd Linux is unsupported.
+    SSH: local OpenSSH server logs (Windows Event Log, Linux journal or macOS
+        unified log). Accepted authentication is a connection; transport closes
+        without a user are marked authentication unknown. Pre-auth closes and
+        failed attempts are excluded. File-only logs and outgoing clients are
+        not collected. Separate native observations are retained, not merged.
 
 Limits:
     History depends on retained accessible logs. Missing records are not proof
@@ -59,13 +67,14 @@ from utils import *  # noqa: E402
 
 HELP = f"""{FLYellow}POWER EVENT VIEWER{CRst}
 
-Inspect and export startup, shutdown, sleep, wake and lock history, including
-Windows Modern Standby. Missing logs do not prove an event did not occur;
-session transitions alone do not establish low-power residency or Wake-on-LAN.
+Inspect and export power, lock/unlock and incoming SSH history, plus Windows
+interactive logon/logoff and RDP connections. Includes Windows Modern Standby.
+History depends on retained logs; power transitions alone do not prove Wake-on-LAN.
 
 {FLYellow}Requirements:{CRst}
   PySide6; Windows PowerShell, macOS log/pmset/last/sysctl, or Linux journalctl.
-  Log access and retained records are required; Linux lock history is limited.
+  Security log access and prior auditing for Windows lock/logon history.
+  OpenSSH server logs for SSH; file-only logs are not read. Linux locks are limited.
 
 {FLYellow}Usage:{CRst}
   python power-event-viewer.py
@@ -107,6 +116,13 @@ class EventKind(StrEnum):
     STANDBY_ENTER = "Modern standby entry"
     STANDBY_EXIT = "Modern standby exit"
     POWER_SESSION = "Power session transition"
+    LOGON = "Logon"
+    LOGOFF = "Logoff"
+    RDP_CONNECT = "RDP connection"
+    RDP_RECONNECT = "RDP reconnection"
+    RDP_DISCONNECT = "RDP disconnection"
+    SSH_CONNECT = "SSH connection"
+    SSH_DISCONNECT = "SSH disconnection"
 
 
 WINDOWS_MODERN_EVENTS: dict[int, tuple[EventKind, str]] = {
@@ -115,6 +131,17 @@ WINDOWS_MODERN_EVENTS: dict[int, tuple[EventKind, str]] = {
     566: (EventKind.POWER_SESSION, "Power session state changed"),
 }
 MODERN_EVENT_KINDS: frozenset[EventKind] = frozenset(kind for kind, _ in WINDOWS_MODERN_EVENTS.values())
+LOGIN_EVENT_KINDS: frozenset[EventKind] = frozenset({
+    EventKind.LOGON, EventKind.LOGOFF, EventKind.RDP_CONNECT, EventKind.RDP_RECONNECT,
+    EventKind.RDP_DISCONNECT, EventKind.SSH_CONNECT, EventKind.SSH_DISCONNECT,
+})
+SECURITY_PROVIDER = "Microsoft-Windows-Security-Auditing"
+RDP_PROVIDER = "Microsoft-Windows-TerminalServices-LocalSessionManager"
+SSH_PROCESSES: frozenset[str] = frozenset({"sshd", "sshd-session", "sshd-auth"})
+INTERACTIVE_LOGON_TYPES: dict[str, str] = {
+    "2": "Interactive", "10": "Remote interactive (RDP)",
+    "11": "Cached interactive", "12": "Cached remote interactive",
+}
 WINDOWS_DURATION_FIELDS: tuple[tuple[str, str], ...] = (
     ("DurationInUs", "Session duration"),
     ("ScreenOffDurationInUs", "Screen-off duration"),
@@ -153,6 +180,7 @@ class PowerEvent:
 
     Timestamps are timezone-aware; record_id identifies the native source record.
     Session and boot_id prevent conflating distinct users and startup cycles.
+    XML is retained separately for structured viewing; raw keeps complete evidence.
     """
 
     timestamp: dt.datetime
@@ -163,6 +191,7 @@ class PowerEvent:
     session: str = ""
     boot_id: str = ""
     raw: str = ""
+    xml: str = ""
 
 
 @dataclass(frozen=True)
@@ -302,8 +331,114 @@ def _parse_mac_last(text: str) -> list[PowerEvent]:
     return events
 
 
+def _parse_ssh_message(message: str) -> tuple[EventKind, str, str] | None:
+    """Interpret trusted sshd messages; authentication attempts are not connections.
+
+    The caller must verify the server process/provider. A transport-only close
+    has no implied authenticated user. Addresses and ports identify endpoints,
+    not a synthetic session ID, and records are never paired across queries.
+    """
+    message = re.sub(r"^sshd(?:-session|-auth)?(?:\[\d+\])?:\s*", "", message.strip())
+    if "[preauth]" in message or re.search(r"\b(?:invalid|authenticating) user\b", message):
+        return None
+    accepted = re.match(r"^Accepted (\S+) for (.+?) from (\S+) port (\d+)\b", message)
+    if accepted:
+        method, user, address, port = accepted.groups()
+        return (EventKind.SSH_CONNECT, f"SSH authentication accepted ({method}); client {address} port {port}", user)
+    closed = re.match(
+        r"^(?:Disconnected from|Connection (?:closed|reset) by|Received disconnect from) "
+        r"(?:user (.+?) )?(\S+) port (\d+)\b", message,
+    )
+    if closed:
+        user, address, port = closed.groups()
+        summary = f"SSH transport disconnected; client {address} port {port}"
+        if not user:
+            summary += "; authentication unknown in this record"
+        return EventKind.SSH_DISCONNECT, summary, user or ""
+    return None
+
+
+def _parse_mac_ssh(text: str) -> list[PowerEvent]:
+    """Read incoming SSH evidence from unified-log server processes only."""
+    events: list[PowerEvent] = []
+    for record in _json_records(text):
+        process = str(record.get("processImagePath") or record.get("process") or "").rsplit("/", 1)[-1]
+        if process not in SSH_PROCESSES:
+            continue
+        matched = _parse_ssh_message(str(record.get("eventMessage", "")))
+        if matched is None:
+            continue
+        kind, summary, user = matched
+        pid = str(record.get("processID", ""))
+        session = "; ".join(part for part in (user, f"PID {pid}" if pid else "") if part)
+        events.append(PowerEvent(
+            _timestamp(str(record["timestamp"])), kind, summary, f"unified log / {process}",
+            str(record.get("machTimestamp", "")), session, str(record.get("bootUUID", "")),
+            json.dumps(record, ensure_ascii=False, indent=2),
+        ))
+    return events
+
+
+def _windows_session_event(source: str, event_id: int, data: dict[str, str]) -> tuple[EventKind, str, str] | None:
+    """Map audited interactive and Terminal Services observations without guessing RDP."""
+    user = data.get("TargetUserName") or data.get("AccountName") or data.get("User", "")
+    domain = data.get("TargetDomainName") or data.get("AccountDomain", "")
+    if domain and domain != "-" and user:
+        user = f"{domain}\\{user}"
+    session_id = data.get("SessionId") or data.get("SessionID", "")
+    session = f"{user} (session {session_id})" if session_id else user
+    logon_id = data.get("TargetLogonId") or data.get("LogonID", "")
+    if logon_id:
+        session = "; ".join(part for part in (session, f"logon {logon_id}") if part)
+    kind: EventKind
+    summary: str
+    if source == SECURITY_PROVIDER:
+        if event_id in (4800, 4801):
+            kind = EventKind.LOCK if event_id == 4800 else EventKind.UNLOCK
+            summary = "Workstation locked" if event_id == 4800 else "Workstation unlocked"
+        elif event_id in (4624, 4634):
+            logon_type = data.get("LogonType", "")
+            if logon_type not in INTERACTIVE_LOGON_TYPES:
+                return None
+            # Windows desktop helpers create interactive logons too; they are not people.
+            if data.get("TargetUserSid", "").startswith(("S-1-5-90-", "S-1-5-96-")):
+                return None
+            kind = EventKind.LOGON if event_id == 4624 else EventKind.LOGOFF
+            summary = f"{INTERACTIVE_LOGON_TYPES[logon_type]} {kind.value.lower()} (type {logon_type})"
+        elif event_id in (4778, 4779):
+            station = data.get("SessionName", "")
+            if not station.lower().startswith("rdp-tcp"):
+                return None
+            kind = EventKind.RDP_RECONNECT if event_id == 4778 else EventKind.RDP_DISCONNECT
+            summary = f"{kind.value}; station {station}"
+        else:
+            return None
+        address = data.get("ClientAddress") or data.get("IpAddress", "")
+    elif source == RDP_PROVIDER:
+        address = data.get("Address", "")
+        remote = address.casefold() not in ("", "-", "local", "unknown", "0.0.0.0", "::")
+        if event_id == 21:
+            kind = EventKind.RDP_CONNECT if remote else EventKind.LOGON
+            summary = "RDP session logon succeeded" if remote else "Terminal Services session logon (RDP not established by this record)"
+        elif event_id == 23:
+            # This record has no address; do not infer its transport from another session.
+            kind, summary = EventKind.LOGOFF, "Terminal Services session logoff succeeded"
+        elif event_id in (24, 25) and remote:
+            kind = EventKind.RDP_DISCONNECT if event_id == 24 else EventKind.RDP_RECONNECT
+            summary = kind.value
+        else:
+            return None
+    else:
+        return None
+    if address and address != "-":
+        summary += f"; client {address}"
+    if data.get("ClientName") and data["ClientName"] != "-":
+        summary += f"; client name {data['ClientName']}"
+    return kind, summary, session
+
+
 def _parse_windows_xml(xml: str, message: str = "") -> list[PowerEvent]:
-    """Map Windows records without equating Modern Standby transitions with full wakes.
+    """Map provider-qualified Windows power and login records, preserving their evidence.
 
     Args:
         xml: Native event XML with provider, timestamp and optional event data.
@@ -331,6 +466,19 @@ def _parse_windows_xml(xml: str, message: str = "") -> list[PowerEvent]:
     timestamp = _timestamp(created.get("SystemTime", ""))
     data = {node.get("Name", f"param{index}"): node.text or ""
             for index, node in enumerate(root.findall("e:EventData/e:Data", XML_NS))}
+    # TerminalServices uses UserData/EventXML in its own XML namespace.
+    user_data = root.find("e:UserData", XML_NS)
+    if user_data is not None:
+        data.update({node.tag.rsplit("}", 1)[-1]: node.text or ""
+                     for node in user_data.iter() if len(node) == 0})
+    session_event = _windows_session_event(source, event_id, data)
+    if source == "OpenSSH":
+        process = data.get("process", "").lower().removesuffix(".exe")
+        if process not in SSH_PROCESSES:
+            return []
+        session_event = _parse_ssh_message(data.get("payload") or message)
+        if session_event is None:
+            return []
     mapping: dict[tuple[str, int], tuple[EventKind, str]] = {
         ("Microsoft-Windows-Kernel-General", 12): (EventKind.STARTUP, "Operating system started"),
         ("Microsoft-Windows-Kernel-General", 13): (EventKind.SHUTDOWN, "Operating system shutdown initiated"),
@@ -338,24 +486,29 @@ def _parse_windows_xml(xml: str, message: str = "") -> list[PowerEvent]:
         ("Microsoft-Windows-Kernel-Power", 107): (EventKind.WAKE, "System resumed from sleep"),
         ("Microsoft-Windows-Kernel-Power", 41): (EventKind.UNEXPECTED_RESTART, "Previous shutdown was unclean; timestamp is the subsequent report"),
         ("Microsoft-Windows-Power-Troubleshooter", 1): (EventKind.WAKE, "System returned from low-power state"),
-        ("Microsoft-Windows-Security-Auditing", 4800): (EventKind.LOCK, "Workstation locked"),
-        ("Microsoft-Windows-Security-Auditing", 4801): (EventKind.UNLOCK, "Workstation unlocked"),
         ("User32", 1074): (EventKind.POWER_REQUEST, "Shutdown/restart requested (not completion)"),
         ("USER32", 1074): (EventKind.POWER_REQUEST, "Shutdown/restart requested (not completion)"),
     }
     mapping.update({("Microsoft-Windows-Kernel-Power", event_id): value
                     for event_id, value in WINDOWS_MODERN_EVENTS.items()})
     matched = mapping.get((source, event_id))
-    if matched is None:
+    if matched is None and session_event is None:
         return []
-    kind, summary = matched
+    if session_event is not None:
+        kind, summary, session = session_event
+    else:
+        assert matched is not None
+        kind, summary = matched
+        session = ""
     if kind == EventKind.SLEEP and data.get("TargetState") == "5":
         kind, summary = EventKind.HIBERNATE, "Entering hibernation"
     if source == "Microsoft-Windows-Power-Troubleshooter" and data.get("WakeTime"):
         timestamp = _timestamp(data["WakeTime"])
-    user = data.get("TargetUserName", "")
-    session = data.get("SessionId", "")
-    session = f"{user} (session {session})" if session else user
+    if source == "OpenSSH":
+        execution = system.find("e:Execution", XML_NS)
+        pid = execution.get("ProcessID", "") if execution is not None else ""
+        if pid:
+            session = "; ".join(part for part in (session, f"PID {pid}") if part)
     # ── Modern Standby evidence ────────────────────
     if kind in MODERN_EVENT_KINDS:
         details = [" ".join(message.split()) or summary]
@@ -379,6 +532,7 @@ def _parse_windows_xml(xml: str, message: str = "") -> list[PowerEvent]:
         system.findtext("e:EventRecordID", "", XML_NS),
         session, boot_id=data.get("BootId", ""),
         raw=f"Rendered message:\n{message}\n\nXML:\n{xml}" if message else xml,
+        xml=xml,
     )]
 
 
@@ -415,6 +569,13 @@ def _parse_linux_journal(text: str) -> list[PowerEvent]:
             if match:
                 kind = EventKind.LOCK if match[2].lower() == "locked" else EventKind.UNLOCK
                 session = match[1]
+        elif identifier in SSH_PROCESSES or str(record.get("_COMM", "")) in SSH_PROCESSES:
+            matched = _parse_ssh_message(message)
+            if matched:
+                kind, summary, session = matched
+                pid = str(record.get("_PID", ""))
+                if pid:
+                    session = "; ".join(part for part in (session, f"PID {pid}") if part)
         elif unit in ("systemd-suspend.service", "systemd-hibernate.service", "systemd-suspend-then-hibernate.service", "systemd-hybrid-sleep.service"):
             if "System returned from sleep operation" in message or message == "System resumed.":
                 kind = EventKind.WAKE
@@ -456,6 +617,13 @@ def _collect_macos(result: QueryResult, cancelled: threading.Event, progress: Ca
         "--start", result.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
         "--end", result.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", predicate,
     ], _parse_mac_sessions, cancelled)
+    progress("Reading incoming SSH history...")
+    ssh_predicate = " OR ".join(f'process == "{process}"' for process in sorted(SSH_PROCESSES))
+    _collect_source(result, "OpenSSH server", [
+        "/usr/bin/log", "show", "--style", "ndjson", "--info",
+        "--start", result.start.strftime("%Y-%m-%d %H:%M:%S+0000"),
+        "--end", result.end.strftime("%Y-%m-%d %H:%M:%S+0000"), "--predicate", ssh_predicate,
+    ], _parse_mac_ssh, cancelled)
     progress("Reading startup and shutdown history...")
     _collect_source(result, "Boot history", ["/usr/bin/last", "-y", "reboot", "shutdown"], _parse_mac_last, cancelled)
     try:
@@ -475,7 +643,9 @@ def _collect_macos(result: QueryResult, cancelled: threading.Event, progress: Ca
         result.statuses.append(SourceStatus("Current startup", SourceState.ERROR, str(exc)))
     result.statuses.append(SourceStatus("Coverage", SourceState.LIMITED,
         "Lock/unlock uses explicit loginwindow notifications; macOS versions and log retention vary. "
-        "Older boot records have minute precision. Background wakes do not imply user activity."))
+        "Older boot records have minute precision. Background wakes do not imply user activity. "
+        "SSH requires retained sshd unified logs; private/redacted fields may prevent recognition. "
+        "RDP and general desktop logon/logoff history are only collected on Windows."))
 
 
 def _collect_windows(result: QueryResult, cancelled: threading.Event, progress: Callable[[str], None]) -> None:
@@ -484,7 +654,7 @@ def _collect_windows(result: QueryResult, cancelled: threading.Event, progress: 
     if executable is None:
         result.statuses.append(SourceStatus("Windows Event Log", SourceState.ERROR, "PowerShell was not found."))
         return
-    progress("Reading Windows System and Security event logs...")
+    progress("Reading Windows power, logon, RDP and OpenSSH event logs...")
     script = r"""
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 # Get-WinEvent's hashtable filter interprets clock values as local even with Kind=Utc.
@@ -496,15 +666,28 @@ $sources = @(
     @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'; Id=@(41,42,107,506,507,566)},
     @{LogName='System'; ProviderName='Microsoft-Windows-Power-Troubleshooter'; Id=@(1)},
     @{LogName='System'; ProviderName='User32'; Id=@(1074)},
-    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4800,4801)}
+    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4800,4801,4778,4779)},
+    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4624,4634)},
+    @{LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; ProviderName='Microsoft-Windows-TerminalServices-LocalSessionManager'; Id=@(21,23,24,25)},
+    @{LogName='OpenSSH/Operational'; ProviderName='OpenSSH'},
+    @{LogName='OpenSSH/Admin'; ProviderName='OpenSSH'}
 )
 foreach ($filter in $sources) {
     $label = "$($filter.LogName) / $($filter.ProviderName)"
+    if ($filter.Id) { $label += " / IDs $($filter.Id -join ',')" }
     $filter.StartTime = $start
     $filter.EndTime = $end
     $count = 0
     try {
-        Get-WinEvent -FilterHashtable $filter -MaxEvents 50001 -ErrorAction Stop | ForEach-Object {
+        $query = @{FilterHashtable=$filter; MaxEvents=50001; ErrorAction='Stop'}
+        if ($filter.Id -contains 4624) {
+            # Filter before the limit: network/service logons otherwise crowd out people.
+            $utcStart = $start.ToUniversalTime().ToString('o')
+            $utcEnd = $end.ToUniversalTime().ToString('o')
+            $xpath = "*[System[Provider[@Name='Microsoft-Windows-Security-Auditing'] and (EventID=4624 or EventID=4634) and TimeCreated[@SystemTime >= '$utcStart' and @SystemTime < '$utcEnd']] and EventData[__LOGON_TYPES__]]"
+            $query = @{LogName='Security'; FilterXPath=$xpath; MaxEvents=50001; ErrorAction='Stop'}
+        }
+        Get-WinEvent @query | ForEach-Object {
             $description = ''
             # Missing provider message resources must not prevent reading the XML evidence.
             try { $description = $_.FormatDescription() } catch { }
@@ -517,7 +700,9 @@ foreach ($filter in $sources) {
         @{kind='status'; source=$label; state=$state; count=$count; message=$_.Exception.Message} | ConvertTo-Json -Compress
     }
 }
-""".replace("__START__", result.start.isoformat()).replace("__END__", result.end.isoformat())
+""".replace("__START__", result.start.isoformat()).replace("__END__", result.end.isoformat()).replace(
+        "__LOGON_TYPES__", " or ".join(f"Data[@Name='LogonType']='{value}'" for value in INTERACTIVE_LOGON_TYPES),
+    )
     try:
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
         text, _ = _run_command([executable, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cancelled)
@@ -533,6 +718,11 @@ foreach ($filter in $sources) {
         result.statuses.append(SourceStatus("Windows Event Log", SourceState.ERROR, str(exc)))
     result.statuses.append(SourceStatus("Coverage", SourceState.LIMITED,
         "Lock/unlock requires prior Other Logon/Logoff auditing and Security log access. "
+        "Interactive logon/logoff requires Logon/Logoff auditing (types 2/10/11/12 only); "
+        "network, service and batch logons are excluded. RDP also uses TerminalServices operational logs. "
+        "SSH reads local OpenSSH server Operational/Admin channels, not file-only or outgoing client logs. "
+        "SSH authentication success is separate from a transport close; unnamed closes have unknown authentication. "
+        "Multiple sources can report the same session; rows are observations, not unique login counts. "
         "Modern Standby 506/507 and auxiliary session transitions 566 are included. "
         "Entry alone does not prove low-power residency; exit can be internal and is not proof of Wake-on-LAN. "
         "Reported sleep/DRIPS durations are shown when present; missing metrics are not zero. "
@@ -545,25 +735,29 @@ def _collect_linux(result: QueryResult, cancelled: threading.Event, progress: Ca
     if executable is None:
         result.statuses.append(SourceStatus("systemd journal", SourceState.ERROR, "journalctl was not found; this version requires systemd journal."))
         return
-    progress("Reading kernel and systemd power history...")
+    progress("Reading kernel, systemd and incoming SSH history...")
     command = [executable, "--no-pager", "--output=json", "--since", f"@{int(result.start.timestamp())}",
                "--until", f"@{int(result.end.timestamp())}",
                "_TRANSPORT=kernel", "+", "_SYSTEMD_UNIT=systemd-logind.service", "+",
                "_SYSTEMD_UNIT=systemd-suspend.service", "+", "_SYSTEMD_UNIT=systemd-hibernate.service", "+",
                "_SYSTEMD_UNIT=systemd-suspend-then-hibernate.service", "+", "_SYSTEMD_UNIT=systemd-hybrid-sleep.service", "+",
                "SYSLOG_IDENTIFIER=systemd-shutdown"]
+    for process in sorted(SSH_PROCESSES):
+        command.extend(["+", f"SYSLOG_IDENTIFIER={process}", "+", f"_COMM={process}"])
     _collect_source(result, "systemd journal", command, _parse_linux_journal, cancelled)
     result.statuses.append(SourceStatus("Coverage", SourceState.LIMITED,
         "History depends on journal retention, persistence and access. Lock/unlock is recognized only "
         "when logind explicitly records the session transition; desktop-only lock signals are not collected. "
-        "Missing shutdown records do not prove a crash."))
+        "Missing shutdown records do not prove a crash. SSH reads sshd journal records only; "
+        "file-only authentication logs are not collected. Unnamed SSH closes have unknown authentication. "
+        "RDP and general desktop logon/logoff history are only collected on Windows."))
 
 
 def query_events(
     start: dt.datetime, end: dt.datetime, cancelled: threading.Event,
     progress: Callable[[str], None] = lambda _message: None,
 ) -> QueryResult:
-    """Read local power history without changing settings or escalating privileges.
+    """Read local power and login history without changing settings or escalating privileges.
 
     Args:
         start: Inclusive timezone-aware start timestamp.
@@ -735,6 +929,7 @@ def _launch_gui() -> int:
             )
             self.worker: QueryWorker | None = None
             self.result: QueryResult | None = None
+            self.status_message = ""
             self.closing = False
             self.checkboxes: dict[EventKind, QtWidgets.QCheckBox] = {}
             self._build_ui()
@@ -766,10 +961,19 @@ def _launch_gui() -> int:
             self.cancel_button = QtWidgets.QPushButton("Cancel")
             self.cancel_button.setEnabled(False)
             self.cancel_button.clicked.connect(self._cancel)
-            for widget in (QtWidgets.QLabel("Range"), self.range_box, QtWidgets.QLabel("From"),
-                           self.start_edit, QtWidgets.QLabel("Until"), self.end_edit,
-                           self.query_button, self.cancel_button):
+            for text, widget in (("Range", self.range_box), ("From", self.start_edit), ("Until", self.end_edit)):
+                label = QtWidgets.QLabel(text)
+                label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                bar.addWidget(label)
                 bar.addWidget(widget)
+            bar.addSpacing(8)
+            divider = QtWidgets.QFrame()
+            divider.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+            divider.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+            bar.addWidget(divider)
+            bar.addSpacing(8)
+            bar.addWidget(self.query_button)
+            bar.addWidget(self.cancel_button)
             layout.addLayout(bar)
             note = QtWidgets.QLabel("Local time. Start is inclusive; end is exclusive. Type filters apply instantly to loaded events.")
             note.setWordWrap(True)
@@ -803,17 +1007,38 @@ def _launch_gui() -> int:
             self.table.setWordWrap(False)
             self.table.setSortingEnabled(True)
             self.table.sortByColumn(0, QtCore.Qt.SortOrder.DescendingOrder)
-            self.table.verticalHeader().hide()
-            for index, width in enumerate((220, 155, 380, 220, 160)):
+            rows = self.table.verticalHeader()
+            rows.hide()
+            row_height = self.table.fontMetrics().height() + 4
+            rows.setMinimumSectionSize(row_height)
+            rows.setDefaultSectionSize(row_height)
+            rows.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Fixed)
+            for index, width in enumerate((155, 380, 220, 160), start=1):
                 self.table.setColumnWidth(index, width)
             self.table.selectionModel().selectionChanged.connect(self._show_detail)
             self.detail = QtWidgets.QPlainTextEdit()
             self.detail.setReadOnly(True)
             self.detail.setPlaceholderText("Select an event to inspect its original evidence.")
+            xml_page = QtWidgets.QWidget()
+            xml_layout = QtWidgets.QVBoxLayout(xml_page)
+            xml_layout.setContentsMargins(0, 0, 0, 0)
+            self.xml_notice = QtWidgets.QLabel("Select an event to inspect its XML.")
+            self.xml_notice.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.xml_notice.setWordWrap(True)
+            self.xml_tree = QtWidgets.QTreeWidget()
+            self.xml_tree.setHeaderLabels(["Node", "Value", "Attributes"])
+            self.xml_tree.setAlternatingRowColors(True)
+            self.xml_tree.setUniformRowHeights(True)
+            self.xml_tree.setColumnWidth(0, 240)
+            self.xml_tree.setColumnWidth(1, 280)
+            self.xml_tree.hide()
+            xml_layout.addWidget(self.xml_notice)
+            xml_layout.addWidget(self.xml_tree, 1)
             self.sources = QtWidgets.QPlainTextEdit()
             self.sources.setReadOnly(True)
             tabs = QtWidgets.QTabWidget()
             tabs.addTab(self.detail, "Event details")
+            tabs.addTab(xml_page, "XML")
             tabs.addTab(self.sources, "Sources and coverage")
             splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
             splitter.addWidget(self.table)
@@ -821,7 +1046,8 @@ def _launch_gui() -> int:
             splitter.setSizes([470, 170])
             layout.addWidget(splitter, 1)
             self.summary = QtWidgets.QLabel("Ready")
-            self.summary.setWordWrap(True)
+            self.summary.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.summary.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
             self.export_button = QtWidgets.QPushButton("Export CSV...")
             self.export_button.setEnabled(False)
             self.export_button.clicked.connect(lambda: self._export(".csv"))
@@ -833,7 +1059,6 @@ def _launch_gui() -> int:
             footer.addWidget(self.export_button)
             footer.addWidget(self.export_json_button)
             layout.addLayout(footer)
-            self.statusBar().showMessage("Ready")
 
         def _restore_settings(self) -> None:
             """Restore presentation preferences; relative date ranges are not stored as fixed dates."""
@@ -843,13 +1068,16 @@ def _launch_gui() -> int:
             header = self.settings.value("columns")
             if isinstance(header, QtCore.QByteArray):
                 self.table.horizontalHeader().restoreState(header)
+            # Fit timestamps even when an older saved layout used a wider column.
+            self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
             value = str(self.settings.value("range", TimeRange.DAY.value))
             index = self.range_box.findText(value)
             self.range_box.setCurrentIndex(max(0, index))
             selected = self.settings.value("types")
             if isinstance(selected, list):
                 # Older releases saved only checked types; new categories must remain visible.
-                known = self.settings.value("knownTypes", [kind.value for kind in EventKind if kind not in MODERN_EVENT_KINDS])
+                known = self.settings.value("knownTypes", [kind.value for kind in EventKind
+                                            if kind not in MODERN_EVENT_KINDS | LOGIN_EVENT_KINDS])
                 for kind, checkbox in self.checkboxes.items():
                     if isinstance(known, list) and kind.value in known:
                         checkbox.setChecked(kind.value in selected)
@@ -901,13 +1129,13 @@ def _launch_gui() -> int:
             self.worker = QueryWorker(start, end, self)
             self.worker.completed.connect(self._loaded)
             self.worker.failed.connect(self._failed)
-            self.worker.progress.connect(self.statusBar().showMessage)
+            self.worker.progress.connect(self._set_status)
             self.worker.finished.connect(self._finished)
             self.query_button.setEnabled(False)
             self.cancel_button.setEnabled(True)
             self.export_button.setEnabled(False)
             self.export_json_button.setEnabled(False)
-            self.summary.setText("Querying... Previous results remain visible until the query completes.")
+            self._set_status("Querying...")
             self.worker.start()
 
         def _cancel(self) -> None:
@@ -915,27 +1143,26 @@ def _launch_gui() -> int:
             if self.worker is not None:
                 self.worker.cancelled.set()
                 self.cancel_button.setEnabled(False)
-                self.statusBar().showMessage("Cancelling...")
+                self._set_status("Cancelling...")
 
         def _loaded(self, result: object) -> None:
             """Install a completed result and display all source errors alongside successful sources."""
             if not isinstance(result, QueryResult):
                 return
             self.result = result
-            self.detail.clear()
+            self._clear_details()
             self.model.replace(result.events)
             self.sources.setPlainText("\n\n".join(
                 f"{status.source}: {status.state.value} ({status.count} matching events)\n{status.message}"
                 for status in result.statuses
             ))
+            self.status_message = ""
             self._filter()
-            errors = sum(status.state == SourceState.ERROR for status in result.statuses)
-            self.statusBar().showMessage(f"Query complete. {errors} unavailable source(s). See Sources and coverage.")
 
         def _failed(self, message: str) -> None:
             """Keep previous results on cancellation or unexpected errors and surface the cause."""
             self._filter()
-            self.statusBar().showMessage(message)
+            self._set_status("Cancelled" if message == "Query cancelled." else "Query failed")
             if message != "Query cancelled.":
                 QtWidgets.QMessageBox.warning(self, "Query failed", message)
 
@@ -965,21 +1192,81 @@ def _launch_gui() -> int:
                 return
             self.proxy.allowed = {kind for kind, checkbox in self.checkboxes.items() if checkbox.isChecked()}
             self.proxy.invalidate()
-            self.detail.clear()
+            self._clear_details()
             self.export_button.setEnabled(self.worker is None and self.proxy.rowCount() > 0)
             self.export_json_button.setEnabled(self.worker is None and self.proxy.rowCount() > 0)
+            self._update_summary()
+
+        def _set_status(self, message: str) -> None:
+            """Show query/export feedback in the same footer as the result count."""
+            self.status_message = message
+            self._update_summary()
+
+        def _update_summary(self) -> None:
+            """Keep the footer on one line; retain exact query times in its tooltip."""
             if self.result is None:
-                self.summary.setText("No query results yet.")
+                self.summary.setText(self.status_message or "Ready")
+                self.summary.setToolTip(self.summary.text())
                 return
-            start = self.result.start.astimezone().strftime(TIMESTAMP_FORMAT)
-            end = self.result.end.astimezone().strftime(TIMESTAMP_FORMAT)
-            self.summary.setText(f"{self.proxy.rowCount():,} shown / {len(self.model.events):,} loaded  |  {start} to {end}")
+            shown, total = self.proxy.rowCount(), len(self.model.events)
+            count = f"{total:,} events" if shown == total else f"{shown:,} / {total:,} events"
+            start, end = self.result.start.astimezone(), self.result.end.astimezone()
+            parts = [count, self.status_message or f"{start:%Y-%m-%d %H:%M} – {end:%Y-%m-%d %H:%M}"]
+            errors = sum(status.state == SourceState.ERROR for status in self.result.statuses)
+            if errors:
+                parts.append(f"{errors} source{'s' if errors != 1 else ''} unavailable")
+            self.summary.setText("  |  ".join(parts))
+            self.summary.setToolTip(
+                f"{shown:,} shown / {total:,} loaded\n"
+                f"Local range: {start.strftime(TIMESTAMP_FORMAT)} to {end.strftime(TIMESTAMP_FORMAT)} (end exclusive)\n"
+                f"{self.status_message or 'Query complete'}. See Sources and coverage for log availability."
+            )
+
+        def _clear_details(self) -> None:
+            """Clear both evidence views when the selection or query changes."""
+            self.detail.clear()
+            self.xml_tree.clear()
+            self.xml_tree.hide()
+            self.xml_notice.setText("Select an event to inspect its XML.")
+            self.xml_notice.show()
+
+        def _show_xml(self, event: PowerEvent) -> None:
+            """Display XML structure as plain text, preserving child order and namespaces in tooltips."""
+            self.xml_tree.clear()
+            self.xml_tree.hide()
+            self.xml_notice.show()
+            if not event.xml:
+                self.xml_notice.setText("This event has no XML record. See Event details for its original evidence.")
+                return
+            try:
+                root = ET.fromstring(event.xml)
+            except ET.ParseError as exc:
+                self.xml_notice.setText(f"Cannot display this XML: {exc}. See Event details for the original record.")
+                return
+            pending = [(root, self.xml_tree.invisibleRootItem())]
+            while pending:
+                element, parent = pending.pop()
+                name = element.tag.rsplit("}", 1)[-1]
+                if name == "Data" and element.get("Name"):
+                    name = f"Data [{element.get('Name')}]"
+                value = element.text or ""
+                attributes = "; ".join(f"{key.rsplit('}', 1)[-1]}={json.dumps(value, ensure_ascii=False)}"
+                                       for key, value in element.attrib.items())
+                item = QtWidgets.QTreeWidgetItem([name, value.strip(), attributes])
+                item.setToolTip(0, element.tag)
+                item.setToolTip(1, value)
+                item.setToolTip(2, "\n".join(f"{key}={value}" for key, value in element.attrib.items()))
+                parent.addChild(item)
+                pending.extend((child, item) for child in reversed(element))
+            self.xml_tree.expandToDepth(1)
+            self.xml_notice.hide()
+            self.xml_tree.show()
 
         def _show_detail(self) -> None:
             """Show the selected row's metadata and original evidence without interpreting it as HTML."""
             index = self.table.currentIndex()
             if not index.isValid():
-                self.detail.clear()
+                self._clear_details()
                 return
             event = self.model.events[self.proxy.mapToSource(index).row()]
             self.detail.setPlainText(
@@ -988,6 +1275,7 @@ def _launch_gui() -> int:
                 f"Boot ID: {event.boot_id or 'Not recorded'}\nRecord ID: {event.record_id or 'Not recorded'}\n"
                 f"\n{event.summary}\n\nOriginal evidence:\n{event.raw}"
             )
+            self._show_xml(event)
 
         def _export(self, suffix: str) -> None:
             """Save visible rows in display order using the requested .csv or .json format."""
@@ -1015,7 +1303,8 @@ def _launch_gui() -> int:
             except (OSError, ValueError) as exc:
                 QtWidgets.QMessageBox.warning(self, "Export failed", str(exc))
                 return
-            self.statusBar().showMessage(f"Exported {len(events):,} visible events to {path}")
+            self._set_status(f"Exported {len(events):,} events ({format_name})")
+            self.summary.setToolTip(f"{self.summary.toolTip()}\nSaved to: {path}")
 
         def closeEvent(self, event: QtGui.QCloseEvent) -> None:
             """Cancel active collection before closing, then persist presentation preferences."""

@@ -21,6 +21,7 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
+from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -217,6 +218,158 @@ class ParserTests(unittest.TestCase):
         self.assertEqual([event.kind for event in events], [app.EventKind.SLEEP, app.EventKind.WAKE, app.EventKind.LOCK, app.EventKind.UNLOCK])
         self.assertTrue(all(event.boot_id == "boot-fixture" for event in events))
 
+    def test_windows_interactive_logons_exclude_network_and_helper_accounts(self) -> None:
+        """RDP is a type 10 session; network/service logons must not become SSH logins."""
+        for event_id, kind in ((4624, app.EventKind.LOGON), (4634, app.EventKind.LOGOFF)):
+            for logon_type in ("2", "10", "11", "12", "3", "4", "5", "7", "9", "13"):
+                with self.subTest(event_id=event_id, logon_type=logon_type):
+                    data = (f'<Data Name="LogonType">{logon_type}</Data>'
+                            '<Data Name="TargetUserName">demo</Data><Data Name="TargetDomainName">EXAMPLE</Data>'
+                            '<Data Name="TargetLogonId">0x123</Data><Data Name="IpAddress">192.0.2.1</Data>')
+                    events = app._parse_windows_xml(_windows_xml(app.SECURITY_PROVIDER, event_id, data))
+                    if logon_type in ("2", "10", "11", "12"):
+                        self.assertEqual(events[0].kind, kind)
+                        self.assertIn("EXAMPLE\\demo", events[0].session)
+                        self.assertIn("0x123", events[0].session)
+                        self.assertIn("192.0.2.1", events[0].summary)
+                    else:
+                        self.assertEqual(events, [])
+        for sid in ("S-1-5-90-0-1", "S-1-5-96-0-1"):
+            self.assertEqual(app._parse_windows_xml(_windows_xml(
+                app.SECURITY_PROVIDER, 4624,
+                f'<Data Name="LogonType">2</Data><Data Name="TargetUserSid">{sid}</Data>',
+            )), [])
+
+    def test_windows_rdp_userdata_and_console_are_distinct(self) -> None:
+        """Namespaced UserData is parsed even without localized message resources."""
+        for event_id, kind in ((21, app.EventKind.RDP_CONNECT), (23, app.EventKind.LOGOFF),
+                               (24, app.EventKind.RDP_DISCONNECT), (25, app.EventKind.RDP_RECONNECT)):
+            with self.subTest(event_id=event_id):
+                xml = _windows_xml(app.RDP_PROVIDER, event_id).replace(
+                    "<EventData></EventData>",
+                    '<UserData><EventXML xmlns="Event_NS"><User>EXAMPLE\\demo</User>'
+                    '<SessionID>7</SessionID><Address>2001:db8::1</Address></EventXML></UserData>',
+                )
+                event = app._parse_windows_xml(xml)[0]
+                self.assertEqual(event.kind, kind)
+                self.assertEqual(event.session, "EXAMPLE\\demo (session 7)")
+                self.assertIn("2001:db8::1", event.summary)
+                self.assertEqual(event.raw, xml)
+                self.assertEqual(app._parse_windows_xml(xml.replace(app.RDP_PROVIDER, "Other")), [])
+                if event_id in (24, 25):
+                    self.assertEqual(app._parse_windows_xml(xml.replace("2001:db8::1", "LOCAL")), [])
+                elif event_id == 21:
+                    local = app._parse_windows_xml(xml.replace("2001:db8::1", "LOCAL"))[0]
+                    self.assertEqual(local.kind, app.EventKind.LOGON)
+        # Event 23 normally has no network address; never guess its transport.
+        event = app._parse_windows_xml(_windows_xml(app.RDP_PROVIDER, 23, '<Data Name="SessionID">7</Data>'))[0]
+        self.assertEqual(event.kind, app.EventKind.LOGOFF)
+
+    def test_windows_rdp_security_requires_remote_station(self) -> None:
+        """Fast user switching produces the same IDs but is not an RDP connection."""
+        for event_id, kind in ((4778, app.EventKind.RDP_RECONNECT), (4779, app.EventKind.RDP_DISCONNECT)):
+            data = ('<Data Name="AccountName">demo</Data><Data Name="AccountDomain">EXAMPLE</Data>'
+                    '<Data Name="LogonID">0x456</Data><Data Name="SessionName">RDP-Tcp#2</Data>'
+                    '<Data Name="ClientAddress">192.0.2.2</Data><Data Name="ClientName">CLIENT</Data>')
+            xml = _windows_xml(app.SECURITY_PROVIDER, event_id, data)
+            event = app._parse_windows_xml(xml)[0]
+            self.assertEqual(event.kind, kind)
+            self.assertIn("0x456", event.session)
+            self.assertIn("CLIENT", event.summary)
+            self.assertIn("192.0.2.2", event.summary)
+            self.assertEqual(app._parse_windows_xml(xml.replace("RDP-Tcp#2", "Console")), [])
+
+    def test_ssh_authentication_and_disconnect_evidence(self) -> None:
+        """Preserve endpoints and users without turning failed attempts into logins."""
+        cases = (
+            ("Accepted publickey for demo from 2001:db8::1 port 63022 ssh2: ED25519 fingerprint",
+             app.EventKind.SSH_CONNECT, "demo"),
+            ("sshd: Accepted keyboard-interactive/pam for EXAMPLE\\demo from 192.0.2.1 port 12345 ssh2",
+             app.EventKind.SSH_CONNECT, "EXAMPLE\\demo"),
+            ("Disconnected from user demo 2001:db8::1 port 63022", app.EventKind.SSH_DISCONNECT, "demo"),
+            ("Connection reset by user demo 192.0.2.1 port 12345", app.EventKind.SSH_DISCONNECT, "demo"),
+            ("Received disconnect from 192.0.2.1 port 12345:11: disconnected by user",
+             app.EventKind.SSH_DISCONNECT, ""),
+        )
+        for message, kind, user in cases:
+            with self.subTest(message=message):
+                matched = app._parse_ssh_message(message)
+                self.assertIsNotNone(matched)
+                assert matched is not None
+                self.assertEqual((matched[0], matched[2]), (kind, user))
+                if not user:
+                    self.assertIn("authentication unknown", matched[1])
+        for message in (
+            "Failed password for demo from 192.0.2.1 port 12345 ssh2",
+            "Connection from 192.0.2.1 port 12345 on 192.0.2.2 port 22",
+            "Partial publickey for demo from 192.0.2.1 port 12345 ssh2",
+            "Connection closed by authenticating user demo 192.0.2.1 port 12345 [preauth]",
+            "Disconnected from invalid user demo 192.0.2.1 port 12345",
+            "Received disconnect from 192.0.2.1 port 12345:11: Bye [preauth]",
+        ):
+            with self.subTest(message=message):
+                self.assertIsNone(app._parse_ssh_message(message))
+
+    def test_ssh_platform_parsers_validate_server_source(self) -> None:
+        """All platforms use server evidence, retaining raw records and process identity."""
+        message = "Accepted password for demo from 192.0.2.1 port 54321 ssh2"
+        data = f'<Data Name="process">sshd</Data><Data Name="payload">{escape(message)}</Data>'
+        xml = _windows_xml("OpenSSH", 4, data)
+        event = app._parse_windows_xml(xml)[0]
+        self.assertEqual(event.kind, app.EventKind.SSH_CONNECT)
+        self.assertEqual(event.raw, xml)
+        self.assertEqual(app._parse_windows_xml(xml.replace(">sshd<", ">ssh<")), [])
+        self.assertEqual(app._parse_windows_xml(xml.replace('Name="OpenSSH"', 'Name="Other"')), [])
+        linux = {"SYSLOG_IDENTIFIER": "sshd-session", "_PID": "321", "MESSAGE": message,
+                 "__REALTIME_TIMESTAMP": str(int(STAMP.timestamp() * 1_000_000)), "_BOOT_ID": "boot-ssh"}
+        event = app._parse_linux_journal(json.dumps(linux))[0]
+        self.assertEqual(event.kind, app.EventKind.SSH_CONNECT)
+        self.assertEqual(event.session, "demo; PID 321")
+        self.assertEqual(event.boot_id, "boot-ssh")
+        linux["SYSLOG_IDENTIFIER"] = "ssh"
+        self.assertEqual(app._parse_linux_journal(json.dumps(linux)), [])
+        mac = {"processImagePath": "/usr/sbin/sshd", "processID": 321,
+               "timestamp": STAMP.isoformat(), "eventMessage": message, "bootUUID": "boot-ssh"}
+        event = app._parse_mac_ssh(json.dumps(mac))[0]
+        self.assertEqual(event.kind, app.EventKind.SSH_CONNECT)
+        self.assertEqual(event.session, "demo; PID 321")
+        self.assertEqual(event.timestamp, STAMP)
+        mac["processImagePath"] = "/usr/bin/ssh"
+        self.assertEqual(app._parse_mac_ssh(json.dumps(mac)), [])
+
+    def test_windows_collector_includes_sessions_and_survives_denied_security(self) -> None:
+        """Unavailable Security must not hide readable RDP/SSH sources."""
+        records = [
+            {"kind": "status", "source": "Security", "state": "Unavailable", "message": "Access denied"},
+            {"kind": "event", "xml": _windows_xml(app.RDP_PROVIDER, 21,
+                '<Data Name="Address">192.0.2.1</Data><Data Name="User">demo</Data>')},
+            {"kind": "event", "xml": _windows_xml("OpenSSH", 4,
+                '<Data Name="process">sshd</Data><Data Name="payload">Accepted publickey for demo from 192.0.2.1 port 54321 ssh2</Data>')},
+        ]
+        result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1))
+        with patch.object(app.Environment, "find_pwsh", return_value="pwsh"), patch.object(
+            app, "_run_command", return_value=("\n".join(json.dumps(record) for record in records), ""),
+        ) as command:
+            app._collect_windows(result, threading.Event(), lambda _text: None)
+        script = base64.b64decode(command.call_args.args[0][-1]).decode("utf-16-le")
+        for token in ("4800,4801,4778,4779", "4624,4634", "21,23,24,25", "OpenSSH/Operational",
+                      "OpenSSH/Admin", "FilterXPath", "Data[@Name='LogonType']='10'"):
+            self.assertIn(token, script)
+        self.assertEqual([event.kind for event in result.events], [app.EventKind.RDP_CONNECT, app.EventKind.SSH_CONNECT])
+        self.assertEqual(result.statuses[0].state, app.SourceState.ERROR)
+
+    def test_unix_collectors_request_sshd_logs(self) -> None:
+        """Parser support must be reachable from native source queries on both Unix hosts."""
+        for collector in (app._collect_macos, app._collect_linux):
+            result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1))
+            with patch.object(app.Environment, "which", return_value="journalctl"), patch.object(
+                app, "_run_command", return_value=("", ""),
+            ) as command:
+                collector(result, threading.Event(), lambda _text: None)
+            arguments = " ".join(" ".join(call.args[0]) for call in command.call_args_list)
+            for process in ("sshd", "sshd-session", "sshd-auth"):
+                self.assertIn(process, arguments)
+
     def test_unavailable_source_is_not_an_empty_success(self) -> None:
         """Permission failure leaves a source diagnostic rather than an empty success."""
         result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1))
@@ -328,6 +481,7 @@ class GuiTests(unittest.TestCase):
                     window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), modern_events))
                     self.assertEqual(window.proxy.rowCount(), 3)
                     self.assertFalse(window.checkboxes[app.EventKind.STARTUP].isChecked())
+                    self.assertTrue(all(window.checkboxes[kind].isChecked() for kind in app.LOGIN_EVENT_KINDS))
                     window.checkboxes[app.EventKind.POWER_SESSION].setChecked(False)
                     self.assertEqual(window.proxy.rowCount(), 2)
                     self.assertEqual(query.call_count, 1)
@@ -336,6 +490,49 @@ class GuiTests(unittest.TestCase):
                     window._restore_settings()
                     self.assertFalse(window.checkboxes[app.EventKind.POWER_SESSION].isChecked())
                     self.assertTrue(window.checkboxes[app.EventKind.STANDBY_EXIT].isChecked())
+                    # Settings from the immediately preceding release know Modern Standby,
+                    # but must still expose new login categories and let users persist filters.
+                    window.settings.setValue("knownTypes", [kind.value for kind in app.EventKind
+                                                           if kind not in app.LOGIN_EVENT_KINDS])
+                    window._restore_settings()
+                    login_events = [app.PowerEvent(STAMP, kind, kind.value, "fixture") for kind in app.LOGIN_EVENT_KINDS]
+                    window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), login_events))
+                    self.assertEqual(window.proxy.rowCount(), len(app.LOGIN_EVENT_KINDS))
+                    window.checkboxes[app.EventKind.SSH_CONNECT].setChecked(False)
+                    self.assertEqual(window.proxy.rowCount(), len(app.LOGIN_EVENT_KINDS) - 1)
+                    # XML remains separate from localized messages, with repeated nodes
+                    # and markup-like values preserved as plain text in source order.
+                    xml = _windows_xml(app.SECURITY_PROVIDER, 4800,
+                        '<Data Name="TargetUserName">demo</Data>'
+                        '<Data Name="Note">&lt;b&gt;literal&lt;/b&gt;</Data><Data Name="Note">second</Data>')
+                    xml_event = app._parse_windows_xml(xml, "Localized description")[0]
+                    self.assertEqual(xml_event.xml, xml)
+                    window._select_types(True)
+                    window._loaded(app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), [xml_event]))
+                    window.table.selectRow(0)
+                    application.processEvents()
+                    root_item = window.xml_tree.topLevelItem(0)
+                    self.assertEqual(root_item.text(0), "Event")
+                    self.assertIn("schemas.microsoft.com", root_item.toolTip(0))
+                    data_item = root_item.child(1)
+                    self.assertEqual(data_item.text(0), "EventData")
+                    self.assertEqual(data_item.childCount(), 3)
+                    self.assertEqual(data_item.child(1).text(0), "Data [Note]")
+                    self.assertEqual(data_item.child(1).text(1), "<b>literal</b>")
+                    self.assertEqual(data_item.child(2).text(1), "second")
+                    self.assertIn('Name="Note"', data_item.child(1).text(2))
+                    self.assertIn("Localized description", window.detail.toPlainText())
+                    # Changing to non-XML evidence or clearing the filter removes stale XML.
+                    window._loaded(result)
+                    window.table.selectRow(0)
+                    application.processEvents()
+                    self.assertEqual(window.xml_tree.topLevelItemCount(), 0)
+                    self.assertIn("no XML record", window.xml_notice.text())
+                    window._show_xml(app.PowerEvent(STAMP, app.EventKind.LOCK, "bad", "fixture", xml="<broken>"))
+                    self.assertIn("Cannot display", window.xml_notice.text())
+                    window._select_types(False)
+                    self.assertEqual(window.xml_tree.topLevelItemCount(), 0)
+                    self.assertIn("Select an event", window.xml_notice.text())
             finally:
                 QtCore.QSettings.setDefaultFormat(original)
 

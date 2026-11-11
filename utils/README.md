@@ -25,6 +25,7 @@ ownership and public exports.
 | [Fonts](docs/font.md) | Font, FontFace, FontStyle | [font.py](font.py) |
 | [Keyboard](docs/keyboard.md) | Keyboard, WindowsScanCode, ScanCodePrefix | [keyboard.py](keyboard.py) |
 | [Unicode text](docs/unicode_text.md) | UnicodeText, UnicodeCharacter, UnicodeReport, TextStatistics | [unicode_text.py](unicode_text.py) |
+| [Tk text input](docs/tk_input.md) | TkTextInput | [tk_input.py](tk_input.py) |
 | [Qt controls](docs/qt.md) | NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls | [qt_widgets.py](qt_widgets.py) |
 
 ## Imports from category scripts

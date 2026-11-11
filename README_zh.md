@@ -317,7 +317,7 @@
 | `tools/windows/device-ejection-history.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
 | `tools/windows/service-restarter.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | `tools/others/power-status-viewer.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
-| `tools/others/power-event-viewer.py` | 开关机、睡眠唤醒和锁定/解锁历史日志 GUI 查看器。Linux 下锁屏历史支持有限。 | **macOS / Windows 10+ / 使用 systemd 的 Linux 桌面**<br />**Python 库**：`PySide6` |
+| `tools/others/power-event-viewer.py` | 电源与登录历史查看器：展示电源状态变化、锁定/解锁和传入 SSH 事件，以及 Windows 交互式登录/注销与 RDP 连接。 | **macOS / Windows 10+ / 使用 systemd 的 Linux**；需要可访问的留存日志，Windows Security 事件需要预先开启审计，Linux 锁屏历史支持有限<br />**Python 库**：`PySide6` |
 | `tools/others/disk-smart-info-viewer.py`         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools` |
 | `tools/macos/rdp-clipboard-image-repair.py`  | 修复在 macOS 中通过 Windows App (RDP) 远程控制 Windows 设备时，从 Windows 复制到剪贴板后，无法在 macOS 中正常粘贴的图片。可将剪贴板中伪装成 png 的 tiff 图片恢复成有效的 PNG 剪贴板数据。<br /> 加 `--force` 参数时无需确认，直接恢复。 | **仅 macOS**；系统内置 `osascript` 和 AppKit                 |
 
