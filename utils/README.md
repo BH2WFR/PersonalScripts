@@ -24,6 +24,7 @@ ownership and public exports.
 | [LLM](docs/llm.md) | Llm, LlmSettings, LlmReasoning, LlmResponse, LlmProfile, LlmProfiles | [llm.py](llm.py); private [_llm_qt.py](_llm_qt.py) |
 | [Fonts](docs/font.md) | Font, FontFace, FontStyle | [font.py](font.py) |
 | [Keyboard](docs/keyboard.md) | Keyboard, WindowsScanCode, ScanCodePrefix | [keyboard.py](keyboard.py) |
+| [Unicode text](docs/unicode_text.md) | UnicodeText, UnicodeCharacter, UnicodeReport, TextStatistics | [unicode_text.py](unicode_text.py) |
 | [Qt controls](docs/qt.md) | NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls | [qt_widgets.py](qt_widgets.py) |
 
 ## Imports from category scripts

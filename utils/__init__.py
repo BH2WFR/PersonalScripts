@@ -33,6 +33,7 @@ from .pdf import Pdf, PdfBookmark
 from .llm import Llm, LlmResponse, LlmSettings, LlmProfile, LlmProfiles, LlmReasoning
 from .font import Font, FontFace, FontStyle
 from .keyboard import Keyboard, ScanCodePrefix, WindowsScanCode
+from .unicode_text import UnicodeText, UnicodeCharacter, UnicodeReport, TextStatistics
 
 # Export only public helpers, not package submodules such as ``utils.input``
 # that would shadow Python built-ins during ``from utils import *``.
@@ -55,5 +56,6 @@ __all__ = [
     "Font", "FontFace", "FontStyle", "DiskInfo", "DiskScan", "PdfBookmark",
     "Llm", "LlmResponse", "LlmSettings", "LlmProfile", "LlmProfiles", "LlmReasoning",
     "Keyboard", "ScanCodePrefix", "WindowsScanCode",
+    "UnicodeText", "UnicodeCharacter", "UnicodeReport", "TextStatistics",
     "ConfigStore", "ConfigBusyError", "EncryptedValue", "APP_DIRECTORY_NAME", "GENERAL_CONFIG",
 ]

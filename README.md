@@ -292,7 +292,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/others/unicode-inspector.py` | **Unicode character information viewer:**<br />Shows each character's position, hexadecimal and decimal code points, and description, with dedicated notation for spaces and control characters. | Linux clipboard access requires `wl-paste` or `xclip` |
+| `tools/others/unicode-inspector.py` | **Unicode text inspector:** Shows code points, UTF-8 bytes, names and categories, including invisible characters, with text statistics and copyable reports. | Python with Tkinter; Windows/macOS/Linux desktop (X11 or XWayland on Linux) |
 
 ### Display Tools
 

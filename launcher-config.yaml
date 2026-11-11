@@ -88,6 +88,7 @@ ignore-list:
         # 规范：no-gui, wayland, x11
         no-gui: # 下列程序在列出时会带上 `[GUI]` 的尾巴
             - "others/script-to-app.py"
+            - "others/unicode-inspector.py"
             - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
             - "document-processing/pdf-binarizer.py"

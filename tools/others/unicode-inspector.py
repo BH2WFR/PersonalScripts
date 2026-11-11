@@ -1,233 +1,245 @@
 #!/usr/bin/env python3
-"""Implementation notes.
+"""Standalone port of the text_actions Unicode inspector's Tk interface.
 
-Keep invisible/control-character rendering distinct from the original
-character value. Clipboard retrieval must remain platform-specific.
+Analysis belongs to utils.unicode_text; keep original text separate from display
+labels. All Tk calls stay on the GUI thread. Do not import the source project's
+macOS selection hooks, named pasteboards or process-launch helpers.
 """
 
-import os
-import sys
+from __future__ import annotations
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils import *  # noqa: E402
 
 HELP = f"""{FLYellow}UNICODE INSPECTOR{CRst}
 
-Inspect character code points and names, including invisible and control characters.
-Accepts text or clipboard input.
+Inspect text in a desktop window: code points, UTF-8 bytes, Unicode names and
+categories, including invisible characters, with text statistics and copyable reports.
 
 {FLYellow}Requirements:{CRst}
-  Project runtime. Clipboard: PowerShell on Windows, pbpaste on macOS,
-  wl-paste on Linux Wayland or xclip on X11.
+  Python with Tkinter; Windows, macOS or Linux with X11/XWayland.
 
 {FLYellow}Usage:{CRst}
-  python unicode-inspector.py [TEXT | --clip] [--pause]
+  python unicode-inspector.py [TEXT ... | --clip]
+  Omit TEXT to enter text in the window; --clip reads the clipboard.
 """
 
-if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import tkinter as tk
 
 
-try:
-    import unicodedata
-except ImportError:
-    unicodedata = None
-import subprocess
+class UnicodeInspector:
+    """Editable text, statistics and a character table using only Tk clipboard I/O."""
 
-REPLACE_MAP = {
-    "\x00":"[NUL]",  "\x01":"[SOH]",  "\x02":"[STX]",  "\x03":"[ETX]",
-    "\x04":"[EOT]",  "\x05":"[ENQ]",  "\x06":"[ACK]",  "\x07":"[\\a]",
-    "\x08":"[\\b]",  "\x09":"[\\t]",  "\x0a":"[\\n]",  "\x0b":"[\\v]",
-    "\x0c":"[\\f]",  "\x0d":"[\\r]",  "\x0e":"[SO]",   "\x0f":"[SI]",
-    "\x10":"[DLE]",  "\x11":"[DC1]",  "\x12":"[DC2]",  "\x13":"[DC3]",
-    "\x14":"[DC4]",  "\x15":"[NAK]",  "\x16":"[SYN]",  "\x17":"[ETB]",
-    "\x18":"[CAN]",  "\x19":"[EM]",   "\x1a":"[SUB]",  "\x1b":"[ESC]",
-    "\x1c":"[FS]",   "\x1d":"[GS]",   "\x1e":"[RS]",   "\x1f":"[US]",
-    " ":   "[sp]",   "\x7f":"[DEL]",
+    ROW_BATCH = 400
 
-    "\u3000": "[ideo sp]",     "\u2002": "[en sp]",
-    "\u2003": "[em sp]",       "\u2007": "[fig sp]",
-    "\u2008": "[punct sp]",    "\u2009": "[thin sp]",
-    "\u200A": "[hair sp]",     "\u200D": "[ZWJ]",
-    "\uFFF9": "[interlinear]", "\uFFFA": "[annot sep]",
-    "\uFFFB": "[annot end]",
-    "\uFFFC":"[obj rep]",      "\uFFFD":"[rep chr]",
-    "\uFFFE":"[not char]",     "\uFFFF":"[not char]",
-    "\u00A0":"[nbrk sp] ",     "\u2000":"[en quad]",
-    "\u2001":"[em quad]",      "\u2004":"[1/3em sp]",
-    "\u2005":"[1/4em sp]",     "\u2006":"[1/6em sp]",
-    "\u200B":"[ZWSP] ",        "\u200C":"[ZWNJ] ",
-    "\u200E":"[LRM] ",         "\u200F":"[RLM] ",
-    "\u202A":"[LRE]",          "\u202B":"[RLE]",
-    "\u202C":"[PDF]",          "\u202D":"[LRO]",
-    "\u202E":"[RLO]",          "\u202F":"[narrow NBSP]",
-    "\u2028":"[LSEP]",         "\u2029":"[PSEP]",
-    "\u205F":"[med math sp] ",     "\u2060":"[WJ] ",
-    "\uFEFF":"[ZWNBSP]",
-}
+    def __init__(self, root: tk.Tk, text: str = "") -> None:
+        import tkinter as tk
+        from tkinter import ttk
+        from tkinter.scrolledtext import ScrolledText
 
-DESC_CONTROL = {
-    0x00: "NULL",                   0x01: "START OF HEADING",
-    0x02: "START OF TEXT",          0x03: "END OF TEXT",
-    0x04: "END OF TRANSMISSION",    0x05: "ENQUIRY",
-    0x06: "ACKNOWLEDGE",            0x07: "BELL",
-    0x08: "BACKSPACE",              0x09: "HORIZONTAL TABULATION",
-    0x0A: "LINE FEED",              0x0B: "VERTICAL TABULATION",
-    0x0C: "FORM FEED",              0x0D: "CARRIAGE RETURN",
-    0x0E: "SHIFT OUT",              0x0F: "SHIFT IN",
-    0x10: "DATA LINK ESCAPE",       0x11: "DEVICE CONTROL ONE",
-    0x12: "DEVICE CONTROL TWO",     0x13: "DEVICE CONTROL THREE",
-    0x14: "DEVICE CONTROL FOUR",    0x15: "NEGATIVE ACKNOWLEDGE",
-    0x16: "SYNCHRONOUS IDLE",       0x17: "END OF TRANSMISSION BLOCK",
-    0x18: "CANCEL",                 0x19: "END OF MEDIUM",
-    0x1A: "SUBSTITUTE",             0x1B: "ESCAPE",
-    0x1C: "FILE SEPARATOR",         0x1D: "GROUP SEPARATOR",
-    0x1E: "RECORD SEPARATOR",       0x1F: "UNIT SEPARATOR",
-    0x7F: "DELETE",
-}
+        self.root = root
+        self._render_job: str | None = None
+        self.report = UnicodeText.inspect("")
+        root.title("Unicode Inspector")
+        root.geometry("1100x720")
+        root.minsize(800, 500)
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+        body = ttk.Frame(root, padding=12)
+        body.grid(sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(3, weight=1)
 
-DESC_SPECIAL = {
-    0xFFFC: "OBJECT REPLACEMENT CHARACTER",
-    0xFFFD: "REPLACEMENT CHARACTER",
-    0xFFFE: "NOT A CHARACTER",
-    0xFFFF: "NOT A CHARACTER",
-}
+        header = ttk.Frame(body)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Text to inspect").grid(row=0, column=0, sticky="w")
+        ttk.Button(header, text="Paste", command=self.paste).grid(row=0, column=1, padx=4)
+        ttk.Button(header, text="Clear", command=lambda: self.set_text("")).grid(row=0, column=2, padx=4)
+        ttk.Button(header, text="Analyze", command=self.analyze).grid(row=0, column=3, padx=(4, 0))
+        self.original = ScrolledText(body, height=6, wrap="word", font="TkDefaultFont", undo=True)
+        self.original.grid(row=1, column=0, sticky="ew", pady=(6, 12))
 
-def pad_to_width(s: str, target_width: int) -> str:
-    """Pad a string to a fixed display width. Truncates if too long."""
-    current = Console.display_width(s)
-    if current > target_width:
-        # Truncate character by character until it fits, add "…"
-        while current > target_width - 1 and len(s) > 0:
-            s = s[:-1]
-            current = Console.display_width(s)
-        return s + "…"
-    return s + " " * (target_width - current)
+        summary = ttk.Frame(body)
+        summary.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        self.statistics: dict[str, tk.StringVar] = {}
+        for column, (label, _) in enumerate(self.report.statistics.items()):
+            block = ttk.Frame(summary)
+            block.grid(row=0, column=column, padx=(0, 14), sticky="w")
+            ttk.Label(block, text=label).pack(side="left", padx=(0, 5))
+            value = tk.StringVar(root, "0")
+            self.statistics[label] = value
+            ttk.Entry(block, width=9, state="readonly", textvariable=value, justify="right").pack(side="left")
+
+        table_frame = ttk.Frame(body)
+        table_frame.grid(row=3, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        self.table = ttk.Treeview(table_frame, columns=UnicodeText.COLUMNS, show="headings", selectmode="extended")
+        widths = (60, 150, 95, 80, 120, 180, 330)
+        for column, width in zip(UnicodeText.COLUMNS, widths):
+            self.table.heading(column, text=column)
+            self.table.column(column, width=width, minwidth=50, stretch=column in ("Character", "Category", "Name"))
+        for tag, color in (("control", "#b71c1c"), ("special", "#267333"),
+                           ("non_ascii", "#1565c0"), ("non_bmp", "#875020")):
+            self.table.tag_configure(tag, foreground=color)
+        vertical = ttk.Scrollbar(table_frame, orient="vertical", command=self.table.yview)
+        horizontal = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
+        self.table.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        self.table.grid(row=0, column=0, sticky="nsew")
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+
+        footer = ttk.Frame(body)
+        footer.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        footer.columnconfigure(0, weight=1)
+        self.status = tk.StringVar(root, "")
+        ttk.Label(footer, textvariable=self.status, wraplength=360).grid(row=0, column=0, sticky="w")
+        ttk.Button(footer, text="Copy Original", command=self.copy_original).grid(row=0, column=1, padx=4)
+        ttk.Button(footer, text="Copy Selected Rows", command=self.copy_rows).grid(row=0, column=2, padx=4)
+        ttk.Button(footer, text="Copy Full Report", command=self.copy_report).grid(row=0, column=3, padx=(4, 0))
+
+        self.original.bind("<<Modified>>", self._on_modified)
+        modifier = "Command" if root.tk.call("tk", "windowingsystem") == "aqua" else "Control"
+        self.table.bind(f"<{modifier}-c>", self.copy_rows)
+        root.bind(f"<{modifier}-Return>", self._analyze_event)
+        root.bind(f"<{modifier}-w>", self.close)
+        root.bind("<Escape>", self.close)
+        root.protocol("WM_DELETE_WINDOW", self.close)
+        self.set_text(text)
+        self.original.focus_set()
+
+    def _on_modified(self, event: object = None) -> None:
+        if self.original.edit_modified():
+            self.original.edit_modified(False)
+            self.status.set("Text changed. Analyze to update the table.")
+
+    def _analyze_event(self, event: object = None) -> str:
+        self.analyze()
+        return "break"
+
+    def set_text(self, text: str) -> None:
+        """Replace the editable text verbatim, including blank-only input, and analyze."""
+        self.original.delete("1.0", "end")
+        self.original.insert("1.0", text)
+        self.original.edit_modified(False)
+        self.analyze()
+
+    def analyze(self) -> None:
+        """Refresh the report and render table rows in cancellable GUI-thread batches."""
+        if self._render_job is not None:
+            self.root.after_cancel(self._render_job)
+            self._render_job = None
+        self.report = UnicodeText.inspect(self.original.get("1.0", "end-1c"))
+        for label, value in self.report.statistics.items():
+            self.statistics[label].set(str(value) if value is not None else "Invalid")
+        children = self.table.get_children()
+        if children:
+            self.table.delete(*children)
+        self.original.edit_modified(False)
+        self._render_rows(0)
+
+    def _render_rows(self, start: int) -> None:
+        self._render_job = None
+        end = min(start + self.ROW_BATCH, len(self.report.characters))
+        for row in self.report.characters[start:end]:
+            self.table.insert("", "end", iid=str(row.index), values=row.columns(), tags=(row.style,) if row.style else ())
+        if end < len(self.report.characters):
+            self.status.set(f"Loading {end:,} / {len(self.report.characters):,} code points…")
+            self._render_job = self.root.after(1, self._render_rows, end)
+        else:
+            if self.original.get("1.0", "end-1c") != self.report.text:
+                self.status.set("Text changed. Analyze to update the table.")
+            else:
+                self.status.set(f"{len(self.report.characters):,} code points. Indexes start at 0.")
+
+    def paste(self) -> None:
+        """Read text through Tk, leaving the window usable if the clipboard has no text."""
+        from tkinter import TclError
+
+        try:
+            text = self.root.clipboard_get()
+        except TclError:
+            self.status.set("Clipboard has no readable text. Enter or paste text manually.")
+            return
+        self.set_text(text)
+
+    def _copy(self, text: str) -> None:
+        from tkinter import TclError
+
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update_idletasks()
+        except TclError:
+            self.status.set("Cannot copy this text to the clipboard.")
+            return
+        self.status.set("Copied to clipboard.")
+
+    def copy_original(self) -> None:
+        """Copy the current editor contents rather than display labels or stale input."""
+        self._copy(self.original.get("1.0", "end-1c"))
+
+    def copy_rows(self, event: object = None) -> str:
+        """Copy selected rows in source order as tab-separated text."""
+        indexes = sorted(int(item) for item in self.table.selection())
+        if indexes:
+            self._copy("\n".join("\t".join(self.report.characters[index].columns()) for index in indexes))
+        else:
+            self.status.set("Select one or more character rows to copy.")
+        return "break"
+
+    def copy_report(self) -> None:
+        """Refresh first so the copied full report always matches the current text."""
+        self.analyze()
+        self._copy(UnicodeText.format_report(self.report))
+
+    def close(self, event: object = None) -> str:
+        """Cancel pending row insertion before destroying the window."""
+        if self._render_job is not None:
+            self.root.after_cancel(self._render_job)
+            self._render_job = None
+        self.root.destroy()
+        return "break"
 
 
 def main() -> int:
-    Console.print_banner("UNICODE INSPECTOR")
+    """Open the standalone inspector; help and argument errors need no GUI runtime."""
+    import argparse
 
-    CLIP_FLAGS = {"--clip", "--from-clipboard"}
-    from_clipboard = bool(CLIP_FLAGS & set(sys.argv))
-    do_pause = "--pause" in sys.argv
-    # Remove custom flags so they don't interfere with positional arg parsing
-    sys.argv = [a for a in sys.argv if a not in CLIP_FLAGS and a != "--pause"]
-
-    if "--help" in sys.argv or "-h" in sys.argv:
-
-        print(HELP)
-        return 0
-
-
-    #============ 用户交互 ===========
-    if from_clipboard:
-        input_source = "clipboard"
+    parser = Console.argument_parser(HELP)
+    parser.add_argument("text", nargs="*", metavar="TEXT")
+    parser.add_argument("--clip", "--from-clipboard", action="store_true", dest="clipboard")
+    parser.add_argument("--pause", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.clipboard and args.text:
+        parser.error("TEXT and --clip cannot be combined")
+    try:
+        import tkinter as tk
+    except ImportError:
+        print(f"{FLRed}Tkinter is unavailable. Install Tk support for this Python environment.{CRst}", file=sys.stderr)
+        return 1
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        print(f"{FLRed}Cannot open the desktop window: {exc}{CRst}", file=sys.stderr)
+        return 1
+    try:
+        inspector = UnicodeInspector(root, " ".join(args.text))
+        if args.clipboard:
+            inspector.paste()
+        root.mainloop()
+    finally:
         try:
-            if sys.platform == "darwin":
-                text = subprocess.check_output(["pbpaste"], text=True)
-            elif sys.platform == "win32":
-                text = subprocess.check_output(["powershell", "-command", "Get-Clipboard"], text=True)
-            else:
-                # Linux: try wl-paste (Wayland) then xclip (X11)
-                try:
-                    text = subprocess.check_output(["wl-paste"], text=True)
-                except (subprocess.CalledProcessError, FileNotFoundError):
-                    text = subprocess.check_output(["xclip", "-selection", "clipboard", "-o"], text=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            print(f"{FLRed}Failed to read clipboard.{CRst}", file=sys.stderr)
-            return 1
-        if not text.strip():
-            print(f"{FLRed}Clipboard is empty. EXIT...{CRst}")
-            return 1
-    elif len(sys.argv) > 1:
-        input_source = "argument"
-        text = " ".join(sys.argv[1:])
-    else:
-        input_source = "interaction"
-        text = Input.read_stdin_multiline(
-            prompt_text="Enter text to parse (one or more lines).",
-            raw=True,
-        )
-        if not text:
-            return 1
-
-    text_len = len(text)
-    print(f"\n{FLYellow}Input source: {FLGreen}{input_source}{CRst}")
-    print(f"{FLYellow}Input length: {text_len} character(s){CRst}")
-    print(f"{FLYellow}Input string: {CRst}{FLCyan}{repr(text)}{CRst}\n")
-
-
-    #============ 打印表头 ===========
-    term_width = Console.get_terminal_width()
-    desc_width = max(20, term_width - 46)  # 46 = Index(7) + Char(13) + Hex(10) + Dec(9) + 7 separators
-    HEX_COL = 23    # 1-based cursor column where Hex starts
-    DEC_COL = 34    # 1-based cursor column where Dec starts
-    DESC_COL = 44   # 1-based cursor column where Description starts
-
-    sep1 = "─" * 7
-    sep2 = "─" * 13
-    sep3 = "─" * 10
-    sep4 = "─" * 9
-    sep5 = "─" * (desc_width + 2)
-
-    print(f"┌{sep1}┬{sep2}┬{sep3}┬{sep4}┬{sep5}┐")
-    print(f"│ Index │     Char    │   Hex    │   Dec   │ {'Description':<{desc_width}} │")
-    print(f"├{sep1}┼{sep2}┼{sep3}┼{sep4}┼{sep5}┤")
-
-
-    #============ 解析 ===========
-    for idx, ch in enumerate(text):
-        cp = ord(ch)
-
-        display_char = REPLACE_MAP.get(ch, ch)
-        is_special = ch in REPLACE_MAP
-        is_control = cp in DESC_CONTROL
-
-        if is_control:
-            desc = DESC_CONTROL[cp]
-            char_color = FLRed
-            desc_color = FLRed
-        elif cp in DESC_SPECIAL:
-            desc = DESC_SPECIAL[cp]
-            char_color = FLCyan
-            desc_color = FGray
-        else:
-            if unicodedata is None:
-                desc = "N/A"
-            else:
-                try:
-                    desc = unicodedata.name(ch)
-                except ValueError:
-                    desc = "<no name>"
-            char_color = FLCyan if is_special else FLYellow
-            desc_color = FGray
-
-        hex_str = f"0x{cp:04X}" if cp <= 0xFFFF else f"0x{cp:06X}"
-        desc_display = pad_to_width(desc, desc_width)
-
-        # Print Index + Char first (the variable-width part)
-        char_str = pad_to_width(display_char, 12)
-        sys.stdout.write(f"│ {FLGreen}{idx:>5}{CRst} │ {char_color}{char_str}{CRst} ")
-
-        # Jump to absolute columns for the remaining fixed-width columns
-        sys.stdout.write(f"\033[{HEX_COL}G│ {FLBlue}{hex_str:<8}{CRst} ")
-        sys.stdout.write(f"\033[{DEC_COL}G│ {FLMagenta}{cp:>7}{CRst} ")
-        sys.stdout.write(f"\033[{DESC_COL}G│ {desc_color}{desc_display}{CRst} │\n")
-
-    total = f"Total: {text_len} character(s)"
-    print(f"├{sep1}┴{sep2}┴{sep3}┴{sep4}┴{sep5}┤")
-    total_width = desc_width + 48  # 48 = index(7) + char(13) + hex(10) + dec(9) + 9 separators
-    print(f"│     {FLYellow}{total}{CRst}{' ' * (total_width - 9 - len(total))} │")
-    print(f"└{'─' * (total_width - 3)}┘\n")
-
-    if do_pause:
-        try:
-            input(f"{FGray}Press Enter to exit...{CRst}")
-        except EOFError:
-            print()
-
+            root.destroy()
+        except tk.TclError:
+            pass
     return 0
 
 
