@@ -27,6 +27,9 @@ After context compaction, reread this file before project work.
   `launcher-config.patch.yaml` is an optional gitignored override. User
   `launcher.yaml` in the shared user configuration directory stores environment
   choices and extra script roots.
+- Whenever adding a feature, renaming a tool, or converting a tool to a GUI,
+  update `launcher-config.yaml` in the same change, including affected discovery,
+  platform exclusions and `gui-tools-list` entries.
 - Read the affected module/package's README and sample configuration as needed.
   Keep implementation details there rather than expanding this project prompt.
 

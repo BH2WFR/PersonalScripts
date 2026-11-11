@@ -11,8 +11,6 @@ import argparse
 from collections.abc import Generator
 from contextlib import closing
 import ctypes
-from dataclasses import dataclass
-import datetime as dt
 import ntpath
 import os
 import sys
@@ -20,6 +18,12 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
+from utils.windows_events import (  # noqa: E402
+    DEVICE_EJECTION_PROVIDER as PROVIDER,
+    DEVICE_EJECTION_EVENT_ID as EVENT_ID,
+    DeviceEjectionEvent as EjectEvent,
+    parse_device_ejection_event as _parse_event,
+)
 
 HELP = f"""{FLYellow}DEVICE EJECTION HISTORY{CRst}
 
@@ -40,8 +44,6 @@ if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
     raise SystemExit(0)
 
 
-PROVIDER = "Microsoft-Windows-Kernel-PnP"
-EVENT_ID = 225
 DEFAULT_MINUTES = 60
 DEFAULT_LIMIT = 50
 EVT_QUERY_CHANNEL_PATH = 0x1
@@ -50,55 +52,8 @@ EVT_RENDER_EVENT_XML = 1
 ERROR_INSUFFICIENT_BUFFER = 122
 ERROR_NO_MORE_ITEMS = 259
 NEXT_TIMEOUT_MS = 5000
-XML_NS: dict[str, str] = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
 CONTROL_ESCAPES: dict[int, str] = {value: f"\\x{value:02x}" for value in range(32)}
 CONTROL_ESCAPES[127] = "\\x7f"
-
-
-@dataclass(frozen=True)
-class EjectEvent:
-    """Historical removal veto; paths and IDs are retained as Windows recorded them.
-
-    Attributes:
-        time: Timezone-aware event timestamp.
-        record_id: System log record identifier.
-        pid: Recorded blocking PID, never the event publisher's PID.
-        executable: Recorded ProcessName, possibly an NT device path.
-        device: DeviceInstance identifying the removal target.
-        affected_devices: Optional VetoingDevices field from newer event versions.
-    """
-
-    time: dt.datetime
-    record_id: str
-    pid: int
-    executable: str
-    device: str
-    affected_devices: str = ""
-
-
-def _parse_event(xml: str) -> EjectEvent:
-    """Decode one event 225, raising ValueError/ParseError for invalid records."""
-    root = ET.fromstring(xml)
-    provider = root.find("e:System/e:Provider", XML_NS)
-    created = root.find("e:System/e:TimeCreated", XML_NS)
-    if (provider is None or provider.get("Name") != PROVIDER
-            or root.findtext("e:System/e:EventID", "", XML_NS) != str(EVENT_ID)):
-        raise ValueError("Unexpected provider or event ID")
-    if created is None:
-        raise ValueError("Missing event timestamp")
-    timestamp = dt.datetime.fromisoformat(created.get("SystemTime", ""))
-    if timestamp.tzinfo is None:
-        raise ValueError("Event timestamp has no timezone")
-    data = {node.get("Name", ""): node.text or ""
-            for node in root.findall("e:EventData/e:Data", XML_NS)}
-    for required in ("ProcessId", "ProcessName", "DeviceInstance"):
-        if not data.get(required):
-            raise ValueError(f"Missing event field: {required}")
-    pid = int(data["ProcessId"])
-    if pid < 0:
-        raise ValueError("Invalid recorded PID")
-    return EjectEvent(timestamp, root.findtext("e:System/e:EventRecordID", "", XML_NS),
-                      pid, data["ProcessName"], data["DeviceInstance"], data.get("VetoingDevices", ""))
 
 
 def _event_xml(minutes: int) -> Generator[str, None, None]:

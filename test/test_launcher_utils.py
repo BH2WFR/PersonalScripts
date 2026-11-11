@@ -88,6 +88,43 @@ class PathTests(ScratchCase):
         self.assertEqual(result, (str(self.root / "deps"), str(self.root / "tools")))
         self.assertEqual(missing, [str(self.root / "missing"), str(file_path)])
 
+    def test_gui_list_controls_labels_and_headless_discovery_independently(self) -> None:
+        """Desktop-dependent CLI exclusions must not acquire a GUI label."""
+        path = self.root / "launcher-config.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["gui-tools-list"] = ["others/viewer.py"]
+        document["ignore-list"]["linux-gui-specific"] = {
+            "no-gui": ["others/hook.py"], "wayland": ["others/capture.py"], "x11": [],
+        }
+        path.write_text(yaml.safe_dump(document), encoding="utf-8")
+        for platform_key, desktop in (("windows", None), ("macos", None),
+                                      ("linux", "x11"), ("linux", "wayland"), ("linux", "no-gui")):
+            with self.subTest(platform=platform_key, desktop=desktop), patch.object(
+                launcher, "_platform_key", return_value=platform_key,
+            ), patch.object(launcher.System, "get_linux_gui", return_value=desktop):
+                config = launcher._load_launcher_config(str(self.root))
+                self.assertIn("[GUI]", launcher._format_script_path("others/viewer.py", config))
+                self.assertNotIn("[GUI]", launcher._format_script_path("others/hook.py", config))
+                self.assertIn("[GUI]", launcher._format_script_path("others/viewer.py", config, "test"))
+                for name in ("viewer", "hook"):
+                    self.assertEqual(config.ignore_spec.match_file(f"others/{name}.py"), desktop == "no-gui")
+                self.assertEqual(config.ignore_spec.match_file("others/capture.py"), desktop == "wayland")
+
+    def test_gui_list_patch_replaces_base_list_and_invalid_types_are_reported(self) -> None:
+        """Use normal YAML patch semantics and reject malformed GUI declarations."""
+        path = self.root / "launcher-config.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["gui-tools-list"] = ["others/old.py"]
+        path.write_text(yaml.safe_dump(document), encoding="utf-8")
+        patch_path = self.root / "launcher-config.patch.yaml"
+        patch_path.write_text(yaml.safe_dump({"gui-tools-list": ["others/new.py"]}), encoding="utf-8")
+        config = launcher._load_launcher_config(str(self.root))
+        self.assertIn("[GUI]", launcher._format_script_path("others/new.py", config))
+        self.assertNotIn("[GUI]", launcher._format_script_path("others/old.py", config))
+        patch_path.write_text(yaml.safe_dump({"gui-tools-list": "not a list"}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "gui-tools-list"):
+            launcher._load_launcher_config(str(self.root))
+
     def test_config_and_additional_directories_use_shared_resolution(self) -> None:
         config = launcher._load_launcher_config(str(self.root))
         self.assertEqual(config.script_root, str(self.root / "tools"))

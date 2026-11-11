@@ -176,7 +176,7 @@
 - Windows 中执行 `run-script.ps1`，Linux/macOS 中执行 `run-script.sh`；包装脚本会查找可用的 Python 解释器，再启动真正的启动器 `run-script.py`。
 - **无参数启动启动器**时，会先检测系统/平台/架构，并检测 Conda/Python/PowerShell/Bash 环境可用性；Linux 下还会显示当前图形环境（`no-gui`/`x11`/`wayland`）。检测完毕后，会**列出当前系统/平台/架构中支持的所有脚本**；列出所有脚本后通过键盘交互选择脚本并启动，支持参数透传：
   - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-mount-manager.py`、`ntfs-3g-mount-manager`）
-  - 配置为在 Linux 无图形环境下隐藏的脚本，列出时会在末尾附上黄色 `[GUI]` 标记。
+  - `launcher-config.yaml` 中 `gui-tools-list` 列出的工具会附上黄色 `[GUI]` 标记；Linux 无桌面环境下会隐藏这些工具及额外的 `no-gui` 排除项。
   - 将数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/display-manager --list`、`display-manager --list`）
 - **有参数启动启动器**时，会根据参数自动查找脚本，并**透传剩余的参数**，此时不会打印出支持的脚本列表，直接启动目标脚本
   （如 `run-script.sh ntfs-3g-mount-manager --list`，会自动找到 `macos/ntfs-3g-mount-manager` 后执行，并透传 `--list` 参数到 `macos/ntfs-3g-mount-manager` 中）
@@ -317,7 +317,7 @@
 | `tools/windows/device-ejection-history.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
 | `tools/windows/service-restarter.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | `tools/others/power-status-viewer.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
-| `tools/others/power-event-viewer.py` | 电源与登录历史查看器：展示电源状态变化、锁定/解锁和传入 SSH 事件，以及 Windows 交互式登录/注销与 RDP 连接。 | **macOS / Windows 10+ / 使用 systemd 的 Linux**；需要可访问的留存日志，Windows Security 事件需要预先开启审计，Linux 锁屏历史支持有限<br />**Python 库**：`PySide6` |
+| `tools/others/system-event-viewer.py` | 系统事件查看器：集中查看电源、登录、故障与系统活动，包括设备/网络变化、更新和资源/服务问题。支持传入 SSH、Windows RDP/SMB 审计与设备弹出受阻记录。 | **macOS / Windows 10+ / 使用 systemd 的 Linux**；覆盖范围取决于留存日志、报告和系统服务，Windows Security/共享访问事件需要预先开启审计，Linux 锁屏与无响应检测支持有限<br />**Python 库**：`PySide6` |
 | `tools/others/disk-smart-info-viewer.py`         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools` |
 | `tools/macos/rdp-clipboard-image-repair.py`  | 修复在 macOS 中通过 Windows App (RDP) 远程控制 Windows 设备时，从 Windows 复制到剪贴板后，无法在 macOS 中正常粘贴的图片。可将剪贴板中伪装成 png 的 tiff 图片恢复成有效的 PNG 剪贴板数据。<br /> 加 `--force` 参数时无需确认，直接恢复。 | **仅 macOS**；系统内置 `osascript` 和 AppKit                 |
 

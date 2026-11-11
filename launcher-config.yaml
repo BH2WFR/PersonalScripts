@@ -63,6 +63,7 @@ ignore-list:
         - "research/matrix-viewer/"
         - "network/rclone-sync/"
         - "others/keyboard-hook-viewer/"
+        - "others/system-event-viewer/"
         - "windows/keyboard-remapper/"
         - "document-processing/pdf-tools/"
     platform-specific:
@@ -86,21 +87,26 @@ ignore-list:
                 - "macos/display-manager.py"
     linux-gui-specific:
         # 规范：no-gui, wayland, x11
-        no-gui: # 下列程序在列出时会带上 `[GUI]` 的尾巴
-            - "others/script-to-app.py"
-            - "others/unicode-inspector.py"
+        no-gui: # 仅列出无 GUI，但是在无桌面环境时可能不适用的工具
             - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
-            - "document-processing/pdf-binarizer.py"
-            - "document-processing/pdf-bookmark-editor.py"
-            - "document-processing/pdf-font-replacer.py"
-            - "document-processing/pdf-page-splitter.py"
-            - "research/matrix-viewer.py"
+            # 也包含所有 gui-tools-list 中的软件
         wayland:
             - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
         x11:
-            # - "others/keyboard-hook-viewer.py"
+            # 暂无
+
+gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no-gui 下也会被隐藏
+    - "others/system-event-viewer.py" # Grouped system history with F5 refresh; noisy filters default off
+    - "document-processing/document-screenshot.py"
+    - "document-processing/pdf-binarizer.py"
+    - "document-processing/pdf-bookmark-editor.py"
+    - "document-processing/pdf-font-replacer.py"
+    - "document-processing/pdf-page-splitter.py"
+    - "research/matrix-viewer.py"
+    - "others/script-to-app.py"
+    - "others/unicode-inspector.py"
 
 extra-env-paths:
     # 规范：all-platforms, windows, linux, macos

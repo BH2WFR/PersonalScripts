@@ -49,7 +49,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-tools", "keyboard-hook-viewer", "keyboard-remapper"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-tools", "keyboard-hook-viewer", "keyboard-remapper", "system-event-viewer"}
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -208,7 +208,8 @@ def _run_compiler(
         runs the compiler, then removes only that temporary staging directory.
         PYTHONPATH changes apply exclusively to the compiler subprocess.
     """
-    packages = {"keyboard-hook-viewer.py": ("keyboard-hook-viewer", "personal_keyboard_hook_viewer"),
+    packages = {"system-event-viewer.py": ("system-event-viewer", "personal_system_event_viewer"),
+                "keyboard-hook-viewer.py": ("keyboard-hook-viewer", "personal_keyboard_hook_viewer"),
                 "keyboard-remapper.py": ("keyboard-remapper", "personal_keyboard_remap"),
                 "rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
                 "pdf-binarizer.py": ("pdf-tools", "personal_pdf_tools"),

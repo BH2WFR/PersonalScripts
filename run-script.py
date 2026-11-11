@@ -396,8 +396,8 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         "ignore-list.linux-gui-specific",
     )
     gui_patterns = _read_pattern_list(
-        linux_gui_rules.get("no-gui"),
-        "ignore-list.linux-gui-specific.no-gui",
+        root.get("gui-tools-list"),
+        "gui-tools-list",
     )
 
     platform_key = _platform_key()
@@ -430,6 +430,8 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
                     f"ignore-list.linux-gui-specific.{linux_gui_key}",
                 )
             )
+            if linux_gui_key == "no-gui":
+                patterns.extend(gui_patterns)
 
     try:
         ignore_spec = PathSpec.from_lines("gitwildmatch", patterns)
@@ -799,7 +801,7 @@ def _format_script_path(
     config: _LauncherConfig,
     display_prefix: Optional[str] = None,
 ) -> str:
-    """Highlight a script and mark no-GUI exclusions relative to its discovery root.
+    """Highlight a script and mark configured GUI tools relative to its discovery root.
 
     An optional display-only prefix labels Test paths without affecting matching.
     """
