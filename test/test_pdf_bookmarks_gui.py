@@ -27,7 +27,7 @@ import pymupdf
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import *
-ENTRY = ROOT / "tools/document-processing/pdf-bookmarks-add.py"
+ENTRY = ROOT / "tools/document-processing/pdf-bookmark-editor.py"
 runpy.run_path(str(ENTRY))["load_app"]("bookmarks.model")
 from personal_pdf_tools.bookmarks.model import Bookmark, BookSession, ConversationTurn, NeedsInformation, Status, TocPage, parse_draft
 from personal_pdf_tools.bookmarks.recognition import build_request

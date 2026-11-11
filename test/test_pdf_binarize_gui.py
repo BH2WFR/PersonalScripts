@@ -32,7 +32,7 @@ from personal_pdf_tools.common.preview_buffer import PreviewBuffer
 from personal_pdf_tools.common.range_input import PageRangeDialog
 from personal_pdf_tools.common.viewer import ViewMode
 
-ENTRY = ROOT / "tools/document-processing/pdf-binarize.py"
+ENTRY = ROOT / "tools/document-processing/pdf-binarizer.py"
 
 
 def wait_for(predicate: Callable[[], bool], timeout: float = 15) -> None:

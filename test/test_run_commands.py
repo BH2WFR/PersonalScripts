@@ -1,4 +1,4 @@
-"""Behavioral tests for run-commands; no installation or external account access.
+"""Behavioral tests for command-runner; no installation or external account access.
 
 Run: conda run -n base python -m unittest discover -s test -p test_run_commands.py
 Fixtures live in the repository's ignored tmp directory. Subprocess integration
@@ -22,7 +22,7 @@ from typing import cast
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "tools/others/run-commands.py"
+RUNNER = ROOT / "tools/others/command-runner.py"
 SPEC = importlib.util.spec_from_file_location("run_commands_test_target", RUNNER)
 assert SPEC is not None and SPEC.loader is not None
 runner = importlib.util.module_from_spec(SPEC)

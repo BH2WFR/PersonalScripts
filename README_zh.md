@@ -38,7 +38,7 @@
 >   - PDF 压缩工具（调用 ghostscript）
 >   - **扫描版 PDF 二值化工具** (可继续压缩体积)
 >   - **PDF 页面标签编辑工具**
->   - **文档自动截屏工具**——通过自动翻页和截图，扒取禁止下载或位于加密存储设备中的文档
+>   - **文档自动截屏工具**：自动翻页并保存文档截图
 > - **网络工具**
 >   - 带同步 profile 读取功能的 **rclone 交互式手动同步工具**
 >   - 将本地带 `index.html` 的网页项目**部署为网页服务**的工具
@@ -108,7 +108,7 @@
 - **macOS：**
 
   - 建议使用 **Homebrew 包管理器**安装命令行工具（Formulae）和图形界面工具（Cask）；
-  - 部分工具（如 `macos/screen-utils`）仅支持配备 Apple Silicon 处理器的 Mac；
+  - 部分工具（如 `macos/display-manager`）仅支持配备 Apple Silicon 处理器的 Mac；
 
 - **Linux：**
 
@@ -175,15 +175,15 @@
 
 - Windows 中执行 `run-script.ps1`，Linux/macOS 中执行 `run-script.sh`；包装脚本会查找可用的 Python 解释器，再启动真正的启动器 `run-script.py`。
 - **无参数启动启动器**时，会先检测系统/平台/架构，并检测 Conda/Python/PowerShell/Bash 环境可用性；Linux 下还会显示当前图形环境（`no-gui`/`x11`/`wayland`）。检测完毕后，会**列出当前系统/平台/架构中支持的所有脚本**；列出所有脚本后通过键盘交互选择脚本并启动，支持参数透传：
-  - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-utils.py`、`ntfs-3g-utils`）
+  - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-mount-manager.py`、`ntfs-3g-mount-manager`）
   - 配置为在 Linux 无图形环境下隐藏的脚本，列出时会在末尾附上黄色 `[GUI]` 标记。
-  - 将数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/screen-utils --list`、`screen-utils --list`）
+  - 将数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/display-manager --list`、`display-manager --list`）
 - **有参数启动启动器**时，会根据参数自动查找脚本，并**透传剩余的参数**，此时不会打印出支持的脚本列表，直接启动目标脚本
-  （如 `run-script.sh ntfs-3g-utils --list`，会自动找到 `macos/ntfs-3g-utils` 后执行，并透传 `--list` 参数到 `macos/ntfs-3g-utils` 中）
-- 所有脚本**均支持省略父路径，直接输入脚本名**，如输入 `ntfs-3g-utils` 会自动递归查找此名称脚本，实际启动结果等价于输入 `macos/ntfs-3g-utils`。
+  （如 `run-script.sh ntfs-3g-mount-manager --list`，会自动找到 `macos/ntfs-3g-mount-manager` 后执行，并透传 `--list` 参数到 `macos/ntfs-3g-mount-manager` 中）
+- 所有脚本**均支持省略父路径，直接输入脚本名**，如输入 `ntfs-3g-mount-manager` 会自动递归查找此名称脚本，实际启动结果等价于输入 `macos/ntfs-3g-mount-manager`。
   当不同目录中存在重名脚本时，会提示用户通过序号选择目标。
   - 注意：`tools` 这层应当忽略，启动器查找时是从 `./tools` 目录内部开始递归查找的
-- 所有脚本均支持省略扩展名，如 `macos/ntfs-3g-utils.py` 可直接输入 `ntfs-3g-utils` 或 `macos/ntfs-3g-utils`。
+- 所有脚本均支持省略扩展名，如 `macos/ntfs-3g-mount-manager.py` 可直接输入 `ntfs-3g-mount-manager` 或 `macos/ntfs-3g-mount-manager`。
   如遇到同名但扩展名不同的脚本，启动器会提示用户通过序号选择目标。
 - **列出脚本时，可对指定平台/环境/架构隐藏部分脚本**：支持通过 `launcher-config.yaml` 设置系统平台（`windows`/`linux`/`macos`）、Linux 图形环境（`no-gui`/`x11`/`wayland`）和处理器架构（`x86`/`x86_64`/`armv7`/`arm64`），从而隐藏当前环境不支持的脚本。
   - 如需修改 `launcher-config.yaml`，请在项目根目录新建 `launcher-config.patch.yaml`，并在 patch 文件中仅写需要覆盖的设置项，启动器启动时会自动读取。
@@ -219,107 +219,107 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/document-processing/pdf-compress.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-font-replace.py` | **PDF 字体与文字颜色替换工具**：可在不改变文字排版、行距的前提下一键替换文本的颜色和字体。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
-| `tools/document-processing/pdf-binarize.py` | **扫描版 PDF 二值化与极限压缩工具**：<br />仅处理 PDF 中的图片元素，可使用自适应灰度阈值，可对识别到的图片、黑框文字、矢量元素使用单独的处理方式。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
-| `tools/document-processing/pdf-decrypt.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据。 | **Python 库**：`PyMuPDF` |
-| `tools/document-processing/pdf-bookmarks-add.py` | **扫描版 PDF 目录识别、书签编辑、页码标签编辑工具**：框选目录图片后通过云端或本地视觉模型逐页识别，并将识别到的目录打入到 PDF 文件中。支持**页码标签**与书签树编辑。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
-| `tools/document-processing/pdf-split-pages.py` | **扫描版 PDF 页面裁剪工具**：用于对双页扫描版 PDF 进行裁剪。 | **Python 库**：`PySide6`、`PyMuPDF`、`tqdm` |
-| `tools/document-processing/document-screenshot.py` | **针对加密文档的自动截图抓取工具**：<br />基于模拟 PgDn 翻页 + 鼠标点击自动翻页，并通过自动截图来获取内容，适用于**全自动抓取并保存被 DRM 保护或位于加密 USB 存储设备中的 PDF** 文件内容。<br /><br />建议使用高分辨率屏幕，并将屏幕方向改为纵向，然后调整文档页面的显示范围（不超出屏幕范围并能充分利用屏幕空间）后，再用本脚本自动截图抓取。<br />macOS 中还需要额外授予相应的屏幕录制权限。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />**Python 库**：`mss`、`pynput`、`Pillow` |
+| `tools/document-processing/ghostscript-pdf-compressor.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-font-replacer.py` | **PDF 字体与文字颜色替换工具**：可在不改变文字排版、行距的前提下一键替换文本的颜色和字体。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
+| `tools/document-processing/pdf-binarizer.py` | **扫描版 PDF 二值化与极限压缩工具**：<br />仅处理 PDF 中的图片元素，可使用自适应灰度阈值，可对识别到的图片、黑框文字、矢量元素使用单独的处理方式。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
+| `tools/document-processing/pdf-decryptor.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据。 | **Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-bookmark-editor.py` | **扫描版 PDF 目录识别、书签编辑、页码标签编辑工具**：框选目录图片后通过云端或本地视觉模型逐页识别，并将识别到的目录打入到 PDF 文件中。支持**页码标签**与书签树编辑。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
+| `tools/document-processing/pdf-page-splitter.py` | **扫描版 PDF 页面裁剪工具**：用于对双页扫描版 PDF 进行裁剪。 | **Python 库**：`PySide6`、`PyMuPDF`、`tqdm` |
+| `tools/document-processing/document-screenshot.py` | **文档自动截图工具**：自动翻页并保存指定屏幕区域的截图。不建议用来进行绕过版权保护的行为。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：辅助功能与屏幕录制权限<br />**Python 库**：`mss`、`pynput`、`Pillow` |
 ### 视频下载
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/download/download-bilibili.py` | **基于 BBDown 的 B 站视频下载器**：<br />（画质/仅音频/字幕/弹幕/多 API）<br />注：BBDown 已停止更新，后续会改用 yt-dlp 完成 B 站的下载 | `BBDown`、`ffmpeg`、`aria2`（可选） |
-| `tools/download/download-yt.py`       | **基于 yt-dlp 的视频下载工具**：<br />（画质/音频/字幕/Cookies/播放列表） | `yt-dlp`、`ffmpeg`、`deno`（可选） |
-| `tools/download/download-m3u8.py` | **基于 yt-dlp 的 m3u8/HLS 流媒体下载器**                     | `yt-dlp`、`ffmpeg`                  |
+| `tools/download/bbdown-bilibili-downloader.py` | **基于 BBDown 的 B 站视频下载器**：<br />（画质/仅音频/字幕/弹幕/多 API）<br />注：BBDown 已停止更新，后续会改用 yt-dlp 完成 B 站的下载 | `BBDown`、`ffmpeg`、`aria2`（可选） |
+| `tools/download/yt-dlp-video-downloader.py`       | **基于 yt-dlp 的视频下载工具**：<br />（画质/音频/字幕/Cookies/播放列表） | `yt-dlp`、`ffmpeg`、`deno`（可选） |
+| `tools/download/yt-dlp-hls-downloader.py` | **基于 yt-dlp 的 m3u8/HLS 流媒体下载器**                     | `yt-dlp`、`ffmpeg`                  |
 
 ### 视频/图片编辑
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/multimedia/ffmpeg-crop-video.py` | **基于 FFmpeg 的视频裁剪工具**：<br />注意：并非画面裁剪，而是**按时间裁剪** | `ffmpeg`                                |
-| `tools/research/batch-crop-images.py` | **基于 OpenCV 的批量图片裁剪工具**：<br />按画面 ROI 区域裁剪 | **Python 库**：`opencv-python`、`numpy` |
+| `tools/multimedia/ffmpeg-video-trimmer.py` | **基于 FFmpeg 的视频裁剪工具**：<br />注意：并非画面裁剪，而是**按时间裁剪** | `ffmpeg`                                |
+| `tools/research/image-cropper.py` | **基于 OpenCV 的批量图片裁剪工具**：<br />按画面 ROI 区域裁剪 | **Python 库**：`opencv-python`、`numpy` |
 
 ### 文件系统/磁盘挂载
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/filesystem/list-disks.py` | **磁盘与分区信息查看工具**：以设备树显示挂载点、盘符、卷标、容量和完整 ID，方便在终端中选取复制。 | Windows：`pwsh` 7；Linux：`lsblk`；macOS：`diskutil` |
+| `tools/filesystem/disk-inventory.py` | **磁盘与分区信息查看工具**：以设备树显示挂载点、盘符、卷标、容量和完整 ID，方便在终端中选取复制。 | Windows：`pwsh` 7；Linux：`lsblk`；macOS：`diskutil` |
 | `tools/filesystem/path-in-use.py` | **文件/目录占用查询工具**：列出占用某文件/目录的进程的 PID、可执行文件路径。支持递归检查目录（含盘符/挂载点）。 | `psutil`；<br />**需要提权** |
-| `tools/filesystem/openssl-file-hash.py` | 基于 OpenSSL 的**文件哈希值计算工具**：<br />支持批量处理文件，并支持 `md5`、`sha256` 等 OpenSSL 提供的常见算法。 | `openssl` |
-| `tools/filesystem/check-filename-overlong.py` | **长文件名自动截断工具**：<br />按 UTF-8 编码统计字节长度，自动截断超过指定字节数（默认 143，适配群晖的加密文件夹限制）的文件名。<br />截断时**保留扩展名**，若发生重名则在扩展名前自动加 `_1`、`_2` 等后缀 |  |
-| `tools/filesystem/modify-file-time.py`        | **文件/文件夹时间戳修改工具**：可修改创建/修改/访问时间，支持加入随机抖动，支持备份/还原指定文件夹下所有文件/文件夹的时间 |  |
-| `tools/macos/ntfs-3g-utils.py`                | 仅 macOS，**基于 ntfs-3g-mac 的 NTFS 分区可写挂载工具**：<br />支持自动扫描 NTFS 分区，并支持卸载/弹出分区 | **仅 macOS**<br />**需要提权**<br />需在安全模式下允许来自认可开发者的内核扩展，并安装内核扩展 `macFUSE` 和挂载工具 `ntfs-3g-mac` |
+| `tools/filesystem/openssl-file-hasher.py` | 基于 OpenSSL 的**文件哈希值计算工具**：<br />支持批量处理文件，并支持 `md5`、`sha256` 等 OpenSSL 提供的常见算法。 | `openssl` |
+| `tools/filesystem/filename-shortener.py` | **长文件名自动截断工具**：<br />按 UTF-8 编码统计字节长度，自动截断超过指定字节数（默认 143，适配群晖的加密文件夹限制）的文件名。<br />截断时**保留扩展名**，若发生重名则在扩展名前自动加 `_1`、`_2` 等后缀 |  |
+| `tools/filesystem/file-timestamp-editor.py`        | **文件/文件夹时间戳修改工具**：可修改创建/修改/访问时间，支持加入随机抖动，支持备份/还原指定文件夹下所有文件/文件夹的时间 |  |
+| `tools/macos/ntfs-3g-mount-manager.py`                | 仅 macOS，**基于 ntfs-3g-mac 的 NTFS 分区可写挂载工具**：<br />支持自动扫描 NTFS 分区，并支持卸载/弹出分区 | **仅 macOS**<br />**需要提权**<br />需在安全模式下允许来自认可开发者的内核扩展，并安装内核扩展 `macFUSE` 和挂载工具 `ntfs-3g-mac` |
 
 ### 文件系统/符号链接工具
 
 | 脚本                                               | 描述                                                         | 依赖           |
 | -------------------------------------------------- | ------------------------------------------------------------ | -------------- |
-| `tools/filesystem/link-create.py`                  | **符号链接/硬链接创建工具**（Windows 下还支持生成目录软链接 SYMLINKD 和 JUNCTION）：<br />支持相对路径、镜像模式、冲突处理 |                |
-| `tools/filesystem/link-scan.py`                    | **递归检测并打印目录中所有符号链接、硬链接的工具**（Windows 下还会打印目录软链接 SYMLINKD 和 JUNCTION）：<br />可自动检测死链（目标不存在），并提供自动修复或删除功能；Windows 下可将错误指向目录的文件软链接修复回 SYMLINKD。 |                |
-| `tools/filesystem/link-fix-to-symlinkd-windows.py` | Windows 专用：将指向目录的文件软链接（SYMLINK）**修复**为正确的**目录软链接**（SYMLINKD）：<br />用于修复某些文件同步工具错误地按照 Linux 上的方法，不区分文件软链接和目录软链接，将目录软链接错误地弄成文件软链接，导致无法访问的问题。 | 仅 **Windows** |
+| `tools/filesystem/link-creator.py`                  | **符号链接/硬链接创建工具**（Windows 下还支持生成目录软链接 SYMLINKD 和 JUNCTION）：<br />支持相对路径、镜像模式、冲突处理 |                |
+| `tools/filesystem/link-scanner.py`                    | **递归检测并打印目录中所有符号链接、硬链接的工具**（Windows 下还会打印目录软链接 SYMLINKD 和 JUNCTION）：<br />可自动检测死链（目标不存在），并提供自动修复或删除功能；Windows 下可将错误指向目录的文件软链接修复回 SYMLINKD。 |                |
+| `tools/windows/directory-symlink-repair.py` | Windows 专用：将指向目录的文件软链接（SYMLINK）**修复**为正确的**目录软链接**（SYMLINKD）：<br />用于修复某些文件同步工具错误地按照 Linux 上的方法，不区分文件软链接和目录软链接，将目录软链接错误地弄成文件软链接，导致无法访问的问题。 | 仅 **Windows** |
 
 ### 文件系统/权限工具
 
 | 脚本                                    | 描述                                                         | 依赖                     |
 | --------------------------------------- | ------------------------------------------------------------ | ------------------------ |
-| `tools/filesystem/batch-add-chmod-x.sh` | **Linux/macOS 下，批量给脚本文件添加可执行权限的工具**：<br />递归查找指定扩展名（默认 `.py`/`.sh`）的文件，并通过 `chmod +x` 添加可执行权限 | **Linux/macOS**<br />**需要提权** |
-| `tools/filesystem/git-batch-add-chmod-x.ps1`       | **Windows 下，给 Git 仓库中的脚本文件批量添加可执行权限的工具**：<br />将 Git 暂存区中的 `.py`/`.sh` 文件通过 `git update-index --chmod=+x` 标记为可执行，方便跨平台开发时 Windows 端提交的文件在 Linux/macOS 上克隆后自带 `+x` 权限 | **Windows**<br />`git` |
-| `tools/filesystem/remove-quarantine.py`      | 仅 macOS，**文件 quarantine 和 provenance 属性批量移除工具**（基于 `xattr` 命令） | **仅 macOS**             |
+| `tools/filesystem/executable-bit-setter.sh` | **Linux/macOS 下，批量给脚本文件添加可执行权限的工具**：<br />递归查找指定扩展名（默认 `.py`/`.sh`）的文件，并通过 `chmod +x` 添加可执行权限 | **Linux/macOS**<br />**需要提权** |
+| `tools/filesystem/git-executable-bit-setter.ps1`       | **Windows 下，给 Git 仓库中的脚本文件批量添加可执行权限的工具**：<br />将 Git 暂存区中的 `.py`/`.sh` 文件通过 `git update-index --chmod=+x` 标记为可执行，方便跨平台开发时 Windows 端提交的文件在 Linux/macOS 上克隆后自带 `+x` 权限 | **Windows**<br />`git` |
+| `tools/macos/quarantine-remover.py`      | 仅 macOS，**文件 quarantine 和 provenance 属性批量移除工具**（基于 `xattr` 命令） | **仅 macOS**             |
 
 ### 网络工具
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/network/tailscale-restart-accept-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
+| `tools/network/tailscale-refresh-routes.py` | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
 | [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，同步、复制、移动或比较多对目录/文件到云盘、U盘中。支持按卷标定位移动硬盘。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
-| `tools/network/upload-ipaddress.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />连接设置和加密凭据来自用户 `config.yaml` 的 `upload-ipaddress` 节 | **Python 库：**`boto3` |
+| `tools/network/network-info-uploader.py` | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />连接设置和加密凭据来自用户 `config.yaml` 的 `upload-ipaddress` 节 | **Python 库：**`boto3` |
 | `tools/windows/firewall-app-blocker.py` | 仅 Windows，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
-| `tools/network/webserver-run.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |
+| `tools/network/http-server.py` | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |
 
 ### 打开方式
 
 | 脚本                                | 描述                                                         | 依赖                                    |
 | ----------------------------------- | ------------------------------------------------------------ | --------------------------------------- |
-| `tools/windows/file-association.py` | 仅 Windows，**为指定扩展名的文件在系统中注册指定 EXE 作为打开方式的工具**：<br />可用于给一些便携软件注册对指定扩展名的打开方式 | **仅 Windows**<br />**需要提权** |
+| `tools/windows/file-association-manager.py` | 仅 Windows，**为指定扩展名的文件在系统中注册指定 EXE 作为打开方式的工具**：<br />可用于给一些便携软件注册对指定扩展名的打开方式 | **仅 Windows**<br />**需要提权** |
 | `tools/others/script-to-app.py      | **以「应用」的方式创建 Python 脚本的启动器**的工具（不是打包！）：不会打包脚本，支持绑定 conda 环境。Windows 下输出 .cmd，macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式。 | **Windows / macOS / Linux 桌面**<br />Windows 需提权或使用可写目录；Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选） |
 
 ### 文本处理
 
 | 脚本                            | 描述                                                         | 依赖                                 |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------ |
-| `tools/others/parse-unicode-string.py` | **Unicode 字符信息显示工具**：<br />可获取输入文本中每个字符的序号、字符、十六进制、十进制、说明等信息，特殊字符（如控制符或空格等）有特殊标注格式。<br />支持用 `--clip`（剪贴板读取）参数从剪贴板读取文本，也可以使用常规的多行交互输入。 | Linux 剪贴板需 `wl-paste` 或 `xclip` |
+| `tools/others/unicode-inspector.py` | **Unicode 字符信息显示工具**：<br />可获取输入文本中每个字符的序号、字符、十六进制、十进制、说明等信息，特殊字符（如控制符或空格等）有特殊标注格式。<br />支持用 `--clip`（剪贴板读取）参数从剪贴板读取文本，也可以使用常规的多行交互输入。 | Linux 剪贴板需 `wl-paste` 或 `xclip` |
 
 ### 显示器工具
 
 | 脚本                                      | 描述                                                         | 依赖                                                         |
 | ----------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| `tools/windows/show-screen-resolution.py` | 仅 Windows，**屏幕分辨率/缩放率查看工具**：<br />用于 RDP 连接中，解决设置界面中看不到当前远程电脑的屏幕分辨率和缩放率的问题。 | **仅 Windows**                                               |
-| `tools/macos/screen-utils.py`             | 仅支持采用 Apple Silicon 的 macOS 设备，显示器管理工具 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）、色彩模式诊断、外接显示器强制 RGB 输出覆写。<br />**特色功能**：**MacBook 连接外接显示器时，可一键开关笔记本自带屏幕**（`--toggle-built-in`）。**支持旋转显示器方向、修改外接显示器亮度**。<br />已在 macos 26.x tahoe 中验证可以正常使用。因其会调用 macos 的**私有 API**，不保证在其他版本系统中的可用性。 | **仅 macOS**（Apple Silicon）<br />**可选 Python 库**：`pyobjc-framework-Cocoa` |
+| `tools/windows/display-info.py` | 仅 Windows，**屏幕分辨率/缩放率查看工具**：<br />用于 RDP 连接中，解决设置界面中看不到当前远程电脑的屏幕分辨率和缩放率的问题。 | **仅 Windows**                                               |
+| `tools/macos/display-manager.py`             | 仅支持采用 Apple Silicon 的 macOS 设备，显示器管理工具 — 旋转、分辨率、亮度（内建 + 外接显示器 DDC/CI）、色彩模式诊断、外接显示器强制 RGB 输出覆写。<br />**特色功能**：**MacBook 连接外接显示器时，可一键开关笔记本自带屏幕**（`--toggle-built-in`）。**支持旋转显示器方向、修改外接显示器亮度**。<br />已在 macos 26.x tahoe 中验证可以正常使用。因其会调用 macos 的**私有 API**，不保证在其他版本系统中的可用性。 | **仅 macOS**（Apple Silicon）<br />**可选 Python 库**：`pyobjc-framework-Cocoa` |
 
 ### 隐私与清理
 
 | 脚本                                          | 描述                                                         | 依赖                                                         |
 | --------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| `tools/windows/clear-recycle-bin.py`          | 仅 Windows，**回收站强力清空工具**：<br />用于解决**回收站中存在 0 KB 文件/文件夹，但是无法清空**（清空后这些文件仍然存在于回收站中）的问题。<br />遇到符号链接，仅删除链接本身，不会遍历指向的目标。 | **仅 Windows**<br />**需要提权** |
-| `tools/windows/clear-all-event-logs.py`       | 仅 Windows，**系统日志一键清空工具**<br />警告：删除后不可恢复。 | **仅 Windows**<br />**需要提权** |
-| `tools/windows/clear-privacy.py`              | 仅 Windows，**隐私痕迹清除工具**：<br />（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。<br />警告：**使用风险自负。** | **仅 Windows**<br />**需要提权**                             |
-| `tools/macos/clear-privacy.py`                | 仅 macOS，**隐私痕迹清除工具**：<br />（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。<br />警告：**使用风险自负。** | **仅 macOS**<br />可选 `brew install trash`<br />**需要提权** |
-| `tools/filesystem/remove-os-junk-files.py`    | **系统生成垃圾文件递归删除工具**：<br />（`.DS_Store`、`__MACOSX__`、`Thumbs.db` 等） |                                                              |
-| `tools/windows/clear-android-rndis-record.py` | 仅 Windows，**清理注册表中残留的 Android USB 网络共享/RNDIS 记录的工具**：<br />用于解决 Android 设备连接到电脑后，每次打开 USB 网络共享时，电脑中的**网络连接编号不断递增**的问题 | **仅 Windows**<br />**需要提权** |
+| `tools/windows/recycle-bin-cleaner.py`          | 仅 Windows，**回收站强力清空工具**：<br />用于解决**回收站中存在 0 KB 文件/文件夹，但是无法清空**（清空后这些文件仍然存在于回收站中）的问题。<br />遇到符号链接，仅删除链接本身，不会遍历指向的目标。 | **仅 Windows**<br />**需要提权** |
+| `tools/windows/event-log-cleaner.py`       | 仅 Windows，**系统日志一键清空工具**<br />警告：删除后不可恢复。 | **仅 Windows**<br />**需要提权** |
+| `tools/windows/privacy-cleaner.py`              | 仅 Windows，**隐私痕迹清除工具**：<br />（资源管理器历史、事件日志、DNS 缓存、浏览器数据、凭据、临时文件等），支持逐项确认。<br />警告：**使用风险自负。** | **仅 Windows**<br />**需要提权**                             |
+| `tools/macos/privacy-cleaner.py`                | 仅 macOS，**隐私痕迹清除工具**：<br />（最近项目、访达状态、Shell 历史、浏览器数据、缓存、日志等），支持逐项确认。<br />警告：**使用风险自负。** | **仅 macOS**<br />可选 `brew install trash`<br />**需要提权** |
+| `tools/filesystem/os-junk-cleaner.py`    | **系统生成垃圾文件递归删除工具**：<br />（`.DS_Store`、`__MACOSX__`、`Thumbs.db` 等） |                                                              |
+| `tools/windows/android-rndis-record-cleaner.py` | 仅 Windows，**清理注册表中残留的 Android USB 网络共享/RNDIS 记录的工具**：<br />用于解决 Android 设备连接到电脑后，每次打开 USB 网络共享时，电脑中的**网络连接编号不断递增**的问题 | **仅 Windows**<br />**需要提权** |
 
 ### 系统工具
 
 | 脚本                               | 描述                                                         | 依赖                                             |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `tools/windows/keyboard-remap.py` | **注册表键盘映射编辑工具**：支持列表选键或捕获按键、禁用按键、拖动排序及最终十六进制预览。写入前确认并备份，支持恢复，保存后需重启 Windows 生效。 | **Windows 10+**<br />`PySide6`<br />写入时需要管理员权限 |
-| `tools/windows/usb-eject-log.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
-| `tools/windows/restart-service.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
-| `tools/others/power-current.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
-| `tools/others/power-events.py` | 开关机、睡眠唤醒和锁定/解锁历史日志 GUI 查看器。Linux 下锁屏历史支持有限。 | **macOS / Windows 10+ / 使用 systemd 的 Linux 桌面**<br />**Python 库**：`PySide6` |
-| `tools/others/disk-smart-info.py`         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools` |
-| `tools/macos/rdp-clipboard-image-fix.py`  | 修复在 macOS 中通过 Windows App (RDP) 远程控制 Windows 设备时，从 Windows 复制到剪贴板后，无法在 macOS 中正常粘贴的图片。可将剪贴板中伪装成 png 的 tiff 图片恢复成有效的 PNG 剪贴板数据。<br /> 加 `--force` 参数时无需确认，直接恢复。 | **仅 macOS**；系统内置 `osascript` 和 AppKit                 |
+| `tools/windows/keyboard-remapper.py` | **注册表键盘映射编辑工具**：支持列表选键或捕获按键、禁用按键、拖动排序及最终十六进制预览。写入前确认并备份，支持恢复，保存后需重启 Windows 生效。 | **Windows 10+**<br />`PySide6`<br />写入时需要管理员权限 |
+| `tools/windows/device-ejection-history.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
+| `tools/windows/service-restarter.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
+| `tools/others/power-status-viewer.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
+| `tools/others/power-event-viewer.py` | 开关机、睡眠唤醒和锁定/解锁历史日志 GUI 查看器。Linux 下锁屏历史支持有限。 | **macOS / Windows 10+ / 使用 systemd 的 Linux 桌面**<br />**Python 库**：`PySide6` |
+| `tools/others/disk-smart-info-viewer.py`         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools` |
+| `tools/macos/rdp-clipboard-image-repair.py`  | 修复在 macOS 中通过 Windows App (RDP) 远程控制 Windows 设备时，从 Windows 复制到剪贴板后，无法在 macOS 中正常粘贴的图片。可将剪贴板中伪装成 png 的 tiff 图片恢复成有效的 PNG 剪贴板数据。<br /> 加 `--force` 参数时无需确认，直接恢复。 | **仅 macOS**；系统内置 `osascript` 和 AppKit                 |
 
 ### 软件启动
 
@@ -331,7 +331,7 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| `tools/others/run-commands.py` | **预设命令运行器**：<br />选择自己的配置文件，再通过菜单选择并执行保存的命令或脚本；[配置样例](tools/others/run-commands-schema-sample.yaml) 提供详细说明。 | **Python 库**：`PyYAML`；预设命令所需的程序或解释器 |
+| `tools/others/command-runner.py` | **预设命令运行器**：<br />选择自己的配置文件，再通过菜单选择并执行保存的命令或脚本；[配置样例](tools/others/run-commands-schema-sample.yaml) 提供详细说明。 | **Python 库**：`PyYAML`；预设命令所需的程序或解释器 |
 
 ### 科研工具
 

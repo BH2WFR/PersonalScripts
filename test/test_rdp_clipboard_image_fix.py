@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 from utils import *  # noqa: E402
 
 SPEC = importlib.util.spec_from_file_location(
-    "rdp_clipboard_image_fix", ROOT / "tools/macos/rdp-clipboard-image-fix.py"
+    "rdp_clipboard_image_fix", ROOT / "tools/macos/rdp-clipboard-image-repair.py"
 )
 assert SPEC is not None and SPEC.loader is not None
 app = importlib.util.module_from_spec(SPEC)
@@ -91,7 +91,7 @@ if (!pb.writeObjects(items)) throw new Error('Fixture write failed.');
     def _main(self, arguments: list[str], answer: str = "n") -> tuple[int, str, str]:
         """Run the actual CLI with controlled confirmation and capture bounded output."""
         output, errors = io.StringIO(), io.StringIO()
-        with patch.object(sys, "argv", ["rdp-clipboard-image-fix.py", *arguments]), \
+        with patch.object(sys, "argv", ["rdp-clipboard-image-repair.py", *arguments]), \
                 patch("builtins.input", return_value=answer) as prompt, \
                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             result = app.main()

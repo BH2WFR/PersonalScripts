@@ -49,7 +49,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-binarize", "pdf-tools", "keyboard-hook-viewer", "keyboard-remap"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-tools", "keyboard-hook-viewer", "keyboard-remapper"}
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -209,12 +209,12 @@ def _run_compiler(
         PYTHONPATH changes apply exclusively to the compiler subprocess.
     """
     packages = {"keyboard-hook-viewer.py": ("keyboard-hook-viewer", "personal_keyboard_hook_viewer"),
-                "keyboard-remap.py": ("keyboard-remap", "personal_keyboard_remap"),
+                "keyboard-remapper.py": ("keyboard-remapper", "personal_keyboard_remap"),
                 "rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
-                "pdf-binarize.py": ("pdf-tools", "personal_pdf_tools"),
-                "pdf-font-replace.py": ("pdf-tools", "personal_pdf_tools"),
-                "pdf-split-pages.py": ("pdf-tools", "personal_pdf_tools"),
-                "pdf-bookmarks-add.py": ("pdf-tools", "personal_pdf_tools")}
+                "pdf-binarizer.py": ("pdf-tools", "personal_pdf_tools"),
+                "pdf-font-replacer.py": ("pdf-tools", "personal_pdf_tools"),
+                "pdf-page-splitter.py": ("pdf-tools", "personal_pdf_tools"),
+                "pdf-bookmark-editor.py": ("pdf-tools", "personal_pdf_tools")}
     package = packages.get(os.path.basename(script_path))
     if package is None:
         return subprocess.run(cmd, check=False)

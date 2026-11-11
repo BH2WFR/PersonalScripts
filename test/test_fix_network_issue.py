@@ -14,7 +14,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / "tools/windows/fix-network-issue.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "tools/windows/network-repair.py"
 SPEC = importlib.util.spec_from_file_location("fix_network_issue", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 REPAIR = importlib.util.module_from_spec(SPEC)

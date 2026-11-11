@@ -27,7 +27,7 @@ from personal_pdf_tools.font_replace.engine import _Embedding, _font_name, _page
 from personal_pdf_tools.font_replace.worker import Worker, _font_details
 from personal_pdf_tools.common.protocol import Json
 
-ENTRY = ROOT / "tools/document-processing/pdf-font-replace.py"
+ENTRY = ROOT / "tools/document-processing/pdf-font-replacer.py"
 
 
 def wait_for(predicate: Callable[[], bool], timeout: float = 20) -> None:

@@ -1,6 +1,6 @@
 """PDF content-stream font replacement, shared by previews and full exports.
 
-Migrated from pdf-font-replace without changing original-text matching, positions,
+Migrated from pdf-font-replacer without changing original-text matching, positions,
 style handling or resource isolation. Requires PyMuPDF >= 1.28, fonttools and tqdm.
 No interactive prompts; unsupported encodings, glyphs and styles raise errors.
 Rewritten operations retain token boundaries even in compact PDF streams.

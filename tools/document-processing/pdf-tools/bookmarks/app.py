@@ -92,7 +92,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         self.draft_timer.setSingleShot(True)
         self.draft_timer.setInterval(400)
         self.draft_timer.timeout.connect(self._apply_yaml)
-        self.setWindowTitle("PDF Bookmarks & Page Labels")
+        self.setWindowTitle("PDF Bookmark Editor")
         self.resize(1500, 950)
         self.setMinimumSize(1050, 650)
         self._build()
@@ -709,13 +709,13 @@ class BookmarksWindow(QtWidgets.QMainWindow):
     def _mark_dirty(self) -> None:
         self.dirty = True
         if self.session:
-            self.setWindowTitle(f"* {self.session.source.name} — PDF Bookmarks & Page Labels")
+            self.setWindowTitle(f"* {self.session.source.name} — PDF Bookmark Editor")
 
     def _error(self, message: str) -> None:
         self.status.setText(message)
         self.information_status.setText("Action needs attention")
         self.information.setPlainText(message)
-        QtWidgets.QMessageBox.critical(self, "PDF Bookmarks", message)
+        QtWidgets.QMessageBox.critical(self, "PDF Bookmark Editor", message)
         self._show_information()
 
     def _open_dialog(self) -> None:
@@ -773,7 +773,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
         if old:
             old.deleteLater()
         self._build()
-        self.setWindowTitle("PDF Bookmarks & Page Labels")
+        self.setWindowTitle("PDF Bookmark Editor")
         self._enabled()
 
     def _discard(self, after_export: Callable[[], object]) -> bool:
@@ -1865,7 +1865,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
             self._refresh_tree()
             self._refresh_pages()
             self._load_page()
-            self.setWindowTitle(f"{self.session.source.name} — PDF Bookmarks & Page Labels")
+            self.setWindowTitle(f"{self.session.source.name} — PDF Bookmark Editor")
             self._render("preview")
         elif kind == "preview" and self.session:
             page = int(cast(int, message["page"]))
@@ -1878,7 +1878,7 @@ class BookmarksWindow(QtWidgets.QMainWindow):
             assert self.session is not None
             self.status.setText(f"PDF saved: {message['path']}")
             self.dirty = False
-            self.setWindowTitle(f"{self.session.source.name} — PDF Bookmarks & Page Labels")
+            self.setWindowTitle(f"{self.session.source.name} — PDF Bookmark Editor")
             QtWidgets.QMessageBox.information(self, "PDF processing complete", f"Saved:\n{message['path']}")
             callback, self._after_export = self._after_export, None
             if callback:

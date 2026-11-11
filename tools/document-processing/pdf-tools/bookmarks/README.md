@@ -1,6 +1,6 @@
-# PDF bookmarks and page labels
+# PDF Bookmark Editor
 
-Run `pdf-bookmarks-add.py` from the document-processing directory. Its **Page labels**
+Run `pdf-bookmark-editor.py` from the document-processing directory. Its **Page labels**
 tab provides the integrated label editor; the tool is GUI-only. Dependencies are PySide6, PyMuPDF, PyYAML, cryptography, LiteLLM, OpenAI, HTTPX and truststore, declared in the
 root requirements. Implementation lives here; the entry only loads this package.
 
@@ -444,7 +444,7 @@ protected. A completion dialog appears after a successful export.
 
 Click the viewer to focus it. PgUp/Left/Up moves to the previous page;
 PgDn/Right/Down moves to the next page, including in crop-editing mode.
-These shortcuts are shared with PDF Binarize and leave text-editor keys alone.
+These shortcuts are shared with PDF Binarizer and leave text-editor keys alone.
 
 Uncached pages render at the same 200 DPI as recognition inputs, with a 12-million
 pixel cap. Packed RGB pixels cross a reusable shared-memory slot without PNG

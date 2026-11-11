@@ -61,7 +61,7 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self._render)
-        self.setWindowTitle("PDF Split Pages")
+        self.setWindowTitle("PDF Page Splitter")
         self.resize(1420, 900)
         self._build()
         self.drop_filter = FileDropFilter(self, self.open_path, lambda: not self.runner.busy, suffixes=(".pdf",))
@@ -243,7 +243,7 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.page_number.setRange(1, 1)
         self.page_total.setText(" / 0 ")
         self.page_info.setText("Page: —\nSize: —")
-        self.setWindowTitle("PDF Split Pages")
+        self.setWindowTitle("PDF Page Splitter")
 
     def _close_pdf(self) -> None:
         if self.runner.busy:
@@ -450,7 +450,7 @@ class SplitWindow(QtWidgets.QMainWindow):
                 self.status.setText("Opening cancelled.")
             else:
                 self.status.setText(str(message.get("message", "Operation failed.")))
-                QtWidgets.QMessageBox.warning(self, "PDF Split Pages", str(message.get("message")))
+                QtWidgets.QMessageBox.warning(self, "PDF Page Splitter", str(message.get("message")))
         elif kind == "opened":
             path = Path(str(self._request["path"]))
             self._reset()
@@ -463,7 +463,7 @@ class SplitWindow(QtWidgets.QMainWindow):
             self.navigation.load(cast(list[str], message["labels"]), cast(list[tuple[int, str, int]], message["bookmarks"]))
             self.panel.load_settings(self.settings, self.page_count)
             self._refresh_markers()
-            self.setWindowTitle(f"PDF Split Pages — {path.name}")
+            self.setWindowTitle(f"PDF Page Splitter — {path.name}")
             self.go_page(1)
         elif kind == "preview":
             if message.get("page") != self.current_page:

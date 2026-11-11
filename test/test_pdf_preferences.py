@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import *
 
-runpy.run_path(str(ROOT / "tools/document-processing/pdf-binarize.py"))["load_app"]("common.preferences")
+runpy.run_path(str(ROOT / "tools/document-processing/pdf-binarizer.py"))["load_app"]("common.preferences")
 from personal_pdf_tools.common.preferences import PDF_CONFIG, choose_open_file, choose_save_file, dialog_directory, remember_directory
 
 

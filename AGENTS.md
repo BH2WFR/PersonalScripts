@@ -60,6 +60,14 @@ conda run -n base python run-script.py <name> [args...]
 
 ## Script structure and platforms
 
+- Entry filenames use lowercase kebab-case, with related tools sharing a
+  subject prefix for alphabetical grouping. Prefer natural tool nouns such as
+  `viewer`, `editor`, `trimmer` and `cleaner`; concise action names are allowed
+  when clearer. Include distinctive backend names, such as `ffmpeg`, `yt-dlp`
+  or `ntfs-3g`, when they identify the tool. Platform names belong in directories.
+- When renaming entries, update launcher/compiler rules, internal entry paths,
+  tests, HELP and both READMEs together. Preserve private import aliases,
+  persisted config keys/filenames and document formats unless explicitly migrated.
 - Put platform-exclusive tools in `tools/windows/`, `tools/macos/` or
   `tools/linux/`. Check `sys.platform` before platform-specific work or imports,
   with a clear unsupported-platform message. Other categories should work

@@ -35,10 +35,10 @@ def load_script(name: str) -> ModuleType:
     return module
 
 
-bookmarks = load_script("pdf-bookmarks-add").load_app("bookmarks.model")
-bookmark_worker = load_script("pdf-bookmarks-add").load_app("bookmarks.worker")
-decrypt = load_script("pdf-decrypt")
-compress = load_script("pdf-compress")
+bookmarks = load_script("pdf-bookmark-editor").load_app("bookmarks.model")
+bookmark_worker = load_script("pdf-bookmark-editor").load_app("bookmarks.worker")
+decrypt = load_script("pdf-decryptor")
+compress = load_script("ghostscript-pdf-compressor")
 
 
 class PdfToolsTests(unittest.TestCase):

@@ -39,7 +39,7 @@ def load_repo_module(name: str, path: str) -> ModuleType:
     return module
 
 
-entry = load_repo_module("keyboard_remap_test_entry", "tools/windows/keyboard-remap.py")
+entry = load_repo_module("keyboard_remap_test_entry", "tools/windows/keyboard-remapper.py")
 app = entry.load_app()
 models = importlib.import_module(f"{entry.PACKAGE_NAME}.models")
 registry = importlib.import_module(f"{entry.PACKAGE_NAME}.registry")
@@ -508,7 +508,7 @@ class IntegrationTests(unittest.TestCase):
     """Launcher discovery, help and compiler alias staging do not invoke live I/O."""
 
     def test_help_never_loads_gui_or_registry(self) -> None:
-        with patch.object(entry, "load_app") as loader, patch.object(sys, "argv", ["keyboard-remap.py", "--help"]):
+        with patch.object(entry, "load_app") as loader, patch.object(sys, "argv", ["keyboard-remapper.py", "--help"]):
             with self.assertRaises(SystemExit) as result, contextlib.redirect_stdout(io.StringIO()):
                 entry.main()
         self.assertEqual(result.exception.code, 0)
@@ -518,11 +518,11 @@ class IntegrationTests(unittest.TestCase):
         launcher = load_repo_module("remap_test_launcher", "run-script.py")
         compiler = load_repo_module("remap_test_compiler", "compile-script.py")
         config = launcher._load_launcher_config(str(ROOT))
-        self.assertTrue(launcher._is_ignored(config.ignore_spec, "windows/keyboard-remap/ui.py"))
+        self.assertTrue(launcher._is_ignored(config.ignore_spec, "windows/keyboard-remapper/ui.py"))
         with patch.object(compiler.sys, "platform", "win32"):
             found = [path.replace("\\", "/") for path in compiler.find_py_scripts(str(ROOT / "tools"))]
-        self.assertIn("windows/keyboard-remap.py", found)
-        self.assertFalse(any(path.startswith("windows/keyboard-remap/") for path in found))
+        self.assertIn("windows/keyboard-remapper.py", found)
+        self.assertFalse(any(path.startswith("windows/keyboard-remapper/") for path in found))
         with tempfile.TemporaryDirectory(prefix="keyboard-remap-build-", dir=ROOT / "tmp") as directory:
             for builder in ("nuitka", "pyinstaller"):
                 def inspect(command: list[str], *, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
@@ -540,6 +540,8 @@ class IntegrationTests(unittest.TestCase):
         with patch.object(app.subprocess, "Popen") as spawn:
             app.open_elevated_editor(before, after)
         command = spawn.call_args.args[0]
+        self.assertEqual(Path(command[1]).resolve(), Path(entry.__file__).resolve())
+        self.assertTrue(Path(command[1]).is_file())
         self.assertEqual(command[-2], "--admin-draft")
         self.assertEqual(app.decode_handoff(command[-1]), (before, after))
         self.assertEqual(spawn.call_args.kwargs["creationflags"], 0x08000000)

@@ -15,7 +15,7 @@ from test_pdf_tools import load_script
 from utils import *
 
 
-entry = load_script("pdf-split-pages")
+entry = load_script("pdf-page-splitter")
 splitter = entry.load_app("split_pages.engine")
 from personal_pdf_tools.split_pages.model import Axis, Box, PageOverride, Settings
 from personal_pdf_tools.split_pages.engine import _Piece

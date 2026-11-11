@@ -21,7 +21,7 @@ from personal_pdf_tools.split_pages.engine import build_plan, _split_document
 from personal_pdf_tools.split_pages.model import Axis, Box, PageOverride, Settings, page_boxes, move_divider
 from personal_pdf_tools.split_pages.worker import Worker
 
-ENTRY = ROOT / "tools/document-processing/pdf-split-pages.py"
+ENTRY = ROOT / "tools/document-processing/pdf-page-splitter.py"
 
 
 def wait_for(predicate: Callable[[], bool], timeout: float = 20) -> None:

@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import *  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("pdf_font_replace", ROOT / "tools/document-processing/pdf-font-replace.py")
+spec = importlib.util.spec_from_file_location("pdf_font_replace", ROOT / "tools/document-processing/pdf-font-replacer.py")
 assert spec and spec.loader
 app = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = app

@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("usb_eject_log_test_target", ROOT / "tools/windows/usb-eject-log.py")
+SPEC = importlib.util.spec_from_file_location("usb_eject_log_test_target", ROOT / "tools/windows/device-ejection-history.py")
 assert SPEC is not None and SPEC.loader is not None
 runner = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = runner
@@ -94,18 +94,18 @@ class UsbEjectLogTests(unittest.TestCase):
         with patch.object(runner.System, "restart_elevated") as elevate:
             for arguments, status in ((["--help"], 0), (["--minutes", "0"], 2),
                                       (["--limit", "-1"], 2), (["--pid", "abc"], 2)):
-                with patch.object(sys, "argv", ["usb-eject-log.py", *arguments]):
+                with patch.object(sys, "argv", ["device-ejection-history.py", *arguments]):
                     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                         with self.assertRaises(SystemExit) as caught:
                             runner.main()
                     self.assertEqual(caught.exception.code, status)
-            with patch.object(sys, "platform", "linux"), patch.object(sys, "argv", ["usb-eject-log.py"]):
+            with patch.object(sys, "platform", "linux"), patch.object(sys, "argv", ["device-ejection-history.py"]):
                 with redirect_stdout(io.StringIO()):
                     self.assertEqual(runner.main(), 1)
             elevate.assert_not_called()
 
     def test_elevation_failure_prevents_query(self) -> None:
-        with patch.object(sys, "platform", "win32"), patch.object(sys, "argv", ["usb-eject-log.py"]):
+        with patch.object(sys, "platform", "win32"), patch.object(sys, "argv", ["device-ejection-history.py"]):
             with patch.object(runner.System, "restart_elevated"), patch.object(runner.System, "is_elevated", return_value=False):
                 with patch.object(runner, "_show_events") as query, redirect_stdout(io.StringIO()):
                     self.assertEqual(runner.main(), 1)

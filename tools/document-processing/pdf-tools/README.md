@@ -28,20 +28,20 @@ During a recognition pause, Pages/Bookmarks remain navigable while structural
 editing stays locked; browsing never changes the recognition queue's position.
 The command-line compression/decryption tools are unchanged.
 
-`../pdf-split-pages.py` opens the visual page splitter: two left settings groups,
+`../pdf-page-splitter.py` opens the visual page splitter: two left settings groups,
 colored numbered crop overlays, and read-only pages/bookmarks with output start
 indexes. Move all frames or individual crops, keep pages whole, and export equal
 child paper sizes with centered crops and blank padding. See
 [split_pages/README.md](split_pages/README.md). It reuses the shared viewer, bounded
 cache, serial jobs, RGB transfer, file actions and tooltips; exports never rasterize.
 
-`../pdf-font-replace.py` opens the font replacement GUI: ordered source/target
+`../pdf-font-replacer.py` opens the font replacement GUI: ordered source/target
 rules on the left, raw/result comparison in the center, and read-only page/bookmark
 navigation on the right. See [font_replace/README.md](font_replace/README.md) for
 matching, font discovery and export behavior. It shares the viewer, cache budgets,
 RGB transport, serial job runner, file dialogs and tooltip handling below.
 
-`../pdf-bookmarks-add.py` opens the TOC recognition, bookmark editor and page-label
+`../pdf-bookmark-editor.py` opens the TOC recognition, bookmark editor and page-label
 GUI, including its Page labels tab. See [bookmarks/README.md](bookmarks/README.md)
 for the workflow, API testing, recognition queue and export behavior. This tool
 keeps recognition drafts in memory and has no project files; API preferences are
@@ -74,9 +74,9 @@ Both windows install `common/tooltips.py`: widget/action and tree-cell hints wra
 within 250 logical pixels, including long unbroken URLs. The window-scoped filter
 also covers controls rebuilt by Close and newly created settings.
 
-The remaining sections describe PDF Binarize.
+The remaining sections describe PDF Binarizer.
 
-Run `../pdf-binarize.py` without arguments to open the PySide6/Fusion desktop
+Run `../pdf-binarizer.py` without arguments to open the PySide6/Fusion desktop
 application.
 
 Dependencies: PySide6, PyMuPDF >= 1.28, pypdf >= 6, Pillow with libtiff, numpy,

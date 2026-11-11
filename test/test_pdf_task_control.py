@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 from utils import *
 
 TOOLS = ROOT / "tools/document-processing"
-runpy.run_path(str(TOOLS / "pdf-binarize.py"))["load_app"]("common.task_control")
+runpy.run_path(str(TOOLS / "pdf-binarizer.py"))["load_app"]("common.task_control")
 from personal_pdf_tools.common.jobs import JobRunner
 from personal_pdf_tools.common.task_control import Cancelled, TaskControl
 from personal_pdf_tools.bookmarks.app import BookmarksWindow
@@ -75,9 +75,9 @@ class TaskControlTests(unittest.TestCase):
 
     def test_gui_export_pause_stop_resume_and_reuse(self) -> None:
         """All migrated windows use the same controls and keep edits after Stop."""
-        for window_class, entry in ((SplitWindow, "pdf-split-pages.py"),
-                                    (FontReplaceWindow, "pdf-font-replace.py"),
-                                    (BookmarksWindow, "pdf-bookmarks-add.py")):
+        for window_class, entry in ((SplitWindow, "pdf-page-splitter.py"),
+                                    (FontReplaceWindow, "pdf-font-replacer.py"),
+                                    (BookmarksWindow, "pdf-bookmark-editor.py")):
             with self.subTest(tool=entry), patch.object(QtWidgets.QMessageBox, "information"):
                 window = window_class(TOOLS / entry)
                 self.addCleanup(self.close_window, window)
@@ -153,7 +153,7 @@ class TaskControlTests(unittest.TestCase):
                 self.assertEqual(list(self.folder.glob(".pdf-tools-*")), [])
 
     def test_font_scan_can_stop_and_restart(self) -> None:
-        runner = JobRunner(TOOLS / "pdf-font-replace.py")
+        runner = JobRunner(TOOLS / "pdf-font-replacer.py")
         results: list[dict] = []
         runner.completed.connect(results.append)
         try:
@@ -172,7 +172,7 @@ class TaskControlTests(unittest.TestCase):
             runner.shutdown()
 
     def test_invalid_request_does_not_allocate_controls(self) -> None:
-        runner = JobRunner(TOOLS / "pdf-split-pages.py")
+        runner = JobRunner(TOOLS / "pdf-page-splitter.py")
         with self.assertRaises(ValueError):
             runner.start({"operation": "export", "invalid": float("nan")})
         self.assertFalse(runner.busy)

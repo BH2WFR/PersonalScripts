@@ -21,7 +21,7 @@ import pymupdf
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "tools/document-processing/pdf-binarize.py"
+SCRIPT = ROOT / "tools/document-processing/pdf-binarizer.py"
 SPEC = importlib.util.spec_from_file_location("pdf_binarize", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 entry = importlib.util.module_from_spec(SPEC)

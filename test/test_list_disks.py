@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("list_disks_test_target", ROOT / "tools/filesystem/list-disks.py")
+SPEC = importlib.util.spec_from_file_location("list_disks_test_target", ROOT / "tools/filesystem/disk-inventory.py")
 assert SPEC is not None and SPEC.loader is not None
 runner = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = runner
@@ -160,18 +160,18 @@ class InventoryTests(unittest.TestCase):
         self.assertNotIn("shared container capacity", output.getvalue())
 
     def test_help_does_not_scan_and_scan_failure_exits_nonzero(self) -> None:
-        with patch.object(sys, "argv", ["list-disks.py", "--help"]), patch.object(runner.System, "scan_disks") as scan:
+        with patch.object(sys, "argv", ["disk-inventory.py", "--help"]), patch.object(runner.System, "scan_disks") as scan:
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(runner.main(), 0)
             scan.assert_not_called()
-        with patch.object(sys, "argv", ["list-disks.py"]), patch.object(runner.System, "scan_disks", side_effect=RuntimeError("denied")):
+        with patch.object(sys, "argv", ["disk-inventory.py"]), patch.object(runner.System, "scan_disks", side_effect=RuntimeError("denied")):
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error:
                 self.assertEqual(runner.main(), 1)
             self.assertIn("denied", error.getvalue())
 
     def test_default_prints_once_without_prompting(self) -> None:
         scan = runner.DiskScan([runner.DiskInfo("/dev/example", "disk", size=4096)])
-        with patch.object(sys, "argv", ["list-disks.py"]), patch.object(runner.System, "scan_disks", return_value=scan):
+        with patch.object(sys, "argv", ["disk-inventory.py"]), patch.object(runner.System, "scan_disks", return_value=scan):
             with patch("builtins.input", side_effect=AssertionError("Must not prompt")):
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     self.assertEqual(runner.main(), 0)

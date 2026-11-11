@@ -72,7 +72,7 @@ class FontReplaceWindow(QtWidgets.QMainWindow):
         self.timer.setSingleShot(True)
         self.timer.setInterval(PREVIEW_DELAY_MS)
         self.timer.timeout.connect(self._render)
-        self.setWindowTitle("PDF Font Replace")
+        self.setWindowTitle("PDF Font Replacer")
         self.resize(1420, 900)
         self._build()
         self.drop_filter = FileDropFilter(self, self.open_path, lambda: not self.runner.busy, suffixes=(".pdf",))
@@ -318,7 +318,7 @@ class FontReplaceWindow(QtWidgets.QMainWindow):
         self.navigation.load([], [])
         self.page_number.setRange(1, 1)
         self.page_total.setText(" / 0 ")
-        self.setWindowTitle("PDF Font Replace")
+        self.setWindowTitle("PDF Font Replacer")
 
     def _close_pdf(self) -> None:
         if self.runner.busy:
@@ -514,7 +514,7 @@ class FontReplaceWindow(QtWidgets.QMainWindow):
                 self.status.setText(str(message.get("message", "Operation failed.")))
                 if self._request.get("operation") == "preview":
                     self.viewer.clear()
-                QtWidgets.QMessageBox.warning(self, "PDF Font Replace", str(message.get("message")))
+                QtWidgets.QMessageBox.warning(self, "PDF Font Replacer", str(message.get("message")))
         elif kind == "opened":
             self._reset()
             self.source = Path(str(self._request["path"]))
@@ -524,7 +524,7 @@ class FontReplaceWindow(QtWidgets.QMainWindow):
             self.page_number.setRange(1, self.page_count)
             self.page_total.setText(f" / {self.page_count} ")
             self.navigation.load(cast(list[str], message["labels"]), cast(list[tuple[int, str, int]], message["bookmarks"]))
-            self.setWindowTitle(f"PDF Font Replace — {self.source.name}")
+            self.setWindowTitle(f"PDF Font Replacer — {self.source.name}")
             self.go_page(1)
         elif kind == "scan":
             names = cast(list[str], message["names"])

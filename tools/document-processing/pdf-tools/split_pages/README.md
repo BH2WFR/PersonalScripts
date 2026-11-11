@@ -1,6 +1,6 @@
-# PDF Split Pages
+# PDF Page Splitter
 
-Run `../../pdf-split-pages.py` or select `pdf-split-pages` in the launcher.
+Run `../../pdf-page-splitter.py` or select `pdf-page-splitter` in the launcher.
 The PySide6/Fusion GUI replaces the previous interactive CLI. Requires PySide6,
 PyMuPDF and tqdm, already included in the project dependencies.
 

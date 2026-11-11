@@ -63,41 +63,37 @@ ignore-list:
         - "research/matrix-viewer/"
         - "network/rclone-sync/"
         - "others/keyboard-hook-viewer/"
-        - "windows/keyboard-remap/"
+        - "windows/keyboard-remapper/"
         - "document-processing/pdf-tools/"
     platform-specific:
         # 规范：windows, linux, macos
         windows:
             - "macos/"
             - "linux/"
-            - "filesystem/batch-add-chmod-x.sh"
-            - "filesystem/remove-quarantine.py"
+            - "filesystem/executable-bit-setter.sh"
         linux:
             - "windows/"
             - "macos/"
-            - "filesystem/link-fix-to-symlinkd-windows.py"
-            - "filesystem/git-batch-add-chmod-x.ps1"
-            - "filesystem/remove-quarantine.py"
+            - "filesystem/git-executable-bit-setter.ps1"
         macos:
             - "windows/"
             - "linux/"
-            - "filesystem/link-fix-to-symlinkd-windows.py"
-            - "filesystem/git-batch-add-chmod-x.ps1"
+            - "filesystem/git-executable-bit-setter.ps1"
     arch-specific:
         # 规范：x86, x86_64, armv7, arm64
         x86_64:
             macos:
-                - "macos/screen-utils.py"
+                - "macos/display-manager.py"
     linux-gui-specific:
         # 规范：no-gui, wayland, x11
         no-gui: # 下列程序在列出时会带上 `[GUI]` 的尾巴
             - "others/script-to-app.py"
             - "others/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
-            - "document-processing/pdf-binarize.py"
-            - "document-processing/pdf-bookmarks-add.py"
-            - "document-processing/pdf-font-replace.py"
-            - "document-processing/pdf-split-pages.py"
+            - "document-processing/pdf-binarizer.py"
+            - "document-processing/pdf-bookmark-editor.py"
+            - "document-processing/pdf-font-replacer.py"
+            - "document-processing/pdf-page-splitter.py"
             - "research/matrix-viewer.py"
         wayland:
             - "others/keyboard-hook-viewer.py"

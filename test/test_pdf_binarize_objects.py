@@ -321,11 +321,11 @@ class ObjectPipelineTests(unittest.TestCase):
             discovered = launcher.find_scripts(str(ROOT / "tools"), config)
         for listing in (discovered, compiler.find_py_scripts(str(ROOT / "tools"))):
             paths = [path.replace("\\", "/") for path in listing]
-            self.assertIn("document-processing/pdf-binarize.py", paths)
+            self.assertIn("document-processing/pdf-binarizer.py", paths)
             self.assertNotIn("document-processing/pdf-binarize-old.py", paths)
-            self.assertIn("document-processing/pdf-bookmarks-add.py", paths)
-            self.assertIn("document-processing/pdf-font-replace.py", paths)
-            self.assertIn("document-processing/pdf-split-pages.py", paths)
+            self.assertIn("document-processing/pdf-bookmark-editor.py", paths)
+            self.assertIn("document-processing/pdf-font-replacer.py", paths)
+            self.assertIn("document-processing/pdf-page-splitter.py", paths)
             self.assertNotIn("document-processing/pdf-page-tag.py", paths)
             self.assertFalse(any(path.startswith("document-processing/pdf-tools/") for path in paths))
         stages: list[Path] = []
@@ -345,7 +345,7 @@ class ObjectPipelineTests(unittest.TestCase):
             self.assertTrue(any("personal_pdf_tools" in part for part in command))
             return subprocess.CompletedProcess(command, 0)
 
-        for filename in ("pdf-binarize.py", "pdf-bookmarks-add.py", "pdf-font-replace.py", "pdf-split-pages.py"):
+        for filename in ("pdf-binarizer.py", "pdf-bookmark-editor.py", "pdf-font-replacer.py", "pdf-page-splitter.py"):
             entry = str(ROOT / "tools/document-processing" / filename)
             for tool in ("nuitka", "pyinstaller"):
                 with patch.object(compiler.subprocess, "run", side_effect=staged):

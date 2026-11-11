@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 
 ROOT = Path(__file__).resolve().parents[1]
-runpy.run_path(str(ROOT / "tools/document-processing/pdf-font-replace.py"))["load_app"]("common.range_input")
+runpy.run_path(str(ROOT / "tools/document-processing/pdf-font-replacer.py"))["load_app"]("common.range_input")
 from utils import *
 from personal_pdf_tools.common.range_input import PageRangeDialog, RangeInput
 from personal_pdf_tools.font_replace.panel import RulePanel

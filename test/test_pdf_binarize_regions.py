@@ -1,6 +1,6 @@
 """Regression tests for independent scan layers, detection and general denoising.
 
-Requires the ordinary pdf-binarize dependencies. Run with:
+Requires the ordinary pdf-binarizer dependencies. Run with:
 conda run -n base python -m unittest discover -s test -p test_pdf_binarize_regions.py
 Uses repository tmp/ for temporary PDFs; no source fixtures are modified.
 """

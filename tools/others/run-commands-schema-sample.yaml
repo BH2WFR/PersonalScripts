@@ -66,7 +66,7 @@ settings:
   default:
     cwd: "{{current_dir}}"
     environment:
-      RUN_COMMANDS_MESSAGE: "Hello from run-commands"
+      RUN_COMMANDS_MESSAGE: "Hello from command-runner"
   windows:
     platform: windows
   posix:
@@ -145,7 +145,7 @@ tasks:
       run:
         type: script
         runtime: python-current
-        script-path: "{{script_dir}}/run-commands.py"
+        script-path: "{{script_dir}}/command-runner.py"
         args: ["--help"]
 
   # Project-specific examples (uncomment and customize):

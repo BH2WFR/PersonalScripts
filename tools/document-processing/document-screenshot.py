@@ -15,8 +15,8 @@ from utils import *  # noqa: E402
 
 HELP = f"""{FLYellow}DOCUMENT SCREENSHOT{CRst}
 
-Capture successive document pages as images when direct export is unavailable.
-Uses the visible desktop and sends page-turn input to the selected window.
+Automatically turn document pages and save screenshots of a selected screen region. Circumventing copyright
+protections or infringing copyright is not welcomed;
 
 {FLYellow}Requirements:{CRst}
   mss, pynput, Pillow; Windows, macOS or Linux X11 desktop.
@@ -32,7 +32,9 @@ if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
 
 
 import mss # pip install mss
-import mss.tools
+
+# MSS was added in 10.2; prefer it without dropping support for older installs.
+create_mss = getattr(mss, "MSS", None) or mss.mss
 
 from pynput import keyboard # pip install pynput
 from pynput import mouse
@@ -121,7 +123,7 @@ def main() -> int:
 
     def probe_screen_capture() -> None:
         """Perform a tiny capture without saving it to trigger macOS consent."""
-        with mss.MSS() as screenshotter:
+        with create_mss() as screenshotter:
             monitors = screenshotter.monitors
             if len(monitors) < 2:
                 raise RuntimeError("No physical display was detected.")
@@ -312,7 +314,7 @@ def main() -> int:
             if stop_event.is_set():
                 break
 
-            with mss.MSS() as sct:
+            with create_mss() as sct:
                 # monitor = sct.monitors[Config.monitor_index]
                 region = {
                     "left": Region.left,

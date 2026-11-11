@@ -106,7 +106,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.preview_timer = QtCore.QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self._start_preview)
-        self.setWindowTitle("PDF Binarize [Administrator]" if self._elevated else "PDF Binarize")
+        self.setWindowTitle("PDF Binarizer [Administrator]" if self._elevated else "PDF Binarizer")
         self.resize(1440, 900)
         self.setMinimumSize(980, 600)
         self.setAcceptDrops(True)
@@ -379,7 +379,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
     def _title(self) -> None:
         name = self.project.source.name if self.project else "No document"
         elevation = " [Administrator]" if self._elevated else ""
-        self.setWindowTitle(f"{'* ' if self.dirty else ''}{name} - PDF Binarize{elevation}")
+        self.setWindowTitle(f"{'* ' if self.dirty else ''}{name} - PDF Binarizer{elevation}")
 
     def _confirm_discard(self) -> bool:
         if not self.dirty:
@@ -688,7 +688,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         if old:
             old.deleteLater()
         self._build()
-        self.setWindowTitle("PDF Binarize [Administrator]" if self._elevated else "PDF Binarize")
+        self.setWindowTitle("PDF Binarizer [Administrator]" if self._elevated else "PDF Binarizer")
         self._refresh_enabled()
 
     def _settings_changed(self, config: Config) -> None:
@@ -993,7 +993,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         remaining = max(0, self.preview_timer.remainingTime())
         self.preview_timer.stop()
         self.status.setText(message)
-        QtWidgets.QMessageBox.critical(self, "PDF Binarize", message)
+        QtWidgets.QMessageBox.critical(self, "PDF Binarizer", message)
         if self._preview_requested and not self.runner.busy:
             self._schedule_preview(remaining)
 

@@ -1,6 +1,6 @@
-# PDF Font Replace
+# PDF Font Replacer
 
-Run `../../pdf-font-replace.py` or select `pdf-font-replace`
+Run `../../pdf-font-replacer.py` or select `pdf-font-replacer`
 in the repository launcher. Requires PySide6, PyMuPDF >= 1.28, fonttools and tqdm;
 the implementation lives in this package, loaded as `personal_pdf_tools.font_replace`.
 

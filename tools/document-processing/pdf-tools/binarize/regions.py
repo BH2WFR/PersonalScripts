@@ -1,4 +1,4 @@
-"""Private scan segmentation, denoising and layer codec for pdf-binarize.py.
+"""Private scan segmentation, denoising and layer codec for pdf-binarizer.py.
 
 Requires numpy, opencv-python, Pillow and PyMuPDF. The private application
 package imports this module; it is hidden from the script launcher.
