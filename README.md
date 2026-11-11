@@ -235,7 +235,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 |------|------|------|
 | `tools/download/bbdown-bilibili-downloader.py` | **Bilibili video downloader based on BBDown:**<br />(quality/audio only/subtitles/danmaku/multiple APIs)<br />Note: BBDown is no longer maintained; Bilibili downloads will be migrated to yt-dlp later. | `BBDown`, `ffmpeg`, `aria2` (optional) |
 | `tools/download/yt-dlp-video-downloader.py` | **Video downloader based on yt-dlp:**<br />(quality/audio/subtitles/cookies/playlists) | `yt-dlp`, `ffmpeg`, `deno` (optional) |
-| `tools/download/yt-dlp-hls-downloader.py` | **m3u8/HLS stream downloader based on yt-dlp** | `yt-dlp`, `ffmpeg` |
+| `tools/download/yt-dlp-m3u8-downloader.py` | **m3u8/HLS stream downloader based on yt-dlp** | `yt-dlp`, `ffmpeg` |
 
 ### Video/Image Editing
 

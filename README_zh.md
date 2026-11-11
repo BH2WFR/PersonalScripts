@@ -232,7 +232,7 @@
 |------|------|------|
 | `tools/download/bbdown-bilibili-downloader.py` | **基于 BBDown 的 B 站视频下载器**：<br />（画质/仅音频/字幕/弹幕/多 API）<br />注：BBDown 已停止更新，后续会改用 yt-dlp 完成 B 站的下载 | `BBDown`、`ffmpeg`、`aria2`（可选） |
 | `tools/download/yt-dlp-video-downloader.py`       | **基于 yt-dlp 的视频下载工具**：<br />（画质/音频/字幕/Cookies/播放列表） | `yt-dlp`、`ffmpeg`、`deno`（可选） |
-| `tools/download/yt-dlp-hls-downloader.py` | **基于 yt-dlp 的 m3u8/HLS 流媒体下载器**                     | `yt-dlp`、`ffmpeg`                  |
+| `tools/download/yt-dlp-m3u8-downloader.py` | **基于 yt-dlp 的 m3u8/HLS 流媒体下载器**                     | `yt-dlp`、`ffmpeg`                  |
 
 ### 视频/图片编辑
 

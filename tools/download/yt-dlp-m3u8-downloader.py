@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-HELP = f"""{FLYellow}YT-DLP HLS DOWNLOADER{CRst}
+HELP = f"""{FLYellow}YT-DLP M3U8 DOWNLOADER{CRst}
 
 Download m3u8/HLS streams through yt-dlp, with custom request headers and filenames.
 
@@ -18,7 +18,7 @@ Download m3u8/HLS streams through yt-dlp, with custom request headers and filena
   yt-dlp, ffmpeg.
 
 {FLYellow}Usage:{CRst}
-  python yt-dlp-hls-downloader.py [URL ...]
+  python yt-dlp-m3u8-downloader.py [URL ...]
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
@@ -27,7 +27,7 @@ if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
 
 
 def main() -> int:
-    Console.print_banner("YT-DLP HLS DOWNLOADER")
+    Console.print_banner("YT-DLP M3U8 DOWNLOADER")
 
     if "--help" in sys.argv or "-h" in sys.argv:
 
