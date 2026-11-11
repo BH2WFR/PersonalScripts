@@ -37,8 +37,23 @@ sources: Sleep/Wake/Background wake share one `pmset` call, without unified-log
 queries or diagnostic-report scans. Activity predicates include only selected
 activity categories; Authentication also needs sshd for SSH failures. Shared
 sources can contain other categories, which are removed before the result limit
-is applied. Windows/Linux retain their existing source queries, with returned
-events restricted to selected categories.
+is applied. Windows also queries only sources needed by the selected categories;
+Linux retains its existing source queries, with returned events restricted to
+selected categories.
+
+Windows uses .NET `EventLogReader` through one PowerShell process, avoiding
+repeated `Get-WinEvent` provider discovery and per-record pipeline overhead.
+Native XPath filters use provider names, event IDs/levels and explicit half-open
+UTC bounds. Reads run newest first and keep independent per-source limits,
+including separate network/interactive logons and each share audit selector.
+Shared sources remain enabled for every category they can produce: Authentication
+also reads OpenSSH failures, and Network authentication includes Security 4625.
+Every record retains its original XML and rendered message; readers and records
+are disposed after use. Missing channels/access errors remain source errors;
+an accessible channel with no matching provider records is reported as No matches.
+Refreshes read current logs without a history cache, retaining command cancellation
+and timeout handling. See the native
+[EventLogReader API](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.eventing.reader.eventlogreader).
 
 Long macOS activity queries split the requested interval into up to four parallel
 time ranges, with at least six hours per range (short queries use one reader).

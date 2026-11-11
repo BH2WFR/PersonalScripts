@@ -239,8 +239,65 @@ def _parse_windows_xml(xml: str, message: str = "") -> list[PowerEvent]:
 
 
 
-def _collect_windows(result: QueryResult, cancelled: threading.Event, progress: Callable[[str], None]) -> None:
-    """Read provider-qualified event XML through PowerShell, retaining access errors per source."""
+def _windows_source_filters(selected_kinds: frozenset[EventKind] | None) -> str:
+    """Select native sources before reading, retaining all shared-source dependencies."""
+    sources: tuple[tuple[frozenset[EventKind], str], ...] = (
+        (frozenset({EventKind.STARTUP, EventKind.SHUTDOWN}),
+         "@{LogName='System'; ProviderName='Microsoft-Windows-Kernel-General'; Id=@(12,13)}"),
+        (frozenset({EventKind.UNEXPECTED_RESTART, EventKind.SLEEP, EventKind.HIBERNATE, EventKind.WAKE,
+                    EventKind.STANDBY_ENTER, EventKind.STANDBY_EXIT, EventKind.POWER_SESSION}),
+         "@{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'; Id=@(41,42,107,506,507,566)}"),
+        (frozenset({EventKind.WAKE}),
+         "@{LogName='System'; ProviderName='Microsoft-Windows-Power-Troubleshooter'; Id=@(1)}"),
+        (frozenset({EventKind.POWER_REQUEST}),
+         "@{LogName='System'; ProviderName='User32'; Id=@(1074)}"),
+        (frozenset({EventKind.DEVICE_EJECT_BLOCKED}),
+         "@{LogName='System'; ProviderName='Microsoft-Windows-Kernel-PnP'; Id=@(225)}"),
+        (frozenset({EventKind.LOCK, EventKind.UNLOCK, EventKind.RDP_RECONNECT, EventKind.RDP_DISCONNECT}),
+         "@{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4800,4801,4778,4779)}"),
+        (frozenset({EventKind.LOGON, EventKind.LOGOFF}),
+         "@{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4624,4634)}"),
+        (frozenset({EventKind.NETWORK_AUTH}),
+         "@{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4624)}"),
+        (frozenset({EventKind.SMB}),
+         "@{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(5140)}"),
+        (frozenset({EventKind.SMB}),
+         "@{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(5145)}"),
+        (frozenset({EventKind.SMB}),
+         "@{LogName='Microsoft-Windows-SMBServer/Security'; ProviderName='Microsoft-Windows-SMBServer'; Id=@(551)}"),
+        (frozenset({EventKind.LOGON, EventKind.LOGOFF, EventKind.RDP_CONNECT, EventKind.RDP_RECONNECT, EventKind.RDP_DISCONNECT}),
+         "@{LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; ProviderName='Microsoft-Windows-TerminalServices-LocalSessionManager'; Id=@(21,23,24,25)}"),
+        (frozenset({EventKind.SSH_CONNECT, EventKind.SSH_DISCONNECT, EventKind.AUTHENTICATION}),
+         "@{LogName='OpenSSH/Operational'; ProviderName='OpenSSH'}"),
+        (frozenset({EventKind.SSH_CONNECT, EventKind.SSH_DISCONNECT, EventKind.AUTHENTICATION}),
+         "@{LogName='OpenSSH/Admin'; ProviderName='OpenSSH'}"),
+        (frozenset({EventKind.APP_CRASH}),
+         "@{LogName='Application'; ProviderName='Application Error'; Id=@(1000)}"),
+        (frozenset({EventKind.APP_HANG}),
+         "@{LogName='Application'; ProviderName='Application Hang'; Id=@(1002)}"),
+        (frozenset({EventKind.DIAGNOSTIC}),
+         "@{LogName='Application'; ProviderName='Windows Error Reporting'; Id=@(1001)}"),
+        (frozenset({EventKind.SYSTEM_CRASH}),
+         "@{LogName='System'; ProviderName='Microsoft-Windows-WER-SystemErrorReporting'; Id=@(1001)}"),
+        (frozenset({EventKind.DIAGNOSTIC}),
+         "@{LogName='System'; ProviderName='Microsoft-Windows-WHEA-Logger'}"),
+        (frozenset({EventKind.DIAGNOSTIC}),
+         "@{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; ProviderName='Microsoft-Windows-Diagnostics-Performance'; Level=@(1,2,3)}"),
+    )
+    filters = [activity_filters(selected_kinds)]
+    filters.extend(f"    {selector}" for kinds, selector in sources
+                   if selected_kinds is None or kinds & selected_kinds)
+    return ",\n".join(part for part in filters if part)
+
+
+def _collect_windows(
+    result: QueryResult, cancelled: threading.Event, progress: Callable[[str], None],
+    *, selected_kinds: frozenset[EventKind] | None = None,
+) -> None:
+    """Read selected sources through EventLogReader; preserve messages and per-source errors."""
+    filters = _windows_source_filters(selected_kinds)
+    if not filters:
+        return
     executable = Environment.find_pwsh()
     if executable is None:
         result.statuses.append(SourceStatus("Windows Event Log", SourceState.ERROR, "PowerShell was not found."))
@@ -248,45 +305,24 @@ def _collect_windows(result: QueryResult, cancelled: threading.Event, progress: 
     progress("Reading Windows system, login, diagnostic and device event logs...")
     script = r"""
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-# Get-WinEvent's hashtable filter interprets clock values as local even with Kind=Utc.
-# Normalize to local wall time here; Python still applies the exact half-open UTC bounds.
-$start = [DateTimeOffset]::Parse('__START__').LocalDateTime
-$end = [DateTimeOffset]::Parse('__END__').LocalDateTime
+# XPath uses explicit UTC bounds, avoiding local-clock and DST ambiguity.
+$utcStart = [DateTimeOffset]::Parse('__START__').UtcDateTime.ToString('o')
+$utcEnd = [DateTimeOffset]::Parse('__END__').UtcDateTime.ToString('o')
 $sources = @(
-__ACTIVITY_SOURCES__,
-    @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-General'; Id=@(12,13)},
-    @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'; Id=@(41,42,107,506,507,566)},
-    @{LogName='System'; ProviderName='Microsoft-Windows-Power-Troubleshooter'; Id=@(1)},
-    @{LogName='System'; ProviderName='User32'; Id=@(1074)},
-    @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-PnP'; Id=@(225)},
-    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4800,4801,4778,4779)},
-    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4624,4634)},
-    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4624)},
-    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(5140)},
-    @{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(5145)},
-    @{LogName='Microsoft-Windows-SMBServer/Security'; ProviderName='Microsoft-Windows-SMBServer'; Id=@(551)},
-    @{LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; ProviderName='Microsoft-Windows-TerminalServices-LocalSessionManager'; Id=@(21,23,24,25)},
-    @{LogName='OpenSSH/Operational'; ProviderName='OpenSSH'},
-    @{LogName='OpenSSH/Admin'; ProviderName='OpenSSH'},
-    @{LogName='Application'; ProviderName='Application Error'; Id=@(1000)},
-    @{LogName='Application'; ProviderName='Application Hang'; Id=@(1002)},
-    @{LogName='Application'; ProviderName='Windows Error Reporting'; Id=@(1001)},
-    @{LogName='System'; ProviderName='Microsoft-Windows-WER-SystemErrorReporting'; Id=@(1001)},
-    @{LogName='System'; ProviderName='Microsoft-Windows-WHEA-Logger'},
-    @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; ProviderName='Microsoft-Windows-Diagnostics-Performance'; Level=@(1,2,3)}
+__SOURCES__
 )
 foreach ($filter in $sources) {
     $label = "$($filter.LogName) / $($filter.ProviderName)"
     if ($filter.Id) { $label += " / IDs $($filter.Id -join ',')" }
-    $filter.StartTime = $start
-    $filter.EndTime = $end
     $count = 0
+    $reader = $null
     try {
-        $query = @{FilterHashtable=$filter; MaxEvents=50001; ErrorAction='Stop'}
+        $conditions = @("Provider[@Name='$($filter.ProviderName)']", "TimeCreated[@SystemTime >= '$utcStart' and @SystemTime < '$utcEnd']")
+        if ($filter.Id) { $conditions += '(' + (($filter.Id | ForEach-Object { "EventID=$_" }) -join ' or ') + ')' }
+        if ($filter.Level) { $conditions += '(' + (($filter.Level | ForEach-Object { "Level=$_" }) -join ' or ') + ')' }
+        $xpath = '*[System[' + ($conditions -join ' and ') + ']]'
         if ($filter.Id -contains 4624) {
             # Separate limits prevent network authentication crowding out desktop sessions.
-            $utcStart = $start.ToUniversalTime().ToString('o')
-            $utcEnd = $end.ToUniversalTime().ToString('o')
             if ($filter.Id.Count -eq 1) {
                 $eventIds = 'EventID=4624'
                 $types = "Data[@Name='LogonType']='3'"
@@ -297,27 +333,37 @@ foreach ($filter in $sources) {
                 $label += ' / Interactive'
             }
             $xpath = "*[System[Provider[@Name='Microsoft-Windows-Security-Auditing'] and ($eventIds) and TimeCreated[@SystemTime >= '$utcStart' and @SystemTime < '$utcEnd']] and EventData[$types]]"
-            $query = @{LogName='Security'; FilterXPath=$xpath; MaxEvents=50001; ErrorAction='Stop'}
         }
-        Get-WinEvent @query | ForEach-Object {
-            $description = ''
-            # Missing provider message resources must not prevent reading the XML evidence.
-            try { $description = $_.FormatDescription() } catch { }
-            @{kind='event'; xml=$_.ToXml(); message=$description} | ConvertTo-Json -Compress
-            $count++
+        $query = [System.Diagnostics.Eventing.Reader.EventLogQuery]::new(
+            $filter.LogName, [System.Diagnostics.Eventing.Reader.PathType]::LogName, $xpath)
+        $query.ReverseDirection = $true
+        $reader = [System.Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+        while ($count -lt __LIMIT__ -and ($record = $reader.ReadEvent())) {
+            try {
+                $description = ''
+                # Missing message resources must not hide the original XML evidence.
+                try { $description = $record.FormatDescription() } catch { }
+                ConvertTo-Json -InputObject @{kind='event'; xml=$record.ToXml(); message=$description} -Compress
+                $count++
+            } finally {
+                $record.Dispose()
+            }
         }
-        @{kind='status'; source=$label; state='Read'; count=$count; message='Accessible retained records queried.'} | ConvertTo-Json -Compress
+        $state = if ($count) {'Read'} else {'No matches'}
+        @{kind='status'; source=$label; state=$state; count=$count; message='Accessible retained records queried.'} | ConvertTo-Json -Compress
     } catch {
-        $state = if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') {'No matches'} else {'Unavailable'}
+        $state = 'Unavailable'
         @{kind='status'; source=$label; state=$state; count=$count; message=$_.Exception.Message} | ConvertTo-Json -Compress
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
     }
 }
-""".replace("__ACTIVITY_SOURCES__", activity_filters()).replace("__START__", result.start.isoformat()).replace("__END__", result.end.isoformat()).replace(
+""".replace("__SOURCES__", filters).replace("__LIMIT__", str(MAX_EVENTS + 1)).replace("__START__", result.start.isoformat()).replace("__END__", result.end.isoformat()).replace(
         "__LOGON_TYPES__", " or ".join(f"Data[@Name='LogonType']='{value}'" for value in INTERACTIVE_LOGON_TYPES),
     )
     try:
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-        text, _ = common._run_command([executable, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cancelled)
+        text, _ = common._run_command([executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cancelled)
         for record in common._json_records(text):
             if record.get("kind") == "event":
                 try:

@@ -202,9 +202,14 @@ class ParserTests(unittest.TestCase):
         ) as command:
             windows._collect_windows(result, threading.Event(), lambda _text: None)
         script = base64.b64decode(command.call_args.args[0][-1]).decode("utf-16-le")
-        # UTC clock values here caused an eight-hour shift on a UTC+08 Windows host.
-        self.assertIn(f"[DateTimeOffset]::Parse('{result.start.isoformat()}').LocalDateTime", script)
-        self.assertIn(f"[DateTimeOffset]::Parse('{result.end.isoformat()}').LocalDateTime", script)
+        # Native XPath receives UTC timestamps even on a UTC+08 Windows host.
+        self.assertIn(f"[DateTimeOffset]::Parse('{result.start.isoformat()}').UtcDateTime", script)
+        self.assertIn(f"[DateTimeOffset]::Parse('{result.end.isoformat()}').UtcDateTime", script)
+        self.assertIn("@SystemTime >= '$utcStart' and @SystemTime < '$utcEnd'", script)
+        self.assertIn("$query.ReverseDirection = $true", script)
+        self.assertIn(f"$count -lt {app.MAX_EVENTS + 1}", script)
+        self.assertIn("$record.Dispose()", script)
+        self.assertIn("$reader.Dispose()", script)
         kernel_filter = " ".join(line for line in script.splitlines() if "ProviderName='Microsoft-Windows-Kernel-Power'" in line)
         self.assertTrue({506, 507, 566}.issubset({int(value) for value in re.findall(r"\b\d+\b", kernel_filter)}))
         self.assertEqual([event.kind for event in result.events],
@@ -366,7 +371,7 @@ class ParserTests(unittest.TestCase):
             windows._collect_windows(result, threading.Event(), lambda _text: None)
         script = base64.b64decode(command.call_args.args[0][-1]).decode("utf-16-le")
         for token in ("4800,4801,4778,4779", "4624,4634", "21,23,24,25", "OpenSSH/Operational",
-                      "OpenSSH/Admin", "FilterXPath", "Data[@Name='LogonType']='10'"):
+                      "OpenSSH/Admin", "EventLogQuery", "Data[@Name='LogonType']='10'"):
             self.assertIn(token, script)
         self.assertEqual([event.kind for event in result.events], [app.EventKind.RDP_CONNECT, app.EventKind.SSH_CONNECT])
         self.assertEqual(result.statuses[0].state, app.SourceState.ERROR)
@@ -961,6 +966,61 @@ class SmbTests(unittest.TestCase):
             self.assertIn(selector, script)
         self.assertEqual(len(result.events), 1)
         self.assertTrue(any(status.state == app.SourceState.ERROR for status in result.statuses))
+
+
+class WindowsQuerySelectionTests(unittest.TestCase):
+    """Prevent source pruning from losing events produced by shared providers."""
+
+    def test_sleep_selection_avoids_unrelated_logs(self) -> None:
+        selected = app.EVENT_FILTER_GROUPS[app.EventKind.SLEEP]
+        selectors = windows._windows_source_filters(selected)
+        self.assertEqual(selectors.count("@{LogName="), 2)
+        self.assertIn("Power-Troubleshooter", selectors)
+        self.assertIn("41,42,107,506,507,566", selectors)
+        for unrelated in ("Security", "OpenSSH", "Application", "Configuration"):
+            self.assertNotIn(unrelated, selectors)
+
+    def test_shared_authentication_and_session_sources_are_retained(self) -> None:
+        cases = (
+            (app.EventKind.NETWORK_AUTH, ("Id=@(4624)", "Id=@(4625,4740,4767)"), ("OpenSSH", "Id=@(4624,4634)", "Id=@(5145)")),
+            (app.EventKind.AUTHENTICATION, ("OpenSSH/Operational", "OpenSSH/Admin", "Id=@(4625,4740,4767)"), ("Id=@(4624)",)),
+            (app.EventKind.LOGOFF, ("Id=@(4624,4634)", "LocalSessionManager", "Id=@(21,23,24,25)"), ("Id=@(4624)", "OpenSSH")),
+            (app.EventKind.RDP_RECONNECT, ("Id=@(4800,4801,4778,4779)", "LocalSessionManager"), ("Id=@(4624)",)),
+            (app.EventKind.SMB, ("Id=@(5140)", "Id=@(5145)", "Id=@(551)"), ("Id=@(4624)",)),
+        )
+        for kind, required, excluded in cases:
+            with self.subTest(kind=kind):
+                selectors = windows._windows_source_filters(frozenset({kind}))
+                for token in required:
+                    self.assertIn(token, selectors)
+                for token in excluded:
+                    self.assertNotIn(token, selectors)
+        for kind in app.PLATFORM_EVENT_KINDS["win32"]:
+            with self.subTest(kind=kind):
+                self.assertTrue(windows._windows_source_filters(frozenset({kind})))
+        self.assertEqual(windows._windows_source_filters(app.PLATFORM_EVENT_KINDS["win32"]),
+                         windows._windows_source_filters(None))
+
+    def test_history_passes_selection_and_filters_shared_source_records(self) -> None:
+        selected = frozenset({app.EventKind.SLEEP})
+        records = [{"kind": "event", "xml": _windows_xml("Microsoft-Windows-Kernel-Power", event_id)}
+                   for event_id in (42, 107)]
+        with patch.object(sys, "platform", "win32"), patch.object(Environment, "find_pwsh", return_value="pwsh"), patch.object(
+            common, "_run_command", return_value=("\n".join(map(json.dumps, records)), ""),
+        ) as command:
+            result = history.query_events(STAMP, STAMP + dt.timedelta(hours=1), threading.Event(),
+                                          selected_kinds=selected)
+        script = base64.b64decode(command.call_args.args[0][-1]).decode("utf-16-le")
+        self.assertNotIn("LogName='Security'", script)
+        self.assertEqual([event.kind for event in result.events], [app.EventKind.SLEEP])
+
+    def test_empty_selection_does_not_start_powershell(self) -> None:
+        result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1))
+        with patch.object(Environment, "find_pwsh") as find, patch.object(common, "_run_command") as run:
+            windows._collect_windows(result, threading.Event(), lambda _: None, selected_kinds=frozenset())
+        find.assert_not_called()
+        run.assert_not_called()
+        self.assertEqual(result.events, [])
 
 
 class DeviceEjectionTests(unittest.TestCase):

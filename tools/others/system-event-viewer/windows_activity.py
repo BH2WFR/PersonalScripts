@@ -69,11 +69,13 @@ ACTIVITY_SOURCES: tuple[ActivitySource, ...] = (
 )
 
 
-def activity_filters() -> str:
-    """Build PowerShell hashtable literals from static, application-owned selectors."""
+def activity_filters(selected_kinds: frozenset[EventKind] | None = None) -> str:
+    """Build selected activity filters, including failed type-3 network logons."""
     return ",\n".join(
         f"    @{{LogName='{source.log}'; ProviderName='{source.provider}'; Id=@({','.join(map(str, source.events))})}}"
         for source in ACTIVITY_SOURCES
+        if selected_kinds is None or source.kind in selected_kinds
+        or (source.kind == EventKind.AUTHENTICATION and EventKind.NETWORK_AUTH in selected_kinds)
     )
 
 

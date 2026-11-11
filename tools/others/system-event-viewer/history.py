@@ -33,8 +33,8 @@ def query_events(
         end: Exclusive timezone-aware end timestamp, after start.
         cancelled: Cancellation flag shared with the GUI worker.
         progress: Optional callback receiving short English progress messages.
-        selected_kinds: Requested categories, or all when omitted. macOS skips
-            unrelated sources; other platforms retain their existing source queries.
+        selected_kinds: Requested categories, or all when omitted. Windows and
+            macOS skip unrelated sources; Linux retains its existing queries.
 
     Returns:
         Sorted events and per-source diagnostics, including partial failures.
@@ -60,6 +60,8 @@ def query_events(
         result.statuses.append(SourceStatus("Platform", SourceState.ERROR, f"Unsupported platform: {sys.platform}"))
     elif sys.platform == "darwin" and selected_kinds is not None:
         macos._collect_macos(result, cancelled, progress, selected_kinds=selected_kinds)
+    elif sys.platform == "win32" and selected_kinds is not None:
+        windows._collect_windows(result, cancelled, progress, selected_kinds=selected_kinds)
     else:
         collector(result, cancelled, progress)
     if cancelled.is_set():
