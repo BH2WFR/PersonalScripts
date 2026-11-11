@@ -298,7 +298,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/windows/display-info.py` | Windows-only **screen resolution/scaling viewer:**<br />Shows the remote computer's current resolution and scaling in RDP sessions, where this information is unavailable in Windows Settings. | **Windows only** |
+| `tools/windows/display-info-viewer.py` | Windows-only **screen resolution/scaling viewer:**<br />Shows the remote computer's current resolution and scaling in RDP sessions, where this information is unavailable in Windows Settings. | **Windows only** |
 | `tools/macos/display-manager.py` | **Display management tool for Apple Silicon Macs:** Adjusts rotation, resolution, and brightness, diagnoses color modes, and forces RGB output on external displays. Can **disable a MacBook's built-in screen while an external display is connected**. | **macOS only** (Apple Silicon); verified on macOS 26.x Tahoe, compatibility with other versions is not guaranteed<br />**Optional Python pkg:** `pyobjc-framework-Cocoa` |
 
 ### Privacy and Cleanup

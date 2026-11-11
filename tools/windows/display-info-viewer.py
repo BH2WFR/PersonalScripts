@@ -13,7 +13,7 @@ from ctypes import wintypes
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils import *  # noqa: E402
 
-HELP = f"""{FLYellow}DISPLAY INFO{CRst}
+HELP = f"""{FLYellow}DISPLAY INFO VIEWER{CRst}
 
 Show physical/effective resolution, DPI scaling and layout for connected monitors,
 using native APIs to avoid DPI-virtualized measurements.
@@ -22,7 +22,7 @@ using native APIs to avoid DPI-virtualized measurements.
   Windows; project runtime only.
 
 {FLYellow}Usage:{CRst}
-  python display-info.py
+  python display-info-viewer.py
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
@@ -286,7 +286,7 @@ def main() -> int:
         print(HELP)
         return 0
 
-    Console.print_banner("DISPLAY INFO")
+    Console.print_banner("DISPLAY INFO VIEWER")
 
     _configure_native_functions()
 
