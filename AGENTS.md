@@ -157,6 +157,13 @@ can print `HELP` directly. Private implementation modules do not need a CLI.
   setup or call it unconditionally in every entry.
 - For PDF tools follow the [shared PDF policy](utils/docs/pdf.md): use
   `Pdf.open_document()` for existing inputs and `Pdf.save_new()` for output.
+- All GUIs must scale on high-DPI screens and update automatically when moved
+  between monitors with different DPI. Scale fonts, controls, spacing and images
+  together without clipping or losing input/state; do not hard-code physical
+  pixels or apply a startup-only scale. Use toolkit-native DPI support and shared
+  helpers; Windows requires per-monitor awareness before creating windows.
+  Tk tools use [TkDpi](utils/docs/tk_dpi.md); Qt uses logical coordinates without
+  double scaling. Verify initial scaling and repeated mixed-DPI transitions.
 - Simple GUI tools may use Tkinter; reserve PySide6 for complex interfaces.
   PySide6 tools use Fusion and the shared no-wheel form controls; follow
   [Qt conventions](utils/docs/qt.md) and import Qt-only APIs explicitly from

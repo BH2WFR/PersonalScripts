@@ -26,6 +26,7 @@ ownership and public exports.
 | [Keyboard](docs/keyboard.md) | Keyboard, WindowsScanCode, ScanCodePrefix | [keyboard.py](keyboard.py) |
 | [Windows event decoding](docs/windows_events.md) | DeviceEjectionEvent, parse_device_ejection_event (explicit import) | [windows_events.py](windows_events.py) |
 | [Unicode text](docs/unicode_text.md) | UnicodeText, UnicodeCharacter, UnicodeReport, TextStatistics | [unicode_text.py](unicode_text.py) |
+| [Tk DPI scaling](docs/tk_dpi.md) | TkDpi | [tk_dpi.py](tk_dpi.py) |
 | [Tk text input](docs/tk_input.md) | TkTextInput | [tk_input.py](tk_input.py) |
 | [Qt controls](docs/qt.md) | NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls | [qt_widgets.py](qt_widgets.py) |
 

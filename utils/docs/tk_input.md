@@ -21,6 +21,10 @@ surrogate, discarding the remainder of the composition. It does not alter fonts,
 clipboard operations, keyboard layouts, system IME settings or global hooks.
 It does not replace Tk's other keyboard-input or text-navigation code.
 
+Native callback installation, forwarding and destruction are shared with
+`TkDpi` through private `utils._win_subclass.WindowSubclass`. IME handling stays
+in this module; DPI handling stays in `tk_dpi.py`.
+
 The callback is removed when the Text widget or toplevel is destroyed;
 `close() -> None` also removes it and is safe to repeat. Construction raises
 `OSError` if installation fails. IME read failures fall back to native handling;

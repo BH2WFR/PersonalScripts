@@ -47,8 +47,9 @@ class UnicodeInspector:
         self._render_job: str | None = None
         self.report = UnicodeText.inspect("")
         root.title("Unicode Inspector")
-        root.geometry("1100x720")
-        root.minsize(800, 500)
+        self._dpi = TkDpi(root)
+        self._layout_scale = 1.0
+        root.geometry(f"{self._dpi.pixels(1100)}x{self._dpi.pixels(720)}")
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
         body = ttk.Frame(root, padding=12)
@@ -106,6 +107,22 @@ class UnicodeInspector:
         ttk.Button(footer, text="Copy Selected Rows", command=self.copy_rows).grid(row=0, column=2, padx=4)
         ttk.Button(footer, text="Copy Full Report", command=self.copy_report).grid(row=0, column=3, padx=(4, 0))
 
+        self._style = ttk.Style(root)
+        self._style_prefix = f"Unicode{id(self)}"
+        pending = list(root.winfo_children())
+        while pending:
+            widget = pending.pop()
+            pending.extend(widget.winfo_children())
+            if "font" in widget.keys():
+                widget.configure(font=self._dpi.font())
+            if isinstance(widget, ttk.Widget):
+                style_class = widget.winfo_class()
+                if isinstance(widget, ttk.Scrollbar):
+                    style_class = f"{str(widget.cget('orient')).capitalize()}.{style_class}"
+                widget.configure(style=f"{self._style_prefix}.{style_class}")
+        self._dpi.track_spacing()
+        self._dpi.start(self._apply_dpi)
+
         self.original.bind("<<Modified>>", self._on_modified)
         modifier = "Command" if root.tk.call("tk", "windowingsystem") == "aqua" else "Control"
         self.table.bind(f"<{modifier}-c>", self.copy_rows)
@@ -115,6 +132,27 @@ class UnicodeInspector:
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.set_text(text)
         self.original.focus_set()
+
+    def _apply_dpi(self, scale: float) -> None:
+        """Resize layout metrics in place, retaining text, selection and scroll state."""
+        px = self._dpi.pixels
+        self.root.minsize(px(800), px(500))
+        font = self._dpi.font()
+        for name in ("TLabel", "TButton", "TEntry", "Treeview"):
+            self._style.configure(f"{self._style_prefix}.{name}", font=font)
+        self._style.configure(f"{self._style_prefix}.TButton", padding=(px(8), px(3)))
+        self._style.configure(f"{self._style_prefix}.TEntry", padding=px(2))
+        self._style.configure(f"{self._style_prefix}.Treeview",
+                              rowheight=max(px(20), font.metrics("linespace") + px(6)))
+        self._style.configure(f"{self._style_prefix}.Treeview.Heading",
+                              font=self._dpi.font("TkHeadingFont"), padding=px(3))
+        for orientation in ("Vertical", "Horizontal"):
+            self._style.configure(f"{self._style_prefix}.{orientation}.TScrollbar",
+                                  arrowsize=px(14), width=px(14))
+        for column in UnicodeText.COLUMNS:
+            width = int(self.table.column(column, "width"))
+            self.table.column(column, width=round(width * scale / self._layout_scale), minwidth=px(50))
+        self._layout_scale = scale
 
     def _on_modified(self, event: object = None) -> None:
         if self.original.edit_modified():
@@ -206,6 +244,7 @@ class UnicodeInspector:
         if self._render_job is not None:
             self.root.after_cancel(self._render_job)
             self._render_job = None
+        self._dpi.close()
         self.root.destroy()
         return "break"
 
@@ -226,8 +265,10 @@ def main() -> int:
     except ImportError:
         print(f"{FLRed}Tkinter is unavailable. Install Tk support for this Python environment.{CRst}", file=sys.stderr)
         return 1
+    System.enable_dpi_awareness()
     try:
         root = tk.Tk()
+        root.withdraw()
     except tk.TclError as exc:
         print(f"{FLRed}Cannot open the desktop window: {exc}{CRst}", file=sys.stderr)
         return 1
@@ -235,6 +276,7 @@ def main() -> int:
         inspector = UnicodeInspector(root, " ".join(args.text))
         if args.clipboard:
             inspector.paste()
+        root.deiconify()
         root.mainloop()
     finally:
         try:

@@ -23,7 +23,6 @@ class TkTextInput:
     """
 
     _WM_IME_COMPOSITION = 0x010F
-    _WM_NCDESTROY = 0x0082
     _GCS_RESULTSTR = 0x0800
     _EVENT = "<<UnicodeImeCommit>>"
 
@@ -38,16 +37,6 @@ class TkTextInput:
 
         self._ct = ct
         self._imm = ct.WinDLL("imm32", use_last_error=True)
-        self._comctl = ct.WinDLL("comctl32", use_last_error=True)
-        callback_type = ct.WINFUNCTYPE(ct.c_ssize_t, wt.HWND, wt.UINT, wt.WPARAM,
-                                      wt.LPARAM, ct.c_size_t, ct.c_size_t)
-        self._callback = callback_type(self._window_proc)
-        self._comctl.SetWindowSubclass.argtypes = [wt.HWND, callback_type, ct.c_size_t, ct.c_size_t]
-        self._comctl.SetWindowSubclass.restype = wt.BOOL
-        self._comctl.RemoveWindowSubclass.argtypes = [wt.HWND, callback_type, ct.c_size_t]
-        self._comctl.RemoveWindowSubclass.restype = wt.BOOL
-        self._comctl.DefSubclassProc.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
-        self._comctl.DefSubclassProc.restype = ct.c_ssize_t
         self._imm.ImmGetContext.argtypes = [wt.HWND]
         self._imm.ImmGetContext.restype = wt.HANDLE
         self._imm.ImmReleaseContext.argtypes = [wt.HWND, wt.HANDLE]
@@ -56,8 +45,10 @@ class TkTextInput:
         self._imm.ImmGetCompositionStringW.restype = wt.LONG
         # Tk routes native keyboard/IME messages through the toplevel HWND.
         self._hwnd = widget.winfo_toplevel().winfo_id()
-        if not self._comctl.SetWindowSubclass(self._hwnd, self._callback, id(self), 0):
-            raise OSError("Cannot enable Unicode IME input for the Tk text editor")
+        from ._win_subclass import WindowSubclass
+
+        self._hook = WindowSubclass(self._hwnd, self._window_proc,
+                                    widget._root().report_callback_exception)
         self._attached = True
         # Tcl's %d substitution preserves the entire Unicode string. TextInsert
         # supplies the same selection replacement, undo and scrolling as typing.
@@ -80,21 +71,14 @@ class TkTextInput:
         finally:
             self._imm.ImmReleaseContext(hwnd, context)
 
-    def _window_proc(self, hwnd: int, message: int, wparam: int, lparam: int,
-                     subclass_id: int, reference: int) -> int:
-        try:
-            if message == self._WM_NCDESTROY:
-                self.close()
-            elif (message == self._WM_IME_COMPOSITION and lparam & self._GCS_RESULTSTR
-                  and self.widget.focus_get() is self.widget):
-                text = self._read_composition(hwnd)
-                if text is not None and any(ord(char) > 0xFFFF for char in text):
-                    self.widget.event_generate(self._EVENT, data=text, when="tail")
-                    return 0
-        except Exception as exc:
-            # Never let a Python exception escape a native callback.
-            self.widget._root().report_callback_exception(type(exc), exc, exc.__traceback__)
-        return self._comctl.DefSubclassProc(hwnd, message, wparam, lparam)
+    def _window_proc(self, hwnd: int, message: int, wparam: int, lparam: int) -> int | None:
+        if (message == self._WM_IME_COMPOSITION and lparam & self._GCS_RESULTSTR
+                and self.widget.focus_get() is self.widget):
+            text = self._read_composition(hwnd)
+            if text is not None and any(ord(char) > 0xFFFF for char in text):
+                self.widget.event_generate(self._EVENT, data=text, when="tail")
+                return 0
+        return None
 
     def _on_destroy(self, event: tk.Event) -> None:
         if event.widget is self.widget:
@@ -103,5 +87,5 @@ class TkTextInput:
     def close(self) -> None:
         """Remove the native callback; safe to repeat or call on other platforms."""
         if self._attached:
-            self._comctl.RemoveWindowSubclass(self._hwnd, self._callback, id(self))
+            self._hook.close()
             self._attached = False

@@ -22,7 +22,7 @@ Implementation: [environment.py](../environment.py), [system.py](../system.py), 
 | Suggest an unused filename | `Paths.available_path(path, start=1, limit=10000) -> Path`; retains a free path or tries `stem_1.ext`, `stem_2.ext`, etc.; does not reserve it, so writers must still check collisions |
 | Resolve a path against an explicit base directory | `Paths.resolve_path(path, base_dir, expand_environment=True, resolve_symlinks=False) -> str`; native variable expansion preserves undefined references, False avoids re-expanding literal/template results |
 | Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |
-| DPI awareness (Windows) | `System.enable_dpi_awareness()` |
+| DPI awareness (Windows) | `System.enable_dpi_awareness()` before creating windows; requests per-monitor V2 awareness, but does not resize existing widgets. Tk tools also use [TkDpi](tk_dpi.md); Qt retains its native DPI handling. |
 | Find bash / pwsh / conda | `Environment.find_bash()`, `Environment.find_pwsh()`, `Environment.find_conda()` |
 | Discover a strict runtime and verify its version | `Environment.resolve_runtime(RuntimeKind, executable=..., environment=..., cwd=...) -> tuple[str, str]`; `runtime_candidates(kind, environment, cwd=...)` discovers paths without probes; relative PATH uses cwd, launch paths preserve symlinks |
 | Find a program using a child environment | `Environment.which(name, environment=..., cwd=...) -> str \| None`; explicit PATH/PATHEXT search relative to cwd, absolute result preserves symlinks; no options retains native shutil.which behavior |

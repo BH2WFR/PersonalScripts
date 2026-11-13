@@ -25,3 +25,10 @@ Qt-generated dialog editors. Wheel events must not change values even when a
 control is focused; keyboard/buttons and open combo-popup scrolling still work.
 Import these APIs explicitly from `utils.qt_widgets`; keep the ordinary utils
 facade Qt-free. Checks: `test/test_qt_widgets.py`.
+
+Use Qt 6's native high-DPI support and logical widget coordinates. Do not multiply
+ordinary widget dimensions by the device pixel ratio. Custom raster buffers and
+cached previews must track the current window's device pixel ratio and refresh
+when it changes. Check startup and moves between differently scaled monitors;
+fonts, controls and images must remain readable without clipping or state loss.
+See https://doc.qt.io/qt-6/highdpi.html.
