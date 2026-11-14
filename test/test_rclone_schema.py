@@ -18,7 +18,7 @@ class SchemaLoadingTests(unittest.TestCase):
             ("tasks: {}\ntasks: {}\n", 1, 2),
             ("settings:\n  base: {}\n  base: {}\n", 2, 3),
             ("tasks:\n  test: []\n  test: []\n", 2, 3),
-            ("tasks:\n  test:\n  - name: demo\n    allow-actions: [push]\n    'allow-actions': all\n", 4, 5),
+            ("tasks:\n  test:\n  - name: demo\n    allow-actions: [push-sync]\n    'allow-actions': all\n", 4, 5),
             ("task:\n  sub-tasks:\n  - name: all\n    local-path: first\n    local-path: second\n", 4, 5),
             ("task: {name: first, name: second}\n", 1, 1),
             ("task:\n  <<: {name: first}\n  <<: {name: second}\n", 2, 3),

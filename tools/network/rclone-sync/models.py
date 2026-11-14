@@ -106,8 +106,8 @@ class PathInfo:
 class SyncAction(enum.StrEnum):
     """User-facing operation, mapping to a command and optional direction."""
 
-    PUSH = "push"
-    PULL = "pull"
+    PUSH_SYNC = "push-sync"
+    PULL_SYNC = "pull-sync"
     PUSH_COPY = "push-copy"
     PULL_COPY = "pull-copy"
     PUSH_MOVE = "push-move"
@@ -121,8 +121,8 @@ class SyncAction(enum.StrEnum):
 
 
 ACTION_COMMANDS: dict[SyncAction, tuple[str, Optional[str]]] = {
-    SyncAction.PUSH: ("sync", "push"),
-    SyncAction.PULL: ("sync", "pull"),
+    SyncAction.PUSH_SYNC: ("sync", "push"),
+    SyncAction.PULL_SYNC: ("sync", "pull"),
     SyncAction.PUSH_COPY: ("copy", "push"),
     SyncAction.PULL_COPY: ("copy", "pull"),
     SyncAction.PUSH_MOVE: ("move", "push"),

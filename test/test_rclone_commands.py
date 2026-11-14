@@ -54,7 +54,7 @@ class ActionTests(unittest.TestCase):
 
     def test_mode_orders_matching_actions_first(self) -> None:
         prefixes = {
-            "sync": ["push", "pull"], "copy": ["push-copy", "pull-copy"],
+            "sync": ["push-sync", "pull-sync"], "copy": ["push-copy", "pull-copy"],
             "move": ["push-move", "pull-move"], "bisync": ["bisync"], "check": ["check"],
         }
         for mode, expected in prefixes.items():
@@ -63,7 +63,7 @@ class ActionTests(unittest.TestCase):
                 self.assertEqual([action.value for action in actions[:len(expected)]], expected)
                 self.assertEqual(len(actions), 8)
 
-    def test_missing_or_empty_mode_highlights_push_pull_in_standard_order(self) -> None:
+    def test_missing_or_empty_mode_highlights_push_sync_pull_sync_in_standard_order(self) -> None:
         for raw in ("name: test", "name: test\npreferred-mode:", 'name: test\npreferred-mode: ""',
                     'name: test\npreferred-mode: "   "'):
             with self.subTest(raw=raw):
@@ -79,7 +79,7 @@ class ActionTests(unittest.TestCase):
                 self.assertEqual([option.value for option in options[:-1]], list(models.PATH_ACTIONS[models.PathType.DIRECTORY]))
                 self.assertEqual(options[-1].keys, ["Q"])
                 for option in options[:-1]:
-                    expected = utility.FLYellow if option.value in (models.SyncAction.PUSH, models.SyncAction.PULL) else utility.FLCyan
+                    expected = utility.FLYellow if option.value in (models.SyncAction.PUSH_SYNC, models.SyncAction.PULL_SYNC) else utility.FLCyan
                     self.assertEqual(option.desc_color, expected)
                     self.assertNotIn("removes source files", option.description)
 
@@ -110,14 +110,14 @@ class ActionTests(unittest.TestCase):
 
     def test_unset_mode_preserves_direction_only_cli_sync(self) -> None:
         task = schema_ops.SyncTask(local_path="local", remote_path="remote:")
-        self.assertEqual(terminal._select_action(task, None, "pull"), models.SyncAction.PULL)
+        self.assertEqual(terminal._select_action(task, None, "pull"), models.SyncAction.PULL_SYNC)
         self.assertEqual(backend.to_command(task, 'rclone', direction='pull')[:4], ["rclone", "sync", "remote:", "local"])
         self.assertEqual(task.mode, "")
 
     def test_allowlist_hides_every_action_not_explicitly_granted(self) -> None:
         for expected, forbidden in (
-            (["push", "push-copy", "push-move", "check"], models.SyncAction.PULL),
-            (["pull", "pull-copy", "pull-move", "check"], models.SyncAction.PUSH),
+            (["push-sync", "push-copy", "push-move", "check"], models.SyncAction.PULL_SYNC),
+            (["pull-sync", "pull-copy", "pull-move", "check"], models.SyncAction.PUSH_SYNC),
         ):
             with self.subTest(expected=expected):
                 config = {"name": "test", "allow-actions": expected,
@@ -201,7 +201,7 @@ class ActionTests(unittest.TestCase):
                     self.assertEqual(models.ACTION_COMMANDS[action], (preferred, "pull"))
                     expected = f"{preferred}to" if path_type == models.PathType.FILE else preferred
                     self.assertEqual(backend.to_command(task, 'rclone', direction='pull')[:4], ["rclone", expected, "remote:", "local"])
-                    override = models.SyncAction.PUSH_COPY_FILE if path_type == models.PathType.FILE else models.SyncAction.PUSH
+                    override = models.SyncAction.PUSH_COPY_FILE if path_type == models.PathType.FILE else models.SyncAction.PUSH_SYNC
                     selected = backend._task_for_action(task, override)
                     self.assertEqual(selected.preferred_mode, preferred)
                     self.assertEqual(selected.mode, models.ACTION_COMMANDS[override][0])
@@ -242,7 +242,7 @@ class ActionTests(unittest.TestCase):
 
     def test_operation_menu_retries_empty_input_and_q_goes_back(self) -> None:
         task = schema_ops.SyncTask(name="test", preferred_mode="move", local_path="local", remote_path="remote")
-        for key, expected in (("q", None), ("pull", models.SyncAction.PULL)):
+        for key, expected in (("q", None), ("pull-sync", models.SyncAction.PULL_SYNC)):
             with self.subTest(key=key), patch("builtins.input", side_effect=["", "   ", key]) as prompt:
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
@@ -296,7 +296,7 @@ class ActionTests(unittest.TestCase):
     def test_actions_override_yaml_mode_and_reverse_pull_paths(self) -> None:
         original = schema_ops.SyncTask(name="test", preferred_mode="move", local_path="local", remote_path="remote:")
         for name, mode, source, destination in (
-            ("push", "sync", "local", "remote:"), ("pull", "sync", "remote:", "local"),
+            ("push-sync", "sync", "local", "remote:"), ("pull-sync", "sync", "remote:", "local"),
             ("push-copy", "copy", "local", "remote:"), ("pull-copy", "copy", "remote:", "local"),
             ("push-move", "move", "local", "remote:"), ("pull-move", "move", "remote:", "local"),
             ("bisync", "bisync", "local", "remote:"), ("check", "check", "local", "remote:"),
@@ -311,15 +311,15 @@ class ActionTests(unittest.TestCase):
                 self.assertEqual(original.mode, "")
 
     def test_permissions_include_check_and_do_not_expand_direction_wildcards(self) -> None:
-        task = schema_ops.SyncTask.from_dict({"name": "test", "allow-actions": ["pull", "pull-copy", "pull-move", "check"]})
-        self.assertEqual([action.value for action in backend._available_actions(task)], ["pull", "pull-copy", "pull-move", "check"])
+        task = schema_ops.SyncTask.from_dict({"name": "test", "allow-actions": ["pull-sync", "pull-copy", "pull-move", "check"]})
+        self.assertEqual([action.value for action in backend._available_actions(task)], ["pull-sync", "pull-copy", "pull-move", "check"])
         with self.assertRaises(ValueError):
             backend._task_for_action(task, models.SyncAction.PUSH_MOVE)
         task.allow_actions = [models.SyncAction.CHECK]
         self.assertEqual(task.validate(), [])
         self.assertEqual(backend._available_actions(task), [models.SyncAction.CHECK])
-        task.allow_actions = [models.SyncAction.PUSH]
-        self.assertEqual(backend._available_actions(task), [models.SyncAction.PUSH])
+        task.allow_actions = [models.SyncAction.PUSH_SYNC]
+        self.assertEqual(backend._available_actions(task), [models.SyncAction.PUSH_SYNC])
         with self.assertRaises(ValueError):
             terminal._select_action(task, models.SyncAction.CHECK, None)
 
@@ -357,7 +357,8 @@ class ActionTests(unittest.TestCase):
     def test_cli_conflicts_and_configured_comparison_default(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):
             for argv in (["--action", "push-copy", "--pull"], ["--push", "--direction", "pull"],
-                         ["--action", "check", "--resync"], ["--comparison", "default"]):
+                         ["--action", "check", "--resync"], ["--comparison", "default"],
+                         ["--action", "push"], ["--action", "pull"]):
                 with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
                     terminal._parse_args(argv)
                 self.assertEqual(raised.exception.code, 2)
@@ -392,8 +393,8 @@ class FileTaskTests(unittest.TestCase):
         cases = [
             {"path-type": value} for value in (None, "directiry", "dir", "symlink", True, [])
         ] + [
-            {"allow-actions": value} for value in ("None", "push", True, 1, {}, [None], [True], ["all"],
-                                                  ["push", "all"], ["check-file"], ["push-copyto"])
+            {"allow-actions": value} for value in ("None", "push-sync", True, 1, {}, [None], [True], ["all"],
+                                                  ["push-sync", "all"], ["push"], ["pull"], ["check-file"], ["push-copyto"])
         ] + [
             {key: True} for key in ("allow-push", "allow-pull", "push-only", "pull-only", "is-file-not-directory")
         ]
@@ -414,7 +415,7 @@ class FileTaskTests(unittest.TestCase):
         for action in models.PATH_ACTIONS[models.PathType.DIRECTORY]:
             with self.subTest(action=action), self.assertRaises(ValueError):
                 terminal._select_action(task, action, None)
-        task.allow_actions = [models.SyncAction.PUSH, models.SyncAction.PULL_COPY_FILE]
+        task.allow_actions = [models.SyncAction.PUSH_SYNC, models.SyncAction.PULL_COPY_FILE]
         self.assertEqual(backend._available_actions(task), [models.SyncAction.PULL_COPY_FILE])
         with self.assertRaises(ValueError):
             backend.to_command(task, 'rclone', direction='push')

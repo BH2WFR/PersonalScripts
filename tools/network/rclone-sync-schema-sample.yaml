@@ -46,10 +46,10 @@
 # ---- Runtime actions --------------------------------------------------
 # Optional preferred-mode controls menu ordering, not which operation must run:
 # A nonempty value (including an inherited one) puts matching actions first
-# in FLYellow; the other actions use FLCyan. If no layer sets preferred-mode, push/pull
+# in FLYellow; the other actions use FLCyan. If no layer sets preferred-mode, push-sync/pull-sync
 # use FLYellow and the others use FLCyan in the standard order below.
 # preferred-mode: null or "" clears an inherited preference and restores that order.
-#   sync   -> push, pull first
+#   sync   -> push-sync, pull-sync first
 #   copy   -> push-copy, pull-copy first
 #   move   -> push-move, pull-move first (removes source files)
 #   bisync -> bisync first
@@ -70,7 +70,7 @@
 # Ungrouped tasks omit the group prefix.
 # Confirmation groups warnings, then shows the command, task/action/comparison,
 # and Execute prompt. Move's source-deletion warning appears here, not in the menu.
-# CLI --action selects an operation explicitly; --direction/--push/--pull
+# CLI --action selects an operation explicitly (e.g. push-sync or pull-sync); --direction/--push/--pull
 # instead use the configured sync/copy/move preferred-mode.
 # Without a preference, direction-only CLI flags use sync for directories, copy for files.
 # allow-actions accepts null, scalar all, or a list of exact action names.
@@ -399,7 +399,7 @@ tasks:
 
       # ---- action safety --------------------------------------------
       # Disable individual actions to prevent accidental reversal or deletion.
-      # push means sync upload only; it does not grant push-copy or push-move.
+      # push-sync means sync upload only; it does not grant push-copy or push-move.
       # Lists replace inherited lists. [] disables all actions; omit to inherit.
       # If never set, all supported actions are available. Explicit all resets restrictions.
       # Bisync and check are independently controlled, like every other action.

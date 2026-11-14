@@ -456,7 +456,7 @@ def _select_action(
     if task.preferred_mode:
         print(f"  {FGray}Preferred mode '{task.preferred_mode}' is listed first in yellow.{CRst}")
     else:
-        highlighted = "push-copy-file/pull-copy-file" if task.path_type == models.PathType.FILE else "push/pull"
+        highlighted = "push-copy-file/pull-copy-file" if task.path_type == models.PathType.FILE else "push-sync/pull-sync"
         print(f"  {FGray}No preferred mode; {highlighted} are highlighted in the standard order.{CRst}")
     if not actions:
         print(f"  {FLYellow}No actions are permitted for this path type.{CRst}")

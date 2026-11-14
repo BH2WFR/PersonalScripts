@@ -33,6 +33,7 @@ destination files; move deletes sources. Bisync initialization requires --resync
 {FLYellow}Usage:{CRst}
   python rclone-sync.py [--schema-file FILE] [--task GROUP/NAME] [--dry-run]
   python rclone-sync.py --task GROUP/NAME --action ACTION [--comparison MODE]
+  Sync actions: push-sync (path1 to path2), pull-sync (path2 to path1).
   Actions/schema options: rclone-sync-schema-sample.yaml beside the entry.
 """
 

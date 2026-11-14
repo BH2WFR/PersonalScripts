@@ -250,7 +250,7 @@ class WorkflowTests(unittest.TestCase):
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [
             {"name": "all", "computer-name": "another-device", "paths": [{"path1": "local", "path2": "remote"}]},
         ]}]}}
-        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(utility.System, "get_computer_name", return_value="this-device"), patch("builtins.input") as prompt:
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-sync"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(utility.System, "get_computer_name", return_value="this-device"), patch("builtins.input") as prompt:
             self.assertEqual(app.main(), 1)
         self.assertIn(f"{utility.FLYellow}WARNING: Task 'test/demo' has no sub-tasks matching this machine. Exiting.{utility.CRst}", self.output.getvalue())
         prompt.assert_not_called()
@@ -279,7 +279,7 @@ class WorkflowTests(unittest.TestCase):
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [
             {"path1": "local-one", "path2": "remote-one"}, {"path1": "local-two", "path2": "remote-two"},
         ]}]}]}}
-        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "pull", "--dry-run"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(terminal, "_display_path_mtimes") as times, patch.object(backend, "_validate_file_endpoints") as guard:
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "pull-sync", "--dry-run"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(terminal, "_display_path_mtimes") as times, patch.object(backend, "_validate_file_endpoints") as guard:
             self.assertEqual(app.main(), 0)
         output = self.output.getvalue()
         self.assertIn("sync remote-one local-one", output)
@@ -403,7 +403,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_duplicate_keys_stop_loading_with_both_line_numbers(self) -> None:
         source = "tasks:\n  test:\n  - name: demo\n    local-path: first\n    local-path: second\n"
-        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push"]), patch("builtins.open", mock_open(read_data=source)):
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-sync"]), patch("builtins.open", mock_open(read_data=source)):
             self.assertEqual(app.main(), 1)
         output = self.output.getvalue()
         self.assertIn("duplicate YAML key 'local-path'", output)
@@ -413,7 +413,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_undefined_path_stops_before_host_or_operation_selection(self) -> None:
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [{"path1": "$MISSING/files", "path2": "remote:"}]}]}]}}
-        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "pull"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(terminal, "_interactive_host_swap") as hosts, patch.object(terminal, "_select_action") as select:
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "pull-sync"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.object(terminal, "_interactive_host_swap") as hosts, patch.object(terminal, "_select_action") as select:
             self.assertEqual(app.main(), 1)
         self.assertIn("Path expansion failed for 'test/demo/all': paths[0].path1: Undefined environment variable: MISSING", self.output.getvalue())
         hosts.assert_not_called()
@@ -432,7 +432,7 @@ class WorkflowTests(unittest.TestCase):
     def test_substituted_variable_syntax_remains_literal_in_final_command(self) -> None:
         schema = {"tasks": {"test": [{"name": "demo", "sub-tasks": [{"name": "all", "paths": [{"path1": "$ROOT/files", "path2": "remote"}]}],
                                      "do-not-check-modified-time": True}]}}
-        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.dict(os.environ, {"ROOT": "${LITERAL}"}):
+        with patch.object(sys, "argv", ["runner", "--task", "test/demo", "--action", "push-sync"]), patch("builtins.open", mock_open(read_data=yaml.safe_dump(schema))), patch.dict(os.environ, {"ROOT": "${LITERAL}"}):
             self.assertEqual(app.main(), 0)
         self.assertEqual(self.run.call_args.args[0][2], "${LITERAL}/files")
 
@@ -538,9 +538,9 @@ class WorkflowTests(unittest.TestCase):
             ("subtask", False, ["0", "Q", "Q"]),
             ("host", False, ["0", "Q", "Q"]),
             ("operation", False, ["0", "Q", "Q"]),
-            ("comparison", False, ["0", "pull", "Q", "Q"]),
+            ("comparison", False, ["0", "pull-sync", "Q", "Q"]),
             ("subtask", True, ["Q"]),
-            ("comparison", True, ["pull", "Q"]),
+            ("comparison", True, ["pull-sync", "Q"]),
         )
         for menu, cli_task, answers in cases:
             with self.subTest(menu=menu, cli_task=cli_task), contextlib.ExitStack() as stack:

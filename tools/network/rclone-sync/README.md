@@ -35,6 +35,11 @@ X11/Wayland count as GUI, so an SSH session without display variables can count
 as headless even if a desktop is installed. Interactive and CLI task selection
 apply the same filter before resolving paths or executing commands.
 
+Directory sync actions are named `push-sync` (path1 to path2) and `pull-sync`
+(path2 to path1). Use these names in the operation menu, `--action`, and
+`allow-actions`. Direction values and `--push`/`--pull` flags select an operation
+using `preferred-mode`.
+
 ## Module ownership
 
 | Module | Responsibility |
@@ -87,5 +92,5 @@ launcher filtering, and compiler staging without building or transferring data.
 excludes this private directory from script selection. When compiling the entry,
 the compiler stages Python modules in a temporary directory below `BUILD`, under
 `personal_rclone_sync`, and explicitly includes that package. No new Python
-dependency is introduced by the split. Source and executable entry points retain
-the original CLI; there is no compatibility facade for old internal imports.
+dependency is introduced by the split. Source and executable entry points share
+the same CLI; there is no compatibility facade for old internal imports.
