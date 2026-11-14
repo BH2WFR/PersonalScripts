@@ -226,6 +226,7 @@
 | `tools/document-processing/pdf-bookmark-editor.py` | **扫描版 PDF 目录识别、书签编辑、页码标签编辑工具**：框选目录图片后通过云端或本地视觉模型逐页识别，并将识别到的目录打入到 PDF 文件中。支持**页码标签**与书签树编辑。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
 | `tools/document-processing/pdf-page-splitter.py` | **扫描版 PDF 页面裁剪工具**：用于对双页扫描版 PDF 进行裁剪。 | **Python 库**：`PySide6`、`PyMuPDF`、`tqdm` |
 | `tools/document-processing/document-screenshot.py` | **文档自动截图工具**：自动翻页并保存指定屏幕区域的截图。不建议用来进行绕过版权保护的行为。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：辅助功能与屏幕录制权限<br />**Python 库**：`mss`、`pynput`、`Pillow` |
+
 ### 视频下载
 
 | 脚本 | 描述 | 依赖 |
@@ -290,6 +291,13 @@
 | 脚本                            | 描述                                                         | 依赖                                 |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------ |
 | `tools/others/unicode-inspector.py` | **Unicode 文本查看器**：显示码点、UTF-8 字节、名称与分类，标注不可见字符，并提供文本统计与可复制报告。 | 带 Tkinter 的 Python；Windows/macOS/Linux 图形桌面（Linux 需 X11 或 XWayland） |
+
+### 输入法工具
+
+| 脚本 | 描述 | 依赖 |
+| ---- | ---- | ---- |
+| `tools/IME/rime-aux-code-generator.py` | 从 Rime 形码码表提取首码或首尾码，以形成辅码方案，支持单码处理规则与字表过滤。辅码使用 [https://github.com/HowcanoeWang/rime-lua-aux-code](https://github.com/HowcanoeWang/rime-lua-aux-code) 中提供的 Lua 脚本。 | Python 库：`PyYAML`、`tqdm` |
+| `tools/IME/rime-userdict-to-dict.py` | 将 Rime 用户词库的文本快照或导出文件转换为 `.dict.yaml`，排除已删除词条，支持按词频缩放。 | Python 库：`PyYAML`、`tqdm` |
 
 ### 显示器工具
 

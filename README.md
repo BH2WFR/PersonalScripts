@@ -294,6 +294,13 @@ editing restrictions, or PDF/A identification. Source files are retained.
 | ------ | ----------- | ------------ |
 | `tools/others/unicode-inspector.py` | **Unicode text inspector:** Shows code points, UTF-8 bytes, names and categories, including invisible characters, with text statistics and copyable reports. | Python with Tkinter; Windows/macOS/Linux desktop (X11 or XWayland on Linux) |
 
+### Input Method Tools
+
+| Script | Description | Requirements |
+| ------ | ----------- | ------------ |
+| `tools/IME/rime-aux-code-generator.py` | Extracts first or first/last codes from Rime shape dictionaries to build auxiliary-code schemes, with configurable single-code handling and character filters. The auxiliary codes are used with the Lua scripts provided by [https://github.com/HowcanoeWang/rime-lua-aux-code](https://github.com/HowcanoeWang/rime-lua-aux-code). | Python packages: `PyYAML`, `tqdm` |
+| `tools/IME/rime-userdict-to-dict.py` | Converts Rime user dictionary text snapshots or exports into `.dict.yaml`, excluding deleted entries and supporting frequency-based weight scaling. | Python packages: `PyYAML`, `tqdm` |
+
 ### Display Tools
 
 | Script | Description | Requirements |
