@@ -56,7 +56,7 @@ def calculate_extrema(sources: tuple[ExtremaInput, ...]) -> ExtremaResult:
     negative = positive = False
     for source in sources:
         iterator = np.nditer([source.original, source.shown, source.valid],
-            flags=["external_loop", "buffered", "zerosize_ok"], op_flags=["readonly"] * 3,
+            flags=["external_loop", "buffered", "zerosize_ok"], op_flags=[["readonly"], ["readonly"], ["readonly"]],
             buffersize=EXTREMA_BUFFER_SIZE, order="K")
         for original, shown, valid in iterator:
             negative |= bool(np.any(np.isneginf(original)))
