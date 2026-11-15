@@ -12,7 +12,7 @@ book contents, PDF passwords and recognition conversations are not persisted.
 `common/preferences.py` uses the project's shared locked, atomic YAML store;
 windows never write their own stale full-file snapshots.
 
-All four desktop tools share **Pause / Resume** and **Stop** for PDF export.
+All PDF desktop tools share **Pause / Resume** and **Stop** for PDF export.
 The icon-and-text buttons stay in the preview area's bottom row beside progress;
 they are disabled when idle. Font discovery and PDF font scans use them as well.
 Pause switches to a play icon and Resume label while a pause is requested.
@@ -27,6 +27,12 @@ Pause waits for the current HTTP request; Stop aborts it and retains completed p
 During a recognition pause, Pages/Bookmarks remain navigable while structural
 editing stays locked; browsing never changes the recognition queue's position.
 The command-line compression/decryption tools are unchanged.
+
+`../pdf-ocr.py` adds an invisible text layer using small local PaddleOCR models
+through RapidOCR and ONNX Runtime. It shares navigation, the viewer, cache, serial
+worker and task controls, including cancellable model downloads and checksum verification; see [ocr/README.md](ocr/README.md). The navigator's
+`contextActionsRequested(menu, tree, point)` signal lets a host append page actions
+while retaining shared bookmark expansion actions.
 
 `../pdf-page-splitter.py` opens the visual page splitter: two left settings groups,
 colored numbered crop overlays, and read-only pages/bookmarks with output start

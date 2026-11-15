@@ -106,10 +106,13 @@ class NavigationPane(QtWidgets.QTabWidget):
         pageRequested: Zero-based physical page selected by the user. The host
             decides when navigation is permitted and how to schedule its rendering.
         imageSelected: Normalized image placement selected by the user, or None.
+        contextActionsRequested: Mutable menu, originating tree and local point;
+            hosts may append actions before the shared menu is shown.
     """
 
     pageRequested = QtCore.Signal(int)
     imageSelected = QtCore.Signal(object)  # Normalized visible bounds, or None.
+    contextActionsRequested = QtCore.Signal(object, object, object)  # Menu, tree, local point.
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -117,6 +120,8 @@ class NavigationPane(QtWidgets.QTabWidget):
         self.pages.pageRequested.connect(self.pageRequested)
         self.pages.setHeaderLabels(["Page", "Title", "Profile"])
         self.pages.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.pages.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.pages.customContextMenuRequested.connect(self._page_context_menu)
         self.pages.setToolTip("Click or use arrow/PgUp/PgDn keys to turn pages. Ctrl/Shift selects multiple pages for batch actions.")
         self.bookmarks = QtWidgets.QTreeWidget()
         compact_bookmark_indentation(self.bookmarks)
@@ -195,8 +200,18 @@ class NavigationPane(QtWidgets.QTabWidget):
 
     def _bookmark_context_menu(self, point: QtCore.QPoint) -> None:
         menu = QtWidgets.QMenu(self)
+        self.contextActionsRequested.emit(menu, self.bookmarks, point)
+        if menu.actions():
+            menu.addSeparator()
         add_bookmark_view_actions(menu, self.bookmarks)
         menu.exec(self.bookmarks.viewport().mapToGlobal(point))
+        menu.deleteLater()
+
+    def _page_context_menu(self, point: QtCore.QPoint) -> None:
+        menu = QtWidgets.QMenu(self)
+        self.contextActionsRequested.emit(menu, self.pages, point)
+        if menu.actions():
+            menu.exec(self.pages.viewport().mapToGlobal(point))
         menu.deleteLater()
 
     @staticmethod
@@ -282,7 +297,8 @@ class NavigationPane(QtWidgets.QTabWidget):
 
     def _activate(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         modifiers = QtWidgets.QApplication.keyboardModifiers()
-        if item.treeWidget() is self.pages and modifiers & (
+        tree = item.treeWidget()
+        if tree is not None and tree.selectionMode() == QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection and modifiers & (
                 QtCore.Qt.KeyboardModifier.ControlModifier | QtCore.Qt.KeyboardModifier.ShiftModifier):
             return  # Multi-selection never starts PDF work or locks the next click.
         number = item.data(0, PAGE_ROLE)

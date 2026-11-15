@@ -9,7 +9,7 @@ a missing general config.yaml; each application owns its own filename and initia
 | User file | Settings |
 | --- | --- |
 | `config.yaml` | General tool settings; empty initially. `rclone-sync.config-password` stores an optional encrypted rclone password. `network-info-uploader` retains the `upload-ipaddress` section, which contains `bucket`, `endpoint`, `access-id`, `secret`. |
-| `config-pdf-tools.yaml` | Shared PDF open/save directories, used by all four tools during file actions. |
+| `config-pdf-tools.yaml` | Shared PDF open/save directories. The `ocr` section stores recognition/language, tiling, anchor-margin and preprocessing settings, plus preview font/color; page exclusions and recognized text remain session-only. The OCR model manager stores explicitly downloaded language extensions in `models/pdf-ocr` beneath the same ConfigStore directory; its catalog and SHA-256 checksums come from the installed RapidOCR registry. Bundled models stay in the package. |
 | `llm.yaml` | `active_source` selects the last URL; `sources` maps canonical endpoints to model/parameters and encrypted `api_key` / `balance_key`. `reasoning_effort` defaults to `auto` (enabled); `default` omits controls, `none` disables, or select a supported `minimal`/`low`/`medium`/`high`/`xhigh`/`max` level. Owned by utils.Llm. Startup/Load reads; Save/window close writes. |
 | `launcher.yaml` | `conda-environment` (default `base`) and `additional-paths` (YAML list, default empty). Relative extra paths use the repository root. This is distinct from repository `launcher-config.yaml` and its optional patch. |
 | `rclone-sync.yaml` | Actual task schema, or a redirect-only mapping to an external schema. |

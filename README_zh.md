@@ -221,6 +221,7 @@
 |------|------|------|
 | `tools/document-processing/ghostscript-pdf-compressor.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-font-replacer.py` | **PDF 字体与文字颜色替换工具**：可在不改变文字排版、行距的前提下一键替换文本的颜色和字体。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
+| `tools/document-processing/pdf-ocr.py` | **扫描 PDF 本地 OCR 工具**：保留原有页面内容，添加可选取、可标记荧光的文字层，使用轻量本地 PaddleOCR 模型并支持下载扩展语言模型。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`rapidocr>=3.10,<4`、`onnxruntime`、`numpy`、OpenCV；扩展语言需下载模型。 |
 | `tools/document-processing/pdf-binarizer.py` | **扫描版 PDF 二值化与极限压缩工具**：<br />仅处理 PDF 中的图片元素，可使用自适应灰度阈值，可对识别到的图片、黑框文字、矢量元素使用单独的处理方式。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
 | `tools/document-processing/pdf-decryptor.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据。 | **Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-bookmark-editor.py` | **扫描版 PDF 目录识别、书签编辑、页码标签编辑工具**：框选目录图片后通过云端或本地视觉模型逐页识别，并将识别到的目录打入到 PDF 文件中。支持**页码标签**与书签树编辑。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |

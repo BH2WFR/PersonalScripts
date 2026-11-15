@@ -17,6 +17,8 @@ psutil
 PyMuPDF>=1.28
 pypdf>=6
 fonttools
+rapidocr>=3.10,<4
+onnxruntime
 pynput
 PySide6
 tqdm

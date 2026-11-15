@@ -68,7 +68,7 @@ class JobRunner(QtCore.QObject):
         request = dict(request)
         # Reject non-JSON values before allocating task controls or changing state.
         json.dumps(request, ensure_ascii=True, allow_nan=False)
-        self.controllable = request.get("operation") in ("export", "export-page", "scan", "catalog", "font_file")
+        self.controllable = request.get("operation") in ("export", "export-page", "scan", "catalog", "font_file", "model-download", "model-verify")
         if self.controllable:
             self._controls = tempfile.TemporaryDirectory(prefix="pdf-tools-control-", ignore_cleanup_errors=True)
             self.pause_marker = Path(self._controls.name) / "pause"

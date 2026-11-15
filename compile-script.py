@@ -214,6 +214,7 @@ def _run_compiler(
                 "rclone-sync.py": ("rclone-sync", "personal_rclone_sync"),
                 "pdf-binarizer.py": ("pdf-tools", "personal_pdf_tools"),
                 "pdf-font-replacer.py": ("pdf-tools", "personal_pdf_tools"),
+                "pdf-ocr.py": ("pdf-tools", "personal_pdf_tools"),
                 "pdf-page-splitter.py": ("pdf-tools", "personal_pdf_tools"),
                 "pdf-bookmark-editor.py": ("pdf-tools", "personal_pdf_tools")}
     package = packages.get(os.path.basename(script_path))
@@ -242,6 +243,10 @@ def _run_compiler(
             [f"--include-package={import_name}"] if tool == "nuitka" else
             ["--paths", staging, "--collect-submodules", import_name]
         )
+        if os.path.basename(script_path) == "pdf-ocr.py":
+            # Inference loads YAML and ONNX files relative to the RapidOCR package.
+            options.extend(["--include-package-data=rapidocr"] if tool == "nuitka"
+                           else ["--collect-data", "rapidocr"])
         return subprocess.run([*cmd[:-1], *options, cmd[-1]], check=False, env=environment)
 
 
