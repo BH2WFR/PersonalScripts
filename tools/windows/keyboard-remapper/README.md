@@ -2,8 +2,9 @@
 
 Windows 10+ registry keyboard remapping with PySide6 and the Fusion style.
 Run `../keyboard-remapper.py` directly or select `keyboard-remapper` in the launcher.
-Use `--read-only` to inspect and try draft editing with all registry writes and
-elevation disabled. `--help` loads no Qt application and reads no registry data.
+Startup requests administrator privileges before opening the editor, including
+with `--read-only`, which disables registry writes while allowing draft editing.
+`--help` does not request elevation, load Qt or read registry data.
 
 ## Select keys
 
@@ -53,23 +54,25 @@ Edits, deletes, Clear all and Load backup affect the draft only. Review changes
 before **Write to registry**. Machine-wide mappings affect all users and
 keyboards, including sign-in; ensure you can still enter your password.
 
-Writing requires administrator privileges and an exclusive new JSON backup
-of the original state. The saved value is checked against the loaded snapshot
-before backup and again before the write, then read back after writing. These
+The Save confirmation includes a backup checkbox, selected by default. Clear it
+to save without a backup. When selected, choose a new JSON file for the original
+state; cancelling file selection cancels the save, and existing files are never
+overwritten. The saved value is checked against the loaded snapshot before any
+backup and again before the write, then read back after writing. These
 are optimistic checks, not an atomic Windows compare-and-swap; avoid simultaneous
 edits from other remappers. Verification failure never triggers an automatic
-rollback that could overwrite another writer. Keep the backup on failure.
+rollback that could overwrite another writer. Keep any created backup on failure.
 No other registry values or parent keys are changed.
 
-A standard-user window hands its draft to a new administrator editor through
-the project's shared elevation helper. The original window retains its draft
-if elevation is cancelled or fails. The elevated window still requires another
-Write confirmation and backup selection; launching it never applies anything.
-Reload the original window after saving in the administrator window.
+The entry uses the project's shared elevation helper for every GUI launch.
+Cancelling or failing elevation exits without opening a standard-user editor.
+The internal administrator draft handoff remains available for embedded callers;
+it only stages a draft and never applies changes during startup.
 
 Backups are versioned UTF-8 JSON, not arbitrary `.reg` files. They preserve
 exact valid bytes and distinguish an absent value from a present empty map.
-Loading a backup stages a restore for review, confirmation and a fresh backup.
+Loading a backup stages a restore for review and confirmation, with an optional
+fresh backup when saving.
 Malformed maps, non-binary registry values and duplicate source entries block
 editing rather than being repaired silently. Clearing all mappings deletes
 only the Scancode Map value when explicitly applied.

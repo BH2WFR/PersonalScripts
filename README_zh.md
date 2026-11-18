@@ -322,7 +322,7 @@
 
 | 脚本                               | 描述                                                         | 依赖                                             |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `tools/windows/keyboard-remapper.py` | **注册表键盘映射编辑工具**：支持列表选键或捕获按键、禁用按键、拖动排序及最终十六进制预览。写入前确认并备份，支持恢复，保存后需重启 Windows 生效。 | **Windows 10+**<br />`PySide6`<br />写入时需要管理员权限 |
+| `tools/windows/keyboard-remapper.py` | **注册表键盘映射编辑工具**：支持按键重映射或禁用，并支持可选备份及恢复映射。 | 仅 **Windows 10+**<br />`PySide6`<br />**需要提权**；保存后需重启 Windows 生效 |
 | `tools/windows/device-ejection-history.py` | **设备弹出失败日志查看器**：显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题。 | **仅 Windows 10+**；<br />**需要提权** |
 | `tools/windows/service-restarter.py` | 仅 Windows，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | `tools/others/power-status-viewer.py`           | 充电器与电池遥测查看器，**可在 macOS 中查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |

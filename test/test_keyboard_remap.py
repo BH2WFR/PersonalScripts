@@ -157,6 +157,22 @@ class RegistrySafetyTests(unittest.TestCase):
                     registry.apply_snapshot(self.backend, self.before, self.after, path)
                 self.backend.write.assert_not_called()
 
+    def test_without_backup_still_checks_conflicts_and_readback(self) -> None:
+        for states, succeeds in (([self.before, self.before, self.after], True),
+                                 ([self.after], False),
+                                 ([self.before, self.after], False),
+                                 ([self.before, self.before, self.before], False)):
+            with self.subTest(states=states), patch.object(registry, "save_backup") as backup:
+                self.backend.reset_mock()
+                self.backend.read.side_effect = states
+                if succeeds:
+                    self.assertTrue(registry.apply_snapshot(self.backend, self.before, self.after, None))
+                else:
+                    with self.assertRaises(RuntimeError):
+                        registry.apply_snapshot(self.backend, self.before, self.after, None)
+                self.assertEqual(self.backend.write.call_count, int(len(states) == 3))
+                backup.assert_not_called()
+
     def test_existing_backup_and_backup_failure_prevent_writes(self) -> None:
         self.backend.read.return_value = self.before
         registry.save_backup(self.path, self.before)
@@ -441,7 +457,7 @@ class GuiTests(unittest.TestCase):
 
     def test_cancel_review_or_backup_dialog_never_writes(self) -> None:
         self.window.set_draft(models.Snapshot(None))
-        with patch.object(self.window, "_review", return_value=False):
+        with patch.object(self.window, "_review", return_value=None):
             self.window._apply()
         with patch.object(self.window, "_review", return_value=True), \
                 patch.object(System, "is_elevated", return_value=True), \
@@ -477,6 +493,35 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(self.window.dirty)
         self.assertTrue(self.window.restart_required)
 
+    def test_save_dialog_can_skip_backup_or_cancel(self) -> None:
+        for checked, accepted in ((True, True), (False, True), (False, False)):
+            with self.subTest(backup=checked, accepted=accepted):
+                self.window.set_draft(models.Snapshot(None))
+                self.backend.reset_mock()
+                self.backend.read.side_effect = [self.before, self.before, models.Snapshot(None)]
+
+                def respond(box: QtWidgets.QMessageBox) -> int:
+                    checkbox = box.checkBox()
+                    self.assertIsNotNone(checkbox)
+                    assert checkbox is not None
+                    self.assertTrue(checkbox.isChecked())
+                    checkbox.setChecked(checked)
+                    return int(QtWidgets.QMessageBox.StandardButton.Save if accepted
+                               else QtWidgets.QMessageBox.StandardButton.Cancel)
+
+                with patch.object(QtWidgets.QMessageBox, "exec", new=respond), \
+                        patch.object(System, "is_elevated", return_value=True), \
+                        patch.object(self.window, "_backup_path", return_value=None) as choose_path, \
+                        patch.object(registry, "save_backup") as backup, \
+                        patch.object(QtWidgets.QMessageBox, "information") as information:
+                    self.window._apply()
+                backup.assert_not_called()
+                self.assertEqual(choose_path.call_count, int(checked and accepted))
+                self.assertEqual(self.backend.write.call_count, int(not checked and accepted))
+                if not checked and accepted:
+                    self.assertNotIn("Backup:", information.call_args.args[2])
+                self.window.baseline = self.before
+
     def test_duplicate_sources_cannot_replace_draft(self) -> None:
         with self.assertRaises(ValueError):
             self.window._replace_rows((models.Mapping(1, 2), models.Mapping(1, 3)))
@@ -508,11 +553,37 @@ class IntegrationTests(unittest.TestCase):
     """Launcher discovery, help and compiler alias staging do not invoke live I/O."""
 
     def test_help_never_loads_gui_or_registry(self) -> None:
-        with patch.object(entry, "load_app") as loader, patch.object(sys, "argv", ["keyboard-remapper.py", "--help"]):
+        with patch.object(entry, "load_app") as loader, \
+                patch.object(System, "restart_elevated") as elevate, \
+                patch.object(sys, "argv", ["keyboard-remapper.py", "--help"]):
             with self.assertRaises(SystemExit) as result, contextlib.redirect_stdout(io.StringIO()):
                 entry.main()
         self.assertEqual(result.exception.code, 0)
         loader.assert_not_called()
+        elevate.assert_not_called()
+
+    def test_startup_elevates_before_opening_every_gui(self) -> None:
+        for read_only in (False, True):
+            with self.subTest(read_only=read_only):
+                calls = Mock()
+                calls.run.return_value = 0
+                arguments = ["keyboard-remapper.py", *(["--read-only"] if read_only else [])]
+                with patch.object(sys, "argv", arguments), patch.object(sys, "platform", "win32"), \
+                        patch.object(System, "restart_elevated", calls.elevate), \
+                        patch.object(app, "run", calls.run):
+                    self.assertEqual(entry.main(), 0)
+                self.assertEqual([call[0] for call in calls.mock_calls], ["elevate", "run"])
+                calls.run.assert_called_once_with(None, read_only=read_only)
+
+    def test_cancelled_elevation_never_opens_gui(self) -> None:
+        with patch.object(sys, "argv", ["keyboard-remapper.py"]), \
+                patch.object(sys, "platform", "win32"), \
+                patch.object(System, "restart_elevated", side_effect=SystemExit(1)), \
+                patch.object(app, "run") as run:
+            with self.assertRaises(SystemExit) as result:
+                entry.main()
+        self.assertEqual(result.exception.code, 1)
+        run.assert_not_called()
 
     def test_only_entry_is_discovered_and_compiler_stages_package(self) -> None:
         launcher = load_repo_module("remap_test_launcher", "run-script.py")

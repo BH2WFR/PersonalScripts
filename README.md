@@ -324,7 +324,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/windows/keyboard-remapper.py` | **Registry keyboard mapping editor:** Remaps or disables keys and supports backing up and restoring mappings. | **Windows 10+**<br />`PySide6`<br />Administrator privileges for writing; Windows restart required for changes to take effect |
+| `tools/windows/keyboard-remapper.py` | **Registry keyboard mapping editor:** Remaps or disables keys and supports optional backups and restoring mappings. | **Windows 10+** Only<br />`PySide6`<br />**Elevation required**; Windows restart required for changes to take effect |
 | `tools/windows/device-ejection-history.py` | **Device ejection failure log viewer:** shows historical blocking process PIDs, executable paths and device IDs recorded by Windows. Helps identify which process is using a USB drive when it cannot be safely ejected. | **Windows 10+ only**;<br />**Elevation required** |
 | `tools/windows/service-restarter.py` | Windows-only **force-restart tool for system services:**<br />Includes a `Windows Audio` preset that **can temporarily fix audio redirection failures in RDP sessions**. | **Windows only**<br />**Elevation required** |
 | `tools/others/power-status-viewer.py` | **Charger and battery telemetry viewer:** Shows charging and battery information, including **the computer's current charging power on macOS**. | **Best on macOS**; other systems are also supported, with some fields unavailable because of firmware or driver limitations |

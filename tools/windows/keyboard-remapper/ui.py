@@ -1,4 +1,4 @@
-"""PySide6/Fusion editor for explicit, backed-up Windows registry key remapping.
+"""PySide6/Fusion editor for confirmed Windows registry key remapping.
 
 Launch ../keyboard-remapper.py. Constructing widgets reads via the supplied backend
 but never writes. Dragging reorders the draft; the hex view shows exact pending
@@ -521,7 +521,8 @@ class RemapWindow(QtWidgets.QMainWindow):
             lines.append("The Scancode Map value will be removed; the parent key remains untouched.")
         return "\n".join(lines)
 
-    def _review(self, confirm: bool) -> bool:
+    def _review(self, confirm: bool) -> bool | None:
+        """Return the backup choice on Save, or None for cancellation/preview."""
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("Review registry changes")
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning if confirm else QtWidgets.QMessageBox.Icon.Information)
@@ -529,19 +530,27 @@ class RemapWindow(QtWidgets.QMainWindow):
                     "Check that you can still type your password. Restart Windows after saving.\n"
                     "Unknown, special and language scan codes may not be remappable on your hardware.")
         box.setDetailedText(self.changes())
-        box.setInformativeText("Expand Show Details to review every change. A new backup is required before writing.")
+        box.setInformativeText("Expand Show Details to review every change.")
+        backup = QtWidgets.QCheckBox("Back up the current registry state before saving")
+        backup.setChecked(True)
         if confirm:
-            box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel)
+            box.setCheckBox(backup)
+            box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Save | QtWidgets.QMessageBox.StandardButton.Cancel)
             box.setDefaultButton(QtWidgets.QMessageBox.StandardButton.Cancel)
         else:
             box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
-        return box.exec() == QtWidgets.QMessageBox.StandardButton.Yes
+        if box.exec() == QtWidgets.QMessageBox.StandardButton.Save:
+            return backup.isChecked()
+        return None
 
     def _preview(self) -> None:
         self._review(False)
 
     def _apply(self) -> None:
-        if self.read_only or self.baseline is None or not self.dirty or not self._review(True):
+        if self.read_only or self.baseline is None or not self.dirty:
+            return
+        backup_requested = self._review(True)
+        if backup_requested is None:
             return
         if not System.is_elevated():
             try:
@@ -555,18 +564,20 @@ class RemapWindow(QtWidgets.QMainWindow):
                 "Nothing has been written by this window. If elevation is cancelled, your draft remains here.\n"
                 "After saving there, reload this window to see the result.")
             return
-        path = self._backup_path()
-        if path is None:
+        path = self._backup_path() if backup_requested else None
+        if backup_requested and path is None:
             return
         try:
             changed = apply_snapshot(self.backend, self.baseline, self.draft, path)
         except (OSError, ValueError, RuntimeError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Write failed", f"{exc}\n\nIf a backup was created, keep it:\n{path}")
+            backup_note = f"\n\nIf a backup was created, keep it:\n{path}" if path is not None else ""
+            QtWidgets.QMessageBox.critical(self, "Write failed", f"{exc}{backup_note}")
             return
         self.baseline = self.draft
         self.restart_required |= changed
         self.set_draft(self.draft)
-        QtWidgets.QMessageBox.information(self, "Saved", f"Registry value verified. Restart Windows to apply.\nBackup: {path}")
+        backup_note = f"\nBackup: {path}" if path is not None else ""
+        QtWidgets.QMessageBox.information(self, "Saved", f"Registry value verified. Restart Windows to apply.{backup_note}")
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Ask before discarding a draft; closing never applies changes."""

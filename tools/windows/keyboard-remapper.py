@@ -24,11 +24,12 @@ from utils import *  # noqa: E402
 HELP = f"""{FLYellow}KEYBOARD REMAPPER{CRst}
 
 Edit machine-wide scan-code mappings to remap or disable physical keys.
-Writes require review and backup; restart Windows to apply saved changes.
+Review changes before writing, with an optional backup; restart Windows to apply them.
 Key capture is limited to the focused window and authorized testing.
 
 {FLYellow}Requirements:{CRst}
-  Windows 10+, PySide6; administrator privileges for writing. gsudo is optional.
+  Windows 10+, PySide6; administrator privileges (requested at startup).
+  gsudo is optional.
 
 {FLYellow}Usage:{CRst}
   python keyboard-remapper.py [--read-only]
@@ -78,11 +79,11 @@ def main() -> int:
         Zero on normal exit, nonzero for unsupported platform/startup failures.
 
     Side effects:
-        Prints help/errors, opens the GUI, and requests elevation only for an
-        explicit internal draft handoff. No startup path writes the registry.
+        Requests elevation before opening the GUI, including in read-only mode.
+        No startup path writes the registry.
     """
     parser = Console.argument_parser(HELP)
-    parser.add_argument("--read-only", action="store_true", help="Disable registry writing and elevation")
+    parser.add_argument("--read-only", action="store_true", help="Disable registry writing")
     parser.add_argument("--admin-draft", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if sys.platform != "win32":
@@ -93,10 +94,9 @@ def main() -> int:
         if args.read_only and args.admin_draft:
             parser.error("--read-only cannot be combined with an administrator draft")
         handoff = app.decode_handoff(args.admin_draft) if args.admin_draft else None
-        # Shared privilege API must run before GUI startup; the elevated child
-        # only reopens the draft and still requires an explicit Write click.
-        if handoff is not None:
-            System.restart_elevated()
+        # Every GUI session requires administrator privileges. Help has already
+        # exited; an optional handoff still only stages a draft for review.
+        System.restart_elevated()
         importlib.import_module("PySide6")
         return int(app.run(handoff, read_only=args.read_only))
     except ImportError as exc:

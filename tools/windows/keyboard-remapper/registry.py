@@ -95,24 +95,25 @@ def save_backup(path: Path, snapshot: Snapshot) -> None:
 
 
 def apply_snapshot(backend: RegistryBackend, expected: Snapshot, desired: Snapshot,
-                   backup_path: Path) -> bool:
-    """Backup and apply a previously confirmed change with optimistic conflict checks.
+                   backup_path: Path | None) -> bool:
+    """Apply a confirmed change with optional backup and optimistic conflict checks.
 
     Args:
         backend: Native or in-memory storage boundary.
         expected: State originally loaded by the editor.
         desired: State explicitly approved by the user.
-        backup_path: New file for the original value; existing files are rejected.
+        backup_path: New file for the original value, or None to skip backup.
+            Existing files are rejected.
 
     Returns:
         True after verified write; False for an unchanged value (no backup needed).
 
     Raises:
         RuntimeError: The registry changed externally, or readback differs.
-        OSError: Backup or native operation failed; the backup remains recoverable.
+        OSError: Backup or native operation failed; any created backup is retained.
 
     Side effects:
-        Creates the backup before writing. Windows offers no atomic compare-and-
+        Creates the backup, if requested, before writing. Windows offers no atomic compare-and-
         swap here: a small race remains between the last check and write. Never
         auto-roll back on verification failure, which could clobber another writer.
     """
@@ -120,10 +121,12 @@ def apply_snapshot(backend: RegistryBackend, expected: Snapshot, desired: Snapsh
         raise RuntimeError("Registry changed outside this window. Reload before writing.")
     if desired == expected:
         return False
-    save_backup(backup_path, expected)
+    if backup_path is not None:
+        save_backup(backup_path, expected)
     if backend.read() != expected:
-        raise RuntimeError("Registry changed during backup. Nothing was written; reload first.")
+        raise RuntimeError("Registry changed before writing. Nothing was written; reload first.")
     backend.write(desired)
     if backend.read() != desired:
-        raise RuntimeError(f"Registry readback differs. Inspect it before retrying. Backup: {backup_path}")
+        backup_note = f" Backup: {backup_path}" if backup_path is not None else ""
+        raise RuntimeError(f"Registry readback differs. Inspect it before retrying.{backup_note}")
     return True
