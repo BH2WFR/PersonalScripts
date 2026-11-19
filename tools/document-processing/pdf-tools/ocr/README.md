@@ -33,8 +33,8 @@ JSON array with one transcription per current image.
 
 **Recognition** stores independent preferences for both modes. Select plain
 text, Markdown, a LaTeX fragment or a complete LaTeX document. Document export
-wraps the batch in one Unicode ctexart document for XeLaTeX. Markdown has live
-preview; both LaTeX formats display source. Math formatting includes inline
+wraps the batch in one Unicode ctexart document for XeLaTeX. Markdown and LaTeX
+fragments have live math previews. Full documents display source. Math formatting includes inline
 and display delimiters, grouping related equation lines, retaining existing
 numbers and preserving mathematical bold separately from prose. Choose which
 document structures and styles to keep, reading order, line breaks and any
@@ -54,12 +54,24 @@ file boundaries. **Uninstall model** removes the downloaded files. Recognition i
 recognizes mathematical structure from grayscale input. For a whole screenshot
 containing prose and equations, use the Vision API formula mode.
 
-**Formula preview** appears when you select Markdown output or local formula recognition.
+**Formula preview** appears for Markdown, LaTeX fragments and local formula recognition.
 It updates as each image completes. Qt WebEngine displays
-locally generated HTML from markdown-it-py and MathJax 2 SVG output. Install
-local MathJax 2 assets under `share/mathjax` in the Python environment, or reuse
-those shipped with Spyder or nbclassic. Without markdown-it-py, only TeX is
-typeset. Copy and Save always use the original recognized source.
+locally generated HTML from markdown-it-py and MathJax 2 SVG output. Run the
+following in the same Conda environment that launches the tool, then restart it:
+
+```sh
+conda install "conda-forge::mathjax=2.7.7"
+```
+
+The preview finds the Conda package automatically. It also recognizes assets
+shipped with Spyder or nbclassic. To set it up manually, extract the
+[MathJax 2.7.9 release](https://github.com/mathjax/MathJax/releases/tag/2.7.9)
+with its directory structure intact so that the environment contains
+`share/mathjax/MathJax.js`. Qt WebEngine comes with the matching PySide6-Addons
+package. The preview tab shows the active interpreter and any missing components.
+The required Python package `markdown-it-py` provides Markdown formatting. In LaTeX fragments MathJax typesets
+delimited math and supported equation environments. The surrounding text and
+document-layout commands appear as source. Copy and Save use the original transcription.
 
 Both tools gray out missing language extensions. Install one in **Manage models**
 and close the dialog to enable it. Removing the last selected extension restores

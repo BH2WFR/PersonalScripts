@@ -263,7 +263,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                     window.current_button.click()
                     finish()
                     if window.rendered is not None:
-                        self.assertEqual(window.tabs.isTabVisible(window.tabs.indexOf(window.rendered)), format_name == "markdown")
+                        self.assertTrue(window.tabs.isTabVisible(window.tabs.indexOf(window.rendered)))
                     self.assertNotIn(r"\documentclass", window.text.toPlainText())
                 page.reset_each.setChecked(False)
                 window.context_images.setValue(0)
@@ -346,10 +346,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                 self.assertTrue(window.run_button.isEnabled())
 
     def test_markdown_and_math_preview(self) -> None:
-        from importlib.util import find_spec
         from personal_pdf_tools.ocr.formula_preview import markdown_html
-        if not find_spec("markdown_it"):
-            self.skipTest("Markdown preview is optional")
         source = "# Formula\n\n" + r"**Vector**: \[\textcolor{red}{\mathbf{x}}\] plus $$a_b$$." + "\n\n"
         source += "$$\na^2\n$$\n\n" + chr(96) + "$code$" + chr(96) + " <script>"
         html = markdown_html(source)
@@ -378,7 +375,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
             options = window.vision_options.formula_page.output
             for output in ("markdown", "text", "fragment", "document", "markdown"):
                 options.setCurrentIndex(options.findData(output))
-                self.assertEqual(window.tabs.isTabVisible(tab), output == "markdown")
+                self.assertEqual(window.tabs.isTabVisible(tab), output in ("markdown", "fragment"))
             window.output_format = window.vision_options.active().task().output
             window.rows["equation"] = QtWidgets.QTreeWidgetItem()
             window._progress({"image": "equation", "done": 1, "total": 1, "text": "$$x^2$$"})
@@ -399,3 +396,21 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                 self.assertIs(window.windowHandle(), surface)
                 window.tabs.setCurrentWidget(window.text)
                 self.assertEqual(window.winId(), handle)
+
+            options.setCurrentIndex(options.findData("fragment"))
+            window.output_format = "fragment"
+            fragment = r"Speed \(v\) follows. \[\frac{d}{t}\] **literal**"
+            window._progress({"image": "equation", "done": 1, "total": 1, "text": fragment})
+            window.tabs.setCurrentWidget(preview)
+
+            def fragment_typeset() -> bool:
+                assert preview.browser is not None
+                result = []
+                preview.browser.page().runJavaScript(
+                    "document.querySelectorAll('#output svg').length === 2 && "
+                    "document.querySelector('#output').textContent.includes('**literal**')", 0, result.append)
+                wait_for(lambda: bool(result))
+                return result[0] is True
+
+            wait_for(fragment_typeset)
+            self.assertEqual(window.text.toPlainText(), fragment)

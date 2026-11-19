@@ -1,5 +1,5 @@
 # Offline formula recognition in Image to Text and Formula (CPU).
 paddlepaddle>=3.3,<4
 tokenizers>=0.19
-# Markdown formatting in the optional local MathJax preview.
-markdown-it-py
+# Offline formula preview (JavaScript assets). Run in the tool's active Conda environment:
+#   conda install "conda-forge::mathjax=2.7.7"

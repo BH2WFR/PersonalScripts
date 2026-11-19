@@ -17,10 +17,10 @@ Use local OCR or a vision API with separate text and formula conversations. Expo
 
 Requirements:
   Python packages: PySide6, Pillow, RapidOCR, ONNX Runtime, NumPy, OpenCV, PyMuPDF,
-  litellm, openai, httpx and truststore.
+  litellm, openai, httpx, truststore and markdown-it-py.
   API recognition requires a cloud or local vision endpoint.
   Optional offline formulas: PaddlePaddle CPU, tokenizers and the PaddleOCR LaTeX_OCR_rec model.
-  Optional Markdown/math preview: markdown-it-py, Qt WebEngine and local MathJax 2 SVG assets.
+  Optional formula preview: Qt WebEngine and local MathJax 2 SVG assets.
 
 Usage:
   python image-to-text-and-formula.py
@@ -35,6 +35,8 @@ def main() -> int:
     module = "ocr.worker" if worker else "ocr.image_app"
     if not worker:
         missing = [name for name in ("litellm", "openai", "httpx", "truststore") if find_spec(name) is None]
+        if find_spec("markdown_it") is None:
+            missing.append("markdown-it-py")
         if missing:
             print("Missing required Python packages. Install with: python -m pip install " + " ".join(missing))
             return 1

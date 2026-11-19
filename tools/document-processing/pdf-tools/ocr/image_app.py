@@ -11,7 +11,7 @@ from utils.qt_widgets import NoWheelComboBox
 from ..common.llm_window import LlmWindow
 from .vision import OUTPUTS, SYSTEM_PROMPT, VisionTask, batch_results, document_source, vision_request
 from .vision_panel import VisionPanel
-from .formula_preview import FormulaPreview, mathjax_directory
+from .formula_preview import FormulaPreview, preview_resources
 from .exchange_view import ExchangeView
 from utils.qt_widgets import install_no_wheel_controls
 from ..common.file_drop import FileDropFilter
@@ -130,13 +130,15 @@ class ImageWindow(LlmWindow):
         self.tabs.addTab(self.text, "Recognized text")
         self.viewer = PageViewer()
         self.tabs.addTab(self.viewer, "Image preview")
-        assets = mathjax_directory()
+        assets, preview_hint = preview_resources()
         self.rendered = FormulaPreview(assets) if assets else None
         if self.rendered is not None:
             self.text.textChanged.connect(self._update_rendered)
             preview_tab = self.rendered
         else:
-            preview_tab = QtWidgets.QLabel("Formula preview requires Qt WebEngine and local MathJax 2 SVG assets.")
+            preview_tab = QtWidgets.QLabel(preview_hint)
+            preview_tab.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            preview_tab.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
             preview_tab.setWordWrap(True)
         self.preview_index = self.tabs.addTab(preview_tab, "Formula preview")
         self.api_log = ExchangeView(Path(self.scratch.name))
@@ -187,10 +189,10 @@ class ImageWindow(LlmWindow):
         self._enabled()
 
     def _sync_preview_tab(self) -> None:
-        """Show the preview as soon as the active recognition mode produces Markdown."""
+        """Show the preview for formats that support local math typesetting."""
         mode = self.mode.currentIndex()
-        markdown = mode == 3 or (mode in (1, 2) and self.vision_options.active().output.currentData() == "markdown")
-        self.tabs.setTabVisible(self.preview_index, markdown)
+        visible = mode == 3 or (mode in (1, 2) and self.vision_options.active().output.currentData() in ("markdown", "fragment"))
+        self.tabs.setTabVisible(self.preview_index, visible)
 
     def _refresh_formula(self) -> str:
         hint = local_formula.runtime_hint()
@@ -496,8 +498,8 @@ class ImageWindow(LlmWindow):
                 QtCore.QTimer.singleShot(0, self._next_image)
         elif message.get("kind") == "images-complete":
             self.tabs.setCurrentWidget(self.text)
-            if self.output_format == "markdown" and self.rendered is not None and self.rendered.browser is not None:
-                self.rendered.display(self.text.toPlainText())
+            if self.output_format in ("markdown", "fragment") and self.rendered is not None and self.rendered.browser is not None:
+                self.rendered.display(self.text.toPlainText(), fragment=self.output_format == "fragment")
             empty = [self.rows[path].text(0) for path, text in self.results.items() if not text]
             if empty or not self.results:
                 failed = message.get("failed", 0)
@@ -541,7 +543,8 @@ class ImageWindow(LlmWindow):
 
     def _update_rendered(self) -> None:
         if self.rendered is not None and self.tabs.currentWidget() is self.rendered:
-            self.rendered.display(self.text.toPlainText() if self.output_format == "markdown" else "")
+            text = self.text.toPlainText() if self.output_format in ("markdown", "fragment") else ""
+            self.rendered.display(text, fragment=self.output_format == "fragment")
 
     def _all_text(self) -> str:
         return self._source("\n\n".join(self.results[key] for key in self.rows if self.results.get(key)))
