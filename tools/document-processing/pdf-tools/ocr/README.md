@@ -11,6 +11,59 @@ Settings are grouped into **OCR** (ignored pages, languages and recognition),
 **Layout** (tiles and text anchors), **Preprocess** (input-only image cleanup),
 and **Preview** (overlay appearance).
 
+The companion [Image OCR](../../image-ocr.py) accepts local files, batch drops and
+clipboard images. Each row shows display dimensions and encoded file size. Clipboard
+sizes refer to temporary PNGs. Adding an image opens its preview. Recognize current processes the active row;
+Recognize all processes the list in order. Recognized text, Copy all and Save
+contain only the latest run. GIF and TIFF inputs use their first frame.
+
+Local OCR runs on CPU. Each Vision API mode keeps its own conversation for
+each endpoint until the window closes. Successful requests and replies
+accumulate across runs. **Context images** in API settings limits all images
+in each request (default 5). At 0, the whole selection is sent in one request
+and all images in the active conversation carry over to the next request.
+With a positive limit, current images take priority.
+For seven new images with a limit of five, the second request contains the
+last three images of the first group and both remaining images. Earlier text
+and replies remain in context. Clear the active conversation or select **Reset
+context before each API request** for independent groups. Set the image limit
+to one as well for independent single-image requests. Failed, stopped or
+unmatched replies do not enter history. Multi-image requests require an ordered
+JSON array with one transcription per current image.
+
+**Recognition** stores independent preferences for both modes. Select plain
+text, Markdown, a LaTeX fragment or a complete LaTeX document. Document export
+wraps the batch in one Unicode ctexart document for XeLaTeX. Markdown has live
+preview; both LaTeX formats display source. Math formatting includes inline
+and display delimiters, grouping related equation lines, retaining existing
+numbers and preserving mathematical bold separately from prose. Choose which
+document structures and styles to keep, reading order, line breaks and any
+custom instructions. Isolated letters are identified as variables by context.
+
+**API exchange** shows the latest run by HTTP request, labeled with its images. Select Request
+or Response to inspect the HTTP method and endpoint, status, JSON or error body.
+Image data is abbreviated in the viewer; **Copy raw body** includes the full
+serialized payload. Session files are replaced by the next API batch and removed
+when the window closes.
+
+**Local formula — PaddleOCR** accepts one tightly cropped equation per image.
+Install the optional PaddlePaddle CPU runtime and tokenizers in the
+environment running Image OCR. Select **Install model** in formula mode to download
+the official `LaTeX_OCR_rec` files (98.9 MiB). Downloads resume at verified
+file boundaries. **Uninstall model** removes the downloaded files. Recognition is enabled once the runtime and model are available. The worker loads the PaddleOCR graph directly with Paddle Inference once per batch. This model
+recognizes mathematical structure from grayscale input. For a whole screenshot
+containing prose and equations, use the Vision API formula mode.
+
+**Formula preview** updates as each image completes. Qt WebEngine displays
+locally generated HTML from markdown-it-py and MathJax 2 SVG output. Install
+local MathJax 2 assets under `share/mathjax` in the Python environment, or reuse
+those shipped with Spyder or nbclassic. Without markdown-it-py, only TeX is
+typeset. Copy and Save always use the original recognized source.
+
+Both tools gray out missing language extensions. Install one in **Manage models**
+and close the dialog to enable it. Removing the last selected extension restores
+the default Chinese and English selection.
+
 ## Recognition and storage
 
 RapidOCR 3.10 uses small PaddleOCR ONNX models on CPU. The wheel bundles the
@@ -42,7 +95,7 @@ recognition confidence; scores are not calibrated across models, so use a
 document-specific language selection when possible. Checkboxes select models, not
 a strict output-character whitelist. At least one language must remain checked.
 Old language presets are migrated when preferences are read; new preferences
-store a `languages` list. No GPU, PaddlePaddle, PaddleX or LLM is
+store a `languages` list. For local text OCR, no GPU, PaddlePaddle, PaddleX or LLM is
 required. Recognition is local; model downloads are the only network operation.
 The language list also exposes extension groups: Latin (v5), East Slavic,
 Cyrillic, Greek, Arabic, Thai, Devanagari, Tamil and Telugu. Download the matching

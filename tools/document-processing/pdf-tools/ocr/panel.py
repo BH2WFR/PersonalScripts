@@ -2,6 +2,7 @@
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
+from .models import inventory
 from .model import LANGUAGES, LANGUAGE_LABELS, Settings
 
 
@@ -16,7 +17,7 @@ class SettingsPanel(QtWidgets.QTabWidget):
     clearPagesRequested = QtCore.Signal()
     manageModelsRequested = QtCore.Signal()
 
-    def __init__(self, settings: Settings, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, settings: Settings, parent: QtWidgets.QWidget | None = None, *, images: bool = False) -> None:
         super().__init__(parent)
         self.color = QtGui.QColor("#dc2020")
         self.preview_font = QtGui.QFont()
@@ -56,6 +57,9 @@ class SettingsPanel(QtWidgets.QTabWidget):
         self.separator.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         self.separator.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         form.addRow(self.separator)
+        if images:
+            for row in range(form.rowCount()):
+                form.setRowVisible(row, False)
         self.language_list = QtWidgets.QListWidget()
         self.language_list.setAlternatingRowColors(True)
         for language in LANGUAGES:
@@ -83,13 +87,16 @@ class SettingsPanel(QtWidgets.QTabWidget):
             ("score", "Minimum text score", 0., 1., .05, "Low values retain uncertain text for highlighting anchors."),
         ):
             self._add_number(recognition_form, settings, name, title, low, high, step, tip)
+        if images:
+            recognition_form.setRowVisible(self.controls['dpi'], False)
         self.angle = QtWidgets.QCheckBox("Text angle classification")
         self.angle.setChecked(settings.angle)
         self.angle.setToolTip("Classify text-line orientation; page rotation and geometry are not changed.")
         recognition_form.addRow(self.angle)
         note = QtWidgets.QLabel("Existing text is retained. OCR adds invisible text only.\nRecognition and preprocessing changes clear results; anchor margins and preview appearance do not.")
         note.setWordWrap(True)
-        form.addRow(note)
+        if not images:
+            form.addRow(note)
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
@@ -124,6 +131,7 @@ class SettingsPanel(QtWidgets.QTabWidget):
                 "Percentage of the original anchor width/height on each side, along the text axes. Positive expands, negative shrinks. Updates preview/export without rerunning OCR.")
             self.controls[name].setSuffix(" %")
         layout_settings.addWidget(anchors_group)
+        anchors_group.setVisible(not images)
         layout_settings.addStretch()
         layout_scroll = QtWidgets.QScrollArea()
         layout_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
@@ -178,7 +186,13 @@ class SettingsPanel(QtWidgets.QTabWidget):
         label.setWordWrap(True)
         display.addWidget(label)
         display.addStretch()
-        self.addTab(appearance, "Preview")
+        if images:
+            appearance.setParent(self)
+            appearance.hide()
+            preprocessing_note.setText('Preprocessing applies to all images before recognition.')
+        else:
+            self.addTab(appearance, "Preview")
+        self.refresh_languages()
         self.language_list.itemChanged.connect(self._language_changed)
         self.angle.toggled.connect(self.recognitionChanged)
         self.tiling_group.toggled.connect(self.recognitionChanged)
@@ -208,6 +222,28 @@ class SettingsPanel(QtWidgets.QTabWidget):
     def _contrast_changed(self) -> None:
         self.controls["contrast_clip"].setEnabled(self.contrast.currentData() == "local")
         self.recognitionChanged.emit()
+
+    def refresh_languages(self) -> None:
+        """Disable missing extensions and recover a usable selection after deletion."""
+        previous = self.selected_languages()
+        installed = {row["key"] for row in inventory() if row["size"]}
+        with QtCore.QSignalBlocker(self.language_list):
+            for index, key in enumerate(LANGUAGES):
+                item = self.language_list.item(index)
+                enabled = key in ("chinese", "english", "japanese") or key in installed
+                flags = item.flags()
+                flag = QtCore.Qt.ItemFlag.ItemIsEnabled
+                item.setFlags(flags | flag if enabled else flags & ~flag)
+                suffix = "" if enabled else " (install separately)"
+                item.setText(LANGUAGE_LABELS[key] + suffix)
+                item.setToolTip("" if enabled else "Install this language separately in Manage models.")
+                if not enabled:
+                    item.setCheckState(QtCore.Qt.CheckState.Unchecked)
+            if not self.selected_languages():
+                for index in (0, 1):
+                    self.language_list.item(index).setCheckState(QtCore.Qt.CheckState.Checked)
+        if previous != self.selected_languages():
+            self.recognitionChanged.emit()
 
     def selected_languages(self) -> tuple[str, ...]:
         """Return checked languages in stable display order."""

@@ -14,7 +14,7 @@ Usage: from utils import *; result = await Llm.acompletion(settings, key, prompt
 
 import asyncio
 import base64
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
@@ -700,13 +700,24 @@ class Llm:
             "url": f"data:{mime_type};base64,{base64.b64encode(image).decode('ascii')}", "detail": detail}}
 
     @staticmethod
-    def chat_request(settings: LlmSettings, messages: Sequence[Mapping[str, object]], *,
+    def vision_message(prompt: str, images: Sequence[Mapping[str, object]]) -> dict[str, object]:
+        """Build one user message with the prompt followed by image_content items in order."""
+        if not images or any(part.get("type") != "image_url" for part in images):
+            raise ValueError("Images must be image_content items.")
+        return {"role": "user", "content": [{"type": "text", "text": prompt}, *images]}
+
+    @staticmethod
+    def chat_request(settings: LlmSettings, messages: Sequence[Mapping[str, object]] = (), *,
+                     prompt: str = "", system_prompt: str = "", images: Sequence[Mapping[str, object]] = (),
                      max_tokens: int | None = None) -> dict[str, object]:
         """Build a non-streaming compatible chat body from caller-owned messages.
 
         Args:
             settings: Valid connection and generation settings.
             messages: Ordered system/user/assistant messages, with text or image content.
+            prompt: New user text to append after the supplied messages.
+            system_prompt: Optional instruction to prepend before the supplied messages.
+            images: Image parts to attach to the new user message, in input order.
             max_tokens: Optional positive override, e.g. for a small connectivity probe.
         Returns:
             A new body with newest images limited by max_context_images (0 means
@@ -717,12 +728,21 @@ class Llm:
             ValueError: Settings or token override is invalid, or messages are empty.
         """
         Llm.validate_settings(settings)
+        if not isinstance(prompt, str) or not isinstance(system_prompt, str):
+            raise ValueError("Prompts must be strings.")
+        conversation = list(messages)
+        if system_prompt:
+            conversation.insert(0, {"role": "system", "content": system_prompt})
+        if images:
+            conversation.append(Llm.vision_message(prompt, images))
+        elif prompt:
+            conversation.append({"role": "user", "content": prompt})
         limit = settings.max_tokens if max_tokens is None else max_tokens
-        if not messages or type(limit) is not int or limit < 1:
+        if not conversation or type(limit) is not int or limit < 1:
             raise ValueError("Provide messages and a positive output-token limit.")
         body: dict[str, object] = {
             "model": settings.model, "temperature": settings.temperature, "max_tokens": limit,
-            "stream": False, "messages": Llm.limit_images(messages, settings.max_context_images),
+            "stream": False, "messages": Llm.limit_images(conversation, settings.max_context_images),
         }
         body.update(Llm._reasoning_parameters(settings))
         api = Llm._reasoning_api(settings.base_url)
@@ -755,24 +775,13 @@ class Llm:
         Dependencies load lazily on first use. No automatic retries or redirects.
         Image limits include history and new images, keeping newest first; 0 = unlimited.
         """
-        if not isinstance(prompt, str) or not isinstance(system_prompt, str):
-            raise ValueError("Prompts must be strings.")
-        conversation = list(messages)
-        if system_prompt:
-            conversation.insert(0, {"role": "system", "content": system_prompt})
-        if images:
-            if any(part.get("type") != "image_url" for part in images):
-                raise ValueError("Images must be image_content items.")
-            conversation.append({"role": "user", "content": [
-                {"type": "text", "text": prompt}, *images]})
-        elif prompt:
-            conversation.append({"role": "user", "content": prompt})
-        body = Llm.chat_request(settings, conversation)
+        body = Llm.chat_request(settings, messages, prompt=prompt, system_prompt=system_prompt, images=images)
         return await Llm._acompletion_body(settings, key, body)
 
     @staticmethod
     async def _acompletion_body(settings: LlmSettings, key: str,
-                                body: Mapping[str, object]) -> LlmResponse:
+                                body: Mapping[str, object], *,
+                                trace: Callable[[str, str, bytes], None] | None = None) -> LlmResponse:
         """Internal shared transport for coroutine and Qt callers; one owned HTTP client."""
         Llm.validate_settings(settings)
         # Snapshot and validate before third-party code can mutate caller containers.
@@ -802,6 +811,8 @@ class Llm:
                     request.headers.pop("OpenAI-Project", None)
                     if not key:
                         request.headers.pop("Authorization", None)
+                    if trace is not None:
+                        trace("request", f"{request.method} {request.url}", request.content)
 
                 def validate_response(response: httpx.Response) -> None:
                     nonlocal failure, original_reason
@@ -843,9 +854,16 @@ class Llm:
                                 async for chunk in incoming.aiter_bytes():
                                     if len(data) + len(chunk) > Llm.MAX_RESPONSE:
                                         failure = "The API response exceeded the size limit."
+                                        if trace is not None:
+                                            data.extend(chunk[:Llm.MAX_RESPONSE - len(data)])
                                         raise ValueError(failure)
                                     data.extend(chunk)
                             finally:
+                                if trace is not None:
+                                    received = bytes(data)
+                                    if key:
+                                        received = received.replace(key.encode(), b"[redacted]")
+                                    trace("response", f"HTTP {incoming.status_code}", received)
                                 await incoming.aclose()
                         except Exception as exc:
                             # The SDK wraps arbitrary transport errors as "Connection
@@ -929,10 +947,9 @@ class Llm:
         # A generic reasoning-options list is not evidence that this model can
         # disable reasoning. Preserve the user's mode, including Server default.
         budget = min(settings.max_tokens, 32) if settings.reasoning_effort == LlmReasoning.NONE else settings.max_tokens
-        return Llm.chat_request(settings, [{"role": "user", "content": [
-            {"type": "text", "text": "Name the solid background color of this test image in English. Reply with only the color name."},
-            Llm.image_content(_probe_png(), mime_type="image/png", detail="low"),
-        ]}], max_tokens=budget)
+        return Llm.chat_request(
+            settings, prompt="Name the solid background color of this test image in English. Reply with only the color name.",
+            images=[Llm.image_content(_probe_png(), mime_type="image/png", detail="low")], max_tokens=budget)
 
     @staticmethod
     def parse_completion(data: Mapping[str, object]) -> LlmResponse:

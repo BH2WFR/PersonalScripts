@@ -6,7 +6,7 @@ Operations on open documents stay in memory until Pdf.save_new is explicitly cal
 """
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import os
 from pathlib import Path
@@ -45,6 +45,24 @@ _PDFA_NAMESPACES: tuple[str, ...] = (
     "http://www.aiim.org/pdfa/ns/id/",
     "http://www.aiim.org/pdfa/ns/id",  # Original PDF/A-1 specification typo.
 )
+
+
+@dataclass(frozen=True)
+class PdfProtection:
+    """AES-256 output settings. An empty opening password enables permission-only protection."""
+
+    owner_password: str = field(repr=False)
+    user_password: str = field(default="", repr=False)
+    permissions: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.owner_password and not self.user_password:
+            raise ValueError("Enter a password for the protected output.")
+        if self.permissions != -1 and (not self.owner_password or self.owner_password == self.user_password):
+            raise ValueError("Restricted permissions require a separate owner password.")
+        for password in (self.owner_password, self.user_password):
+            if "\0" in password or len(password) > 40 or len(password.encode("utf-8")) > 127:
+                raise ValueError("Use at most 40 characters and 127 UTF-8 bytes per password, without NUL.")
 
 
 def _process_pdfa_identification(document: "pymupdf.Document", *, remove: bool) -> bool:
@@ -89,6 +107,10 @@ def _process_pdfa_identification(document: "pymupdf.Document", *, remove: bool) 
             # DOM keeps existing prefixes, including those used in QName values.
             document.set_xml_metadata(metadata.toxml())
         return found
+
+
+class PdfPasswordRequired(ValueError):
+    """Opening authentication failed and the caller must supply a password."""
 
 
 class _OutputStream:
@@ -455,6 +477,11 @@ class Pdf:
         return _process_pdfa_identification(document, remove=False)
 
     @staticmethod
+    def remove_pdfa_identification(document: "pymupdf.Document") -> bool:
+        """Remove identification properties in memory and return whether any were found."""
+        return _process_pdfa_identification(document, remove=True)
+
+    @staticmethod
     @contextmanager
     def open_document(
         path: str | Path, *, password: str | None = None, interactive: bool = True,
@@ -601,7 +628,7 @@ class Pdf:
         if password is not None and document.authenticate(password):
             return password
         if not interactive:
-            raise ValueError("The PDF requires a valid opening password.")
+            raise PdfPasswordRequired("The PDF requires a valid opening password.")
         if password is not None:
             print(f"{FLRed}Incorrect password. Please try again.{CRst}")
         while True:
@@ -614,8 +641,9 @@ class Pdf:
 
     @staticmethod
     def save_new(document: "pymupdf.Document", output_path: str | Path, *, compact: bool = True,
-                 overwrite: bool = False) -> None:
-        """Save an unencrypted, non-PDF/A copy with explicit replacement support.
+                 overwrite: bool = False, preserve_pdfa: bool = False,
+                 protection: PdfProtection | None = None) -> None:
+        """Save a separate PDF with optional identification and output protection.
 
         Args:
             document: Open, authenticated PDF to save.
@@ -625,6 +653,9 @@ class Pdf:
                 and saves, preserving live object references.
             overwrite: Explicit permission to replace an existing output after
                 a complete staged save. Defaults False. The input is protected.
+            preserve_pdfa: Keep identification properties currently in the XMP.
+            protection: Apply AES-256 passwords and permissions to the output.
+                Defaults to unencrypted. Marked output cannot be encrypted.
 
         Raises:
             FileExistsError: The destination exists and overwrite is False.
@@ -635,11 +666,9 @@ class Pdf:
         Writes the PDF and removes only this call's new output on failure or
         interruption. With overwrite=True, replaces the destination only after
         a complete staged save. Discards unreferenced objects, including replaced images.
-        Removes PDF/A identification from the in-memory XMP before saving;
-        does so even for unencrypted, unrestricted input. Retains other metadata
-        and does not modify the source file.
+        By default removes PDF/A identification from the in-memory XMP.
         """
-        from pymupdf.mupdf import PDF_ENCRYPT_NONE
+        from pymupdf.mupdf import PDF_ENCRYPT_AES_256, PDF_ENCRYPT_NONE
 
         path = Path(output_path)
         if overwrite:
@@ -648,14 +677,21 @@ class Pdf:
                 raise ValueError("The source PDF cannot be overwritten.")
             with tempfile.TemporaryDirectory(prefix=".pdf-save-", dir=path.parent) as directory:
                 staged = Path(directory) / "result.pdf"
-                Pdf.save_new(document, staged, compact=compact)
+                Pdf.save_new(document, staged, compact=compact, preserve_pdfa=preserve_pdfa,
+                             protection=protection)
                 os.replace(staged, path)
             return
         with path.open("xb") as destination:
             try:
-                _process_pdfa_identification(document, remove=True)
+                if not preserve_pdfa:
+                    Pdf.remove_pdfa_identification(document)
+                elif protection and Pdf.has_pdfa_identification(document):
+                    raise ValueError("Remove PDF/A identification before applying encryption.")
                 document.save(_OutputStream(destination), garbage=3 if compact else 1, deflate=True,
-                              encryption=PDF_ENCRYPT_NONE)
+                              encryption=PDF_ENCRYPT_AES_256 if protection else PDF_ENCRYPT_NONE,
+                              owner_pw=(protection.owner_password or protection.user_password) if protection else None,
+                              user_pw=protection.user_password if protection else None,
+                              permissions=protection.permissions if protection else 0)
             except BaseException:
                 destination.close()
                 path.unlink(missing_ok=True)

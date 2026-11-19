@@ -10,6 +10,8 @@ After context compaction, reread this file before project work.
 - Project text files use UTF-8 without BOM. Preserve existing line endings;
   new cross-platform files use LF, while Windows-only scripts may use CRLF.
 - Windows support starts at Windows 10; do not add legacy Windows fallbacks.
+- Avoid creating many temporary files or writing large volumes of temporary data.
+  Prefer streaming or bounded in-memory buffers for intermediate results.
 
 ## Directory layout
 
@@ -168,6 +170,10 @@ can print `HELP` directly. Private implementation modules do not need a CLI.
   PySide6 tools use Fusion and the shared no-wheel form controls; follow
   [Qt conventions](utils/docs/qt.md) and import Qt-only APIs explicitly from
   `utils.qt_widgets`.
+- In PySide6 GUIs, avoid `PIL.ImageQt` because it can load PyQt6 first and cause
+  a Qt version conflict at startup. Build a PySide6 `QImage` from Pillow pixel
+  bytes with the matching format and stride, then call `.copy()` before releasing
+  the buffer.
 
 ## Code and module documentation
 

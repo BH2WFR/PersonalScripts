@@ -61,6 +61,10 @@ class Worker:
         operation = request["operation"]
         if str(operation).startswith("model-"):
             action = str(operation).removeprefix("model-")
+            if request.get("formula_models"):
+                from .local_formula import manage
+                manage(action, self.control)
+                return {"kind": "models", "action": action}
             if action != "list":
                 model = models.catalog()[str(request["model"])]
                 if action in ("download", "delete"):
@@ -77,6 +81,25 @@ class Worker:
                 # digest. Deleting a model does not erase already recognized pages.
             return cast(dict[str, Json], {"kind": "models", "action": action,
                 "rows": models.inventory(), "directory": str(models.cache_directory())})
+        if operation == "vision-image":
+            from io import BytesIO
+            from utils import Llm
+            from .image_batch import image_rgb
+            with BytesIO() as stream, image_rgb(Path(str(request["path"]))) as pixels:
+                pixels.save(stream, format="PNG")
+                return {"kind": "vision-image", "image": Llm.image_content(stream.getvalue(), mime_type="image/png")}
+        if operation == "scan" and "images" in request:
+            if request.get("local_formula"):
+                from .local_formula import recognizer
+                from .image_batch import scan_batch
+                recognize = recognizer(self.control, bool(request.get("brackets")))
+                return scan_batch(cast(list[str], request["images"]), recognize, self.control)
+            from .image_batch import scan_images
+            settings = Settings.from_data(cast(dict, request["settings"]))
+            if self.settings != settings or self.recognizer is None:
+                self.recognizer = Recognizer(settings, self.control.checkpoint)
+                self.settings = settings
+            return scan_images(cast(list[str], request["images"]), settings, self.recognizer, self.control)
         path = Path(str(request["path"]))
         password = str(request.get("password", ""))
         stat = path.stat()

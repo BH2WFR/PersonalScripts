@@ -39,6 +39,10 @@ class Model:
     bundled: bool = False
 
     @property
+    def directory(self) -> Path:
+        return cache_directory()
+
+    @property
     def filename(self) -> str:
         name = urlsplit(self.url).path.rsplit("/", 1)[-1]
         if not re.fullmatch(r"[A-Za-z0-9_.-]+\.onnx", name):
@@ -81,7 +85,7 @@ def model_path(model: Model) -> Path:
     """Reject redirected cache entries before reading, replacing or deleting them."""
     if model.bundled:
         return package_directory() / "models" / model.filename
-    root = cache_directory()
+    root = model.directory
     path = root / model.filename
     if root.is_symlink() or root.is_junction() or path.is_symlink() or path.is_junction():
         raise ValueError("Model cache entries must not be symbolic links or junctions.")

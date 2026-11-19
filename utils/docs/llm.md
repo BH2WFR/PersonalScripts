@@ -13,7 +13,8 @@ Implementation: [llm.py](../llm.py), [_llm_qt.py](../_llm_qt.py) (private Qt ada
 | Shared LLM settings and presets | `LlmSettings(base_url=..., model=..., temperature=.1, max_tokens=8192, timeout_seconds=180, max_context_images=5, reasoning_effort=LlmReasoning.AUTO, skip_certificate_verification=False)`; HTTP(S) supported; TLS opt-out is per source and also applies to Qt catalog/balance requests; no secrets; `Llm.PRESETS` includes cloud providers and local endpoints |
 | Reasoning choices | `Llm.reasoning_options(base, model="")` returns ordered `(label, LlmReasoning)` pairs; AUTO explicitly enables, DEFAULT sends no controls, NONE disables, remaining enum values select effort. Known provider/model restrictions apply; generic options are not live capability guarantees |
 | Validate/resolve LLM endpoints | `Llm.validate_settings(settings, require_model=True)`, `Llm.completion_url(base)`, `Llm.models_url(base, page=1)`; reject credentials/query/fragment in base URLs; same-host Alibaba catalog pagination and SiliconFlow chat filter |
-| Construct chat/image requests | `Llm.chat_request(settings, messages, max_tokens=None)`, `Llm.image_content(image, mime_type="image/jpeg", detail="high")`; caller owns context; chat_request limits images across the entire request and maps reasoning to provider fields, rejecting known unsupported levels; no I/O |
+| Construct a vision message | `Llm.image_content(image, mime_type="image/jpeg", detail="high")` encodes each image, and `Llm.vision_message(prompt, images)` places the prompt before the images in attachment order |
+| Construct chat/image requests | `Llm.chat_request(settings, messages=(), prompt="", system_prompt="", images=(), max_tokens=None)` combines the optional system prompt, history and current input in that order, applies the image limit across all messages and maps reasoning settings to provider fields |
 | Count/limit context images | `Llm.image_count(messages)`, `Llm.limit_images(messages, maximum)`; 0 = unlimited, otherwise keep newest image_url parts including current input; omit older images with text markers, retain all text/replies, never mutate caller history |
 | Construct a vision API probe | `Llm.vision_test_request(settings)`; generated 48x48 red PNG, preserves selected reasoning and output budget; only explicit Off caps output at 32 tokens; no user content or image-library dependency |
 | Parse LLM responses/catalogs | `Llm.parse_completion(data) -> LlmResponse(text, prompt_tokens, finish_reason)` retains partial text; `Llm.parse_models(data) -> (ids, total_or_none)` validates compatible/native formats |
@@ -32,9 +33,12 @@ canonicalizes base/full endpoint aliases. Failed saves retain drafts.
 The module owns provider presets, request construction, balances, source profiles
 and its encryption key. Reasoning is stored per source as an enum string; older
 profiles default to AUTO. Optional balance-only keys never enter model requests.
-Prompt/history construction belongs to callers; utilities do not import applications.
 
 ## Internal transport and validation
+
+Bookmark recognition, image OCR and the async client use `Llm.chat_request()`
+to assemble messages. Callers supply task prompts, choose batch sizes and
+manage conversation history.
 
 `_reasoning_api`/`_reasoning_parameters` map exact provider hosts and known model
 families to payload dialects; token budgets are not converted to effort levels.
@@ -45,6 +49,15 @@ LiteLLM with bundled pricing and dotenv disabled, owns an OpenAI/HTTPX client pe
 request, enforces the image limit at send time and drains bookkeeping before a
 worker loop closes. Transport diagnostics retain exception causes, send/read
 stage and byte counts, redact submitted keys and omit image bodies.
+
+Qt callers can opt into body capture for a single inference with
+`client.send(settings, key, body, capture=True)`. The `exchangePart` signal
+delivers a direction, a summary (HTTP method and URL or response status), and
+body bytes. The request comes from HTTPX after SDK serialization. Responses are
+captured after HTTP decompression and before status/JSON validation, including
+available bytes on interrupted reads up to the existing response limit.
+Headers are excluded and an exact API key echoed in the response is redacted.
+Catalog, balance and ordinary untraced calls do not emit these events.
 
 `truststore.SSLContext(PROTOCOL_TLS_CLIENT)` uses native system trust and hostname
 verification unless a source explicitly opts out. Proxy routing is unchanged.

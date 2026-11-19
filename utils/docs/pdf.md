@@ -32,12 +32,24 @@ document is already open. New empty documents and generated in-memory page
 buffers may use PyMuPDF directly. Keep passwords in memory, never in external
 command arguments.
 
-Save final output through `Pdf.save_new()`: remove encryption, permission
+With `interactive=False`, `PdfPasswordRequired` (a `ValueError` subclass)
+lets GUI callers request or retry a password independently of other input errors.
+
+By default, saving final output through `Pdf.save_new()` removes encryption, permission
 restrictions and PDF/A identification while retaining unrelated metadata.
 Preserve the source and use exclusive output creation by default. Explicitly
 authorized replacement stages the result before publication; failures retain
 the previous output. Ghostscript compression stages unprotected input privately
 and publishes the validated result through the same save helper.
+
+The metadata editor can pass `preserve_pdfa=True` to keep the current XMP
+identification, including a newly edited marker. `Pdf.remove_pdfa_identification()`
+removes only the marker properties in memory. For AES-256 output pass
+`protection=PdfProtection(owner_password, user_password, permissions)`. An empty
+user password applies viewer permissions without an opening prompt. With
+`permissions=-1`, an opening password alone can grant full access. Marked
+output and encryption are mutually exclusive. All options use the same safe
+publication path and the default policy remains in effect for other tools.
 
 ## Internal implementation notes
 

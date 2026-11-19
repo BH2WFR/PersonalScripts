@@ -91,15 +91,14 @@ def build_request(project: BookSession, page: int, image: bytes, *, retry: bool 
             "Transcribe only the attached image now.")
     if retry:
         text += f"\nPrevious draft for THIS page (may be wrong; do not copy blindly):\n{task.draft}"
-    messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    history: list[dict[str, object]] = []
     for turn in project.conversation:
         if turn.page not in project.toc:
             continue
-        messages.append({"role": "user", "content": [
-            {"type": "text", "text": turn.prompt}, Llm.image_content(turn.image)]})
+        history.append(Llm.vision_message(turn.prompt, [Llm.image_content(turn.image)]))
         answer = turn.response or "[No model response was received.]"
         if turn.error:
             answer += f"\n[Application diagnostic: {turn.error}]"
-        messages.append({"role": "assistant", "content": answer})
-    messages.append({"role": "user", "content": [{"type": "text", "text": text}, Llm.image_content(image)]})
-    return Llm.chat_request(project.api, messages)
+        history.append({"role": "assistant", "content": answer})
+    return Llm.chat_request(project.api, history, system_prompt=SYSTEM_PROMPT, prompt=text,
+                            images=[Llm.image_content(image)])

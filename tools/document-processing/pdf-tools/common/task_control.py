@@ -45,7 +45,8 @@ class TaskControl:
         self.progress({"kind": "progress", "paused": False, "stage": "Resuming..."})
 
     def save(self, document: "pymupdf.Document", output: Path, source: Path, *,
-             compact: bool = True, overwrite: bool = False) -> None:
+             compact: bool = True, overwrite: bool = False, preserve_pdfa: bool = False,
+             protection: PdfProtection | None = None) -> None:
         """Save privately, check Stop after MuPDF returns, then publish safely."""
         if output.resolve() == source.resolve() or (output.exists() and output.samefile(source)):
             raise FileExistsError("The source PDF cannot be overwritten.")
@@ -56,7 +57,8 @@ class TaskControl:
             staged = Path(directory) / "result.pdf"
             self.progress({"kind": "progress", "stage": "Writing PDF..."})
             self.checkpoint()
-            Pdf.save_new(document, staged, compact=compact)
+            Pdf.save_new(document, staged, compact=compact, preserve_pdfa=preserve_pdfa,
+                         protection=protection)
             publish(staged, output, self.cancel, overwrite, self.checkpoint)
 
 

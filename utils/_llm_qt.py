@@ -6,6 +6,7 @@ publishing completion. Catalog/balance GETs retain Qt's cancellable transport.
 """
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 import json
 import threading
@@ -17,9 +18,10 @@ class _CompletionThread(QtCore.QThread):
     """One cancellable asyncio operation; completion is published only after exit."""
 
     def __init__(self, settings: LlmSettings, key: str, body: dict[str, object],
-                 parent: QtCore.QObject) -> None:
+                 parent: QtCore.QObject, trace: Callable[[str, str, bytes], None] | None) -> None:
         super().__init__(parent)
         self.settings, self.key, self.body = replace(settings), key, body
+        self.trace = trace
         self.result: LlmResponse | None = None
         self.error = ""
         self._lock = threading.Lock()
@@ -39,7 +41,7 @@ class _CompletionThread(QtCore.QThread):
         try:
             if self.isInterruptionRequested():
                 raise asyncio.CancelledError
-            self.result = await Llm._acompletion_body(self.settings, self.key, self.body)
+            self.result = await Llm._acompletion_body(self.settings, self.key, self.body, trace=self.trace)
         finally:
             with self._lock:
                 self._loop = self._task = None
@@ -71,6 +73,7 @@ class LlmQtClient(QtCore.QObject):
     completed = QtCore.Signal(str, int, str)  # raw text, prompt tokens, error
     modelsCompleted = QtCore.Signal(list, str)  # model IDs, error
     balanceCompleted = QtCore.Signal(list, str)
+    exchangePart = QtCore.Signal(str, str, object)  # direction, method/URL or HTTP status, body bytes
 
     def __init__(self, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
@@ -99,13 +102,14 @@ class LlmQtClient(QtCore.QObject):
         """Active operation marker, retained until network/worker cleanup finishes."""
         return self._completion if self._completion is not None else self._reply
 
-    def send(self, settings: LlmSettings, key: str, body: dict[str, object]) -> None:
+    def send(self, settings: LlmSettings, key: str, body: dict[str, object], *, capture: bool = False) -> None:
         """Send one explicit chat/vision request asynchronously.
 
         Args:
             settings: Target URL/model, generation parameters and timeout.
             key: Bearer token, held only until this request finishes.
             body: JSON-serializable request, normally from Llm.chat_request.
+            capture: Emit exchangePart for the serialized HTTP request and decoded response bodies.
         Raises:
             ValueError: Settings or payload are invalid.
             TypeError: The payload contains values that JSON cannot serialize.
@@ -119,7 +123,7 @@ class LlmQtClient(QtCore.QObject):
         self._listing = False
         self._balance_base = ""
         self._error = ""
-        self._completion = _CompletionThread(settings, key, payload, self)
+        self._completion = _CompletionThread(settings, key, payload, self, self.exchangePart.emit if capture else None)
         self._completion.finished.connect(self._completion_finished)
         self.timer.start(settings.timeout_seconds * 1000)
         self._completion.start()

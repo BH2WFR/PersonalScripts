@@ -20,7 +20,7 @@ ownership and public exports.
 | [Configuration](docs/config.md) | ConfigStore, ConfigBusyError, EncryptedValue | [config.py](config.py) |
 | [Environment, system and paths](docs/runtime.md) | Environment, PythonEnvironment, RuntimeKind, System, LinuxGui, DiskInfo, DiskScan, Paths | [environment.py](environment.py), [system.py](system.py), [paths.py](paths.py) |
 | [Console and interaction](docs/terminal.md) | Console, Input, RangeParity, Menu, MenuOption, Cursor, CmdCheck, ANSI constants | [console.py](console.py), [input.py](input.py), [menu.py](menu.py), [menu_option.py](menu_option.py), [cursor.py](cursor.py), [cmd_check.py](cmd_check.py), [ansi.py](ansi.py) |
-| [PDF](docs/pdf.md) | Pdf, PdfBookmark | [pdf.py](pdf.py) |
+| [PDF](docs/pdf.md) | Pdf, PdfBookmark, PdfPasswordRequired, PdfProtection | [pdf.py](pdf.py) |
 | [LLM](docs/llm.md) | Llm, LlmSettings, LlmReasoning, LlmResponse, LlmProfile, LlmProfiles | [llm.py](llm.py); private [_llm_qt.py](_llm_qt.py) |
 | [Fonts](docs/font.md) | Font, FontFace, FontStyle | [font.py](font.py) |
 | [Keyboard](docs/keyboard.md) | Keyboard, WindowsScanCode, ScanCodePrefix | [keyboard.py](keyboard.py) |

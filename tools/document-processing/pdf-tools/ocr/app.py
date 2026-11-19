@@ -57,6 +57,7 @@ class OcrWindow(QtWidgets.QMainWindow):
         except (ValueError, TypeError):
             self.settings = Settings()
         self._build()
+        self.settings = self.panel.settings()
         color = QtGui.QColor(str(preferences.get("color", "#dc2020")))
         if color.isValid():
             self.panel.color = color
@@ -98,14 +99,17 @@ class OcrWindow(QtWidgets.QMainWindow):
         splitter.addWidget(self.left)
         right = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(right)
+        layout.setContentsMargins(3, 6, 6, 6)
         self.toolbar = QtWidgets.QToolBar()
-        self.previous = self.toolbar.addAction("Previous", lambda: self.go_page(self.current_page - 1))
-        self.next = self.toolbar.addAction("Next", lambda: self.go_page(self.current_page + 1))
+        self.previous = self.toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack),
+                                              "Previous page", lambda: self.go_page(self.current_page - 1))
+        self.next = self.toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowForward),
+                                          "Next page", lambda: self.go_page(self.current_page + 1))
         self.page_number = NoWheelSpinBox()
         self.page_number.setRange(1, 1)
         self.page_number.setKeyboardTracking(False)
         self.page_number.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.page_number.setMinimumWidth(60)
+        self.page_number.setFixedWidth(55)
         self.page_number.editingFinished.connect(lambda: self.go_page(self.page_number.value()))
         self.toolbar.addWidget(self.page_number)
         self.page_total = QtWidgets.QLabel(" / 0 ")
@@ -218,6 +222,7 @@ class OcrWindow(QtWidgets.QMainWindow):
         dialog.exec()
         self.model_dialog = None
         dialog.deleteLater()
+        self.panel.refresh_languages()
         if self.source is not None and not self._show_cached():
             self.timer.start()
         elif self.source is None:

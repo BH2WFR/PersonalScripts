@@ -6,11 +6,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class FileDropFilter(QtCore.QObject):
-    """Accept one local PDF/JSON throughout a window, including image viewports.
+    """Accept local files throughout a window, including child viewports.
 
     Args:
         window: Owning top-level tool window; dialogs are deliberately excluded.
-        open_path: Callback invoked for one accepted file drop.
+        open_path: Callback invoked for each accepted path in drop order.
+        multiple: Accept batches when every URL is a supported local file.
         enabled: Predicate that prevents file changes during a running PDF task.
         suffixes: Accepted filename suffixes; defaults to PDF and project JSON.
 
@@ -19,12 +20,14 @@ class FileDropFilter(QtCore.QObject):
     """
 
     def __init__(self, window: QtWidgets.QWidget, open_path: Callable[[Path], None],
-                 enabled: Callable[[], bool], *, suffixes: tuple[str, ...] = (".pdf", ".json")) -> None:
+                 enabled: Callable[[], bool], *, suffixes: tuple[str, ...] = (".pdf", ".json"),
+                 multiple: bool = False) -> None:
         super().__init__(window)
         self.window = window
         self.open_path = open_path
         self.enabled = enabled
         self.suffixes = suffixes
+        self.multiple = multiple
         application = QtWidgets.QApplication.instance()
         if application is None:
             raise RuntimeError("File drops require a QApplication.")
@@ -38,11 +41,14 @@ class FileDropFilter(QtCore.QObject):
                 or not isinstance(event, QtGui.QDropEvent) or not event.mimeData().hasUrls()):
             return False
         urls = event.mimeData().urls()
-        if (not self.enabled() or len(urls) != 1 or not urls[0].isLocalFile() or
-                Path(urls[0].toLocalFile()).suffix.lower() not in self.suffixes):
+        paths = [Path(url.toLocalFile()) for url in urls if url.isLocalFile()]
+        if (not self.enabled() or not paths or len(paths) != len(urls) or
+                (not self.multiple and len(paths) != 1) or
+                any(path.suffix.lower() not in self.suffixes for path in paths)):
             event.ignore()
             return True
         event.acceptProposedAction()
         if event.type() == QtCore.QEvent.Type.Drop:
-            self.open_path(Path(urls[0].toLocalFile()))
+            for path in paths:
+                self.open_path(path)
         return True

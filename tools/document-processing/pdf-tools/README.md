@@ -28,6 +28,19 @@ During a recognition pause, Pages/Bookmarks remain navigable while structural
 editing stays locked; browsing never changes the recognition queue's position.
 The command-line compression/decryption tools are unchanged.
 
+`../pdf-metadata-editor.py [INPUT.pdf]` edits document Info properties and XMP.
+Common fields fall back to XMP when Info text is absent. Editing them also updates
+the default translation or first creator in an existing XMP packet. Beside
+Title, **Multilingual…** edits individual language alternatives. Populated
+languages appear first in bold green on a light green background. Clearing the default language also clears
+the ordinary title. **Remove all multilingual titles** removes the XMP title
+property while keeping the ordinary PDF title. Cancel discards the dialog draft.
+The XMP tab
+accepts complete RDF/XML, including additional languages, authors and schemas.
+Output settings apply after metadata edits. A marked export writes identification
+only. Permission-restricted and password-encrypted copies use AES-256 and remove
+PDF/A identification. Export reopens the source and uses the shared staged writer.
+
 `../pdf-ocr.py` adds an invisible text layer using small local PaddleOCR models
 through RapidOCR and ONNX Runtime. It shares navigation, the viewer, cache, serial
 worker and task controls, including cancellable model downloads and checksum verification; see [ocr/README.md](ocr/README.md). The navigator's

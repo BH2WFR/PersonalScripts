@@ -221,9 +221,11 @@
 |------|------|------|
 | `tools/document-processing/ghostscript-pdf-compressor.py` | 基于 Ghostscript 的 **PDF 压缩器**：<br />支持 Ebook（标准）和 Custom（自定义 DPI/质量）模式，可处理带打开密码的文件。 | `ghostscript`；**Python 库**：`PyMuPDF` |
 | `tools/document-processing/pdf-font-replacer.py` | **PDF 字体与文字颜色替换工具**：可在不改变文字排版、行距的前提下一键替换文本的颜色和字体。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`tqdm` |
+| `tools/document-processing/image-ocr.py` | **图片 OCR 工具**：支持本地图片与剪贴板图片的单张或批量识别，可离线识别文字或单个公式，也可通过视觉 API 将图文混排截图转为 Markdown 或 LaTeX，分别保留文本和公式的对话上下文。 | **Python 库**：`PySide6`、`Pillow`、`PyMuPDF`、`rapidocr`、`onnxruntime`、`numpy`、`opencv-python`、`litellm`、`openai`、`httpx`、`truststore`<br />**可选 Python 库**：`paddlepaddle`（CPU 版）和 `tokenizers`（离线 LaTeX 识别），`markdown-it-py`（Markdown 预览）<br />**可选组件**：`LaTeX_OCR_rec` 模型（离线 LaTeX 识别），Qt WebEngine 和本地 MathJax 2 资源（预览） |
 | `tools/document-processing/pdf-ocr.py` | **扫描 PDF 本地 OCR 工具**：保留原有页面内容，添加可选取、可标记荧光的文字层，使用轻量本地 PaddleOCR 模型并支持下载扩展语言模型。 | **Python 库**：`PySide6`、`PyMuPDF`、`fonttools`、`rapidocr>=3.10,<4`、`onnxruntime`、`numpy`、OpenCV；扩展语言需下载模型。 |
 | `tools/document-processing/pdf-binarizer.py` | **扫描版 PDF 二值化与极限压缩工具**：<br />仅处理 PDF 中的图片元素，可使用自适应灰度阈值，可对识别到的图片、黑框文字、矢量元素使用单独的处理方式。 | **Python 库**：`PySide6`、`PyMuPDF`、`pypdf`、`Pillow`（含 libtiff）、`numpy`、`opencv-python`、`tqdm` |
 | `tools/document-processing/pdf-decryptor.py` | **PDF 保护及 PDF/A 标识移除工具**：<br />移除加密、权限限制及 PDF/A 标识，保留文档结构和其他元数据。 | **Python 库**：`PyMuPDF` |
+| `tools/document-processing/pdf-metadata-editor.py` | 编辑 PDF 文档属性、自定义字段和 XMP 元数据。另存时可设置 PDF/A 标识、权限限制或打开密码。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
 | `tools/document-processing/pdf-bookmark-editor.py` | **扫描版 PDF 目录识别、书签编辑、页码标签编辑工具**：框选目录图片后通过云端或本地视觉模型逐页识别，并将识别到的目录打入到 PDF 文件中。支持**页码标签**与书签树编辑。 | **Python 库**：`PySide6`、`PyMuPDF`、`PyYAML` |
 | `tools/document-processing/pdf-page-splitter.py` | **扫描版 PDF 页面裁剪工具**：用于对双页扫描版 PDF 进行裁剪。 | **Python 库**：`PySide6`、`PyMuPDF`、`tqdm` |
 | `tools/document-processing/document-screenshot.py` | **文档自动截图工具**：自动翻页并保存指定屏幕区域的截图。不建议用来进行绕过版权保护的行为。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：辅助功能与屏幕录制权限<br />**Python 库**：`mss`、`pynput`、`Pillow` |
