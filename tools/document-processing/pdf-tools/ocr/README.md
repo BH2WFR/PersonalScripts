@@ -54,7 +54,8 @@ file boundaries. **Uninstall model** removes the downloaded files. Recognition i
 recognizes mathematical structure from grayscale input. For a whole screenshot
 containing prose and equations, use the Vision API formula mode.
 
-**Formula preview** updates as each image completes. Qt WebEngine displays
+**Formula preview** appears when you select Markdown output or local formula recognition.
+It updates as each image completes. Qt WebEngine displays
 locally generated HTML from markdown-it-py and MathJax 2 SVG output. Install
 local MathJax 2 assets under `share/mathjax` in the Python environment, or reuse
 those shipped with Spyder or nbclassic. Without markdown-it-py, only TeX is

@@ -372,8 +372,14 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
             handle = window.winId()
             surface = window.windowHandle()
 
-            window.output_format = "markdown"
-            window.tabs.setTabVisible(window.tabs.indexOf(preview), True)
+            tab = window.tabs.indexOf(preview)
+            self.assertFalse(window.tabs.isTabVisible(tab))
+            window.mode.setCurrentIndex(2)
+            options = window.vision_options.formula_page.output
+            for output in ("markdown", "text", "fragment", "document", "markdown"):
+                options.setCurrentIndex(options.findData(output))
+                self.assertEqual(window.tabs.isTabVisible(tab), output == "markdown")
+            window.output_format = window.vision_options.active().task().output
             window.rows["equation"] = QtWidgets.QTreeWidgetItem()
             window._progress({"image": "equation", "done": 1, "total": 1, "text": "$$x^2$$"})
             window._completed({"kind": "images-complete", "total": 1, "failed": 0})

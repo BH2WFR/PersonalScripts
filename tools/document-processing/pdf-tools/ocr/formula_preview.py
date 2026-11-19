@@ -136,6 +136,7 @@ class FormulaPreview(QtWidgets.QWidget):
             self.browser.loadFinished.connect(self._loaded)
             self.browser.setHtml(r"""<!doctype html><meta charset="utf-8">
 <style>body{font:16px sans-serif;margin:1em}#output{overflow-wrap:anywhere}
+#output:empty::before{content:"Run recognition to preview Markdown and formulas.";color:#666}
 table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:.3em}pre{white-space:pre-wrap}</style>
 <script type="text/x-mathjax-config">
 MathJax.Hub.Config({showMathMenu:false,messageStyle:"none",extensions:["Safe.js"],

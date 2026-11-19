@@ -90,6 +90,7 @@ class ImageWindow(LlmWindow):
         for page in (self.vision_options.text_page, self.vision_options.formula_page):
             page.clearRequested.connect(self._clear_context)
             page.reset_each.toggled.connect(self._reset_changed)
+            page.output.currentIndexChanged.connect(self._sync_preview_tab)
         self.saved_vision = self.vision_options.to_data()
         self.api_tabs = QtWidgets.QTabWidget()
         self.api_tabs.addTab(self.vision_options, "Recognition")
@@ -100,7 +101,6 @@ class ImageWindow(LlmWindow):
         self.balance_summary.hide()
         self.balance_summary.setParent(left)
         self.mode.currentIndexChanged.connect(self._mode_changed)
-        self._mode_changed()
         split.addWidget(left)
         body = QtWidgets.QWidget()
         split.addWidget(body)
@@ -133,9 +133,12 @@ class ImageWindow(LlmWindow):
         assets = mathjax_directory()
         self.rendered = FormulaPreview(assets) if assets else None
         if self.rendered is not None:
-            self.tabs.addTab(self.rendered, "Formula preview")
-            self.tabs.setTabVisible(self.tabs.indexOf(self.rendered), False)
             self.text.textChanged.connect(self._update_rendered)
+            preview_tab = self.rendered
+        else:
+            preview_tab = QtWidgets.QLabel("Formula preview requires Qt WebEngine and local MathJax 2 SVG assets.")
+            preview_tab.setWordWrap(True)
+        self.preview_index = self.tabs.addTab(preview_tab, "Formula preview")
         self.api_log = ExchangeView(Path(self.scratch.name))
         self.tabs.addTab(self.api_log, "API exchange")
         self.tabs.setTabVisible(self.tabs.indexOf(self.api_log), False)
@@ -160,6 +163,7 @@ class ImageWindow(LlmWindow):
         self.runner.completed.connect(self._completed)
         self.runner.busyChanged.connect(self._enabled)
         self.runner.controlStatus.connect(self.status.setText)
+        self._mode_changed()
         self._load_api_preferences()
         self._enabled()
         if self.rendered is not None and QtGui.QGuiApplication.platformName() == "windows":
@@ -170,9 +174,9 @@ class ImageWindow(LlmWindow):
         mode = self.mode.currentIndex()
         self.panel.setVisible(mode == 0)
         self.api_tabs.setVisible(mode in (1, 2))
-        if hasattr(self, "api_log"):
-            self.tabs.setTabVisible(self.tabs.indexOf(self.api_log), mode in (1, 2))
+        self.tabs.setTabVisible(self.tabs.indexOf(self.api_log), mode in (1, 2))
         self.vision_options.setCurrentWidget(self.vision_options.formula_page if mode == 2 else self.vision_options.text_page)
+        self._sync_preview_tab()
         self.formula_controls.setVisible(mode == 3)
         self.formula_hint.setVisible(mode == 3)
         self.delimiter.setVisible(mode == 3)
@@ -181,6 +185,12 @@ class ImageWindow(LlmWindow):
             if hint:
                 QtWidgets.QMessageBox.warning(self, "Offline formula OCR", hint)
         self._enabled()
+
+    def _sync_preview_tab(self) -> None:
+        """Show the preview as soon as the active recognition mode produces Markdown."""
+        mode = self.mode.currentIndex()
+        markdown = mode == 3 or (mode in (1, 2) and self.vision_options.active().output.currentData() == "markdown")
+        self.tabs.setTabVisible(self.preview_index, markdown)
 
     def _refresh_formula(self) -> str:
         hint = local_formula.runtime_hint()
@@ -364,8 +374,6 @@ class ImageWindow(LlmWindow):
             self.output_format = self.vision_task.output
         else:
             self.output_format = "markdown" if self.mode.currentIndex() == 3 else "text"
-        if self.rendered is not None:
-            self.tabs.setTabVisible(self.tabs.indexOf(self.rendered), self.output_format == "markdown")
         self.save.setText(f"Save as {OUTPUTS[self.output_format][0]}...")
         self.status.setText("Recognizing images...")
         if vision:
@@ -533,7 +541,7 @@ class ImageWindow(LlmWindow):
 
     def _update_rendered(self) -> None:
         if self.rendered is not None and self.tabs.currentWidget() is self.rendered:
-            self.rendered.display(self.text.toPlainText())
+            self.rendered.display(self.text.toPlainText() if self.output_format == "markdown" else "")
 
     def _all_text(self) -> str:
         return self._source("\n\n".join(self.results[key] for key in self.rows if self.results.get(key)))
