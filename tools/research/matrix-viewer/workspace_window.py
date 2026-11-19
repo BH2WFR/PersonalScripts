@@ -1,8 +1,9 @@
 """Channel-checkbox workspace with independent controls and automatic overlays.
 
 Requirements: the existing viewer dependencies; no additional packages.
-Usage: constructed by app.run. Open and replace resets the session; Open appends one
-file and selects NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
+Usage: constructed by app.run. Open and replace resets the session; Open appends
+files. Both dialogs allow multi-selection and use the batch import queue,
+selecting NPZ/MAT/Excel members before loading. Excel/CSV/TXT offer per-table
 row/column ranges and headers. Dropping a file into a populated session appends.
 Multi-file drops use the same sequential queue as command-line batches. Entries
 are registered first; activation, tree refresh and view preparation run after
@@ -325,13 +326,13 @@ class WorkspaceWindow(ViewerWindow):
         self.multiple_matrix_mode.toggled.connect(self._display_mode_changed)
         self.open_file_action = QtGui.QAction("Open and replace…", self)
         self.open_file_action.setShortcut(QtGui.QKeySequence.StandardKey.Open)
-        self.open_file_action.setToolTip("Open a file and replace the current session.")
+        self.open_file_action.setToolTip("Open one or more files and replace the current session.")
         self.open_file_action.triggered.connect(self._choose_file)
         self.addAction(self.open_file_action)
         self.open_file_button.setShortcut(QtGui.QKeySequence())
         self.add_file_action = QtGui.QAction("Open…", self)
         self.add_file_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+O"))
-        self.add_file_action.setToolTip("Open another file in this session. Existing matrices remain in the list.")
+        self.add_file_action.setToolTip("Open one or more files in this session. Existing matrices remain in the list.")
         self.add_file_action.triggered.connect(self._choose_overlay)
         self.addAction(self.add_file_action)
         bar = QtWidgets.QHBoxLayout()
@@ -341,7 +342,7 @@ class WorkspaceWindow(ViewerWindow):
         file_menu = QtWidgets.QMenu(self.add_overlay)
         file_menu.addActions([self.add_file_action, self.open_file_action])
         self.add_overlay.setMenu(file_menu)
-        self.add_overlay.setToolTip("Open another file, or choose Open and replace from the arrow menu. Files can also be dropped anywhere in the window.")
+        self.add_overlay.setToolTip("Open one or more files, or choose Open and replace from the arrow menu. Files can also be dropped anywhere in the window.")
         bar.addWidget(self.add_overlay)
         self.fourier_button = QtWidgets.QPushButton("Transform…")
         self.fourier_button.setEnabled(False)
@@ -1300,11 +1301,20 @@ class WorkspaceWindow(ViewerWindow):
         self.open_paths(paths, append=bool(self.entries))
 
     def _choose_overlay(self) -> None:
+        """Append the files selected in the multi-file Open dialog."""
+        self._choose_files(append=True)
+
+    def _choose_file(self) -> None:
+        """Replace the session with files selected in the multi-file Open dialog."""
+        self._choose_files(append=False)
+
+    def _choose_files(self, *, append: bool) -> None:
+        """Queue selected files, preserving the session if the dialog is canceled."""
         start = str(self.document.path.parent) if self.document else ""
-        title = "Open matrix file"
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, start, FILE_FILTER)
-        if path:
-            self.open_path(Path(path), append=True)
+        title = "Open matrices or images" if append else "Open matrices or images and replace"
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(self, title, start, FILE_FILTER)
+        if paths:
+            self.open_paths(tuple(Path(path) for path in paths), append=append)
 
     def _choose_fourier(self) -> None:
         self._store_entry()
@@ -1524,7 +1534,7 @@ class WorkspaceWindow(ViewerWindow):
         self._activate(entry, reset_selection=True)
 
     def open_paths(self, paths: Sequence[Path], key: str | None = None, *, append: bool = False) -> None:
-        """Load dropped/command-line files sequentially into a single workspace.
+        """Load dialog-selected, dropped or CLI files sequentially into a workspace.
 
         Args:
             paths: Files in argument order; an empty sequence starts no load.

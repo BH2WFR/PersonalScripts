@@ -101,6 +101,7 @@ ignore-list:
             # 暂无
 
 gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no-gui 下也会被隐藏
+    # 禁止有多余的注释
     - "windows/keyboard-remapper.py"
     - "others/system-event-viewer.py"
     - "document-processing/document-screenshot.py"
