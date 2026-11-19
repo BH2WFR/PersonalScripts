@@ -18,7 +18,7 @@ from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
 from ..common.preferences import read_preferences, save_preferences, choose_save_file, dialog_directory, remember_directory
 from ..common.task_buttons import TaskButtons
-from ..common.viewer import PageViewer
+from ..common.viewer import PageViewer, install_preview_menu
 from .image_batch import FORMATS, SUFFIXES, image_rgb
 from . import local_formula
 from .model import Settings
@@ -129,6 +129,8 @@ class ImageWindow(LlmWindow):
         self.text.setPlaceholderText("Select an image and run recognition to see its text.")
         self.tabs.addTab(self.text, "Recognized text")
         self.viewer = PageViewer()
+        install_preview_menu(self.viewer, reset=self.viewer.fit_page,
+                             fit=self.viewer.fit_page, original=self._original_image_size)
         self.tabs.addTab(self.viewer, "Image preview")
         assets, preview_hint = preview_resources()
         self.rendered = FormulaPreview(assets) if assets else None
@@ -309,6 +311,7 @@ class ImageWindow(LlmWindow):
             return
         item = QtWidgets.QTreeWidgetItem([label or path.name, f"{width} × {height}", Console.format_size(size), "Ready"])
         item.setData(0, QtCore.Qt.ItemDataRole.UserRole, key)
+        item.setData(1, QtCore.Qt.ItemDataRole.UserRole, QtCore.QSize(width, height))
         item.setToolTip(0, label or key)
         item.setToolTip(2, f"{size:,} bytes" + (" (clipboard PNG)" if label else ""))
         self.rows[key] = item
@@ -367,6 +370,8 @@ class ImageWindow(LlmWindow):
                 QtWidgets.QMessageBox.warning(self, "Vision API", str(exc))
                 return
         self.results.clear()
+        if self.rendered is not None:
+            self.rendered.reset_view()
         for item in self.rows.values():
             item.setText(3, "Ready")
             item.setToolTip(3, "")
@@ -531,15 +536,33 @@ class ImageWindow(LlmWindow):
         if self.tabs.currentWidget() is self.viewer:
             self.viewer.clear()
             if key:
-                try:
-                    image = image_rgb(Path(key), (2048, 2048))
-                    pixels = image.tobytes()
-                    preview = QtGui.QImage(pixels, image.width, image.height, image.width * 3,
-                                           QtGui.QImage.Format.Format_RGB888)
-                    self.viewer.set_pixmap(QtGui.QPixmap.fromImage(preview.copy()), key)
-                except (OSError, ValueError, Image.DecompressionBombError) as exc:
-                    self.status.setText(str(exc))
+                self._load_image_preview(key, (2048, 2048))
         self._enabled()
+
+    def _load_image_preview(self, key: str, thumbnail: tuple[int, int] | None) -> bool:
+        try:
+            image = image_rgb(Path(key), thumbnail)
+            pixels = image.tobytes()
+            preview = QtGui.QImage(pixels, image.width, image.height, image.width * 3, QtGui.QImage.Format.Format_RGB888)
+            self.viewer.set_pixmap(QtGui.QPixmap.fromImage(preview.copy()), key)
+            return True
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            self.status.setText(str(exc))
+            return False
+
+    def _original_image_size(self) -> None:
+        """Use source pixels and preserve the point at the center of the thumbnail."""
+        key = self._current_key()
+        bounds = self.viewer.sceneRect()
+        if not key or bounds.isEmpty():
+            return
+        center = self.viewer.mapToScene(self.viewer.viewport().rect().center())
+        source_size = self.rows[key].data(1, QtCore.Qt.ItemDataRole.UserRole)
+        if bounds.size().toSize() != source_size and not self._load_image_preview(key, None):
+            return
+        self.viewer.actual_pixels()
+        full = self.viewer.sceneRect()
+        self.viewer.centerOn(center.x() * full.width() / bounds.width(), center.y() * full.height() / bounds.height())
 
     def _update_rendered(self) -> None:
         if self.rendered is not None and self.tabs.currentWidget() is self.rendered:

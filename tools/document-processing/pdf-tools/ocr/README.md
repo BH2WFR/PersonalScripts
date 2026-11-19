@@ -56,6 +56,12 @@ containing prose and equations, use the Vision API formula mode.
 
 **Formula preview** appears for Markdown, LaTeX fragments and local formula recognition.
 It updates as each image completes. Qt WebEngine displays
+the output at 100% at the start of each run. Use the wheel to zoom at the pointer,
+drag with the left button to pan, or Shift-drag to select text. Right-click either
+preview for **Fit to window**, **Original size (100%)** or **Reset view**. Reset
+centers and fits the source image, or returns the formula preview to its starting
+position at 100%. Original size preserves the current center and uses full source
+pixels in the image preview. The preview renders
 locally generated HTML from markdown-it-py and MathJax 2 SVG output. Run the
 following in the same Conda environment that launches the tool, then restart it:
 

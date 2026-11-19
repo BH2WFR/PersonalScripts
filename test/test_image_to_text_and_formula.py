@@ -6,6 +6,7 @@ import tempfile
 import subprocess
 import sys
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -414,3 +415,85 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
 
             wait_for(fragment_typeset)
             self.assertEqual(window.text.toPlainText(), fragment)
+
+            from PySide6 import QtTest
+            assert preview.browser is not None
+            page = preview.browser.page()
+
+            def transform(action: str = "") -> list[float]:
+                result = []
+                page.runJavaScript(action + """
+                    ;(() => {
+                        const m = new DOMMatrix(getComputedStyle(document.querySelector('#sheet')).transform);
+                        return JSON.stringify([m.a, m.e, m.f]);
+                    })()
+                """, 0, result.append)
+                wait_for(lambda: bool(result))
+                return json.loads(result[0])
+
+            self.assertEqual(transform(), [1, 0, 0])
+            zoom, x, y = transform("window.dispatchEvent(new WheelEvent('wheel', "
+                                   "{deltaY:-100, clientX:100, clientY:50, cancelable:true}))")
+            self.assertAlmostEqual(zoom, 1.2)
+            self.assertAlmostEqual(x, -20)
+            self.assertAlmostEqual(y, -10)
+            target = preview.browser.focusProxy()
+            assert target is not None
+            button = QtCore.Qt.MouseButton.LeftButton
+            QtTest.QTest.mousePress(target, button, pos=QtCore.QPoint(90, 50))
+            QtTest.QTest.mouseMove(target, QtCore.QPoint(130, 80))
+            QtTest.QTest.mouseRelease(target, button, pos=QtCore.QPoint(130, 80))
+            wait_for(lambda: transform() == [zoom, x + 40, y + 30])
+            window.tabs.setCurrentWidget(window.text)
+            window.tabs.setCurrentWidget(preview)
+            self.assertEqual(transform(), [zoom, x + 40, y + 30])
+            def popup_labels(open_menu: Callable[[], object]) -> list[str]:
+                labels: list[str] = []
+                timer = QtCore.QTimer()
+
+                def inspect() -> None:
+                    popup = QtWidgets.QApplication.activePopupWidget()
+                    if isinstance(popup, QtWidgets.QMenu):
+                        labels.extend(action.text() for action in popup.actions())
+                        popup.close()
+
+                timer.timeout.connect(inspect)
+                timer.start(15)
+                try:
+                    open_menu()
+                    wait_for(lambda: bool(labels), timeout=4)
+                finally:
+                    timer.stop()
+                return labels
+
+            required = {"Reset view", "Fit to window", "Original size (100%)"}
+            self.assertTrue(required.issubset(popup_labels(lambda: QtTest.QTest.mouseClick(
+                target, QtCore.Qt.MouseButton.RightButton, pos=QtCore.QPoint(75, 40)))))
+            menu = {action.text(): action for action in preview.browser.actions()}
+            menu["Original size (100%)"].trigger()
+            wait_for(lambda: transform()[0] == 1)
+            menu["Fit to window"].trigger()
+            wait_for(lambda: transform()[0] > 1)
+            menu["Reset view"].trigger()
+            wait_for(lambda: transform() == [1, 0, 0])
+
+            wide = QtGui.QImage(3000, 300, QtGui.QImage.Format.Format_RGB32)
+            wide.fill(QtCore.Qt.GlobalColor.white)
+            path = Path(folder) / "wide.png"
+            self.assertTrue(wide.save(str(path)))
+            window.add_file(path)
+            view = window.viewer
+            point = QtCore.QPoint(50, 40)
+            event = QtGui.QContextMenuEvent(QtGui.QContextMenuEvent.Reason.Mouse,
+                                            point, view.viewport().mapToGlobal(point))
+            self.assertTrue(required.issubset(popup_labels(lambda: self.app.sendEvent(view.viewport(), event))))
+            image_menu = {action.text(): action for action in view.actions()}
+            image_menu["Original size (100%)"].trigger()
+            self.assertEqual(view.sceneRect().width(), wide.width())
+            self.assertEqual(view.transform().m11(), 1)
+            image_menu["Fit to window"].trigger()
+            fit = view.transform().m11()
+            self.assertLess(fit, 1)
+            view.set_zoom(200)
+            image_menu["Reset view"].trigger()
+            self.assertAlmostEqual(view.transform().m11(), fit)

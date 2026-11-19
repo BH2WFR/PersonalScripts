@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from markdown_it.token import Token
 
 from PySide6 import QtCore, QtWidgets, __version__ as pyside_version
+from ..common.viewer import MAX_SCALE, MIN_SCALE, ZOOM_STEP, install_preview_menu
 
 
 @lru_cache(maxsize=1)
@@ -86,7 +87,8 @@ def preview_resources() -> tuple[Path | None, str]:
     try:
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except (ImportError, OSError) as exc:
-        problems.append(f"Qt WebEngine could not load ({exc}). Check PySide6-Addons=={pyside_version}.")
+        problems.append(f"Qt WebEngine could not load ({exc}). In the Python environment shown below, run:\n"
+                        f'python -m pip install "PySide6-Addons=={pyside_version}"')
     packages = Path(sysconfig.get_path("purelib"))
     prefix = Path(sys.prefix)
     target = prefix / "share/mathjax"
@@ -98,10 +100,10 @@ def preview_resources() -> tuple[Path | None, str]:
         if all((root / name).is_file() for name in ("MathJax.js", "config/TeX-AMS_SVG-full.js", "extensions/Safe.js")):
             break
     else:
-        problems.append('Install MathJax in the active Conda environment: conda install "conda-forge::mathjax=2.7.7"\n'
+        problems.append('Install MathJax in the active Conda environment:\nconda install "conda-forge::mathjax=2.7.7"\n'
                         f"For manual setup, extract MathJax 2.7.9 so its MathJax.js is at {target / 'MathJax.js'}.")
     if problems:
-        return None, "\n\n".join([*problems, f"Python: {sys.executable}"])
+        return None, "\n\n".join([*problems, f"Python: {sys.executable}\nRestart the tool after installation."])
     return root, ""
 
 
@@ -113,10 +115,28 @@ class FormulaPreview(QtWidgets.QWidget):
         self.root = root.resolve()
         self.layout_box = QtWidgets.QVBoxLayout(self)
         self.layout_box.setContentsMargins(0, 0, 0, 0)
+        self.original_size = QtWidgets.QToolButton(self)
+        self.original_size.setText("Original size (100%)")
+        self.original_size.clicked.connect(self._original_size)
+        self.layout_box.addWidget(self.original_size, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         self.value = ""
         self.fragment = False
         self.ready = False
         self.browser = None
+        self.setToolTip("Wheel to zoom, drag to pan. Shift-drag to select text.")
+
+    def reset_view(self) -> None:
+        """Start each recognition run at the rendered document's natural size."""
+        if self.ready and self.browser is not None:
+            self.browser.page().runJavaScript("resetView()")
+
+    def _original_size(self) -> None:
+        if self.ready and self.browser is not None:
+            self.browser.page().runJavaScript("zoomAt(1, innerWidth / 2, innerHeight / 2)")
+
+    def _fit_view(self) -> None:
+        if self.ready and self.browser is not None:
+            self.browser.page().runJavaScript("fitView()")
 
     def display(self, text: str, *, fragment: bool = False) -> None:
         from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineUrlRequestInterceptor
@@ -141,10 +161,14 @@ class FormulaPreview(QtWidgets.QWidget):
             self.profile.setUrlRequestInterceptor(self.filter)
             page = QWebEnginePage(self.profile, self.browser)
             self.browser.setPage(page)
+            install_preview_menu(self.browser, reset=self.reset_view, fit=self._fit_view, original=self._original_size)
+            self.browser.addAction(page.action(QWebEnginePage.WebAction.Copy))
             self.layout_box.addWidget(self.browser)
             self.browser.loadFinished.connect(self._loaded)
             self.browser.setHtml(r"""<!doctype html><meta charset="utf-8">
-<style>body{font:16px sans-serif;margin:1em}#output{overflow-wrap:anywhere}
+<style>html{min-height:100%;cursor:grab;overflow-anchor:none}html.dragging{cursor:grabbing;user-select:none}
+html.fitted{overflow:hidden}
+body{font:16px sans-serif;margin:0}#sheet{transform-origin:0 0;padding:1em}#output{overflow-wrap:anywhere}
 #output:empty::before{content:"Run recognition to preview Markdown and formulas.";color:#666}
 table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:.3em}pre{white-space:pre-wrap}</style>
 <script type="text/x-mathjax-config">
@@ -152,7 +176,91 @@ MathJax.Hub.Config({showMathMenu:false,messageStyle:"none",extensions:["Safe.js"
  TeX:{extensions:["color.js","boldsymbol.js"]},Safe:{allow:{URLs:"none",classes:"none",styles:"none",cssIDs:"none"}},
  tex2jax:{inlineMath:[["$","$"],["\\(","\\)"]],processEscapes:true}});
 </script><script src="MathJax.js?config=TeX-AMS_SVG-full"></script>
-<div id="output"></div>""", QtCore.QUrl.fromLocalFile(str(root / "index.html")))
+<div id="sheet"><div id="output"></div></div>
+<script>
+const sheet = document.getElementById('sheet');
+const [minScale, maxScale, zoomStep] = ZOOM_SETTINGS;
+let scale = 1, offsetX = 0, offsetY = 0;
+const viewport = document.documentElement;
+function positionSheet() {
+    sheet.style.transform = 'translate(' + offsetX + 'px,' + offsetY + 'px) scale(' + scale + ')';
+}
+function resetView() {
+    viewport.classList.remove('fitted');
+    scale = 1;
+    offsetX = offsetY = 0;
+    positionSheet();
+    window.scrollTo(0, 0);
+}
+function fitView() {
+    resetView();
+    viewport.classList.add('fitted');
+    const output = document.getElementById('output');
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    function include(rect) {
+        if (!rect.width || !rect.height) return;
+        left = Math.min(left, rect.left);
+        top = Math.min(top, rect.top);
+        right = Math.max(right, rect.right);
+        bottom = Math.max(bottom, rect.bottom);
+    }
+    // Blocks can span the page even if a centered equation uses only a few pixels.
+    output.querySelectorAll('svg,table,hr').forEach(el => include(el.getBoundingClientRect()));
+    const walker = document.createTreeWalker(output, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent.trim() || node.parentElement.closest('svg,script,style')) continue;
+        range.selectNodeContents(node);
+        include(range.getBoundingClientRect());
+    }
+    if (!Number.isFinite(left) || innerWidth <= 16 || innerHeight <= 16) return;
+    scale = Math.min(maxScale, (innerWidth - 16) / (right - left), (innerHeight - 16) / (bottom - top));
+    offsetX = (innerWidth - scale * (right + left)) / 2;
+    offsetY = (innerHeight - scale * (bottom + top)) / 2;
+    positionSheet();
+}
+function refitIfNeeded() {
+    if (viewport.classList.contains('fitted')) fitView();
+}
+window.addEventListener('resize', refitIfNeeded);
+function zoomAt(next, x, y) {
+    viewport.classList.remove('fitted');
+    const rect = sheet.getBoundingClientRect();
+    offsetX += (x - rect.left) * (1 - next / scale);
+    offsetY += (y - rect.top) * (1 - next / scale);
+    scale = next;
+    positionSheet();
+}
+window.addEventListener('wheel', event => {
+    if (!event.deltaY) return;
+    event.preventDefault();
+    const steps = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY / 3 :
+                  event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? event.deltaY : event.deltaY / 100;
+    const next = Math.max(minScale, Math.min(maxScale, scale * zoomStep ** -steps));
+    zoomAt(next, event.clientX, event.clientY);
+}, {passive: false});
+let drag = null;
+viewport.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.shiftKey || !event.isPrimary) return;
+    event.target.setPointerCapture(event.pointerId);
+    drag = {id: event.pointerId, x: event.clientX - offsetX, y: event.clientY - offsetY};
+    viewport.classList.add('dragging');
+});
+viewport.addEventListener('pointermove', event => {
+    if (!drag || drag.id !== event.pointerId) return;
+    viewport.classList.remove('fitted');
+    offsetX = event.clientX - drag.x;
+    offsetY = event.clientY - drag.y;
+    positionSheet();
+});
+viewport.addEventListener('lostpointercapture', () => {
+    drag = null;
+    viewport.classList.remove('dragging');
+});
+resetView();
+</script>""".replace("ZOOM_SETTINGS", json.dumps((MIN_SCALE, MAX_SCALE, ZOOM_STEP))),
+                                 QtCore.QUrl.fromLocalFile(str(root / "index.html")))
         self.value, self.fragment = text, fragment
         if self.ready:
             self._update()
@@ -169,4 +277,4 @@ MathJax.Hub.Config({showMathMenu:false,messageStyle:"none",extensions:["Safe.js"
             self.browser.page().runJavaScript(
                 "MathJax.Hub.Queue(function(){MathJax.Hub.getAllJax('output').forEach(j=>j.Remove());"
                 "document.getElementById('output').innerHTML="
-                + json.dumps(html) + ";},['Typeset',MathJax.Hub,'output']);")
+                + json.dumps(html) + ";},['Typeset',MathJax.Hub,'output'],refitIfNeeded);")

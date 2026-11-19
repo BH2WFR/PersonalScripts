@@ -1,5 +1,6 @@
 """Reusable raster page viewer with cursor-centered zoom and hand panning."""
 
+from collections.abc import Callable
 from enum import StrEnum
 import math
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -7,6 +8,14 @@ from PySide6 import QtCore, QtGui, QtWidgets
 MIN_SCALE = .025
 MAX_SCALE = 16.0
 ZOOM_STEP = 1.2
+
+
+def install_preview_menu(widget: QtWidgets.QWidget, *, reset: Callable[[], None],
+                         fit: Callable[[], None], original: Callable[[], None]) -> None:
+    """Install native view actions on the widget that receives context-menu events."""
+    for title, callback in (("Reset view", reset), ("Fit to window", fit), ("Original size (100%)", original)):
+        widget.addAction(title, callback)
+    widget.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
 
 
 def page_key_step(event: QtGui.QKeyEvent) -> int:
