@@ -10,7 +10,7 @@ ENTRY = Path(__file__).resolve()
 sys.path.insert(0, str(ENTRY.parents[2]))
 from utils import *
 
-HELP = """IMAGE OCR
+HELP = """IMAGE TO TEXT AND FORMULA
 
 Extract text or formulas from files and clipboard images, individually or in batches.
 Use local OCR or a vision API with separate text and formula conversations. Export text, Markdown or LaTeX.
@@ -23,7 +23,7 @@ Requirements:
   Optional Markdown/math preview: markdown-it-py, Qt WebEngine and local MathJax 2 SVG assets.
 
 Usage:
-  python image-ocr.py
+  python image-to-text-and-formula.py
 """
 
 

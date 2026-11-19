@@ -36,7 +36,7 @@ profiles default to AUTO. Optional balance-only keys never enter model requests.
 
 ## Internal transport and validation
 
-Bookmark recognition, image OCR and the async client use `Llm.chat_request()`
+Bookmark recognition, Image to Text and Formula, and the async client use `Llm.chat_request()`
 to assemble messages. Callers supply task prompts, choose batch sizes and
 manage conversation history.
 

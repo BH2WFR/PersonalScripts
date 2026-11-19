@@ -104,7 +104,7 @@ gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no
     - "windows/keyboard-remapper.py"
     - "others/system-event-viewer.py"
     - "document-processing/document-screenshot.py"
-    - "document-processing/image-ocr.py"
+    - "document-processing/image-to-text-and-formula.py"
     - "document-processing/pdf-binarizer.py"
     - "document-processing/pdf-bookmark-editor.py"
     - "document-processing/pdf-font-replacer.py"

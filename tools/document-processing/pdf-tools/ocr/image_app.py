@@ -31,7 +31,7 @@ class ImageWindow(LlmWindow):
 
     def __init__(self, entry: Path) -> None:
         super().__init__()
-        self.setWindowTitle("Image OCR")
+        self.setWindowTitle("Image to Text and Formula")
         self.resize(1160, 780)
         self._loading = self._closing = self._close_when_idle = self._running = False
         self._init_api_state()
@@ -599,7 +599,7 @@ def main(entry: Path) -> int:
     System.enable_dpi_awareness()
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     if not isinstance(app, QtWidgets.QApplication):
-        raise RuntimeError("Image OCR requires a QApplication.")
+        raise RuntimeError("Image to Text and Formula requires a QApplication.")
     app.setStyle("Fusion")
     install_no_wheel_controls(app)
     window = ImageWindow(entry)

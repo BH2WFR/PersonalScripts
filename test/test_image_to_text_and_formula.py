@@ -48,7 +48,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
 
     def test_drop_clipboard_and_batch_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch("personal_pdf_tools.ocr.image_app.read_preferences", return_value={}):
-            window = ImageWindow(ROOT / "tools/document-processing/image-ocr.py")
+            window = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             try:
                 with pymupdf.open() as fixture:
                     page = fixture.new_page(width=480, height=100)
@@ -95,7 +95,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
         endpoint, requests = server.api_server(replies=[r"Vector: $$\textcolor{red}{\mathbf{x}}$$",
                                                        r"\frac{a}{b}", "[NO_TEXT]", '["first image","second image"]'])
         with tempfile.TemporaryDirectory() as folder, patch("utils.config.ConfigStore.directory", return_value=Path(folder)):
-            window = ImageWindow(ROOT / "tools/document-processing/image-ocr.py")
+            window = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             try:
                 path = Path(folder) / "equation.png"
                 image = QtGui.QImage(100, 100, QtGui.QImage.Format.Format_RGB32)
@@ -191,7 +191,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
             finally:
                 window.close()
                 window.deleteLater()
-            reopened = ImageWindow(ROOT / "tools/document-processing/image-ocr.py")
+            reopened = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             try:
                 self.assertEqual(reopened.vision_options.to_data(), saved)
             finally:
@@ -208,7 +208,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
             json.dumps(fragments[:5]), json.dumps(fragments[5:]), "single", "again", "fresh", "independent",
             "markdown", "fragment", json.dumps(fragments), "next"])
         with tempfile.TemporaryDirectory() as folder, patch("utils.config.ConfigStore.directory", return_value=Path(folder)):
-            window = ImageWindow(ROOT / "tools/document-processing/image-ocr.py")
+            window = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             try:
                 page = window.vision_options.formula_page
                 window.mode.setCurrentIndex(2)
@@ -303,7 +303,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
         from personal_pdf_tools.ocr import local_formula
         from personal_pdf_tools.ocr.worker import Worker
         with tempfile.TemporaryDirectory() as folder, patch("utils.config.ConfigStore.directory", return_value=Path(folder)):
-            window = ImageWindow(ROOT / "tools/document-processing/image-ocr.py")
+            window = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             self.addCleanup(window.close)
             image = QtGui.QImage(10, 10, QtGui.QImage.Format.Format_RGB32)
             image.fill(QtGui.QColor("white"))
@@ -361,7 +361,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
         if self.app.platformName() != "windows":
             self.skipTest("Requires the native Windows Qt platform")
         with tempfile.TemporaryDirectory() as folder, patch("utils.config.ConfigStore.directory", return_value=Path(folder)):
-            window = ImageWindow(ROOT / "tools/document-processing/image-ocr.py")
+            window = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             self.addCleanup(window.close)
             preview = window.rendered
             if preview is None:

@@ -1,4 +1,4 @@
-# Offline formula recognition in Image OCR (CPU).
+# Offline formula recognition in Image to Text and Formula (CPU).
 paddlepaddle>=3.3,<4
 tokenizers>=0.19
 # Markdown formatting in the optional local MathJax preview.

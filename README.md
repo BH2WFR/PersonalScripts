@@ -8,6 +8,8 @@
 
 **A collection of cross-platform utility scripts for personal use**, covering PDF processing, file links, video downloads, system tools, and more.
 
+Most tools run on the command line. Some have a graphical interface.
+
 **Highlights** (see [Script List](#script-list) for the complete list; bold entries are key features):
 
 > - **Research**
@@ -21,6 +23,8 @@
 >   - **Add every `.exe`/`.com` file under a specified directory to Windows Firewall blocking rules**
 >   - Toolset for registering applications as Open With handlers for specified file extensions
 >   - Wrap any Python script in a CMD launcher suitable for use as a file association
+>   - Remap keyboard keys through the Windows registry
+>   - Identify the process blocking USB drive ejection from the Windows event log
 > - **macOS**
 >   - **NTFS read-write mounting tool** based on ntfs-3g-mac
 >   - Display utilities for **disabling a MacBook's built-in screen while an external display is connected**, rotating displays, and adjusting external-display brightness
@@ -32,12 +36,18 @@
 >   - **Batch truncation of overlong filenames** while preserving extensions
 >   - **Batch file hash calculation**
 >   - Recursive cleanup tool for files such as `Thumbs.db` and `.DS_Store`
+>   - Find which processes are using a file or directory
 > - **Document tools**
 >   - PDF decryption and editing-restriction removal
 >   - **PDF table-of-contents (bookmark) injector** that uses a vision LLM to read a book's table of contents and adds the resulting entries to the PDF
 >   - PDF compression using Ghostscript
 >   - **Scanned PDF binarization tool** (can further reduce file size)
 >   - **PDF page-label editor**
+>   - Batch PDF font replacement
+>   - Split double-page PDF scans down the middle
+>   - Edit PDF metadata such as the author and title
+>   - Run OCR on PDFs
+>   - Convert images to text with OCR or transcribe formulas to LaTeX with a vision LLM
 >   - **Automated document screenshot tool** that turns pages and saves document screenshots
 > - **Network tools**
 >   - **Interactive manual rclone synchronization tool** with reusable profile support
@@ -47,7 +57,11 @@
 >   - Web video downloader based on yt-dlp, including m3u8 streams
 >   - Video time-trimming tool based on FFmpeg
 > - Unicode character inspector
-> - Global keyboard and mouse hook tester
+> - **System tools**
+>   - **System log viewer** for startup, shutdown, sleep, USB ejection, errors, updates and network authentication on Windows, Linux and macOS
+>   - **Global keyboard and mouse hook tester**
+>   - Run preset commands from a profile
+>   - Network repair tools
 
 Most scripts support both interactive mode and command-line arguments. Run `python <script-name>.py --help` for usage details.
 
@@ -113,7 +127,7 @@ Most scripts support both interactive mode and command-line arguments. Run `pyth
 
 - **Linux:**
 
-  - On systems without a graphical environment, some GUI- or screenshot-related tools cannot be launched.
+  - On headless Linux systems, the launcher hides tools that require a graphical session, including GUI applications and screenshot tools.
   - Some keyboard-hook and screenshot scripts support X11 but not Wayland. The launcher hides them under Wayland.
 
 - **Other:**
@@ -221,141 +235,141 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/document-processing/ghostscript-pdf-compressor.py` | **PDF compressor** based on Ghostscript:<br />Compresses PDFs with standard or custom resolution and quality settings, including password-protected input. | `ghostscript`; **Python pkg:** `PyMuPDF` |
-| `tools/document-processing/pdf-font-replacer.py` | **PDF font and text-color replacement tool:** Changes text fonts and colors while preserving text layout and line spacing. | **Python pkgs:** `PySide6`, `PyMuPDF`, `fonttools`, `tqdm` |
-| `tools/document-processing/image-ocr.py` | **Image OCR:** Recognizes text or individual formulas offline from local files and clipboard images, singly or in batches. A vision API can convert screenshots containing text and formulas to Markdown or LaTeX, with separate conversations for text and formula recognition. | **Python pkgs:** `PySide6`, `Pillow`, `PyMuPDF`, `rapidocr`, `onnxruntime`, `numpy`, `opencv-python`, `litellm`, `openai`, `httpx`, `truststore`<br />**Optional Python pkgs:** `paddlepaddle` (CPU) and `tokenizers` (offline LaTeX), `markdown-it-py` (Markdown preview)<br />**Optional components:** `LaTeX_OCR_rec` model (offline LaTeX), Qt WebEngine and local MathJax 2 assets (preview) |
-| `tools/document-processing/pdf-ocr.py` | **Local scanned-PDF OCR:** Adds selectable, highlightable text while preserving original page content. Uses small local PaddleOCR models with downloadable language extensions. | **Python pkgs:** `PySide6`, `PyMuPDF`, `fonttools`, `rapidocr>=3.10,<4`, `onnxruntime`, `numpy`, OpenCV; extension languages require model downloads. |
-| `tools/document-processing/pdf-binarizer.py` | **Scanned PDF binarization and aggressive compression tool:**<br />Binarizes PDF image elements using adaptive grayscale thresholds, with separate handling for detected illustrations, text in black boxes, and vector elements. | **Python pkgs:** `PySide6`, `PyMuPDF`, `pypdf`, `Pillow` (with libtiff), `numpy`, `opencv-python`, `tqdm` |
-| `tools/document-processing/pdf-decryptor.py` | **PDF protection and PDF/A identification removal:**<br />Removes encryption, permission restrictions, and PDF/A identification while retaining document structure and other metadata. | **Python pkg:** `PyMuPDF` |
-| `tools/document-processing/pdf-metadata-editor.py` | Edits PDF document properties, custom fields and XMP. Saves a copy with optional PDF/A identification, permissions or password encryption. | **Python pkgs:** `PySide6`, `PyMuPDF`, `PyYAML` |
-| `tools/document-processing/pdf-bookmark-editor.py` | **Scanned PDF TOC recognition, bookmark and page-label editor:** Recognizes table-of-contents images page by page through cloud or local vision models and adds the results as PDF bookmarks. Supports editing **page labels** and bookmark trees. | **Python pkg:** `PySide6`, `PyMuPDF`, `PyYAML` |
-| `tools/document-processing/pdf-page-splitter.py` | **Scanned PDF page-cropping tool:** Splits double-page scans into individual pages. | **Python pkgs:** `PySide6`, `PyMuPDF`, `tqdm` |
-| `tools/document-processing/document-screenshot.py` | **Automated document screenshots:** Turns pages and saves screenshots of a selected screen region. Not recommended to infringe copyright | **Windows/macOS/Linux X11**; Wayland is not supported<br />macOS: Accessibility and Screen Recording permissions<br />**Python pkgs:** `mss`, `pynput`, `Pillow` |
+| [`tools/document-processing/ghostscript-pdf-compressor.py`](tools/document-processing/ghostscript-pdf-compressor.py) | **PDF compressor** based on Ghostscript:<br />Compresses PDFs with standard or custom resolution and quality settings, including password-protected input. | `ghostscript`<br />**Python pkg:** `PyMuPDF` |
+| [`tools/document-processing/pdf-font-replacer.py`](tools/document-processing/pdf-font-replacer.py) | **(GUI) PDF font and text-color replacement**<br />Replace text fonts and colors throughout a PDF while preserving layout and line spacing. | **Python pkgs:** `PySide6`, `PyMuPDF`, `fonttools`, `tqdm` |
+| [`tools/document-processing/image-to-text-and-formula.py`](tools/document-processing/image-to-text-and-formula.py) | **(GUI) Image to Text and Formula**<br />Run offline OCR on text or individual formulas in local files and clipboard images, singly or in batches. A vision API can transcribe screenshots containing text and formulas to Markdown or LaTeX, with separate conversations for text and formula recognition. | **Python pkgs:** `PySide6`, `Pillow`, `PyMuPDF`, `rapidocr`, `onnxruntime`, `numpy`, `opencv-python`, `litellm`, `openai`, `httpx`, `truststore`<br />**Optional Python pkgs:** `paddlepaddle` (CPU) and `tokenizers` (offline LaTeX), `markdown-it-py` (Markdown preview)<br />**Optional components:** `LaTeX_OCR_rec` model (offline LaTeX), Qt WebEngine and local MathJax 2 assets (preview) |
+| [`tools/document-processing/pdf-ocr.py`](tools/document-processing/pdf-ocr.py) | **(GUI) Local OCR for scanned PDFs** adds selectable, highlightable text while preserving the original page content. It uses lightweight local PaddleOCR models and supports downloadable language models. | **Python pkgs:** `PySide6`, `PyMuPDF`, `fonttools`, `rapidocr>=3.10,<4`, `onnxruntime`, `numpy`, OpenCV; extension languages require model downloads. |
+| [`tools/document-processing/pdf-binarizer.py`](tools/document-processing/pdf-binarizer.py) | **(GUI) Scanned PDF binarization and compression**<br />Apply adaptive thresholding to embedded images and choose how to process detected illustrations, text on dark backgrounds and vector elements. | **Python pkgs:** `PySide6`, `PyMuPDF`, `pypdf`, `Pillow` (with libtiff), `numpy`, `opencv-python`, `tqdm` |
+| [`tools/document-processing/pdf-decryptor.py`](tools/document-processing/pdf-decryptor.py) | **PDF protection and PDF/A identification removal:**<br />Removes encryption, permission restrictions, and PDF/A identification while retaining document structure and other metadata. | **Python pkg:** `PyMuPDF` |
+| [`tools/document-processing/pdf-metadata-editor.py`](tools/document-processing/pdf-metadata-editor.py) | **(GUI) PDF properties, custom fields and XMP metadata editor**<br />Save a copy with optional PDF/A identification, permission restrictions or an opening password. | **Python pkgs:** `PySide6`, `PyMuPDF`, `PyYAML` |
+| [`tools/document-processing/pdf-bookmark-editor.py`](tools/document-processing/pdf-bookmark-editor.py) | **(GUI) Scanned PDF table-of-contents recognition, bookmark and page-label editor**<br />Select a table-of-contents region and use a cloud or local vision model to read it page by page and add the entries as PDF bookmarks. Edit **page labels** and the bookmark tree. | **Python pkgs:** `PySide6`, `PyMuPDF`, `PyYAML` |
+| [`tools/document-processing/pdf-page-splitter.py`](tools/document-processing/pdf-page-splitter.py) | **(GUI) Scanned PDF page splitter**<br />Split double-page scans into individual pages. | **Python pkgs:** `PySide6`, `PyMuPDF`, `tqdm` |
+| [`tools/document-processing/document-screenshot.py`](tools/document-processing/document-screenshot.py) | **(GUI) Automatic page turning and screenshots**<br />Turn pages automatically and save screenshots of a selected screen region.<br />Avoid using this tool to bypass copyright protection. The project accepts no responsibility for disputes arising from such use. | **Windows/macOS/Linux X11**; Wayland is not supported<br />macOS: Accessibility and Screen Recording permissions<br />**Python pkgs:** `mss`, `pynput`, `Pillow` |
 
 ### Video Download
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/download/bbdown-bilibili-downloader.py` | **Bilibili video downloader based on BBDown:**<br />(quality/audio only/subtitles/danmaku/multiple APIs)<br />Note: BBDown is no longer maintained; Bilibili downloads will be migrated to yt-dlp later. | `BBDown`, `ffmpeg`, `aria2` (optional) |
-| `tools/download/yt-dlp-video-downloader.py` | **Video downloader based on yt-dlp:**<br />(quality/audio/subtitles/cookies/playlists) | `yt-dlp`, `ffmpeg`, `deno` (optional) |
-| `tools/download/yt-dlp-m3u8-downloader.py` | **m3u8/HLS stream downloader based on yt-dlp** | `yt-dlp`, `ffmpeg` |
+| [`tools/download/bbdown-bilibili-downloader.py`](tools/download/bbdown-bilibili-downloader.py) | **Bilibili video downloader based on BBDown:**<br />(quality/audio only/subtitles/danmaku/multiple APIs)<br />Note: BBDown is no longer maintained; Bilibili downloads will be migrated to yt-dlp later. | `BBDown`, `ffmpeg`, `aria2` (optional) |
+| [`tools/download/yt-dlp-video-downloader.py`](tools/download/yt-dlp-video-downloader.py) | **Video downloader based on yt-dlp:**<br />(quality/audio/subtitles/cookies/playlists) | `yt-dlp`, `ffmpeg`, `deno` (optional) |
+| [`tools/download/yt-dlp-m3u8-downloader.py`](tools/download/yt-dlp-m3u8-downloader.py) | **m3u8/HLS stream downloader based on yt-dlp** | `yt-dlp`, `ffmpeg` |
 
 ### Video/Image Editing
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/multimedia/ffmpeg-video-trimmer.py` | **Video trimming tool based on FFmpeg:**<br />Note: this trims **by time**; it does not crop the picture. | `ffmpeg` |
-| `tools/research/image-cropper.py` | **Batch image-cropping tool based on OpenCV:**<br />Crops images to a selected ROI. | **Python pkgs:** `opencv-python`, `numpy` |
+| [`tools/multimedia/ffmpeg-video-trimmer.py`](tools/multimedia/ffmpeg-video-trimmer.py) | **Video trimming tool based on FFmpeg:**<br />Note: this trims **by time**; it does not crop the picture. | `ffmpeg` |
+| [`tools/research/image-cropper.py`](tools/research/image-cropper.py) | **Batch image-cropping tool based on OpenCV:**<br />Crops images to a selected ROI. | **Python pkgs:** `opencv-python`, `numpy` |
 
 ### File System/Disk Mounting
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/filesystem/disk-inventory.py` | **Disk and partition inventory:** Shows a device tree with mount points, drive letters, labels, capacities, and full native IDs. | Windows: `pwsh` 7; Linux: `lsblk`; macOS: `diskutil` |
-| `tools/filesystem/path-in-use.py` | **File/directory usage query:** Lists the PIDs and executable paths of processes using a file or directory. Supports recursive directory checks, including drive roots and mount points. | `psutil`;<br />**Elevation required** |
-| `tools/filesystem/openssl-file-hasher.py` | **File hash calculator based on OpenSSL:**<br />Processes files in batches and supports common algorithms provided by OpenSSL, including `md5` and `sha256`. | `openssl` |
-| `tools/filesystem/filename-shortener.py` | **Automatic long-filename truncation tool:**<br />Counts the UTF-8 encoded byte length and truncates filenames that exceed a specified limit (143 bytes by default, for compatibility with Synology encrypted-folder limits).<br />Extensions are **preserved**, and collisions receive an automatic `_1`, `_2`, and so on before the extension. | |
-| `tools/filesystem/file-timestamp-editor.py` | **File/directory timestamp editor:** Changes creation, modification, and access times, with optional random jitter. Supports timestamp backup and restore for all files and directories under a selected directory. | |
-| `tools/macos/ntfs-3g-mount-manager.py` | macOS only. **NTFS read-write mounting tool based on ntfs-3g-mac:**<br />Automatically scans NTFS partitions and can unmount or eject them. | **macOS only**<br />**Elevation required**<br />Allow kernel extensions from identified developers in Safe Mode, then install the `macFUSE` kernel extension and the `ntfs-3g-mac` mounting tool. |
+| [`tools/filesystem/disk-inventory.py`](tools/filesystem/disk-inventory.py) | **Disk and partition inventory:** Shows a device tree with mount points, drive letters, labels, capacities, and full native IDs. | Windows: `pwsh` 7; Linux: `lsblk`; macOS: `diskutil` |
+| [`tools/filesystem/path-in-use.py`](tools/filesystem/path-in-use.py) | **File/directory usage query:** Lists the PIDs and executable paths of processes using a file or directory. Supports recursive directory checks, including drive roots and mount points. | `psutil`;<br />**Elevation required** |
+| [`tools/filesystem/openssl-file-hasher.py`](tools/filesystem/openssl-file-hasher.py) | **File hash calculator based on OpenSSL:**<br />Processes files in batches and supports common algorithms provided by OpenSSL, including `md5` and `sha256`. | `openssl` |
+| [`tools/filesystem/filename-shortener.py`](tools/filesystem/filename-shortener.py) | **Automatic long-filename truncation tool:**<br />Counts the UTF-8 encoded byte length and truncates filenames that exceed a specified limit (143 bytes by default, for compatibility with Synology encrypted-folder limits).<br />Extensions are **preserved**, and collisions receive an automatic `_1`, `_2`, and so on before the extension. | |
+| [`tools/filesystem/file-timestamp-editor.py`](tools/filesystem/file-timestamp-editor.py) | **File and folder timestamp editor**<br />Change creation, modification and access times with optional random jitter. Back up and restore timestamps for all files and folders under a selected directory. | |
+| [`tools/macos/ntfs-3g-mount-manager.py`](tools/macos/ntfs-3g-mount-manager.py) | **macOS only. Read-write NTFS mounting with ntfs-3g-mac**<br />Scan for NTFS partitions automatically, then mount, unmount or eject them. | **macOS only**<br />**Elevation required**<br />Allow kernel extensions from identified developers in Safe Mode, then install the `macFUSE` kernel extension and the `ntfs-3g-mac` mounting tool. |
 
 ### File System/Symbolic Link Tools
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/filesystem/link-creator.py` | **Symbolic-link/hard-link creation tool** (also supports directory symlinks, or SYMLINKD, and JUNCTION links on Windows):<br />Supports relative paths, mirror mode, and conflict handling. | |
-| `tools/filesystem/link-scanner.py` | **Recursively detects and prints every symbolic link and hard link in a directory** (also prints SYMLINKD and JUNCTION directory links on Windows):<br />Automatically detects dead links whose targets no longer exist and can repair or delete them. On Windows, it can convert file symlinks that incorrectly point to directories back to SYMLINKD links. | |
-| `tools/windows/directory-symlink-repair.py` | Windows-only tool that **repairs** file symlinks (SYMLINK) pointing to directories by converting them to proper **directory symlinks** (SYMLINKD):<br />Fixes links created by some file-sync tools that apply Linux symlink behavior on Windows without distinguishing file and directory symlinks, making linked directories inaccessible. | **Windows only** |
+| [`tools/filesystem/link-creator.py`](tools/filesystem/link-creator.py) | **Symbolic-link/hard-link creation tool** (also supports directory symlinks, or SYMLINKD, and JUNCTION links on Windows):<br />Supports relative paths, mirror mode, and conflict handling. | |
+| [`tools/filesystem/link-scanner.py`](tools/filesystem/link-scanner.py) | **Recursive symbolic-link and hard-link scanner**<br />List links in a directory and repair or remove links whose targets no longer exist. On Windows, also list directory symlinks (SYMLINKD) and junctions, and convert file symlinks pointing to directories into directory symlinks. | |
+| [`tools/windows/directory-symlink-repair.py`](tools/windows/directory-symlink-repair.py) | **Windows only.** Convert file symlinks (SYMLINK) that point to directories into **directory symlinks** (SYMLINKD). This repairs inaccessible links created by sync tools that handle file and directory symlinks alike on Linux and Windows. | **Windows only** |
 
 ### File System/Permission Tools
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/filesystem/executable-bit-setter.sh` | **Adds executable permission to script files in batches on Linux/macOS:**<br />Recursively finds files with selected extensions (`.py`/`.sh` by default) and applies `chmod +x`. | **Linux/macOS**<br />**Elevation required** |
-| `tools/filesystem/git-executable-bit-setter.ps1` | **Marks script files as executable in a Git repository on Windows:**<br />Uses `git update-index --chmod=+x` on staged `.py`/`.sh` files so Windows commits retain `+x` permission when cloned on Linux/macOS. | **Windows**<br />`git` |
-| `tools/macos/quarantine-remover.py` | macOS-only tool for **removing `quarantine` and `provenance` attributes from files in batches**, based on the `xattr` command. | **macOS only** |
+| [`tools/filesystem/executable-bit-setter.sh`](tools/filesystem/executable-bit-setter.sh) | **Linux/macOS only. Batch executable permissions for scripts**<br />Find files recursively by extension (default: `.py` and `.sh`) and apply `chmod +x`. | **Linux/macOS**<br />**Elevation required** |
+| [`tools/filesystem/git-executable-bit-setter.ps1`](tools/filesystem/git-executable-bit-setter.ps1) | **Windows only. Batch executable permissions for scripts in Git**<br />Apply `git update-index --chmod=+x` to staged `.py` and `.sh` files so they are executable when cloned on Linux or macOS. | **Windows**<br />`git` |
+| [`tools/macos/quarantine-remover.py`](tools/macos/quarantine-remover.py) | **macOS only**, a tool for **removing `quarantine` and `provenance` attributes from files in batches**, based on the `xattr` command. | **macOS only** |
 
 ### Network Tools
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/network/tailscale-refresh-routes.py` | **Tailscale subnet-route restart tool:**<br />Restores subnet routing on macOS when it stops working after a device returns home and then leaves again. | `tailscale` |
-| [`tools/network/rclone-sync.py`](tools/network/rclone-sync/README.md) | **Manual runner for rclone tasks using your own YAML configuration:**<br />Uses reusable profiles and machine-specific subtasks to sync, copy, move, or compare directory/file pairs across cloud storage and local or removable drives. Supports locating removable drives by volume label. | `rclone`<br />**Python pkg:** `PyYAML`<br />Volume discovery: Windows `pwsh` 7; Linux `lsblk`; macOS `diskutil` |
-| `tools/network/network-info-uploader.py` | **Local network-interface information collector and uploader:**<br />Collects network-interface information, especially IP addresses, and uploads it to an S3 bucket for remote access. | **Python pkg:** `boto3` |
-| `tools/windows/firewall-app-blocker.py` | Windows-only tool for **configuring system firewall rules that block network access for `.exe`/`.com` files:**<br />Recursively finds every `.exe`/`.com` file under a selected path and can add blocking rules or remove those rules to restore access. | **Windows only**<br />**Elevation required** |
-| `tools/network/http-server.py` | **Local HTTP server:** Serves files from a local directory or hosts a website containing `index.html`. | |
+| [`tools/network/tailscale-refresh-routes.py`](tools/network/tailscale-refresh-routes.py) | **Tailscale subnet-route restart tool:**<br />Restores subnet routing on macOS when it stops working after a device returns home and then leaves again. | `tailscale` |
+| [`tools/network/rclone-sync.py`](tools/network/rclone-sync.py) | **Manual rclone task runner with personal YAML configurations**<br />Use reusable profiles and machine-specific subtasks to sync, copy, move or compare file and directory pairs across cloud storage and USB drives. Locate removable drives by volume label. | `rclone`<br />**Python pkg:** `PyYAML`<br />Volume discovery: Windows `pwsh` 7; Linux `lsblk`; macOS `diskutil` |
+| [`tools/network/network-info-uploader.py`](tools/network/network-info-uploader.py) | **Local network-interface information collector and uploader:**<br />Collects network-interface information, especially IP addresses, and uploads it to an S3 bucket for remote access. | **Python pkg:** `boto3` |
+| [`tools/windows/firewall-app-blocker.py`](tools/windows/firewall-app-blocker.py) | **Windows only. Firewall rules for blocking network access by `.exe` and `.com` files**<br />**Recursively find executables under a selected path**, then add blocking rules or remove them to restore access. | **Windows only**<br />**Elevation required** |
+| [`tools/network/http-server.py`](tools/network/http-server.py) | **Local HTTP server:** Serves files from a local directory or hosts a website containing `index.html`. | |
 
 ### Open With
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/windows/file-association-manager.py` | Windows-only tool that **registers a selected EXE as an Open With handler for specified file extensions:**<br />Useful for registering file associations for portable applications. | **Windows only**<br />**Elevation required** |
-| `tools/others/script-to-app.py` | **Creates app-style launchers for Python scripts** without packaging them, with support for binding a Conda environment. Produces `.cmd` launchers on Windows, movable or renameable apps on macOS, and file handlers for specified MIME types or all files on Linux. | **Windows / macOS / Linux desktop**<br />Windows elevation or a writable directory; Linux Bash and a desktop terminal (`desktop-file-utils` optional); Linux all-files support depends on the file manager |
+| [`tools/windows/file-association-manager.py`](tools/windows/file-association-manager.py) | **Windows only. Register an executable as an Open With handler**<br />Associate selected file extensions with an application, including portable applications. | **Windows only**<br />**Elevation required** |
+| [`tools/others/script-to-app.py`](tools/others/script-to-app.py) | **App-style launchers for Python scripts**<br />Launch an existing script in a chosen Conda environment without packaging it. Create a `.cmd` launcher on Windows, a movable or renameable app on macOS, or a Linux file handler for selected MIME types or all files. | **Windows / macOS / Linux desktop**<br />Windows requires elevation or a writable directory. Linux requires Bash and a desktop terminal (`desktop-file-utils` optional). |
 
 ### Text Processing
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/others/unicode-inspector.py` | **Unicode text inspector:** Shows code points, UTF-8 bytes, names and categories, including invisible characters, with text statistics and copyable reports. | Python with Tkinter; Windows/macOS/Linux desktop (X11 or XWayland on Linux) |
+| [`tools/others/unicode-inspector.py`](tools/others/unicode-inspector.py) | **(GUI) Unicode text inspector** displays code points, UTF-8 bytes, names and categories, highlights invisible characters, and provides text statistics and copyable reports. | **Python pkg:** `Tkinter` |
 
 ### Input Method Tools
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/IME/rime-aux-code-generator.py` | Extracts first or first/last codes from Rime shape dictionaries to build auxiliary-code schemes, with configurable single-code handling and character filters. The auxiliary codes are used with the Lua scripts provided by [https://github.com/HowcanoeWang/rime-lua-aux-code](https://github.com/HowcanoeWang/rime-lua-aux-code). | Python packages: `PyYAML`, `tqdm` |
-| `tools/IME/rime-userdict-to-dict.py` | Converts Rime user dictionary text snapshots or exports into `.dict.yaml`, excluding deleted entries and supporting frequency-based weight scaling. | Python packages: `PyYAML`, `tqdm` |
+| [`tools/IME/rime-aux-code-generator.py`](tools/IME/rime-aux-code-generator.py) | Extracts first or first/last codes from Rime shape dictionaries to build auxiliary-code schemes, with configurable single-code handling and character filters. The auxiliary codes are used with the Lua scripts provided by [https://github.com/HowcanoeWang/rime-lua-aux-code](https://github.com/HowcanoeWang/rime-lua-aux-code). | **Python pkgs:** `PyYAML`, `tqdm` |
+| [`tools/IME/rime-userdict-to-dict.py`](tools/IME/rime-userdict-to-dict.py) | Converts Rime user dictionary text snapshots or exports into `.dict.yaml`, excluding deleted entries and supporting frequency-based weight scaling. | **Python pkgs:** `PyYAML`, `tqdm` |
 
 ### Display Tools
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/windows/display-info-viewer.py` | Windows-only **screen resolution/scaling viewer:**<br />Shows the remote computer's current resolution and scaling in RDP sessions, where this information is unavailable in Windows Settings. | **Windows only** |
-| `tools/macos/display-manager.py` | **Display management tool for Apple Silicon Macs:** Adjusts rotation, resolution, and brightness, diagnoses color modes, and forces RGB output on external displays. Can **disable a MacBook's built-in screen while an external display is connected**. | **macOS only** (Apple Silicon); verified on macOS 26.x Tahoe, compatibility with other versions is not guaranteed<br />**Optional Python pkg:** `pyobjc-framework-Cocoa` |
+| [`tools/windows/display-info-viewer.py`](tools/windows/display-info-viewer.py) | **Windows only. Screen resolution and scaling viewer**<br />Check the remote computer’s resolution and scaling in an RDP session when Windows Settings does not show them. | **Windows only** |
+| [`tools/macos/display-manager.py`](tools/macos/display-manager.py) | **Apple Silicon Macs only. Display manager**<br />Rotate displays, adjust built-in and external display brightness (via DDC/CI), diagnose color modes and force RGB output on external displays.<br />**Toggle the MacBook’s built-in display while an external monitor is connected** with `--toggle-built-in`. **Display rotation and external brightness adjustment are also supported.** Tested on macOS Tahoe 26.x. Compatibility with other versions depends on private macOS APIs. | **macOS only** (Apple Silicon)<br />**Optional Python pkg:** `pyobjc-framework-Cocoa` |
 
 ### Privacy and Cleanup
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/windows/recycle-bin-cleaner.py` | Windows-only **force-empty Recycle Bin tool:**<br />Removes **0 KB files/directories that remain in the Recycle Bin after it is emptied**.<br />When it encounters a symbolic link, it deletes only the link and does not traverse its target. | **Windows only**<br />**Elevation required** |
-| `tools/windows/event-log-cleaner.py` | Windows-only **one-click event-log clearing tool**.<br />Warning: deletion cannot be undone. | **Windows only**<br />**Elevation required** |
-| `tools/windows/privacy-cleaner.py` | Windows-only **privacy-trace cleanup tool:**<br />Covers File Explorer history, event logs, DNS cache, browser data, credentials, temporary files, and more.<br />Warning: **Use at your own risk.** | **Windows only**<br />**Elevation required** |
-| `tools/macos/privacy-cleaner.py` | macOS-only **privacy-trace cleanup tool:**<br />Covers recent items, Finder state, shell history, browser data, caches, logs, and more.<br />Warning: **Use at your own risk.** | **macOS only**<br />Optional: `brew install trash`<br />**Elevation required** |
-| `tools/filesystem/os-junk-cleaner.py` | **Recursive cleanup tool for OS-generated junk files:**<br />(`.DS_Store`, `__MACOSX__`, `Thumbs.db`, and others) | |
-| `tools/windows/android-rndis-record-cleaner.py` | Windows-only tool for **removing stale Android USB tethering/RNDIS records from the registry:**<br />Prevents the network connection number from continually increasing each time USB tethering is enabled after connecting an Android device. | **Windows only**<br />**Elevation required** |
+| [`tools/windows/recycle-bin-cleaner.py`](tools/windows/recycle-bin-cleaner.py) | **Windows only. Force-empty the Recycle Bin**<br />Remove **0 KB files or folders that remain after emptying the Recycle Bin**. For symbolic links, remove only the link itself. | **Windows only**<br />**Elevation required** |
+| [`tools/windows/event-log-cleaner.py`](tools/windows/event-log-cleaner.py) | **Windows only. One-click system event log cleanup**<br />Cleared logs cannot be recovered. | **Windows only**<br />**Elevation required** |
+| [`tools/windows/privacy-cleaner.py`](tools/windows/privacy-cleaner.py) | **Windows only. Privacy cleanup**<br />Clear File Explorer history, event logs, DNS cache, browser data, credentials and temporary files, with confirmation for each category.<br />**Use at your own risk.** | **Windows only**<br />**Elevation required** |
+| [`tools/macos/privacy-cleaner.py`](tools/macos/privacy-cleaner.py) | macOS-only **privacy-trace cleanup tool:**<br />Covers recent items, Finder state, shell history, browser data, caches, logs, and more.<br />Warning: **Use at your own risk.** | **macOS only**<br />Optional: `brew install trash`<br />**Elevation required** |
+| [`tools/filesystem/os-junk-cleaner.py`](tools/filesystem/os-junk-cleaner.py) | **Recursive cleanup tool for OS-generated junk files:**<br />(`.DS_Store`, `__MACOSX__`, `Thumbs.db`, and others) | |
+| [`tools/windows/android-rndis-record-cleaner.py`](tools/windows/android-rndis-record-cleaner.py) | Windows-only tool for **removing stale Android USB tethering/RNDIS records from the registry:**<br />Prevents the network connection number from continually increasing each time USB tethering is enabled after connecting an Android device. | **Windows only**<br />**Elevation required** |
 
 ### System Tools
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/windows/keyboard-remapper.py` | **Registry keyboard mapping editor:** Remaps or disables keys and supports optional backups and restoring mappings. | **Windows 10+** Only<br />`PySide6`<br />**Elevation required**; Windows restart required for changes to take effect |
-| `tools/windows/device-ejection-history.py` | **Device ejection failure log viewer:** shows historical blocking process PIDs, executable paths and device IDs recorded by Windows. Helps identify which process is using a USB drive when it cannot be safely ejected. | **Windows 10+ only**;<br />**Elevation required** |
-| `tools/windows/service-restarter.py` | Windows-only **force-restart tool for system services:**<br />Includes a `Windows Audio` preset that **can temporarily fix audio redirection failures in RDP sessions**. | **Windows only**<br />**Elevation required** |
-| `tools/others/power-status-viewer.py` | **Charger and battery telemetry viewer:** Shows charging and battery information, including **the computer's current charging power on macOS**. | **Best on macOS**; other systems are also supported, with some fields unavailable because of firmware or driver limitations |
-| `tools/others/system-event-viewer.py` | **System event viewer:** Shows power, login, failures and system activity, including device/network changes, updates and resource/service problems. Supports incoming SSH, Windows RDP/SMB auditing and blocked device ejections. | **macOS / Windows 10+ / Linux with systemd**; coverage depends on retained logs/reports and OS services; Windows Security/share events require prior auditing; Linux lock and hang detection is limited<br />**Python pkg:** `PySide6` |
-| `tools/others/disk-smart-info-viewer.py` | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools` |
-| `tools/macos/rdp-clipboard-image-repair.py` | **RDP clipboard image repair tool:** Fixes images that cannot be pasted correctly on macOS after being copied from a Windows device through Windows App (RDP). | **macOS only**; built-in `osascript` and AppKit |
+| [`tools/windows/keyboard-remapper.py`](tools/windows/keyboard-remapper.py) | **Windows only. Registry-based keyboard mapping editor**<br />Remap or disable keys, with optional backup and restore of the mappings. | **Windows 10+** Only<br />`PySide6`<br />**Elevation required**; Windows restart required for changes to take effect |
+| [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **Windows only. Failed device ejection log viewer, primarily for USB devices**<br />Look up the process ID, executable path and device ID in Windows event logs to **identify the process preventing safe ejection of a USB drive**. | **Windows 10+ only**;<br />**Elevation required** |
+| [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **Windows only. Force-restart system services**<br />Choose whether to wait for the restart. The `Windows Audio` preset **can temporarily restore sound redirection from the remote computer in an RDP session**. | **Windows only**<br />**Elevation required** |
+| [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py) | **Charger and battery information viewer**<br />**On macOS, see how much power the computer is drawing to charge.** Readings come from `ioreg` on macOS, PowerShell CIM/WMI on Windows and `/sys/class/power_supply` on Linux. Available fields depend on firmware and drivers. **macOS provides the most complete readings.** | **Best on macOS**; other systems are also supported, with some fields unavailable because of firmware or driver limitations |
+| [`tools/others/system-event-viewer.py`](tools/others/system-event-viewer.py) | **(GUI) Cross-platform system log and event viewer**<br />Review power events, logins, faults, device and network changes, updates, and resource or service issues. Includes SSH and Windows RDP/SMB connection and authentication records, plus logs showing why a device could not be ejected. | **macOS / Windows 10+ / Linux with systemd**; coverage depends on retained logs/reports and OS services; Windows Security/share events require prior auditing; Linux lock and hang detection is limited<br />**Python pkg:** `PySide6` |
+| [`tools/others/disk-smart-info-viewer.py`](tools/others/disk-smart-info-viewer.py) | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools` |
+| [`tools/macos/rdp-clipboard-image-repair.py`](tools/macos/rdp-clipboard-image-repair.py) | **macOS only. RDP clipboard image repair**<br />When an image copied from Windows through Windows App (RDP) will not paste on macOS, convert TIFF clipboard data mislabeled as PNG into a valid PNG. Use `--force` to repair without confirmation. | **macOS only**<br />Built-in `osascript` and AppKit |
 
 ### Software Launching
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| `tools/macos/run-pdf2zh.sh` | macOS-only launcher for **pdf2zh-next** ([PDFMathTranslate-next](https://github.com/PDFMathTranslate-next/PDFMathTranslate-next)). | **macOS only** |
+| [`tools/macos/run-pdf2zh.sh`](tools/macos/run-pdf2zh.sh) | macOS-only launcher for **pdf2zh-next** ([PDFMathTranslate-next](https://github.com/PDFMathTranslate-next/PDFMathTranslate-next)). | **macOS only** |
 
 ### Command Presets
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/others/command-runner.py` | **Preset command runner:** Runs commands and scripts saved in your own configuration; see the [configuration sample](tools/others/run-commands-schema-sample.yaml). | **Python pkg:** `PyYAML`; programs or runtimes required by the selected preset |
+| [`tools/others/command-runner.py`](tools/others/command-runner.py) | **Preset command runner**<br />Choose a configuration file, then select a saved command or script from its menu. See the [configuration sample](tools/others/run-commands-schema-sample.yaml) for details. | **Python pkg:** `PyYAML`; programs or runtimes required by the selected preset |
 
 ### Research Tools
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/research/matrix-viewer.py` | **Matrix and signal viewer for scientific research:** Visualizes and compares 1D arrays, 2D matrices, images, and point clouds, including slices, derivatives, and complex magnitude/phase. Supports Fourier/Laplace transforms, decibel conversion, and cropped matrix or slice export. | **Python pkgs:** `numpy`, `opencv-python`, `Pillow`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk`, `scipy`, `h5py`, `openpyxl`, `xlrd` |
-| `tools/research/pattern-generator.py` | **Structured-light projection pattern generator:**<br />Generates sinusoidal stripes with selectable left/top-edge, center, or right/bottom-edge pixel sampling, plus standard Gray-code sequences.<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
+| [`tools/research/matrix-viewer.py`](tools/research/matrix-viewer.py) | **(GUI) Matrix and signal viewer for scientific research**<br />Explore 1D arrays, 2D matrices and point clouds from `.npy`, `.npz`, `.mat`, `.csv`, `.xls` and `.xlsx` files, or open images as matrices. Compare matrices side by side, switch between 2D, 3D, 1D slice and slice-derivative views, crop by coordinate or value range, and export matrices or slices. For complex data, inspect magnitude and phase, apply Fourier or Laplace transforms, and convert values to decibels. | **Python pkgs:** `numpy`, `opencv-python`, `Pillow`, `matplotlib`, `PySide6`, `pyqtgraph`, `pyvista`, `pyvistaqt`, `vtk`, `scipy`, `h5py`, `openpyxl`, `xlrd` |
+| [`tools/research/pattern-generator.py`](tools/research/pattern-generator.py) | **Structured-light projection pattern generator:**<br />Generates sinusoidal stripes with selectable left/top-edge, center, or right/bottom-edge pixel sampling, plus standard Gray-code sequences.<br />Not intended for non-specialists. | **Python pkgs:** `opencv-python`, `numpy` |
 
 ### Test/Helper Scripts
 
 | Script | Description | Requirements |
 |------|------|------|
-| `tools/others/keyboard-hook-viewer.py` | **Global keyboard and mouse hook monitor:** Shows key identities and scroll directions/deltas, including Windows scan codes and left/right modifiers, plus precise scrolling, pinch deltas, and available source device information on macOS.<br />**For legitimate keyboard testing, custom hotkeys and authorized automation only.** | **Windows/macOS/Linux X11**; Wayland is not supported<br />macOS: `pip install pyobjc-framework-Quartz`<br />Linux: `pip install python-xlib`<br />Windows: none (standard-library `ctypes`) |
-| `test/print-argv.py`<br>`test/print-argv.sh`<br>`test/print-argv.ps1` | **Command-line argument printer:**<br />Prints every `argv` argument passed to the script, for checking whether arguments are being forwarded correctly. | |
+| [`tools/others/keyboard-hook-viewer.py`](tools/others/keyboard-hook-viewer.py) | **Global keyboard and mouse hook monitor**<br />View scroll direction across platforms. Windows shows scan codes and raw scroll deltas and distinguishes left/right modifiers and keypad Enter. macOS reports precise scrolling, pinch deltas and source device details when available. Linux uses X11 XRecord.<br />For legitimate keyboard testing, custom hotkeys and authorized automation only. The project accepts no responsibility for misuse. | **Windows/macOS/Linux X11**; Wayland is not supported<br />macOS: `pip install pyobjc-framework-Quartz`<br />Linux: `pip install python-xlib`<br />Windows: none (standard-library `ctypes`) |
+| [`test/print-argv.py`](test/print-argv.py)<br>[`test/print-argv.sh`](test/print-argv.sh)<br>[`test/print-argv.ps1`](test/print-argv.ps1) | **Command-line argument printer:**<br />Prints every `argv` argument passed to the script, for checking whether arguments are being forwarded correctly. | |

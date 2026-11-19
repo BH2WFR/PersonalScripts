@@ -25,7 +25,7 @@ def runtime_hint() -> str:
     """Describe missing optional packages without importing a native runtime in Qt."""
     missing = [package for name, package in (("paddle", "paddlepaddle"),
                                              ("tokenizers", "tokenizers")) if find_spec(name) is None]
-    return ("Install the optional offline formula packages in the Python environment running Image OCR:\n"
+    return ("Install the optional offline formula packages in the Python environment running Image to Text and Formula:\n"
             "python -m pip install " + " ".join(missing)) if missing else ""
 
 

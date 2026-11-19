@@ -11,7 +11,7 @@ Settings are grouped into **OCR** (ignored pages, languages and recognition),
 **Layout** (tiles and text anchors), **Preprocess** (input-only image cleanup),
 and **Preview** (overlay appearance).
 
-The companion [Image OCR](../../image-ocr.py) accepts local files, batch drops and
+The companion [Image to Text and Formula](../../image-to-text-and-formula.py) accepts local files, batch drops and
 clipboard images. Each row shows display dimensions and encoded file size. Clipboard
 sizes refer to temporary PNGs. Adding an image opens its preview. Recognize current processes the active row;
 Recognize all processes the list in order. Recognized text, Copy all and Save
@@ -48,7 +48,7 @@ when the window closes.
 
 **Local formula — PaddleOCR** accepts one tightly cropped equation per image.
 Install the optional PaddlePaddle CPU runtime and tokenizers in the
-environment running Image OCR. Select **Install model** in formula mode to download
+environment running Image to Text and Formula. Select **Install model** in formula mode to download
 the official `LaTeX_OCR_rec` files (98.9 MiB). Downloads resume at verified
 file boundaries. **Uninstall model** removes the downloaded files. Recognition is enabled once the runtime and model are available. The worker loads the PaddleOCR graph directly with Paddle Inference once per batch. This model
 recognizes mathematical structure from grayscale input. For a whole screenshot
