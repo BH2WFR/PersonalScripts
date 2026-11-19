@@ -15,18 +15,25 @@ FORMATS = ("PNG", "JPEG", "TIFF", "BMP", "WEBP", "GIF")
 SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif")
 
 
-def image_rgb(path: Path, thumbnail: tuple[int, int] | None = None) -> Image.Image:
-    """Read the first frame in display orientation and composite transparency over white."""
+def read_image(path: Path, thumbnail: tuple[int, int] | None = None) -> Image.Image:
+    """Read the first frame as oriented RGB or RGBA pixels."""
     with Image.open(path, formats=FORMATS) as source:
         if thumbnail:
             source.thumbnail(thumbnail)
         image = ImageOps.exif_transpose(source)
         if "A" in image.getbands() or "transparency" in image.info:
-            rgba = image.convert("RGBA")
-            paper = Image.new("RGB", image.size, "white")
-            paper.paste(rgba, mask=rgba.getchannel("A"))
-            return paper
+            return image.convert("RGBA")
         return image.convert("RGB")
+
+
+def image_rgb(path: Path, thumbnail: tuple[int, int] | None = None) -> Image.Image:
+    """Read display-oriented pixels for recognition, compositing transparency over white."""
+    image = read_image(path, thumbnail)
+    if image.mode == "RGBA":
+        paper = Image.new("RGB", image.size, "white")
+        paper.paste(image, mask=image.getchannel("A"))
+        return paper
+    return image
 
 
 def scan_images(paths: list[str], settings: Settings, engine: Recognizer,

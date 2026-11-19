@@ -1,14 +1,27 @@
-# Qt controls
+# Qt controls and images
 
 [Utility index](../README.md)
 
-Implementation: [qt_widgets.py](../qt_widgets.py).
+Implementations: [qt_widgets.py](../qt_widgets.py) and [qt_images.py](../qt_images.py).
 
 ## API reference
 
 | Need | Use |
 | --- | --- |
 | Qt inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
+
+## Image operations
+
+Import these functions explicitly from `utils.qt_images`.
+
+| Need | Use |
+| --- | --- |
+| Convert Pillow pixels for Qt | `qimage_from_pillow(image)` accepts RGB and RGBA, preserves alpha and returns a detached QImage. The caller chooses frame, orientation and color conversion before calling. |
+| Copy an image | `copy_image_to_clipboard(image)` copies a QImage to the system clipboard on the GUI thread. |
+| Save a PNG | `save_png(image, path)` accepts a QImage and a string or Path destination. It commits the encoded PNG atomically and raises `OSError` on failure, preserving an existing file. |
+
+The calling tool chooses the image or crop, prompts for a path, remembers the
+directory and presents errors. Formula typesetting belongs to the formula preview.
 
 ## GUI conventions
 

@@ -2,8 +2,8 @@
 
 `utils/__init__.py` re-exports the public classes and ANSI constants used by
 project scripts through `from utils import *`. Implementations belong in their
-canonical modules. Qt-only controls are imported explicitly from
-`utils.qt_widgets`; ordinary utility imports do not load Qt, PyMuPDF, Pillow or
+canonical modules. Import Qt controls from `utils.qt_widgets` and Qt image
+helpers from `utils.qt_images`. Ordinary utility imports do not load Qt, PyMuPDF, Pillow or
 application packages.
 
 Use this index to read only the reference needed for a task. References describe
@@ -30,6 +30,7 @@ ownership and public exports.
 | [Tk DPI scaling](docs/tk_dpi.md) | TkDpi | [tk_dpi.py](tk_dpi.py) |
 | [Tk text input](docs/tk_input.md) | TkTextInput | [tk_input.py](tk_input.py) |
 | [Qt controls](docs/qt.md) | NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls | [qt_widgets.py](qt_widgets.py) |
+| [Qt images](docs/qt.md#image-operations) | qimage_from_pillow, copy_image_to_clipboard, save_png | [qt_images.py](qt_images.py) |
 
 ## Imports from category scripts
 

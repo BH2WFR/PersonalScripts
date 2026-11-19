@@ -7,19 +7,19 @@ import tempfile
 from PIL import Image
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import Console, System, Llm
-from utils.qt_widgets import NoWheelComboBox
+from utils.qt_images import copy_image_to_clipboard, qimage_from_pillow, save_png
+from utils.qt_widgets import NoWheelComboBox, install_no_wheel_controls
 from ..common.llm_window import LlmWindow
 from .vision import OUTPUTS, SYSTEM_PROMPT, VisionTask, batch_results, document_source, vision_request
 from .vision_panel import VisionPanel
 from .formula_preview import FormulaPreview, preview_resources
 from .exchange_view import ExchangeView
-from utils.qt_widgets import install_no_wheel_controls
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
 from ..common.preferences import read_preferences, save_preferences, choose_save_file, dialog_directory, remember_directory
 from ..common.task_buttons import TaskButtons
 from ..common.viewer import PageViewer, install_preview_menu
-from .image_batch import FORMATS, SUFFIXES, image_rgb
+from .image_batch import FORMATS, SUFFIXES, image_rgb, read_image
 from . import local_formula
 from .model import Settings
 from .model_dialog import ModelDialog
@@ -39,6 +39,7 @@ class ImageWindow(LlmWindow):
         self.queue: list[str] = []
         self.position = 0
         self.failed = 0
+        self._failed_image: str | None = None
         self.stopping = False
         self.output_format = "text"
         self.vision_task: VisionTask
@@ -122,36 +123,41 @@ class ImageWindow(LlmWindow):
         self.list.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.list.header().setStretchLastSection(False)
         self.list.currentItemChanged.connect(self._show)
+        self.list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._list_menu)
         layout.addWidget(self.list, 1)
         self.tabs = QtWidgets.QTabWidget()
         self.text = QtWidgets.QPlainTextEdit()
         self.text.setReadOnly(True)
-        self.text.setPlaceholderText("Select an image and run recognition to see its text.")
         self.tabs.addTab(self.text, "Recognized text")
         self.viewer = PageViewer()
         install_preview_menu(self.viewer, reset=self.viewer.fit_page,
                              fit=self.viewer.fit_page, original=self._original_image_size)
+        self.copy_image = self.viewer.addAction("Copy image", lambda: self._export_source(False))
+        self.save_image = self.viewer.addAction("Save image...", lambda: self._export_source(True))
         self.tabs.addTab(self.viewer, "Image preview")
         assets, preview_hint = preview_resources()
         self.rendered = FormulaPreview(assets) if assets else None
         if self.rendered is not None:
-            self.text.textChanged.connect(self._update_rendered)
+            self.rendered.imageReady.connect(lambda image, save: self._output_image(image, save, Path("formula.png")))
+            self.rendered.exportFailed.connect(self._image_error)
             preview_tab = self.rendered
         else:
             preview_tab = QtWidgets.QLabel(preview_hint)
+            preview_tab.setStyleSheet("color: #c02020;")
             preview_tab.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             preview_tab.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
             preview_tab.setWordWrap(True)
         self.preview_index = self.tabs.addTab(preview_tab, "Formula preview")
         self.api_log = ExchangeView(Path(self.scratch.name))
+        self.list.itemClicked.connect(lambda: self.api_log.select_image(self._current_key()))
         self.tabs.addTab(self.api_log, "API exchange")
-        self.tabs.setTabVisible(self.tabs.indexOf(self.api_log), False)
         self.client.exchangePart.connect(self.api_log.record)
         self.tabs.currentChanged.connect(self._show)
         layout.addWidget(self.tabs, 2)
         output = QtWidgets.QHBoxLayout()
         layout.addLayout(output)
-        self.copy = actions_button(output, "Copy current", lambda: self._copy(self._source(self.results.get(self._current_key(), ""))))
+        self.copy = actions_button(output, "Copy current", lambda: self._copy(self._current_text()))
         self.copy_all = actions_button(output, "Copy all", lambda: self._copy(self._all_text()))
         self.save = actions_button(output, "Save all as TXT...", self._save)
         footer = QtWidgets.QHBoxLayout()
@@ -178,7 +184,6 @@ class ImageWindow(LlmWindow):
         mode = self.mode.currentIndex()
         self.panel.setVisible(mode == 0)
         self.api_tabs.setVisible(mode in (1, 2))
-        self.tabs.setTabVisible(self.tabs.indexOf(self.api_log), mode in (1, 2))
         self.vision_options.setCurrentWidget(self.vision_options.formula_page if mode == 2 else self.vision_options.text_page)
         self._sync_preview_tab()
         self.formula_controls.setVisible(mode == 3)
@@ -228,6 +233,10 @@ class ImageWindow(LlmWindow):
         item = self.list.currentItem()
         return item.data(0, QtCore.Qt.ItemDataRole.UserRole) if item is not None else ""
 
+    def _current_text(self) -> str:
+        item = self.list.currentItem()
+        return (item.data(3, QtCore.Qt.ItemDataRole.UserRole) or "") if item is not None else ""
+
     def _context_key(self) -> tuple[str, int]:
         return self._api_source_id(self._api_base()), self.mode.currentIndex()
 
@@ -259,8 +268,10 @@ class ImageWindow(LlmWindow):
         self.remove_button.setEnabled(idle and bool(self.rows))
         self.run_button.setEnabled(can_run and bool(self.rows))
         self.current_button.setEnabled(can_run and bool(self._current_key()))
+        self.copy_image.setEnabled(bool(self._current_key()))
+        self.save_image.setEnabled(bool(self._current_key()))
         self.tasks.set_external_state(self._running and not self.stopping)
-        self.copy.setEnabled(bool(self.results.get(self._current_key())))
+        self.copy.setEnabled(bool(self._current_text()))
         self.copy_all.setEnabled(bool(self.results))
         self.save.setEnabled(bool(self.results))
 
@@ -269,8 +280,10 @@ class ImageWindow(LlmWindow):
         if settings != self.settings:
             self.settings = settings
             self.results.clear()
+            self.api_log.forget(self.rows)
             for item in self.rows.values():
-                item.setText(3, "Ready")
+                item.setData(3, QtCore.Qt.ItemDataRole.UserRole, None)
+                self._set_row_status(item, "Ready")
                 item.setToolTip(3, "")
             self._show()
             save_preferences(self, "image-ocr", {"settings": settings.to_data()})
@@ -343,8 +356,46 @@ class ImageWindow(LlmWindow):
             key = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             self.rows.pop(key)
             self.results.pop(key, None)
+            self.api_log.forget([key])
             self.list.takeTopLevelItem(self.list.indexOfTopLevelItem(item))
         self._show()
+
+    def _list_menu(self, pos: QtCore.QPoint) -> None:
+        item = self.list.itemAt(pos)
+        if item is not None:
+            flag = (QtCore.QItemSelectionModel.SelectionFlag.NoUpdate if item.isSelected() else
+                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            self.list.setCurrentItem(item, 0, flag)
+        menu = QtWidgets.QMenu(self.list)
+        menu.addAction("Add images...", self.open_button.click).setEnabled(self.open_button.isEnabled())
+        menu.addAction("Paste image", self.paste_button.click).setEnabled(self.paste_button.isEnabled())
+        menu.addSeparator()
+        editable = item is not None and self.remove_button.isEnabled()
+        menu.addAction("Delete image", self._remove).setEnabled(editable)
+        menu.addAction("Rename image...", self._rename_image).setEnabled(editable)
+        menu.addAction("Copy image", self.copy_image.trigger).setEnabled(item is not None)
+        menu.addAction("Save image...", self.save_image.trigger).setEnabled(item is not None)
+        menu.addSeparator()
+        menu.addAction("Recognize current", self.current_button.click).setEnabled(item is not None and self.current_button.isEnabled())
+        menu.addAction("Recognize all", self.run_button.click).setEnabled(self.run_button.isEnabled())
+        menu.exec(self.list.viewport().mapToGlobal(pos))
+        menu.deleteLater()
+
+    def _rename_image(self) -> None:
+        item = self.list.currentItem()
+        if item is not None:
+            name, ok = QtWidgets.QInputDialog.getText(self, "Rename image", "Name in this list:", text=item.text(0))
+            if ok and name.strip():
+                item.setText(0, name.strip())
+
+    @staticmethod
+    def _set_row_status(item: QtWidgets.QTreeWidgetItem, status: str) -> None:
+        color = {"Recognized": "#188038", "Failed": "#c02020"}.get(status)
+        font = item.font(3)
+        font.setBold(color is not None)
+        item.setFont(3, font)
+        item.setForeground(3, QtGui.QBrush(QtGui.QColor(color)) if color else QtGui.QBrush())
+        item.setText(3, status)
 
     def _run(self) -> None:
         self._start_images(list(self.rows))
@@ -370,12 +421,16 @@ class ImageWindow(LlmWindow):
                 QtWidgets.QMessageBox.warning(self, "Vision API", str(exc))
                 return
         self.results.clear()
+        self._failed_image = None
+        self.api_log.forget(paths)
         if self.rendered is not None:
             self.rendered.reset_view()
-        for item in self.rows.values():
-            item.setText(3, "Ready")
+        for path in paths:
+            item = self.rows[path]
+            item.setData(3, QtCore.Qt.ItemDataRole.UserRole, None)
+            self._set_row_status(item, "Ready")
             item.setToolTip(3, "")
-        self.text.clear()
+        self._show()
         if vision:
             self.vision_task = self.vision_options.active().task()
             self.output_format = self.vision_task.output
@@ -384,7 +439,6 @@ class ImageWindow(LlmWindow):
         self.save.setText(f"Save as {OUTPUTS[self.output_format][0]}...")
         self.status.setText("Recognizing images...")
         if vision:
-            self.api_log.reset()
             self.queue = paths
             self.position = self.failed = 0
             self._running = True
@@ -414,7 +468,8 @@ class ImageWindow(LlmWindow):
         self.runner.start({"operation": "vision-image", "path": path})
 
     def _send_batch(self) -> None:
-        self.api_log.begin(", ".join(self.rows[path].text(0) for path in self.batch_paths))
+        self.api_log.begin(", ".join(self.rows[path].text(0) for path in self.batch_paths), self.batch_paths)
+        self.api_log.select_image(self._current_key())
         try:
             settings = self._read_api()
             history = self.histories.get(self._context_key(), [])
@@ -431,6 +486,26 @@ class ImageWindow(LlmWindow):
             self.client.cancel("Recognition stopped.")
         self._enabled()
 
+    def _begin_api_test(self) -> bool:
+        self.api_log.forget([None])
+        self.api_log.begin("Vision API test", [None])
+        return True
+
+    def _client_completed(self, text: str, tokens: int, error: str) -> None:
+        if self._testing:
+            if error:
+                self.api_log.failed(error)
+            self._show_response(None)
+        super()._client_completed(text, tokens, error)
+
+    def _show_response(self, key: str | None) -> None:
+        if key is not None:
+            self.list.setCurrentItem(self.rows[key])
+        self.tabs.setCurrentWidget(self.api_log)
+        self.api_log.select_image(key)
+        self.api_log.direction.setCurrentIndex(self.api_log.direction.findData("response"))
+        self.api_log.body.setFocus()
+
     def _recognized(self, text: str, tokens: int, error: str) -> None:
         if not self._running:
             return
@@ -443,6 +518,9 @@ class ImageWindow(LlmWindow):
                     error = str(exc)
             if error:
                 self.api_log.failed(error)
+                current = self._current_key()
+                self._failed_image = current if current in self.batch_paths else self.batch_paths[0]
+                self._show_response(self._failed_image)
             elif not self.vision_options.active().reset_each.isChecked():
                 self.histories[self._context_key()] = [*self.sent_messages, {"role": "assistant", "content": text}]
             for i, key in enumerate(self.batch_paths):
@@ -466,14 +544,17 @@ class ImageWindow(LlmWindow):
         item = self.rows[path]
         if "error" in message:
             self.results.pop(path, None)
-            item.setText(3, "Failed")
+            self._set_row_status(item, "Failed")
             item.setToolTip(3, message["error"])
         else:
             self.results[path] = message["text"].strip()
-            item.setText(3, "Recognized" if self.results[path] else "No text found")
+            self._set_row_status(item, "Recognized" if self.results[path] else "No text found")
             item.setToolTip(3, "")
         self.status.setText(f"{message['done']} / {message['total']} images")
-        self.text.setPlainText(self._all_text())
+        item.setData(3, QtCore.Qt.ItemDataRole.UserRole, self._source(self.results.get(path, "")))
+        if path == self._current_key():
+            self.text.setPlainText(self._current_text())
+        self._update_rendered()
         self._enabled()
 
     def _completed(self, message: dict) -> None:
@@ -502,11 +583,14 @@ class ImageWindow(LlmWindow):
                     self._vision_result(path, "", str(message.get("message", "Could not read image.")))
                 QtCore.QTimer.singleShot(0, self._next_image)
         elif message.get("kind") == "images-complete":
-            self.tabs.setCurrentWidget(self.text)
+            if self._failed_image is None:
+                self.tabs.setCurrentWidget(self.text)
+            else:
+                self._show_response(self._failed_image)
             if self.output_format in ("markdown", "fragment") and self.rendered is not None and self.rendered.browser is not None:
-                self.rendered.display(self.text.toPlainText(), fragment=self.output_format == "fragment")
+                self.rendered.display(self._all_text(), fragment=self.output_format == "fragment")
             empty = [self.rows[path].text(0) for path, text in self.results.items() if not text]
-            if empty or not self.results:
+            if empty or (not self.results and self._failed_image is None):
                 failed = message.get("failed", 0)
                 detail = "No text was recognized in this run."
                 if empty:
@@ -527,9 +611,9 @@ class ImageWindow(LlmWindow):
         self._enabled()
 
     def _show(self, *_args: object) -> None:
-        item = self.list.currentItem()
-        key = item.data(0, QtCore.Qt.ItemDataRole.UserRole) if item else ""
-        result = self._all_text()
+        key = self._current_key()
+        self.api_log.select_image(key)
+        result = self._current_text()
         if self.text.toPlainText() != result:
             self.text.setPlainText(result)
         self._update_rendered()
@@ -542,13 +626,38 @@ class ImageWindow(LlmWindow):
     def _load_image_preview(self, key: str, thumbnail: tuple[int, int] | None) -> bool:
         try:
             image = image_rgb(Path(key), thumbnail)
-            pixels = image.tobytes()
-            preview = QtGui.QImage(pixels, image.width, image.height, image.width * 3, QtGui.QImage.Format.Format_RGB888)
-            self.viewer.set_pixmap(QtGui.QPixmap.fromImage(preview.copy()), key)
+            self.viewer.set_pixmap(QtGui.QPixmap.fromImage(qimage_from_pillow(image)), key)
             return True
         except (OSError, ValueError, Image.DecompressionBombError) as exc:
             self.status.setText(str(exc))
             return False
+
+    def _image_error(self, message: str) -> None:
+        QtWidgets.QMessageBox.warning(self, "Image export", message)
+
+    def _export_source(self, save: bool) -> None:
+        key = self._current_key()
+        if not key:
+            return
+        try:
+            image = qimage_from_pillow(read_image(Path(key)))
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            self._image_error(str(exc))
+            return
+        name = Path(self.rows[key].text(0)).stem or "image"
+        self._output_image(image, save, Path(name + ".png"))
+
+    def _output_image(self, image: QtGui.QImage, save: bool, default: Path) -> None:
+        if not save:
+            copy_image_to_clipboard(image)
+            return
+        path = choose_save_file(self, "Save image", default, "PNG image (*.png)", kind="ocr-image")
+        if not path:
+            return
+        try:
+            save_png(image, path)
+        except OSError as exc:
+            self._image_error(str(exc))
 
     def _original_image_size(self) -> None:
         """Use source pixels and preserve the point at the center of the thumbnail."""
@@ -566,7 +675,7 @@ class ImageWindow(LlmWindow):
 
     def _update_rendered(self) -> None:
         if self.rendered is not None and self.tabs.currentWidget() is self.rendered:
-            text = self.text.toPlainText() if self.output_format in ("markdown", "fragment") else ""
+            text = self._all_text() if self.output_format in ("markdown", "fragment") else ""
             self.rendered.display(text, fragment=self.output_format == "fragment")
 
     def _all_text(self) -> str:
@@ -590,6 +699,10 @@ class ImageWindow(LlmWindow):
                 self.status.setText(str(exc))
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self.rendered is not None and self.rendered.exporting:
+            self.status.setText("Finishing image export...")
+            event.ignore()
+            return
         if self.runner.busy or self._api_busy:
             self.status.setText("Stop recognition or wait for it to finish before closing.")
             event.ignore()

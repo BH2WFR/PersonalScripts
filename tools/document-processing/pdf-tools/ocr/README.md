@@ -14,8 +14,13 @@ and **Preview** (overlay appearance).
 The companion [Image to Text and Formula](../../image-to-text-and-formula.py) accepts local files, batch drops and
 clipboard images. Each row shows display dimensions and encoded file size. Clipboard
 sizes refer to temporary PNGs. Adding an image opens its preview. Recognize current processes the active row;
-Recognize all processes the list in order. Recognized text, Copy all and Save
-contain only the latest run. GIF and TIFF inputs use their first frame.
+Recognize all processes the list in order. Select a row to see its original image,
+recognized text and API exchange. Before recognition, only its original image is
+available. Recognize current replaces that row's results. Copy all, Save all and
+Formula preview use the latest run. GIF and TIFF inputs use their first frame.
+Right-click a row to rename it in the queue, remove selected rows, copy or save
+the source image, or start recognition. The status column shows **Recognized**
+in green and **Failed** in red.
 
 Local OCR runs on CPU. Each Vision API mode keeps its own conversation for
 each endpoint until the window closes. Successful requests and replies
@@ -40,11 +45,16 @@ numbers and preserving mathematical bold separately from prose. Choose which
 document structures and styles to keep, reading order, line breaks and any
 custom instructions. Isolated letters are identified as variables by context.
 
-**API exchange** shows the latest run by HTTP request, labeled with its images. Select Request
+**API exchange** shows the selected image's most recent recognition request. Images
+submitted together share the same HTTP exchange. Select Request
 or Response to inspect the HTTP method and endpoint, status, JSON or error body.
+If recognition fails, the viewer selects the affected image and opens **Response**.
+An explicit API test opens its own response. Selecting an image returns to its
+exchange. The viewer shows the server's reply when available, or the connection
+error if the request never received a response.
 Image data is abbreviated in the viewer; **Copy raw body** includes the full
-serialized payload. Session files are replaced by the next API batch and removed
-when the window closes.
+serialized payload. Removing or rerunning the last image associated with a request
+releases its stored bodies. Closing the window clears the session files.
 
 **Local formula — PaddleOCR** accepts one tightly cropped equation per image.
 Install the optional PaddlePaddle CPU runtime and tokenizers in the
@@ -62,7 +72,14 @@ preview for **Fit to window**, **Original size (100%)** or **Reset view**. Reset
 centers and fits the source image, or returns the formula preview to its starting
 position at 100%. Original size preserves the current center and uses full source
 pixels in the image preview. The preview renders
-locally generated HTML from markdown-it-py and MathJax 2 SVG output. Run the
+locally generated HTML from markdown-it-py and MathJax 2 SVG output. If OCR places
+a row-ending tag such as `\tag{6}` inside a standalone `aligned` block, the preview
+renders the number beside that row. Copied and saved LaTeX retains the transcription.
+A formula
+that MathJax cannot parse appears as red LaTeX source. **Copy image** and
+**Save image...** export the source at full resolution from Image preview, or
+the entire typeset result at natural scale from Formula preview. Saved images
+use PNG. Run the
 following in the same Conda environment that launches the tool, then restart it:
 
 ```sh

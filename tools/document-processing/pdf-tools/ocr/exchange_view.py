@@ -1,17 +1,19 @@
-"""Read-only HTTP bodies for the most recent image OCR API batch."""
+"""Read-only HTTP exchanges shared by the images submitted in each request."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
-import tempfile
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils.qt_widgets import NoWheelComboBox
 
 
-@dataclass
+@dataclass(eq=False)
 class Exchange:
+    number: int
+    name: str
     headings: dict[str, str] = field(default_factory=dict)
     error: str = ""
 
@@ -22,18 +24,21 @@ class ExchangeView(QtWidgets.QWidget):
     def __init__(self, scratch: Path) -> None:
         super().__init__()
         self.scratch = scratch
-        self.storage: tempfile.TemporaryDirectory | None = None
-        self.entries: list[Exchange] = []
+        self._by_image: dict[str | None, Exchange] = {}
+        self._serial = 0
+        self._active: Exchange | None = None
+        self._shown: Exchange | None = None
         layout = QtWidgets.QVBoxLayout(self)
         row = QtWidgets.QHBoxLayout()
         layout.addLayout(row)
-        self.images = NoWheelComboBox()
-        self.images.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.images.setMinimumContentsLength(12)
-        row.addWidget(self.images, 1)
+        self.request_name = QtWidgets.QLabel()
+        self.request_name.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.request_name.setWordWrap(True)
+        row.addWidget(self.request_name, 1)
         self.direction = NoWheelComboBox()
         self.direction.addItem("Request", "request")
         self.direction.addItem("Response", "response")
+        self.direction.setEnabled(False)
         row.addWidget(self.direction)
         self.copy = QtWidgets.QPushButton("Copy raw body")
         self.copy.setEnabled(False)
@@ -44,72 +49,86 @@ class ExchangeView(QtWidgets.QWidget):
         layout.addWidget(self.status)
         self.body = QtWidgets.QPlainTextEdit()
         self.body.setReadOnly(True)
-        self.body.setPlaceholderText("Run Vision API recognition to inspect the HTTP exchange.")
         layout.addWidget(self.body)
-        self.images.currentIndexChanged.connect(self.refresh)
         self.direction.currentIndexChanged.connect(self.refresh)
         self.copy.clicked.connect(self._copy_raw)
 
-    def reset(self) -> None:
-        """Discard the previous batch before submitting new images."""
-        self.entries.clear()
-        self.images.clear()
-        self.body.clear()
-        self.status.clear()
-        self.copy.setEnabled(False)
-        if self.storage:
-            self.storage.cleanup()
-        self.storage = tempfile.TemporaryDirectory(dir=self.scratch, prefix="api-")
+    def forget(self, keys: Iterable[str | None]) -> None:
+        """Release bodies once the last image referencing a request is removed or rerun."""
+        removed = {self._by_image.pop(key) for key in keys if key in self._by_image}
+        for entry in removed.difference(self._by_image.values()):
+            if self._active is entry:
+                self._active = None
+            if self._shown is entry:
+                self._shown = None
+                self.refresh()
+            for part in entry.headings:
+                self._path(entry, part).unlink(missing_ok=True)
 
-    def begin(self, name: str) -> None:
-        """Label an HTTP exchange with the new images in its batch."""
-        follow = self.images.currentIndex() == self.images.count() - 1
-        self.entries.append(Exchange())
-        self.images.addItem(f"{len(self.entries)}. {name}")
-        if follow:
-            self.images.setCurrentIndex(self.images.count() - 1)
+    def begin(self, name: str, keys: Iterable[str | None]) -> None:
+        """Capture one exchange for all submitted images, or None for an API test."""
+        self._serial += 1
+        self._active = Exchange(self._serial, name)
+        self._by_image.update(dict.fromkeys(keys, self._active))
 
-    def _path(self, index: int, part: str) -> Path:
-        assert self.storage is not None
-        return Path(self.storage.name) / f"{index}-{part}.body"
+    def select_image(self, key: str | None) -> None:
+        """Show the selected image's exchange. None explicitly selects the API test."""
+        entry = self._by_image.get(key)
+        if entry is not self._shown:
+            self._shown = entry
+            self.refresh()
+
+    def _path(self, entry: Exchange, part: str) -> Path:
+        return self.scratch / f"api-{entry.number}-{part}.body"
 
     @QtCore.Slot(str, str, object)
     def record(self, part: str, heading: str, data: bytes) -> None:
         """Receive actual transport bytes on the GUI thread in submission order."""
-        index = len(self.entries) - 1
-        if index < 0:
+        entry = self._active
+        if entry is None:
             return
         try:
-            self._path(index, part).write_bytes(data)
-            self.entries[index].headings[part] = heading
+            self._path(entry, part).write_bytes(data)
+            entry.headings[part] = heading
         except OSError as exc:
-            self.entries[index].error = f"Could not store API body: {exc}"
-        if index == self.images.currentIndex() and part == self.direction.currentData():
+            entry.error = f"Could not store API body: {exc}"
+        if entry is self._shown and part == self.direction.currentData():
             self.refresh()
 
     def failed(self, message: str) -> None:
-        if self.entries:
-            self.entries[-1].error = message
-            self.refresh()
+        if self._active is not None:
+            self._active.error = message
+            if self._shown is self._active:
+                self.refresh()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
         self.refresh()
 
     def refresh(self) -> None:
-        index = self.images.currentIndex()
-        if not self.isVisible() or not 0 <= index < len(self.entries):
+        entry = self._shown
+        self.request_name.setText(entry.name if entry else "")
+        self.direction.setEnabled(entry is not None)
+        if entry is None:
+            self.copy.setEnabled(False)
+            self.body.clear()
+            self.body.setPlaceholderText("")
+            self.status.clear()
             return
-        entry = self.entries[index]
+        if not self.isVisible():
+            return
         part = self.direction.currentData()
         heading = entry.headings.get(part, "")
         self.copy.setEnabled(bool(heading))
-        self.status.setText("\n".join(filter(None, [heading or f"No HTTP {part} captured yet.", entry.error])))
+        missing = f"No HTTP {part} captured." if entry.error else f"No HTTP {part} captured yet."
+        self.body.setPlaceholderText(f"The HTTP {part} body is empty." if heading else "")
+        self.status.setStyleSheet("color: #c02020;" if entry.error else "")
+        self.status.setText("\n".join(filter(None, [heading or missing, entry.error])))
         if not heading:
             self.body.clear()
             return
         try:
-            raw = self._path(index, part).read_bytes()
+            raw = self._path(entry, part).read_bytes()
             if part == "request":
                 raw = re.sub(rb'(data:image/[^";]+;base64,)([a-zA-Z0-9+/=]+)',
                              lambda m: m[1] + f"[{len(m[2]):,} base64 characters; Copy raw body for full data]".encode(), raw)
@@ -122,8 +141,10 @@ class ExchangeView(QtWidgets.QWidget):
             self.body.setPlainText(str(exc))
 
     def _copy_raw(self) -> None:
+        if self._shown is None:
+            return
         try:
-            raw = self._path(self.images.currentIndex(), self.direction.currentData()).read_bytes()
+            raw = self._path(self._shown, self.direction.currentData()).read_bytes()
             QtWidgets.QApplication.clipboard().setText(raw.decode("utf-8", errors="replace"))
         except OSError as exc:
             self.status.setText(str(exc))

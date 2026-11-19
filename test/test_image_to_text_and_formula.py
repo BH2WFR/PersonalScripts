@@ -2,6 +2,7 @@
 
 import json
 import pymupdf
+import socket
 import tempfile
 import subprocess
 import sys
@@ -74,8 +75,11 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                 window.run_button.click()
                 wait_for(lambda: not window.runner.busy, timeout=60)
                 self.assertEqual(len(window.results), 3, window.status.text())
+                for item in window.rows.values():
+                    self.assertTrue(item.font(3).bold())
+                    self.assertEqual(item.foreground(3).color().name(), "#188038")
                 self.assertIs(window.tabs.currentWidget(), window.text)
-                self.assertEqual(window.text.toPlainText(), window._all_text())
+                self.assertEqual(window.text.toPlainText(), window.results[window._current_key()])
                 self.assertEqual(window._all_text().lower().count("sample"), 3, window.results)
                 with patch("personal_pdf_tools.ocr.image_app.choose_save_file", return_value=str(Path(directory) / "out.txt")):
                     window._save()
@@ -150,13 +154,14 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                     window.run_button.click()
                     self.assertFalse(panel.isEnabled())
                     wait_for_api(lambda: not window._running and not window.runner.busy)
-                    self.assertEqual(window.text.toPlainText(), "first image\n\nsecond image")
+                    self.assertEqual(window.text.toPlainText(), "second image")
+                    self.assertEqual(window._all_text(), "first image\n\nsecond image")
+                    window.list.setCurrentItem(window.rows[str(path)])
+                    self.assertEqual(window.text.toPlainText(), "first image")
                     window.show()
                     log = window.api_log
                     window.tabs.setCurrentWidget(log)
-                    self.assertEqual(log.images.count(), 1)
-                    self.assertIn("another.png", log.images.currentText())
-                    log.images.setCurrentIndex(0)
+                    self.assertIn("another.png", log.request_name.text())
                     self.assertIn("base64 characters", log.body.toPlainText())
                     self.assertIn("POST " + endpoint, log.status.text())
                     with patch.object(QtWidgets.QApplication, "clipboard") as clipboard:
@@ -168,6 +173,19 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                     response = json.loads(log.body.toPlainText())
                     self.assertEqual(json.loads(response["choices"][0]["message"]["content"]), ["first image","second image"])
                     self.assertEqual(response["usage"]["prompt_tokens"], 321)
+                    fresh = Path(folder) / "unrecognized.png"
+                    self.assertTrue(image.scaled(75, 25).save(str(fresh)))
+                    window.add_file(fresh)
+                    self.assertEqual(window.viewer.sceneRect().width(), 75)
+                    window.tabs.setCurrentWidget(log)
+                    self.assertEqual(log.request_name.text(), "")
+                    self.assertEqual(log.body.toPlainText(), "")
+                    self.assertEqual(log.status.text(), "")
+                    self.assertFalse(log.copy.isEnabled())
+                    self.assertEqual(window.text.toPlainText(), "")
+                    window.list.setCurrentItem(window.rows[str(second)])
+                    self.assertEqual(window.text.toPlainText(), "second image")
+                    self.assertEqual(json.loads(log.body.toPlainText()), response)
                     self.assertEqual(len(requests[-1]["messages"]), 2)
                     prompt = requests[-1]["messages"][-1]["content"][0]["text"]
                     self.assertIn("each column", prompt)
@@ -181,14 +199,38 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                     window.api_url.setEditText(rejected)
                     window.api_model.setEditText("vision-test")
                     window.api_key.setText("test-key")
+                    log.direction.setCurrentIndex(log.direction.findData("request"))
+                    window.tabs.setCurrentWidget(window.viewer)
                     window.current_button.click()
                     wait_for_api(lambda: not window._running and not window.runner.busy)
-                    window.tabs.setCurrentWidget(log)
-                    self.assertEqual(log.images.count(), 1)
+                    self.assertIs(window.tabs.currentWidget(), log)
+                    self.assertEqual(log.direction.currentData(), "response")
+                    self.assertIs(window.focusWidget(), log.body)
+                    self.assertEqual(log.request_name.text(), "another.png")
                     self.assertIn("HTTP 401", log.status.text())
+                    self.assertTrue(window.rows[str(second)].font(3).bold())
+                    self.assertEqual(window.rows[str(second)].foreground(3).color().name(), "#c02020")
                     self.assertIn("[redacted]", log.body.toPlainText())
                     self.assertNotIn("test-key", log.body.toPlainText())
                     self.assertEqual(len(other_requests[0]["messages"]), 2)
+                    window.list.setCurrentItem(window.rows[str(path)])
+                    self.assertEqual(window.text.toPlainText(), "first image")
+                    self.assertEqual(json.loads(log.body.toPlainText()), response)
+                    with socket.socket() as unavailable:
+                        unavailable.bind(("127.0.0.1", 0))
+                        port = unavailable.getsockname()[1]
+                        window.api_url.setEditText(f"http://127.0.0.1:{port}/v1")
+                        window.api_model.setEditText("vision-test")
+                        window.tabs.setCurrentWidget(window.text)
+                        window.test_button.click()
+                        wait_for_api(lambda: not window._testing)
+                        self.assertIs(window.tabs.currentWidget(), log)
+                        self.assertEqual(log.request_name.text(), "Vision API test")
+                        self.assertEqual(log.direction.currentData(), "response")
+                        self.assertIn("No HTTP response captured.", log.status.text())
+                        self.assertIn("Transport failed", log.status.text())
+                        self.assertFalse(log.copy.isEnabled())
+                    notice.assert_called_once()
             finally:
                 window.close()
                 window.deleteLater()
@@ -207,7 +249,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
         fragments = [f"Page {n} with $x$." for n in range(7)]
         endpoint, requests = server.api_server(replies=[
             json.dumps(fragments[:5]), json.dumps(fragments[5:]), "single", "again", "fresh", "independent",
-            "markdown", "fragment", json.dumps(fragments), "next"])
+            "markdown", "fragment", json.dumps(fragments), "next", "invalid batch", json.dumps(fragments[5:])])
         with tempfile.TemporaryDirectory() as folder, patch("utils.config.ConfigStore.directory", return_value=Path(folder)):
             window = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             try:
@@ -235,7 +277,8 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                 self.assertEqual(b[-2]["content"], json.dumps(fragments[:5]))
                 self.assertEqual(Llm.image_count(b[-1:]), 2)
                 self.assertIn("isolated single Latin or Greek letter", b[-1]["content"][0]["text"])
-                source = window.text.toPlainText()
+                self.assertEqual(window.text.toPlainText().count(r"\(x\)"), 1)
+                source = window._all_text()
                 self.assertEqual(source.count(r"\documentclass"), 1)
                 self.assertEqual(source.count(r"\end{document}"), 1)
                 self.assertEqual(source.count(r"\(x\)"), 7)
@@ -281,6 +324,17 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                 self.assertEqual(next_turn[:-2], unlimited)
                 self.assertEqual(next_turn[-2]["content"], json.dumps(fragments))
                 self.assertEqual(Llm.image_count(next_turn), len(fragments) + 1)
+                window.context_images.setValue(5)
+                window.run_button.click()
+                finish()
+                self.assertIs(window.tabs.currentWidget(), window.api_log)
+                self.assertEqual(window._current_key(), str(Path(folder) / "0.png"))
+                self.assertIn("0.png", window.api_log.request_name.text())
+                self.assertEqual(window.api_log.direction.currentData(), "response")
+                self.assertEqual(len(window.results), 2)
+                window.list.setCurrentItem(window.rows[str(Path(folder) / "6.png")])
+                self.assertEqual(window.api_log.request_name.text(), "5.png, 6.png")
+                self.assertIn("Page 6", window.text.toPlainText())
             finally:
                 window.close()
                 window.deleteLater()
@@ -355,6 +409,59 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                          r"\[a_b\]", r"\[a^2\]", "<code>$code$</code>", "&lt;script&gt;"):
             self.assertIn(expected, html)
 
+    def test_numbered_aligned_ocr_preview(self) -> None:
+        from personal_pdf_tools.ocr.formula_preview import FormulaPreview, preview_resources
+        assets, hint = preview_resources()
+        if assets is None:
+            self.skipTest(hint)
+        preview = FormulaPreview(assets)
+        self.addCleanup(preview.close)
+        preview.show()
+        source = r"""In the active branch, $\sigma < a\sigma_{\text{int}}$, the update is
+
+$$
+\begin{aligned}
+\widetilde{X}_0 &= \frac{X_t-\sqrt{1-\bar{a}_t}\,\tilde{\epsilon}_t}{\sqrt{\bar{a}_t}},\\
+\lambda &= \frac{\sigma\sqrt{1-\eta^2}}{\max(a\sigma_{int},\,10^{-12})}, \tag{6}\\
+X_s &= a[(1-\lambda)\widetilde{X}_0+\lambda Y]+\sigma\eta\xi.
+\end{aligned}
+$$
+
+Otherwise, the identity correction eliminates the model-dependent term, giving
+
+$$
+X_s = aY+\sqrt{\max[\sigma^2-(a\sigma_{int})^2,0]}\;\xi. \tag{7}
+$$"""
+        preview.display("")
+        wait_for(lambda: preview.ready)
+        assert preview.browser is not None
+        page = preview.browser.page()
+
+        def js(expression: str) -> str | int | bool:
+            result = []
+            page.runJavaScript(expression, 0, result.append)
+            wait_for(lambda: bool(result))
+            return result[0]
+
+        js("""window.parseErrors = [];
+            MathJax.Hub.Register.MessageHook('TeX Jax - parse error', msg => {parseErrors.push(msg[1])}); true""")
+        for fragment in (False, True):
+            preview.display(source, fragment=fragment)
+            wait_for(lambda: js(f"Number(sheet.dataset.rendered) === {preview.revision}") is True)
+            self.assertEqual(js("parseErrors.join(', ')"), "")
+            self.assertEqual(js("document.querySelectorAll('#output svg').length"), 3)
+            self.assertEqual(js(r"""
+                (() => {
+                    const formulas = MathJax.Hub.getAllJax('output').slice(1);
+                    return formulas.map(jax => {
+                        const table = jax.root.data[0].data[0];
+                        return table.data.map(row => row.type === 'mlabeledtr'
+                            ? row.data[0].toString().match(/\([0-9]+\)/)?.[0] : '-').join('|');
+                    }).join(';');
+                })()
+            """), "-|(6)|-;(7)")
+            self.assertEqual(preview.value, source)
+
     def test_formula_preview_preserves_native_window(self) -> None:
         if self.app.platformName() != "windows":
             self.skipTest("Requires the native Windows Qt platform")
@@ -378,7 +485,10 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                 options.setCurrentIndex(options.findData(output))
                 self.assertEqual(window.tabs.isTabVisible(tab), output in ("markdown", "fragment"))
             window.output_format = window.vision_options.active().task().output
-            window.rows["equation"] = QtWidgets.QTreeWidgetItem()
+            item = QtWidgets.QTreeWidgetItem(window.list)
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, "equation")
+            window.rows["equation"] = item
+            window.list.setCurrentItem(item)
             window._progress({"image": "equation", "done": 1, "total": 1, "text": "$$x^2$$"})
             window._completed({"kind": "images-complete", "total": 1, "failed": 0})
             self.assertIs(window.tabs.currentWidget(), window.text)
@@ -466,7 +576,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                     timer.stop()
                 return labels
 
-            required = {"Reset view", "Fit to window", "Original size (100%)"}
+            required = {"Reset view", "Fit to window", "Original size (100%)", "Copy image", "Save image..."}
             self.assertTrue(required.issubset(popup_labels(lambda: QtTest.QTest.mouseClick(
                 target, QtCore.Qt.MouseButton.RightButton, pos=QtCore.QPoint(75, 40)))))
             menu = {action.text(): action for action in preview.browser.actions()}
@@ -476,6 +586,50 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
             wait_for(lambda: transform()[0] > 1)
             menu["Reset view"].trigger()
             wait_for(lambda: transform() == [1, 0, 0])
+
+            preview.display(r"Valid \(x^2\), incomplete \(\frac{a}\), unknown \(\unknowncommand\).", fragment=True)
+
+            def shows_formula_errors() -> bool:
+                result = []
+                page.runJavaScript("""
+                    (() => {
+                        const errors = Array.from(document.querySelectorAll('#output .noError'));
+                        return errors.length === 2 &&
+                            errors.every(node => getComputedStyle(node).color === 'rgb(176, 0, 32)') &&
+                            errors[0].textContent.includes('frac') && errors[1].textContent.includes('unknowncommand') &&
+                            document.querySelectorAll('#output svg').length === 1;
+                    })()
+                """, 0, result.append)
+                wait_for(lambda: bool(result))
+                return result[0] is True
+
+            wait_for(shows_formula_errors)
+
+            # The green tail is outside the viewport and must survive zoom and export.
+            long_text = ("Line of text\n\n" * 65) + r"\[\textcolor{lime}{\blacksquare}\]"
+            preview.display(long_text)
+            def tail_typeset() -> bool:
+                result = []
+                page.runJavaScript(f"Number(sheet.dataset.rendered) === {preview.revision}", 0, result.append)
+                wait_for(lambda: bool(result))
+                return result[0] is True
+            wait_for(tail_typeset)
+            menu["Fit to window"].trigger()
+            with patch.object(QtWidgets.QApplication, "clipboard") as clipboard:
+                menu["Copy image"].trigger()
+                wait_for(lambda: clipboard.return_value.setImage.called)
+                rendered_image = clipboard.return_value.setImage.call_args.args[0]
+            self.assertGreater(rendered_image.height(), preview.height())
+            import numpy as np
+            rgba = rendered_image.convertToFormat(QtGui.QImage.Format.Format_RGBA8888)
+            pixels = np.frombuffer(rgba.bits(), dtype=np.uint8).reshape(rgba.height(), rgba.width(), 4)
+            tail = pixels[preview.height():]
+            self.assertTrue(((tail[:, :, 1] > 200) & (tail[:, :, 0] < 80) & (tail[:, :, 2] < 80)).any())
+            formula_png = Path(folder) / "formula.png"
+            with patch("personal_pdf_tools.ocr.image_app.choose_save_file", return_value=str(formula_png)):
+                menu["Save image..."].trigger()
+                wait_for(formula_png.exists)
+            self.assertEqual(QtGui.QImage(str(formula_png)).size(), rendered_image.size())
 
             wide = QtGui.QImage(3000, 300, QtGui.QImage.Format.Format_RGB32)
             wide.fill(QtCore.Qt.GlobalColor.white)
@@ -488,6 +642,17 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                                             point, view.viewport().mapToGlobal(point))
             self.assertTrue(required.issubset(popup_labels(lambda: self.app.sendEvent(view.viewport(), event))))
             image_menu = {action.text(): action for action in view.actions()}
+            with patch.object(QtWidgets.QApplication, "clipboard") as clipboard:
+                image_menu["Copy image"].trigger()
+                self.assertEqual(clipboard.return_value.setImage.call_args.args[0].size(), wide.size())
+            source_png = Path(folder) / "copy.png"
+            with patch("personal_pdf_tools.ocr.image_app.choose_save_file", return_value=str(source_png)):
+                image_menu["Save image..."].trigger()
+            self.assertEqual(QtGui.QImage(str(source_png)).size(), wide.size())
+            pos = window.list.visualItemRect(window.rows[str(path)]).center()
+            self.assertEqual(popup_labels(lambda: window.list.customContextMenuRequested.emit(pos)), [
+                "Add images...", "Paste image", "", "Delete image", "Rename image...", "Copy image", "Save image...",
+                "", "Recognize current", "Recognize all"])
             image_menu["Original size (100%)"].trigger()
             self.assertEqual(view.sceneRect().width(), wide.width())
             self.assertEqual(view.transform().m11(), 1)
@@ -497,3 +662,17 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
             view.set_zoom(200)
             image_menu["Reset view"].trigger()
             self.assertAlmostEqual(view.transform().m11(), fit)
+            with patch.object(QtWidgets.QInputDialog, "getText", return_value=("Renamed image", True)):
+                window._rename_image()
+            self.assertEqual(window.list.currentItem().text(0), "Renamed image")
+            self.assertEqual(window._current_key(), str(path))
+            window.add_file(source_png)
+            window.rows[str(path)].setSelected(True)
+            self.assertEqual(len(window.list.selectedItems()), 2)
+            popup_labels(lambda: window.list.customContextMenuRequested.emit(pos))
+            self.assertEqual(window._current_key(), str(path))
+            self.assertEqual(len(window.list.selectedItems()), 2)
+            window._remove()
+            self.assertNotIn(str(path), window.rows)
+            self.assertNotIn(str(source_png), window.rows)
+            self.assertTrue(path.exists() and source_png.exists())

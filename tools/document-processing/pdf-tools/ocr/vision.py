@@ -66,7 +66,9 @@ class VisionTask:
                 "separate": "Prefer separate display blocks for independent equation lines.",
             }.get(self.multiline, "Group continuous derivations in aligned rows and separate independent equations."))
             instructions.append("Never split matrices, cases or a single expression at a visual line wrap.")
-            instructions.append("Preserve existing equation numbers. Do not invent numbers." if self.numbers else
+            instructions.append(r"Preserve existing equation numbers. Do not invent numbers. For one number on a "
+                                r"multiline group, place \tag{...} after \end{aligned}, inside the display delimiters. "
+                                r"For individually numbered equations, use separately tagged displays." if self.numbers else
                                 "Omit displayed equation numbers.")
             instructions.append(r"Preserve mathematical bold, e.g. \mathbf or \boldsymbol for vectors."
                                 if self.math_bold else "Use ordinary weight for mathematical bold symbols.")

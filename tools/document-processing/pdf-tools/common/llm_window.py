@@ -430,6 +430,10 @@ class LlmWindow(QtWidgets.QMainWindow):
         if self._close_when_idle:
             QtCore.QTimer.singleShot(0, self.close)
 
+    def _begin_api_test(self) -> bool:
+        """Let windows with an exchange viewer start capturing the test request."""
+        return False
+
     def _test_api(self) -> None:
         if self._api_busy or self.runner.busy:
             return
@@ -437,10 +441,11 @@ class LlmWindow(QtWidgets.QMainWindow):
         self._testing = True
         self._test_elapsed.start()
         try:
+            capture = self._begin_api_test()
             body = Llm.vision_test_request(settings)
             self.test_status.setText("Testing image input…")
             self.test_status.setStyleSheet("")
-            self.client.send(settings, self.api_key.text(), body)
+            self.client.send(settings, self.api_key.text(), body, capture=capture)
             self._enabled()
         except (ValueError, RuntimeError) as exc:
             self._client_completed("", 0, str(exc))

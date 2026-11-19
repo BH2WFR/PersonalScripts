@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from markdown_it.rules_block import StateBlock
     from markdown_it.token import Token
 
-from PySide6 import QtCore, QtWidgets, __version__ as pyside_version
+from PySide6 import QtCore, QtGui, QtWidgets, __version__ as pyside_version
 from ..common.viewer import MAX_SCALE, MIN_SCALE, ZOOM_STEP, install_preview_menu
 
 
@@ -110,19 +110,25 @@ def preview_resources() -> tuple[Path | None, str]:
 class FormulaPreview(QtWidgets.QWidget):
     """Create an offline web view on first use and render the latest transcription."""
 
+    imageReady = QtCore.Signal(QtGui.QImage, bool)
+    exportFailed = QtCore.Signal(str)
+    MAX_EXPORT_PIXELS = 48_000_000
+
     def __init__(self, root: Path) -> None:
         super().__init__()
         self.root = root.resolve()
         self.layout_box = QtWidgets.QVBoxLayout(self)
         self.layout_box.setContentsMargins(0, 0, 0, 0)
-        self.original_size = QtWidgets.QToolButton(self)
-        self.original_size.setText("Original size (100%)")
-        self.original_size.clicked.connect(self._original_size)
-        self.layout_box.addWidget(self.original_size, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         self.value = ""
         self.fragment = False
         self.ready = False
         self.browser = None
+        self.revision = 0
+        self.exporting = False
+        self.copy_image = QtGui.QAction("Copy image", self)
+        self.save_image = QtGui.QAction("Save image...", self)
+        self.copy_image.triggered.connect(lambda: self._export_image(False))
+        self.save_image.triggered.connect(lambda: self._export_image(True))
         self.setToolTip("Wheel to zoom, drag to pan. Shift-drag to select text.")
 
     def reset_view(self) -> None:
@@ -162,19 +168,39 @@ class FormulaPreview(QtWidgets.QWidget):
             page = QWebEnginePage(self.profile, self.browser)
             self.browser.setPage(page)
             install_preview_menu(self.browser, reset=self.reset_view, fit=self._fit_view, original=self._original_size)
+            self.browser.addActions([self.copy_image, self.save_image])
             self.browser.addAction(page.action(QWebEnginePage.WebAction.Copy))
             self.layout_box.addWidget(self.browser)
             self.browser.loadFinished.connect(self._loaded)
             self.browser.setHtml(r"""<!doctype html><meta charset="utf-8">
 <style>html{min-height:100%;cursor:grab;overflow-anchor:none}html.dragging{cursor:grabbing;user-select:none}
 html.fitted{overflow:hidden}
+@media print {
+    html,html.fitted{min-height:0;overflow:visible}
+    #sheet{transform:none !important}
+    *{-webkit-print-color-adjust:exact}
+}
 body{font:16px sans-serif;margin:0}#sheet{transform-origin:0 0;padding:1em}#output{overflow-wrap:anywhere}
 #output:empty::before{content:"Run recognition to preview Markdown and formulas.";color:#666}
+#output .noError,#output .MathJax_Error,#output .renderer-error{color:#b00020}
 table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:.3em}pre{white-space:pre-wrap}</style>
 <script type="text/x-mathjax-config">
 MathJax.Hub.Config({showMathMenu:false,messageStyle:"none",extensions:["Safe.js"],
- TeX:{extensions:["color.js","boldsymbol.js"]},Safe:{allow:{URLs:"none",classes:"none",styles:"none",cssIDs:"none"}},
+ TeX:{extensions:["color.js","boldsymbol.js"],noUndefined:{disabled:true}},
+ Safe:{allow:{URLs:"none",classes:"none",styles:"none",cssIDs:"none"}},
  tex2jax:{inlineMath:[["$","$"],["\\(","\\)"]],processEscapes:true}});
+// OCR can place a printed row number inside aligned, where AMS forbids \tag.
+// Use align* for that display in MathJax so only explicitly tagged rows get numbers.
+MathJax.Hub.Register.StartupHook("TeX Jax Ready", function () {
+    MathJax.InputJax.TeX.prefilterHooks.Add(function (data) {
+        if (!data.display) return;
+        const block = /^\s*\\begin\{aligned\}([\s\S]*)\\end\{aligned\}\s*$/.exec(data.math);
+        if (!block || /^\s*\[[tbc]\]/.test(block[1]) || /\\(?:begin|end)\{aligned\}/.test(block[1])) return;
+        if (/\\tag\*?\s*\{[^{}]*\}\s*(?:\\\\|$)/.test(block[1])) {
+            data.math = '\\begin{align*}' + block[1] + '\\end{align*}';
+        }
+    });
+});
 </script><script src="MathJax.js?config=TeX-AMS_SVG-full"></script>
 <div id="sheet"><div id="output"></div></div>
 <script>
@@ -223,6 +249,25 @@ function fitView() {
 function refitIfNeeded() {
     if (viewport.classList.contains('fitted')) fitView();
 }
+function renderOutput(html, revision) {
+    const output = document.getElementById('output');
+    if (!window.MathJax || !MathJax.Hub) {
+        const error = document.createElement('p');
+        error.className = 'renderer-error';
+        error.textContent = 'Formula preview failed to load MathJax.';
+        output.innerHTML = html;
+        output.prepend(error);
+        sheet.dataset.rendered = revision;
+        return;
+    }
+    MathJax.Hub.Queue(function () {
+        MathJax.Hub.getAllJax(output).forEach(jax => jax.Remove());
+        output.innerHTML = html;
+    }, ['Typeset', MathJax.Hub, output], function () {
+        sheet.dataset.rendered = revision;
+        refitIfNeeded();
+    });
+}
 window.addEventListener('resize', refitIfNeeded);
 function zoomAt(next, x, y) {
     viewport.classList.remove('fitted');
@@ -262,11 +307,14 @@ resetView();
 </script>""".replace("ZOOM_SETTINGS", json.dumps((MIN_SCALE, MAX_SCALE, ZOOM_STEP))),
                                  QtCore.QUrl.fromLocalFile(str(root / "index.html")))
         self.value, self.fragment = text, fragment
+        self.revision += 1
+        self._sync_export_actions()
         if self.ready:
             self._update()
 
     def _loaded(self, ok: bool) -> None:
         self.ready = ok
+        self._sync_export_actions()
         if ok:
             self._update()
 
@@ -274,7 +322,82 @@ resetView();
         if self.browser is not None:
             html = (f'<div style="white-space:pre-wrap">{escape(self.value)}</div>'
                     if self.fragment and self.value else markdown_html(self.value))
-            self.browser.page().runJavaScript(
-                "MathJax.Hub.Queue(function(){MathJax.Hub.getAllJax('output').forEach(j=>j.Remove());"
-                "document.getElementById('output').innerHTML="
-                + json.dumps(html) + ";},['Typeset',MathJax.Hub,'output'],refitIfNeeded);")
+            self.browser.page().runJavaScript(f"renderOutput({json.dumps(html)}, {self.revision})")
+
+    def _sync_export_actions(self) -> None:
+        enabled = self.ready and bool(self.value.strip()) and not self.exporting
+        self.copy_image.setEnabled(enabled)
+        self.save_image.setEnabled(enabled)
+
+    def _export_image(self, save: bool) -> None:
+        """Print the typeset content at natural scale, including off-screen pixels."""
+        if self.browser is None or not self.copy_image.isEnabled():
+            return
+        revision = self.revision
+        self.exporting = True
+        self._sync_export_actions()
+
+        def finish() -> None:
+            self.exporting = False
+            self._sync_export_actions()
+
+        def printed(data: QtCore.QByteArray) -> None:
+            finish()
+            if revision != self.revision:
+                return
+            try:
+                image = self._rasterize_pdf(bytes(data.data()))
+            except (ValueError, RuntimeError, MemoryError) as exc:
+                self.exportFailed.emit(str(exc) or "Could not render the preview image.")
+                return
+            self.imageReady.emit(image, save)
+
+        def measured(dimensions: str) -> None:
+            if revision != self.revision or self.browser is None:
+                finish()
+                return
+            if not dimensions:
+                finish()
+                self.exportFailed.emit("Wait for formula rendering to finish and try again.")
+                return
+            width, height = json.loads(dimensions)
+            if width * height > self.MAX_EXPORT_PIXELS:
+                finish()
+                self.exportFailed.emit("The formula preview is too large to export as one image.")
+                return
+            # CSS uses 96 pixels/inch and PDF uses 72 points/inch.
+            size = QtGui.QPageSize(QtCore.QSizeF(width * .75, height * .75), QtGui.QPageSize.Unit.Point,
+                                   "Preview", QtGui.QPageSize.SizeMatchPolicy.ExactMatch)
+            layout = QtGui.QPageLayout(size, QtGui.QPageLayout.Orientation.Portrait, QtCore.QMarginsF())
+            self.browser.page().printToPdf(printed, layout)
+
+        self.browser.page().runJavaScript(
+            f"Number(sheet.dataset.rendered) === {revision} ? "
+            "JSON.stringify([sheet.scrollWidth + 2, sheet.scrollHeight + 2]) : ''", 0, measured)
+
+    @classmethod
+    def _rasterize_pdf(cls, data: bytes) -> QtGui.QImage:
+        import pymupdf
+
+        with pymupdf.open(stream=data, filetype="pdf") as document:
+            scale = pymupdf.Matrix(96 / 72, 96 / 72)
+            sizes = [(page.rect * scale).irect for page in document]
+            width, height = max(size.width for size in sizes), sum(size.height for size in sizes)
+            if width * height > cls.MAX_EXPORT_PIXELS:
+                raise ValueError("The formula preview is too large to export as one image.")
+            image = QtGui.QImage(width, height, QtGui.QImage.Format.Format_RGB32)
+            if image.isNull():
+                raise MemoryError("Insufficient memory to export the formula preview.")
+            image.fill(QtCore.Qt.GlobalColor.white)
+            painter = QtGui.QPainter(image)
+            try:
+                y = 0
+                for page in document:
+                    pix = page.get_pixmap(matrix=scale)
+                    tile = QtGui.QImage(pix.samples_mv, pix.width, pix.height, pix.stride,
+                                        QtGui.QImage.Format.Format_RGB888)
+                    painter.drawImage(0, y, tile)
+                    y += pix.height
+            finally:
+                painter.end()
+            return image

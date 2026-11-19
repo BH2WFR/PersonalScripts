@@ -13,6 +13,7 @@ import sys
 from typing import Callable, cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_images import copy_image_to_clipboard
 from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls
 
 from utils import *
@@ -1125,7 +1126,7 @@ class BookmarksWindow(LlmWindow):
 
     def _copy_image(self) -> None:
         try:
-            QtWidgets.QApplication.clipboard().setImage(self._image())
+            copy_image_to_clipboard(self._image())
         except ValueError as exc:
             self._error(str(exc))
 
