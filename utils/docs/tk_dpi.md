@@ -43,7 +43,8 @@ suggested rectangle with `SetWindowPos`, without activation or z-order changes.
 Mapping checks for a recreated native wrapper. `System.enable_dpi_awareness()`
 is the shared startup initializer; declaring awareness alone does not resize Tk
 widgets. Private `utils._win_subclass.WindowSubclass` owns native callback setup,
-error forwarding and destruction, and is also used by `TkTextInput`.
+error forwarding and destruction, and is also used by `TkTextInput`. It forwards
+handler exceptions to Tk's error reporter and ignores the reporter's return value.
 
 On macOS, preserve Cocoa logical coordinates and native font/Retina rendering.
 On X11/XWayland, use Tk's display scaling and observe changes every 500 ms. Tk 8

@@ -114,12 +114,12 @@ class UnicodeInspector:
             widget = pending.pop()
             pending.extend(widget.winfo_children())
             if "font" in widget.keys():
-                widget.configure(font=self._dpi.font())
+                widget["font"] = self._dpi.font()
             if isinstance(widget, ttk.Widget):
                 style_class = widget.winfo_class()
                 if isinstance(widget, ttk.Scrollbar):
                     style_class = f"{str(widget.cget('orient')).capitalize()}.{style_class}"
-                widget.configure(style=f"{self._style_prefix}.{style_class}")
+                widget["style"] = f"{self._style_prefix}.{style_class}"
         self._dpi.track_spacing()
         self._dpi.start(self._apply_dpi)
 

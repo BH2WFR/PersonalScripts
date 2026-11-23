@@ -11,7 +11,7 @@ class WindowSubclass:
     """Forward unhandled messages and detach before a native window is destroyed."""
 
     def __init__(self, hwnd: int, handler: Callable[[int, int, int, int], int | None],
-                 report_error: Callable[[type[BaseException], BaseException, TracebackType | None], None]) -> None:
+                 report_error: Callable[[type[BaseException], BaseException, TracebackType | None], object]) -> None:
         from ctypes import wintypes as wt
 
         self.hwnd = hwnd
