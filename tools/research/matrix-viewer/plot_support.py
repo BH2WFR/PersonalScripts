@@ -9,6 +9,8 @@ Axis footer captions follow the X-title row and reflow with exported plots.
 """
 
 import math
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -18,9 +20,122 @@ from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
 from pyqtgraph.graphicsItems.PlotItem.PlotItem import PlotItem
 
 AXIS_TICK_TEXT_OFFSET = 2
+PAN_MARGIN_PIXELS = 10.0
 type LineSpec = tuple[QtGui.QPen, QtCore.QPointF, QtCore.QPointF]
 type TextSpec = tuple[QtCore.QRectF, int, str]
 type AxisSpecs = tuple[LineSpec, list[LineSpec], list[TextSpec]]
+type PlotBounds = tuple[tuple[float, float], tuple[float, float]]
+
+
+def minimum_axis_pixels(fitted_pixels: float) -> float:
+    """Return the zoom-out floor for a full data axis, in Qt logical pixels."""
+    return min(30.0, fitted_pixels / 2)
+
+
+@dataclass
+class NavigationLimits:
+    """Mouse navigation preferences shared by the plots in one workspace."""
+
+    zoom_out: bool = True
+    pan: bool = True
+
+
+class NavigationViewBox(ViewBox):
+    """Bound interactive scale/translation using full data bounds, independent of manual ranges."""
+
+    def __init__(self, bounds: Callable[[], PlotBounds | None], *, fit_padding: float | None = None,
+                 constrain_after_zoom: bool = False) -> None:
+        self.navigation = NavigationLimits()
+        self._navigation_bounds = bounds
+        self._fit_padding = fit_padding
+        self._constrain_after_zoom = constrain_after_zoom
+        self._sample_pitch: tuple[float, float | None] | None = None
+        self._sample_target: QtCore.QRectF | None = None
+        super().__init__()
+        self.sigResized.connect(self._reflow_sample_size)
+
+    def set_sample_size(self, dx: float, dy: float | None) -> None:
+        """Set coordinates per physical pixel, keeping the center as axis labels reflow."""
+        viewport = pyside_graphics_view(self.getViewWidget()).viewport()
+        if self._sample_pitch is None:
+            viewport.installEventFilter(self)
+        dpr = viewport.devicePixelRatioF()
+        center = self.viewRect().center()
+        half_x = self.width() * dpr * dx / 2
+        half_y = self.height() * dpr * dy / 2 if dy is not None else None
+        self._sample_target = None
+        self.setRange(xRange=(center.x() - half_x, center.x() + half_x),
+                      yRange=(center.y() - half_y, center.y() + half_y) if half_y is not None else None,
+                      padding=0)
+        self._sample_pitch = (dx, dy)
+        self._sample_target = self.targetRect()
+
+    def _reflow_sample_size(self) -> None:
+        if self._sample_target is None or self._sample_pitch is None or self.signalsBlocked():
+            return
+        previous, current = self._sample_target, self.targetRect()
+        if (previous.left() != current.left() or previous.right() != current.right()
+                or (self._sample_pitch[1] is not None and previous != current)
+                or self.state["autoRange"][0]):
+            self._sample_target = None
+        elif self.width() > 0 and self.height() > 0:
+            self.set_sample_size(*self._sample_pitch)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if event.type() == QtCore.QEvent.Type.DevicePixelRatioChange and self._sample_target is not None:
+            self._reflow_sample_size()
+        return super().eventFilter(watched, event)
+
+    def _zoom_caps(self, bounds: PlotBounds) -> tuple[float, float]:
+        """Measure each axis at the current and fully fitted scales, accounting for aspect lock."""
+        lengths = []
+        fit_factors = []
+        for axis, ((lo, hi), (left, right), pixels) in enumerate(zip(bounds, self.viewRange(),
+                                                                     (self.width(), self.height()))):
+            length = pixels * ((hi - lo) / (right - left)) if right > left else 0.0
+            lengths.append(length)
+            padding = self.suggestPadding(axis) if self._fit_padding is None else self._fit_padding
+            fit_factors.append(pixels / ((1 + 2 * padding) * length) if length > 0 else math.inf)
+        locked = self.state["aspectLocked"] is not False
+        if locked:
+            fit_factors = [min(fit_factors)] * 2
+        caps = [length / minimum_axis_pixels(length * fit) if length > 0 and fit > 0 else math.inf
+                for length, fit in zip(lengths, fit_factors)]
+        return (min(caps), min(caps)) if locked else (caps[0], caps[1])
+
+    def scaleBy(self, s: Sequence[float | None] | None = None, center: QtCore.QPointF | None = None,
+                x: float | None = None, y: float | None = None) -> None:
+        if s is not None:
+            x, y = s
+        if self.navigation.zoom_out and any(f is not None and f > 1 for f in (x, y)):
+            bounds = self._navigation_bounds()
+            if bounds is not None:
+                caps = self._zoom_caps(bounds)
+                x = min(x, caps[0]) if x is not None and x > 1 else x
+                y = min(y, caps[1]) if y is not None and y > 1 else y
+        super().scaleBy(center=center, x=x, y=y)
+        if self._constrain_after_zoom and self.navigation.pan:
+            self.translateBy(x=0.0, y=0.0)
+
+    def translateBy(self, t: QtCore.QPointF | Sequence[float] | None = None, x: float | None = None,
+                    y: float | None = None) -> None:
+        if isinstance(t, QtCore.QPointF):
+            x, y = t.x(), t.y()
+        elif t is not None:
+            x, y = t
+        bounds = self._navigation_bounds() if self.navigation.pan else None
+        if bounds is not None:
+            shifts = []
+            for shift, (lo, hi), (left, right), pixels in zip((x, y), bounds, self.viewRange(),
+                                                              (self.width(), self.height())):
+                first, last = sorted((lo - left, hi - right))
+                margin = min(PAN_MARGIN_PIXELS * (right - left) / max(1.0, pixels),
+                             (hi - lo) / 2, (right - left) / 2)
+                shifts.append(None if shift is None else min(max(shift, first - margin), last + margin))
+            x, y = shifts
+        if x or y:
+            self._resetTarget()
+            super().translateBy(x=x, y=y)
 
 
 def range_endpoint(value: float, infinite: bool, *, maximum: bool, precision: int = 10,

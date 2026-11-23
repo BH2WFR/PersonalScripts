@@ -34,6 +34,7 @@ Alt+left, Alt+middle and right drag all roll the camera.
 
 import math
 from enum import StrEnum
+from itertools import product
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -48,7 +49,7 @@ from .data_model import DEFAULT_CLIP_COLOR, ColorArray, FilterMode, FloatArray, 
 from .coordinates import AxisMap
 from .workspace import RenderLayer, profile_series
 from .render_style import DEFAULT_POINT_SIZE, SurfaceStyle
-from .plot_support import RangeLabel
+from .plot_support import PAN_MARGIN_PIXELS, NavigationLimits, RangeLabel, minimum_axis_pixels
 
 HOVER_INTERVAL_MS = 35
 ROTATION_DEGREES_PER_PIXEL = 0.45
@@ -142,6 +143,8 @@ class SurfaceCanvas(QtInteractor):
         self.frame: Frame | None = None
         self.layers: list[tuple[vtkActor, RenderLayer]] = []
         self.axis_scale = (1.0, 1.0, 1.0)
+        self.navigation = NavigationLimits()
+        self.pan_boxes: FloatArray = np.empty((0, 8, 3))
         self._last = QtCore.QPointF()
         self._action: Gesture | None = None
         self._pending_hover: QtCore.QPointF | None = None
@@ -232,14 +235,57 @@ class SurfaceCanvas(QtInteractor):
         steps = event.angleDelta().y() / 120
         if not steps:
             steps = event.pixelDelta().y() / 120
-        factor = ZOOM_FACTOR ** steps
-        if self.camera.GetParallelProjection():
+        factor = ZOOM_FACTOR ** max(-100, min(100, steps))
+        parallel = self.camera.GetParallelProjection()
+        bounds = self._navigation_box() if self.navigation.zoom_out and factor < 1 else None
+        if bounds is not None:
+            limit = self._zoom_out_limit(bounds)
+            current = self.camera.GetParallelScale() if parallel else self.camera.GetDistance()
+            factor = max(factor, current / limit)
+        if parallel:
             self.camera.SetParallelScale(self.camera.GetParallelScale() / factor)
         else:
             self.camera.Dolly(factor)
         self.reset_camera_clipping_range()
         self.render()
         event.accept()
+
+    def _zoom_out_limit(self, bounds: FloatArray) -> float:
+        """Largest camera distance (parallel scale in orthographic mode) allowed by all visible axes.
+
+        Measure each axis through the center of a fitted box with the current
+        orientation, so panning does not change its reference length.
+        """
+        spans = bounds[:, 1] - bounds[:, 0]
+        radius = math.hypot(*spans) / 2 or 1.0
+        aspect = max(self.renderer.GetTiledAspectRatio(), 1e-9)
+        parallel = self.camera.GetParallelProjection()
+        height = max(1, self.height())
+        if parallel:
+            fit = radius / min(1.0, aspect)
+            pixel_factor = height / 2
+        else:
+            tangent = math.tan(math.radians(self.camera.GetViewAngle()) / 2)
+            horizontal = self.camera.GetUseHorizontalViewAngle()
+            angle = math.atan(tangent * min(1.0, 1 / aspect if horizontal else aspect))
+            fit = radius / math.sin(angle)
+            pixel_factor = (max(1, self.width()) if horizontal else height) / (2 * tangent)
+
+        rotation = self.camera.GetViewTransformMatrix()
+        limit = math.inf
+        for axis, span in enumerate(spans):
+            transverse = math.hypot(rotation.GetElement(0, axis), rotation.GetElement(1, axis))
+            if span <= 0 or transverse <= 1e-12:
+                continue
+            projected = span * transverse * pixel_factor
+            half_depth = 0.0 if parallel else span * rotation.GetElement(2, axis) / 2
+            # Perspective endpoints have depths d ± half_depth, giving a
+            # projected length of projected / (d - half_depth²/d).
+            fitted_px = projected / (fit - half_depth * (half_depth / fit))
+            ratio = projected / minimum_axis_pixels(fitted_px)
+            distance = ratio / 2 + math.hypot(ratio / 2, half_depth)
+            limit = min(limit, distance)
+        return limit if math.isfinite(limit) else 2 * fit
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """Keep VTK shortcuts from changing interaction or closing the canvas.
@@ -276,6 +322,14 @@ class SurfaceCanvas(QtInteractor):
         return (position.x() * width / max(self.width(), 1),
                 (self.height() - position.y() - 1) * height / max(self.height(), 1))
 
+    def _navigation_box(self) -> FloatArray | None:
+        """Return the scaled visible axes box, including any explicit Z range."""
+        axes = self.renderer.cube_axes_actor
+        if axes is None:
+            return None
+        box = np.asarray(axes.bounds, dtype=np.float64).reshape(3, 2)
+        return box if np.isfinite(box).all() and (box[:, 1] >= box[:, 0]).all() else None
+
     def _pan(self, old: QtCore.QPointF, new: QtCore.QPointF) -> None:
         renderer = self.renderer
         focal = np.asarray(self.camera.GetFocalPoint())
@@ -290,8 +344,49 @@ class SurfaceCanvas(QtInteractor):
             world = renderer.GetWorldPoint()
             coordinates.append(np.asarray(world[:3]) / world[3])
         shift = coordinates[0] - coordinates[1]
+        if self.navigation.pan and self.pan_boxes.size:
+            shift = self._limit_pan(shift)
         self.camera.SetFocalPoint(*(focal + shift))
         self.camera.SetPosition(*(np.asarray(self.camera.GetPosition()) + shift))
+
+    def _limit_pan(self, shift: FloatArray) -> FloatArray:
+        """Clamp camera-plane motion at projected mesh edges, using each corner's depth."""
+        rotation = self.camera.GetViewTransformMatrix()
+        basis = np.array([[rotation.GetElement(i, j) for j in range(3)] for i in range(3)])
+        boxes = (self.pan_boxes - self.camera.GetPosition()) @ basis.T
+        points = boxes.reshape(-1, 3)
+        pixels = np.array([self.width(), self.height()], dtype=float)
+        if self.camera.GetParallelProjection():
+            units = np.full((len(points), 1), 2 * self.camera.GetParallelScale() / pixels[1])
+        else:
+            # Intersect box edges with the near plane when zoomed into a surface.
+            near = self.camera.GetClippingRange()[0]
+            front = -points[:, 2] >= near
+            if not np.all(front):
+                clipped = [points[front]]
+                for bit in (1, 2, 4):
+                    starts = [i for i in range(8) if not i & bit]
+                    a = boxes[:, starts].reshape(-1, 3)
+                    b = boxes[:, [i | bit for i in starts]].reshape(-1, 3)
+                    crosses = (a[:, 2] <= -near) != (b[:, 2] <= -near)
+                    a, b = a[crosses], b[crosses]
+                    t = (-near - a[:, 2:3]) / (b[:, 2:3] - a[:, 2:3])
+                    clipped.append(a + t * (b - a))
+                points = np.concatenate(clipped)
+                if not points.size:
+                    return shift
+            dimension = pixels[0] if self.camera.GetUseHorizontalViewAngle() else pixels[1]
+            units = (-points[:, 2:3]) * (2 * math.tan(math.radians(self.camera.GetViewAngle()) / 2) / dimension)
+
+        xy = points[:, :2]
+        half = pixels / 2
+        margin = np.minimum(PAN_MARGIN_PIXELS, np.minimum(half, np.ptp(xy / units, axis=0) / 2))
+        # Solve the camera shifts aligning either silhouette edge to the viewport.
+        lower = np.minimum((xy + (half - margin) * units).min(axis=0),
+                           (xy - (half + margin) * units).max(axis=0))
+        upper = np.maximum((xy + (half + margin) * units).min(axis=0),
+                           (xy - (half - margin) * units).max(axis=0))
+        return np.clip(basis[:2] @ shift, lower, upper) @ basis[:2]
 
     def _pick_pending(self) -> None:
         frame = self.frame
@@ -445,6 +540,7 @@ class SurfaceView(QtWidgets.QWidget):
         self._layer_profiles.clear()
         self.canvas.layers.clear()
         self.canvas.clear()
+        self.canvas.pan_boxes = np.empty((0, 8, 3))
         self.z_range_label.set_limits(None)
         self._color_limits = None if frame.composite else levels
         self.color_range_label.set_limits(self._color_limits)
@@ -540,6 +636,7 @@ class SurfaceView(QtWidgets.QWidget):
         reset = reset or (self._surface_actor is None and not self.canvas.layers)
         camera = self.canvas.camera_position
         self.canvas.clear()
+        self.canvas.pan_boxes = np.empty((0, 8, 3))
         self.z_range_label.set_limits(None)
         self._color_limits = None
         self.color_range_label.set_limits(None)
@@ -895,6 +992,16 @@ class SurfaceView(QtWidgets.QWidget):
             axes.bounds = (bounds[0], bounds[1], bounds[2], bounds[3],
                            limits[0] * sz, limits[1] * sz)
         bounds = axes.bounds
+        # Cache scaled mesh boxes only; axes, text and slice markers are decorations.
+        corners = []
+        for actor in (self._surface_actor, *self._clip_actors, *(actor for actor, _ in self.canvas.layers)):
+            if actor is None or not actor.GetVisibility():
+                continue
+            box = np.asarray(actor.GetBounds(), dtype=float).reshape(3, 2)
+            box[2] = (max(box[2, 0], bounds[4]), min(box[2, 1], bounds[5]))
+            if np.isfinite(box).all() and (box[:, 1] >= box[:, 0]).all():
+                corners.append(list(product(*box)))
+        self.canvas.pan_boxes = np.asarray(corners, dtype=float).reshape(-1, 8, 3)
         axes.x_axis_range = (bounds[0] / sx, bounds[1] / sx)
         axes.y_axis_range = (bounds[2] / sy, bounds[3] / sy)
         mapping = self.value_z_mapping

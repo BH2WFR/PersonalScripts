@@ -29,13 +29,15 @@ from enum import IntEnum, StrEnum
 from functools import partial
 from typing import TYPE_CHECKING
 
+import numpy as np
 from PySide6 import QtCore, QtWidgets
 from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
 
 from .data_model import ViewMode
 from .figure_export import FigureView
+from .image_view import IMAGE_FIT_PADDING
 from .surface_view import MAX_AXIS_SCALE, MIN_AXIS_SCALE
-from .plot_support import EndpointAxis
+from .plot_support import EndpointAxis, NavigationViewBox
 from .profile_view import ExpandingYRange
 
 if TYPE_CHECKING:
@@ -43,7 +45,6 @@ if TYPE_CHECKING:
 
 ZOOM_STEP = 2.0
 FINE_ZOOM_STEP = 1.2
-IMAGE_FIT_PADDING = 0.02
 
 
 class Axis(IntEnum):
@@ -79,12 +80,71 @@ class ViewScaling(QtCore.QObject):
     def __init__(self, window: "WorkspaceWindow") -> None:
         super().__init__(window)
         self.window = window
+        self.navigation = window.image_view.view_box.navigation
+        window.surface_view.canvas.navigation = self.navigation
         self.endpoint_ticks = False
         self.y_range_lock = False
         self._y_histories = (ExpandingYRange(), ExpandingYRange())
         for profile in (window.profile_view, window.overlay_profile):
             for pane, history in zip((profile.signal_pane, profile.derivative_pane), self._y_histories):
                 pane.view_box.y_range_lock = history
+                pane.view_box.navigation = self.navigation
+
+    def fit_view(self, view: FigureView) -> None:
+        """Run the canvas's Fit this view action without changing other tabs."""
+        if view == FigureView.IMAGE:
+            self.window.image_view.reset_view()
+        elif view == FigureView.SURFACE:
+            self.window.surface_view.reset_view()
+        else:
+            self.box(view).enableAutoRange()
+
+    def _sample_steps(self, view: FigureView) -> tuple[float, float | None]:
+        """Return displayed coordinate units per original sample of the visible reference."""
+        window = self.window
+        layers = window._render_layers
+        if view != FigureView.IMAGE and window._profile_uses_overlay:
+            layers = tuple(series.layer for series in window.overlay_profile._series)
+            if not layers:
+                raise ValueError("Select a slice to measure its sample spacing.")
+        layer = next((item for item in layers if item.uid == window.reference_uid), layers[0] if layers else None)
+        frame = layer.frame if layer is not None else next(
+            (entry.frame for entry in window.entries if entry.visible and entry.frame is not None), None)
+        if frame is None:
+            raise ValueError("No displayed samples are available.")
+        dx = frame.x_mapping.scale
+        dy = frame.y_mapping.scale
+        if frame.xy and frame.x_values is not None:
+            # Explicit XY coordinates may arrive out of order. Only a uniform
+            # set has an exact one-sample-per-pixel scale.
+            gaps = np.diff(np.sort(np.asarray(frame.x_values, dtype=np.float64)))
+            dx = float(np.median(gaps)) if gaps.size else 0.0
+            if not math.isfinite(dx) or dx <= 0 or not np.allclose(gaps, dx, rtol=1e-6, atol=0):
+                raise ValueError("Original size requires at least two distinct, uniformly spaced, finite X coordinates.")
+        if layer is not None:
+            dx *= layer.x.scale
+            dy *= layer.y.scale
+        if view == FigureView.IMAGE:
+            return abs(dx), abs(dy)
+        column_slice = frame.scalar.ndim == 2 and window.profile_direction.currentIndex() == 1
+        return abs(dy if column_slice else dx), None
+
+    def original_size(self, view: FigureView) -> None:
+        """Show one source sample per physical screen pixel around the current view center."""
+        if not self.available(view) or view == FigureView.SURFACE:
+            return
+        try:
+            dx, dy = self._sample_steps(view)
+        except ValueError as exc:
+            QtWidgets.QMessageBox.information(self.window, "Original size", str(exc))
+            return
+        box = self.box(view)
+        if box.state["aspectLocked"] is not False and (dy is None or dx != dy):
+            visible_y = box.viewRange()[1]
+            self.equal_xy(view, False)
+            if dy is None:
+                box.setYRange(*visible_y, padding=0)
+        box.set_sample_size(dx, dy)
 
     def set_y_range_lock(self, enabled: bool) -> None:
         """Start/end expanding Y ranges across slices, files and overlay modes.
@@ -151,7 +211,7 @@ class ViewScaling(QtCore.QObject):
             return profile.tabs.currentIndex() == 1 and profile.tabs.isTabEnabled(1)
         return bool(window.overlay_profile._series) if window._profile_uses_overlay else profile.values is not None
 
-    def box(self, view: FigureView) -> ViewBox:
+    def box(self, view: FigureView) -> NavigationViewBox:
         """Return the active flat viewport; never creates or calculates data."""
         if view == FigureView.SURFACE:
             raise ValueError("A 3D scene has no flat viewport range.")

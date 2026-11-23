@@ -314,7 +314,17 @@ class WorkspaceWindow(ViewerWindow):
         self.color_lock_button.toggled.connect(self.color_range_lock.setChecked)
         self.color_range_lock.toggled.connect(self.color_lock_button.setChecked)
         tab_actions_layout.addWidget(self.color_lock_button)
+        self.profile_y_lock_button = QtWidgets.QPushButton("Lock Y range")
+        for button in (self.profile_y_lock_button, self.profile_view.y_lock_button, self.overlay_profile.y_lock_button):
+            button.setCheckable(True)
+            button.setToolTip(self.view_settings.y_lock.toolTip())
+            button.toggled.connect(self.scaling.set_y_range_lock)
+        tab_actions_layout.addWidget(self.profile_y_lock_button)
         tab_actions_layout.addWidget(self.profile_fit_button)
+        self.spatial_fit_button = QtWidgets.QPushButton("Fit view")
+        self.spatial_fit_button.clicked.connect(lambda: self.scaling.fit_view(
+            FigureView.SURFACE if self.tabs.currentIndex() == 1 else FigureView.IMAGE))
+        tab_actions_layout.addWidget(self.spatial_fit_button)
         tab_actions_layout.addWidget(self.view_settings_button)
         self.tabs.setCornerWidget(tab_actions, QtCore.Qt.Corner.TopRightCorner)
         self.view_extrema = ViewExtrema(self)
@@ -2149,6 +2159,7 @@ class WorkspaceWindow(ViewerWindow):
         self.profile_controls.setEnabled(False)
         self._sync_raw_view()
         self._sync_export_controls()
+        self.view_settings.refresh()
 
     def _set_view_layout(self, mode: ViewMode) -> None:
         if not (self._overlay() and self._painting_active):

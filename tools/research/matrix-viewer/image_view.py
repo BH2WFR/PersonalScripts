@@ -23,13 +23,14 @@ from pyqtgraph.graphicsItems.PlotItem.PlotItem import PlotItem
 from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
 
 from .data_model import DEFAULT_CLIP_COLOR, ColorArray, Frame, format_sample
-from .plot_support import AxisFooterLabel, EndpointAxis, RangeLabel, compact_axis, graphics_scene, pyside_graphics_view
+from .plot_support import AxisFooterLabel, EndpointAxis, NavigationViewBox, RangeLabel, compact_axis, graphics_scene, pyside_graphics_view
 from .workspace import RenderLayer
 from .value_markers import MarkerStyle, nonfinite_mask
 from .coordinates import AxisMap
 from .render_style import DEFAULT_POINT_SIZE, ImageStyle
 
 PLOT_CONTENT_MARGIN = 2
+IMAGE_FIT_PADDING = 0.02
 
 
 class ImageView(QtWidgets.QWidget):
@@ -76,7 +77,7 @@ class ImageView(QtWidgets.QWidget):
         # repainted together. This is event-driven; cached images are reused.
         native_view.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         layout.addWidget(native_view)
-        self.view_box = ViewBox()
+        self.view_box = NavigationViewBox(self.fit_bounds, fit_padding=IMAGE_FIT_PADDING, constrain_after_zoom=True)
         self.plot = PlotItem(viewBox=self.view_box)
         self.extrema_label = AxisFooterLabel(self.plot)
         self.extrema_label.hide()
@@ -434,7 +435,7 @@ class ImageView(QtWidgets.QWidget):
         """Fit the complete matrix bounds, excluding the infinite profile line."""
         bounds = self.fit_bounds()
         if bounds is not None:
-            self.view_box.setRange(xRange=bounds[0], yRange=bounds[1], padding=0.02)
+            self.view_box.setRange(xRange=bounds[0], yRange=bounds[1], padding=IMAGE_FIT_PADDING)
 
     def set_theme(self, dark: bool) -> None:
         """Set plot background and axis colors for the requested UI theme.

@@ -38,6 +38,20 @@ class OptionalIndexSpinBox(NoWheelSpinBox):
         self.editingFinished.connect(self._finish_edit)
         self.set_empty(True)
 
+    def minimumSizeHint(self) -> QtCore.QSize:
+        """Reserve space for a signed five-digit index even when the editor is blank."""
+        hint = super().minimumSizeHint()
+        metrics = self.fontMetrics()
+        labels = ("-00000", super().textFromValue(self.minimum()), super().textFromValue(self.maximum()))
+        text_width = max(metrics.horizontalAdvance(label) for label in labels)
+        option = QtWidgets.QStyleOptionSpinBox()
+        self.initStyleOption(option)
+        field = self.style().subControlRect(QtWidgets.QStyle.ComplexControl.CC_SpinBox, option,
+                                            QtWidgets.QStyle.SubControl.SC_SpinBoxEditField, self)
+        chrome_width = self.width() - field.width()
+        hint.setWidth(max(hint.width(), text_width + chrome_width + metrics.horizontalAdvance("0")))
+        return hint
+
     def set_empty(self, empty: bool) -> None:
         """Show blank or the retained numeric index without changing its value."""
         self._empty = empty

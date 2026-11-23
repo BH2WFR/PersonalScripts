@@ -107,11 +107,12 @@ class ViewExtrema(QtCore.QObject):
         window.extrema_button.clicked.connect(self.calculate_current)
         for profile in (window.profile_view, window.overlay_profile):
             profile.extrema_button.clicked.connect(partial(self.calculate_profile, profile))
-        window.tabs.currentChanged.connect(self._sync_buttons)
-        self._sync_buttons()
+        self.sync_buttons()
 
-    def _sync_buttons(self) -> None:
-        self.window.extrema_button.setVisible(self.window.tabs.currentIndex() != 2)
+    def sync_buttons(self) -> None:
+        """Enable calculations only for a prepared data view and an idle worker."""
+        ready = any(entry.visible and entry.frame is not None and not entry.document.is_text
+                    for entry in self.window.entries)
         for button, tabs in ((self.window.extrema_button, self.window.tabs),
                              (self.window.profile_view.extrema_button, self.window.profile_view.tabs),
                              (self.window.overlay_profile.extrema_button, self.window.overlay_profile.tabs)):
@@ -119,7 +120,7 @@ class ViewExtrema(QtCore.QObject):
                 # Disabling a focused widget advances through the global tab
                 # chain, which can reveal an offscreen matrix color button.
                 tabs.tabBar().setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
-            button.setEnabled(not self._jobs)
+            button.setEnabled(ready and not self._jobs)
             button.setText("Calculating…" if self._jobs else "Calculate extrema")
 
     def calculate_current(self) -> None:
@@ -174,7 +175,7 @@ class ViewExtrema(QtCore.QObject):
         self._jobs[job.number] = job
         job.signals.done.connect(self._done)
         job.signals.failed.connect(self._failed)
-        self._sync_buttons()
+        self.sync_buttons()
         QtCore.QThreadPool.globalInstance().start(job)
 
     def _done(self, number: int, result: ExtremaResult) -> None:
@@ -188,9 +189,9 @@ class ViewExtrema(QtCore.QObject):
                 target.extrema_label.setText(f"Data max:{result.maximum} min:{result.minimum}")
                 target.extrema_label.setToolTip("Full-resolution current crop; finite value bounds applied. Original infinities retained. Before 3D height/alignment scaling.")
                 target.extrema_label.show()
-        self._sync_buttons()
+        self.sync_buttons()
 
     def _failed(self, number: int, message: str) -> None:
         self._jobs.pop(number)
         self.window.statusBar().showMessage(f"Extrema calculation failed: {message}", 10000)
-        self._sync_buttons()
+        self.sync_buttons()

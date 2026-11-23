@@ -479,6 +479,9 @@ class WorkspaceMenus(QtCore.QObject):
         scale.setEnabled(controller.available(view))
         self._add(scale, "Manual scaling…", partial(controller.show_for, view))
         self._add(scale, "Apply auto scaling", partial(controller.apply_auto, view))
+        if view != FigureView.SURFACE:
+            original = self._add(scale, "Original size (1:1)", partial(controller.original_size, view))
+            original.setToolTip("One physical screen pixel per sample interval. Uses the visible alignment reference in overlays.")
         if view in (FigureView.SIGNAL, FigureView.DERIVATIVE):
             self._add(scale, "Lock Y range (expand only)",
                       partial(controller.set_y_range_lock, not controller.y_range_lock), checked=controller.y_range_lock)
@@ -508,6 +511,17 @@ class WorkspaceMenus(QtCore.QObject):
             reset.setToolTip("Restore this scene axis multiplier to 1; locked X/Y reset together. Keep matrix heights."
                              if view == FigureView.SURFACE else
                              "Fit this axis to displayed data once; keep the other axis range.")
+        scale.addSeparator()
+        limits = controller.navigation
+        for label, attr, tip in (
+            ("Limit zoom out", "zoom_out", "Each axis keeps at least 30 px or half its fitted length, whichever is smaller."),
+            ("Limit panning", "pan", "Allow up to 10 px past each content edge. In 3D, use the projected mesh bounds."),
+        ):
+            action = scale.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(getattr(limits, attr))
+            action.setToolTip(tip)
+            action.toggled.connect(partial(setattr, limits, attr))
 
     def view_menu(self, view: FigureView) -> QtWidgets.QMenu:
         """Offer plot-specific actions without computing hidden derivatives.
@@ -526,9 +540,7 @@ class WorkspaceMenus(QtCore.QObject):
         menu = QtWidgets.QMenu(window)
         menu.addSection("View")
         pane = profile.derivative_pane if view == FigureView.DERIVATIVE else profile.signal_pane
-        reset = (window.image_view.reset_view if view == FigureView.IMAGE else
-                 window.surface_view.reset_view if view == FigureView.SURFACE else pane.view_box.enableAutoRange)
-        self._add(menu, "Fit this view", reset, enabled=ready)
+        self._add(menu, "Fit this view", partial(window.scaling.fit_view, view), enabled=ready)
         self._add(menu, "Fit all views", window._fit_views, enabled=ready)
         menu.addAction(window.keep_same_shape_view)
         active = window._entry()

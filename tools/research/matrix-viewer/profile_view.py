@@ -51,7 +51,7 @@ from .data_model import (DEFAULT_CLIP_COLOR, FloatArray, ImageMember, Limits, Re
                          apply_value_limits, format_sample, normalize_image_alpha)
 from .clipping import ClippedCurve, clip_curve
 from .derivatives import DerivativeResult, differentiate
-from .plot_support import EndpointAxis, RangeNotes, compact_axis, graphics_scene, pyside_graphics_view
+from .plot_support import EndpointAxis, NavigationViewBox, PlotBounds, RangeNotes, compact_axis, graphics_scene, pyside_graphics_view
 from .profile_legend import ProfileLegend
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .value_markers import MarkerStyle, curve_markers
@@ -159,13 +159,27 @@ class ExpandingYRange:
     bounds: tuple[float, float] | None = None
 
 
-class ProfileViewBox(ViewBox):
-    """Pan freely; zoom X with the wheel, or XY with Ctrl/an equal-unit lock."""
+class ProfileViewBox(NavigationViewBox):
+    """Zoom X with the wheel, or XY with Ctrl/an equal-unit lock."""
 
     def __init__(self) -> None:
         self.y_range_lock = ExpandingYRange()
         self._enforcing_y_lock = False
-        super().__init__()
+        super().__init__(self._curve_bounds)
+
+    def _curve_bounds(self) -> PlotBounds | None:
+        """Use cached full curve bounds even when clipToView draws a small subset."""
+        rects = [rect for item in self.addedItems if isinstance(item, pg.PlotDataItem) and item.isVisible()
+                 and (rect := item.dataRect()) is not None
+                 and all(math.isfinite(v) for v in rect.getRect())]
+        if not rects:
+            return None
+        low, high = min(r.top() for r in rects), max(r.bottom() for r in rects)
+        magnitude = max(abs(low), abs(high))
+        if high - low <= magnitude * FLOAT_NOISE_RELATIVE_TOLERANCE:
+            padding = magnitude * CONSTANT_Y_PADDING_FRACTION or ZERO_Y_PADDING
+            low, high = low - padding, high + padding
+        return ((min(r.left() for r in rects), max(r.right() for r in rects)), (low, high))
 
     def enableAutoRange(self, axis: int | str | None = None, enable: bool | float = True,
                         x: bool | float | None = None, y: bool | float | None = None) -> None:
@@ -247,6 +261,7 @@ class ProfileViewBox(ViewBox):
         factor = WHEEL_ZOOM_FACTOR ** (-ev.delta() / 120)
         center = self.mapSceneToView(ev.scenePos())
         self.disableAutoRange()
+        self._resetTarget()
         self.scaleBy(x=factor, y=factor if both else 1.0, center=center)
         ev.accept()
         self.sigRangeChangedManually.emit([True, both])
@@ -518,6 +533,8 @@ class ProfileView(QtWidgets.QWidget):
         self.extrema_button = QtWidgets.QPushButton("Calculate extrema")
         actions_layout.addWidget(self.extrema_button)
         actions_layout.addWidget(VerticalSeparator())
+        self.y_lock_button = QtWidgets.QPushButton("Lock Y range")
+        actions_layout.addWidget(self.y_lock_button)
         fit = QtWidgets.QPushButton("Fit curve")
         fit.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         fit.clicked.connect(self.reset_view)

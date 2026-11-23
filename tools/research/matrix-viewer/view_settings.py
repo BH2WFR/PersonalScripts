@@ -144,11 +144,19 @@ class ViewSettingsDialog(QtWidgets.QDialog):
                 authoritative, so this signal argument is deliberately unused.
         """
         window = self.workspace
-        window.profile_fit_button.setVisible(window._layout_mode == ViewMode.SIGNAL and window.tabs.currentIndex() in (0, 1))
+        signal_tab = window._layout_mode == ViewMode.SIGNAL and window.tabs.currentIndex() in (0, 1)
+        window.profile_fit_button.setVisible(signal_tab)
+        window.profile_y_lock_button.setVisible(signal_tab)
+        spatial_tab = window._layout_mode in (None, ViewMode.MATRIX, ViewMode.POINTS) and window.tabs.currentIndex() in (0, 1)
+        window.spatial_fit_button.setVisible(spatial_tab)
+        if spatial_tab:
+            view = FigureView.SURFACE if window.tabs.currentIndex() == 1 else FigureView.IMAGE
+            window.spatial_fit_button.setEnabled(window.scaling.available(view))
         window.extrema_button.setVisible(window.tabs.currentWidget() is not window.raw_view)
+        if hasattr(window, "view_extrema"):
+            window.view_extrema.sync_buttons()
         window.tab_actions_separator.setVisible(window.tabs.currentWidget() is not window.raw_view)
-        window.color_lock_button.setVisible(window._layout_mode in (ViewMode.MATRIX, ViewMode.POINTS)
-                                            and window.tabs.currentIndex() in (0, 1))
+        window.color_lock_button.setVisible(spatial_tab)
         entry = window._entry()
         ready = self._ready()
         mode = entry.selection.mode if entry is not None else None
@@ -167,8 +175,11 @@ class ViewSettingsDialog(QtWidgets.QDialog):
                 checkbox.setChecked(bool(pane.plot_item.getAxis("bottom").grid))
         with QtCore.QSignalBlocker(self.auto_y):
             self.auto_y.setChecked(window._profile_auto_y)
-        with QtCore.QSignalBlocker(self.y_lock):
-            self.y_lock.setChecked(window.scaling.y_range_lock)
+        for control in (self.y_lock, window.profile_y_lock_button, window.profile_view.y_lock_button,
+                        window.overlay_profile.y_lock_button):
+            with QtCore.QSignalBlocker(control):
+                control.setChecked(window.scaling.y_range_lock)
+            control.setEnabled(ready and mode != ViewMode.POINTS)
         self.auto_y.setEnabled(not window.scaling.y_range_lock)
         with QtCore.QSignalBlocker(self.z_lock):
             self.z_lock.setChecked(window.surface_view.z_range_lock)
