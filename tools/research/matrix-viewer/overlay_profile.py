@@ -3,8 +3,9 @@
 Requirements: numpy, PySide6 and pyqtgraph. Usage: embedded in the workspace;
 uses the ordinary profile's controls, zoom behavior and compact numeric axes.
 Each layer keeps independent nonfinite colors and clipping emphasis.
-Line widths and sample diameters belong to each layer and style its cached
-derivative without invalidating the numerical derivative cache.
+Render snapshots carry shared multi-mode line widths/sample diameters and
+per-channel rendering modes, line patterns, point shapes and colors. All style
+changes reuse numerical derivative caches. Clipping caps remain solid emphasis.
 Hover readouts use one header line for source coordinates and an elided matrix
 name; full readings remain in the tooltip without resizing the plot.
 Derivative omission/jump totals share the header; explanations stay in tooltips.
@@ -20,9 +21,9 @@ from .clipping import clip_curve
 from .data_model import FloatArray, RealArray
 from .derivatives import DerivativeResult, differentiate
 from .profile_view import CurvePane, ProfileView, _compact_sample
-from .workspace import ProfileSeries
+from .workspace import ProfileSeries, RenderLayer
 from .value_markers import curve_markers
-from .render_style import DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE, CurveStyle
+from .render_style import CurveStyle, PointShape
 
 
 class OverlayProfile(ProfileView):
@@ -40,10 +41,13 @@ class OverlayProfile(ProfileView):
         self.title.setText("Overlay")
         self.jump_mode.setToolTip(f"{self.jump_mode.toolTip()}\nSettings apply to the selected matrix only.")
         self.jump_threshold.setToolTip("Jump threshold for the selected matrix only.")
-        self.point_size.setToolTip("Signal/slice and derivative point size for the selected matrix/channel.")
+        self.point_size.setToolTip("Signal/slice and derivative point size for all open matrices/channels in multiple mode.")
         self.point_size.valueChanged.connect(lambda _size: self.settings_changed.emit())
-        self.line_width.setToolTip("Signal/slice and derivative line width for the selected matrix/channel.")
+        self.line_width.setToolTip("Signal/slice and derivative line width for all open matrices/channels in multiple mode.")
         self.line_width.valueChanged.connect(lambda _width: self.settings_changed.emit())
+        for control in (self.style_selector, self.line_style, self.point_shape):
+            control.setToolTip(f"{control.toolTip()}\nApplies only to the selected matrix/channel in multiple mode.")
+            control.currentIndexChanged.connect(lambda _index: self.settings_changed.emit())
 
     def set_series(self, series: tuple[ProfileSeries, ...], reset: bool = False) -> None:
         """Update visible series without calculating derivatives on hidden pages.
@@ -81,10 +85,11 @@ class OverlayProfile(ProfileView):
         self._draw_derivatives()
 
     def _signature(self) -> tuple[object, ...]:
-        return (self.style_selector.currentIndex(), *(
+        return tuple(
             (series.key, series.mapping, series.layer.color, series.layer.clip_color, series.layer.markers,
-             series.layer.profile_point_size, series.layer.profile_line_width, series.label)
-            for series in self._series))
+             series.layer.profile_point_size, series.layer.profile_line_width, series.layer.profile_curve_style,
+             series.layer.profile_line_style, series.layer.profile_point_shape, series.label)
+            for series in self._series)
 
     def _clear_pane(self, pane: CurvePane, index: int) -> None:
         for item in self._items[index]:
@@ -93,14 +98,15 @@ class OverlayProfile(ProfileView):
         pane.curve.hide()
 
     def _curve(self, pane: CurvePane, index: int, x: FloatArray, y: RealArray,
-               color: str, name: str | None = None, *, cap: bool = False,
-               point_size: float = DEFAULT_POINT_SIZE, line_width: float = DEFAULT_LINE_WIDTH) -> None:
-        mode = CurveStyle(self.style_selector.currentIndex())
+               color: str, name: str | None = None, *, layer: RenderLayer, cap: bool = False) -> None:
+        mode, line_width = layer.profile_curve_style, layer.profile_line_width
         points = mode != CurveStyle.LINE or len(x) == 1
         curve = pg.PlotDataItem(x=x, y=y, name=name, connect="finite",
-            pen=pg.mkPen(color, width=max(3, line_width + 2) if cap else line_width) if cap or mode != CurveStyle.POINTS else None,
-            symbol="o" if points else None, symbolSize=point_size,
-            symbolBrush=color, symbolPen=None)
+            pen=pg.mkPen(color, width=max(3, line_width + 2) if cap else line_width,
+                         style=QtCore.Qt.PenStyle.SolidLine if cap else QtCore.Qt.PenStyle(layer.profile_line_style.value))
+                if cap or mode != CurveStyle.POINTS else None,
+            symbol=layer.profile_point_shape.value if points else None, symbolSize=layer.profile_point_size,
+            symbolBrush=color, symbolPen=color if layer.profile_point_shape == PointShape.CROSSHAIR else None)
         pane.plot_item.addItem(curve)
         self._items[index].append(curve)
 
@@ -119,21 +125,20 @@ class OverlayProfile(ProfileView):
                 indices = np.arange(len(series.values), dtype=np.float64)
                 x = series.mapping.array(np.interp(capped.x, indices, series.source_x))
                 y = capped.y
-                self._curve(pane, 0, x, y, series.layer.color, series.label, point_size=series.layer.profile_point_size,
-                            line_width=series.layer.profile_line_width)
+                self._curve(pane, 0, x, y, series.layer.color, series.label, layer=series.layer)
                 cap_x = series.mapping.array(np.interp(capped.cap_x, indices, series.source_x))
                 if series.layer.markers.highlight_clipped:
                     self._curve(pane, 0, cap_x, capped.cap_y, series.layer.clip_color, cap=True,
-                                point_size=series.layer.profile_point_size, line_width=series.layer.profile_line_width)
+                                layer=series.layer)
                     marked = series.clipped & np.isfinite(series.source_x)
                     dots = pg.PlotDataItem(series.mapping.array(series.source_x[marked]), series.shown[marked],
-                                          pen=None, symbol="o", symbolSize=series.layer.profile_point_size, symbolPen=None,
+                                          pen=None, symbol=series.layer.profile_point_shape.value,
+                                          symbolSize=series.layer.profile_point_size, symbolPen=None,
                                           symbolBrush=series.layer.clip_color)
                     pane.plot_item.addItem(dots)
                     self._items[0].append(dots)
             else:
-                self._curve(pane, 0, x, y, series.layer.color, series.label, point_size=series.layer.profile_point_size,
-                            line_width=series.layer.profile_line_width)
+                self._curve(pane, 0, x, y, series.layer.color, series.label, layer=series.layer)
             for group in curve_markers(series.values, series.shown, series.valid, series.layer.markers):
                 coordinates = series.mapping.array(series.source_x[group.indices])
                 finite_x = np.isfinite(coordinates)
@@ -196,7 +201,7 @@ class OverlayProfile(ProfileView):
             x = series.mapping.array(series.source_x)
             y = np.where(result.valid, result.values, np.nan)
             self._curve(pane, 1, x[order], y[order], series.layer.color, series.label,
-                        point_size=series.layer.profile_point_size, line_width=series.layer.profile_line_width)
+                        layer=series.layer)
             markers.append(x[result.undefined_indices])
         points = np.concatenate(markers) if markers else np.empty(0)
         self.undefined_markers.setData(points, np.zeros(len(points)))

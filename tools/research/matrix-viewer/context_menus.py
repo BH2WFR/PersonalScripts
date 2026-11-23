@@ -12,7 +12,9 @@ Color / color range menu groups colormaps, scalar bounds, overlay colors,
 opacity, slice/clipping colors and plot background. Hidden editing targets are
 disabled here to avoid changing an unseen matrix from a displayed plot. Plot
 background remains global. Numeric menu editors ignore the wheel and synchronize
-with their original controls; signal/derivative menus share the 1D point size.
+with their original controls. Signal/derivative menus expose native line
+patterns and point shapes. In multiple mode, sizes are shared and other 1D
+styles target the active channel.
 Every canvas also opens the centralized View settings dialog on its own page.
 1D quick style/color actions remain together in Appearance.
 Scaling groups manual ranges/multipliers, one-shot fitting and equal-unit
@@ -552,11 +554,15 @@ class WorkspaceMenus(QtCore.QObject):
             appearance.setEnabled(appearance_ready)
             appearance.menuAction().setToolTip("Appearance of the active matrix/channel; background applies to all plots.")
             lock = window.appearance_locks[AppearancePage.SIGNAL]
-            self._add(appearance, "Lock appearance across matrices", lock.toggle, checked=lock.isChecked())
+            self._add(appearance, "Lock appearance across matrices", lock.toggle,
+                      checked=lock.isChecked(), enabled=lock.isEnabled())
             appearance.addSeparator()
             self._combo_menu(appearance, "Rendering style", profile.style_selector)
-            self._number_menu(appearance, "Line width", profile.line_width)
-            self._number_menu(appearance, "Point size", profile.point_size)
+            self._combo_menu(appearance, "Line style", profile.line_style)
+            self._combo_menu(appearance, "Point shape", profile.point_shape)
+            shared = " (all matrices)" if window.multiple_matrix_mode.isChecked() else ""
+            self._number_menu(appearance, f"Line width{shared}", profile.line_width)
+            self._number_menu(appearance, f"Point size{shared}", profile.point_size)
             lock = window.appearance_locks[AppearancePage.COLORS]
             self._add(appearance, "Lock colors (single matrix mode)", lock.toggle,
                       checked=lock.isChecked(), enabled=lock.isEnabled())

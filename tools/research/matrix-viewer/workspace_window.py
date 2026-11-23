@@ -93,6 +93,9 @@ settings without overwriting them; unlocking restores the local styles. A
 separate default-on color lock retains line/colormap/value-marker colors only
 in single matrix mode, suspending its snapshot while multiple mode uses local
 colors. Derivative thresholds, data crops and numerical/scaling ranges are excluded.
+In multiple mode, 1D appearance locking is suspended: rendering mode, line
+pattern and point shape remain per-channel, while line width and point size
+always use one shared snapshot, including for hidden entries when activated.
 """
 
 from collections import deque
@@ -139,7 +142,8 @@ from .view_extrema import ViewExtrema
 from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .profile_view import CHANNEL_COLORS, JumpMode
-from .render_style import DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE, ImageStyle, SurfaceStyle
+from .render_style import (DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE,
+                           CurveStyle, ImageStyle, LineStyle, PointShape, SurfaceStyle)
 from .surface_view import ProfileStyle
 from .slice_snapshot import freeze_slice
 from .value_markers import DEFAULT_MARKER_SIZE, MarkerStyle
@@ -156,9 +160,11 @@ SETTINGS: tuple[str, ...] = (
     "crop_x_start", "crop_x_end", "crop_y_start", "crop_y_end",
     "show_nonfinite", "highlight_clipped", "nonfinite_size",
 )
-PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size", "profile_line_width")
+PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size",
+                                    "profile_line_width", "profile_line_style", "profile_point_shape")
+PROFILE_SIZE_SETTINGS: tuple[str, ...] = ("profile_point_size", "profile_line_width")
 APPEARANCE_SETTINGS: dict[AppearancePage, tuple[str, ...]] = {
-    AppearancePage.SIGNAL: ("curve_style", "profile_point_size", "profile_line_width"),
+    AppearancePage.SIGNAL: ("curve_style", "profile_point_size", "profile_line_width", "profile_line_style", "profile_point_shape"),
     AppearancePage.IMAGE: ("image_style", "image_point_size"),
     AppearancePage.SURFACE: ("surface_style", "point_size"),
     AppearancePage.COLORS: ("curve_color", "colormap", "clip_color", "nonfinite_positive_color",
@@ -244,12 +250,14 @@ class WorkspaceWindow(ViewerWindow):
         self.appearance_locks: dict[AppearancePage, QtWidgets.QCheckBox] = {}
         self._locked_appearance: dict[str, Setting] = {}
         self._color_lock_single_mode = True
+        self._shared_profile_sizes: dict[str, Setting] = {}
         super().__init__(max_edge, initial_mode, initial_channel_axis)
         self.overlay_profile = OverlayProfile()
         self.profile_layout.addWidget(self.overlay_profile)
         self.overlay_profile.hide()
         self.overlay_profile.settings_changed.connect(self._profile_settings_changed)
         self._defaults = self._read_settings()
+        self._shared_profile_sizes = {name: self._defaults[name] for name in PROFILE_SIZE_SETTINGS}
         for page, names in APPEARANCE_SETTINGS.items():
             label = ("Lock colors across matrices (single matrix mode)" if page == AppearancePage.COLORS else
                      "Lock value marker appearance across matrices" if page == AppearancePage.MARKERS else
@@ -259,6 +267,9 @@ class WorkspaceWindow(ViewerWindow):
             lock.setToolTip("Keep line color, scalar colormap and value-marker colors across matrices/channels in single matrix mode. "
                             "Multiple matrices always use their own colors. Color range and native RGB channel colors are unchanged."
                             if page == AppearancePage.COLORS else
+                            "Keep 1D rendering, line pattern, point shape and sizes across matrices in single mode. "
+                            "Multiple mode always shares line width/point size; other styles belong to the selected matrix/channel."
+                            if page == AppearancePage.SIGNAL else
                             "Keep rendering styles and sizes when switching matrices/channels. Ranges and data settings are excluded. "
                             "Unlock to restore saved per-matrix appearance. Colors and shared value markers have separate locks.")
             self.appearance_locks[page] = lock
@@ -530,8 +541,12 @@ class WorkspaceWindow(ViewerWindow):
         self._switch_view = None
         self._last_single_view = None
         self._store_entry()
+        if multiple:
+            settings = self._read_profile_settings()
+            self._shared_profile_sizes.update({name: settings[name] for name in PROFILE_SIZE_SETTINGS})
         self._color_lock_single_mode = not multiple
         self.appearance_locks[AppearancePage.COLORS].setEnabled(not multiple)
+        self.appearance_locks[AppearancePage.SIGNAL].setEnabled(not multiple)
         entry = self._entry()
         if entry is not None:
             self._restoring = True
@@ -607,11 +622,14 @@ class WorkspaceWindow(ViewerWindow):
                 "curve_style": profile.style_selector.currentIndex(),
                 "profile_point_size": profile.point_size.value(),
                 "profile_line_width": profile.line_width.value(),
+                "profile_line_style": int(profile.line_style.currentData()),
+                "profile_point_shape": str(profile.point_shape.currentData()),
                 "curve_color": self.profile_view.color.name()}
 
     def _appearance_lock_enabled(self, page: AppearancePage) -> bool:
-        """Suspend color sharing in multiple mode without losing its snapshot."""
-        return self.appearance_locks[page].isChecked() and (page != AppearancePage.COLORS or self._color_lock_single_mode)
+        """Suspend color/1D-style sharing in multiple mode; sizes stay shared."""
+        return self.appearance_locks[page].isChecked() and (
+            page not in (AppearancePage.COLORS, AppearancePage.SIGNAL) or self._color_lock_single_mode)
 
     def _remember_locked_appearance(self) -> None:
         """Capture live view styles without overwriting per-matrix settings."""
@@ -619,6 +637,8 @@ class WorkspaceWindow(ViewerWindow):
             return
         settings = self._read_settings()
         settings.update(self._read_profile_settings())
+        if not self._color_lock_single_mode:
+            self._shared_profile_sizes.update({name: settings[name] for name in PROFILE_SIZE_SETTINGS})
         for page, names in APPEARANCE_SETTINGS.items():
             if self._appearance_lock_enabled(page):
                 self._locked_appearance.update({name: settings[name] for name in names})
@@ -629,6 +649,8 @@ class WorkspaceWindow(ViewerWindow):
         for page, names in APPEARANCE_SETTINGS.items():
             if self._appearance_lock_enabled(page):
                 settings.update({name: self._locked_appearance[name] for name in names})
+        if not self._color_lock_single_mode:
+            settings.update(self._shared_profile_sizes)
         return settings
 
     def _appearance_lock_changed(self, page: AppearancePage, enabled: bool) -> None:
@@ -659,6 +681,8 @@ class WorkspaceWindow(ViewerWindow):
         """Retain unsaved controls while excluding shared/toggled appearance keys."""
         excluded = {name for group, names in APPEARANCE_SETTINGS.items()
                     if group == page or self._appearance_lock_enabled(group) for name in names}
+        if not self._color_lock_single_mode:
+            excluded.update(PROFILE_SIZE_SETTINGS)
         entry.settings.update({name: value for name, value in settings.items() if name not in excluded})
 
     def _store_visible_profile_settings(self) -> None:
@@ -668,7 +692,7 @@ class WorkspaceWindow(ViewerWindow):
             shown = next((member for member in self.entries if member.visible), None)
             if shown is not None and self._last_single_view is not None and shown.uid == self._last_single_view[0]:
                 profile = self._read_profile_settings()
-                if self.appearance_locks[AppearancePage.SIGNAL].isChecked():
+                if self._appearance_lock_enabled(AppearancePage.SIGNAL):
                     profile = {key: value for key, value in profile.items() if key not in APPEARANCE_SETTINGS[AppearancePage.SIGNAL]}
                 if self._appearance_lock_enabled(AppearancePage.COLORS):
                     profile.pop("curve_color", None)
@@ -706,6 +730,8 @@ class WorkspaceWindow(ViewerWindow):
         for page, names in APPEARANCE_SETTINGS.items():
             if self._appearance_lock_enabled(page):
                 settings.update({name: entry.settings.get(name, self._defaults[name]) for name in names})
+        if not self._color_lock_single_mode:
+            settings.update({name: entry.settings.get(name, self._defaults[name]) for name in PROFILE_SIZE_SETTINGS})
         entry.settings = settings
         entry.crop = self._crop
         try:
@@ -776,12 +802,15 @@ class WorkspaceWindow(ViewerWindow):
             previous_jump = (profile.jump_mode.currentIndex(), profile.jump_threshold.value())
             with (QtCore.QSignalBlocker(profile.jump_mode), QtCore.QSignalBlocker(profile.jump_threshold),
                   QtCore.QSignalBlocker(profile.style_selector), QtCore.QSignalBlocker(profile.point_size),
-                  QtCore.QSignalBlocker(profile.line_width)):
+                  QtCore.QSignalBlocker(profile.line_width), QtCore.QSignalBlocker(profile.line_style),
+                  QtCore.QSignalBlocker(profile.point_shape)):
                 profile.jump_mode.setCurrentIndex(int(entry.settings.get("jump_mode", JumpMode.GAPS_ONLY)))
                 profile.jump_threshold.setValue(float(entry.settings.get("jump_threshold", 1.0)))
                 profile.style_selector.setCurrentIndex(int(entry.settings.get("curve_style", 0)))
                 profile.point_size.setValue(float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE)))
                 profile.line_width.setValue(float(entry.settings.get("profile_line_width", DEFAULT_LINE_WIDTH)))
+                profile.line_style.setCurrentIndex(profile.line_style.findData(int(entry.settings.get("profile_line_style", LineStyle.SOLID.value))))
+                profile.point_shape.setCurrentIndex(profile.point_shape.findData(str(entry.settings.get("profile_point_shape", PointShape.CIRCLE.value))))
                 profile.sync_jump_controls()
             if profile is self.profile_view and previous_jump != (profile.jump_mode.currentIndex(), profile.jump_threshold.value()):
                 profile._invalidate_derivative()
@@ -2178,7 +2207,10 @@ class WorkspaceWindow(ViewerWindow):
                 image_point_size=float(entry.settings.get("image_point_size", DEFAULT_POINT_SIZE)),
                 surface_style=SurfaceStyle(str(entry.settings.get("surface_style", SurfaceStyle.SURFACE))),
                 profile_point_size=float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE)),
-                profile_line_width=float(entry.settings.get("profile_line_width", DEFAULT_LINE_WIDTH))))
+                profile_line_width=float(entry.settings.get("profile_line_width", DEFAULT_LINE_WIDTH)),
+                profile_curve_style=CurveStyle(int(entry.settings.get("curve_style", CurveStyle.LINE))),
+                profile_line_style=LineStyle(int(entry.settings.get("profile_line_style", LineStyle.SOLID))),
+                profile_point_shape=PointShape(str(entry.settings.get("profile_point_shape", PointShape.CIRCLE)))))
         return tuple(layers)
 
     def _render_workspace(self, reset: bool = False) -> None:
@@ -2401,11 +2433,10 @@ class WorkspaceWindow(ViewerWindow):
                                     name=label, alignment=alignment, preserve_complex=preserve_complex)
             limits = Limits() if preserve_complex else frame.value_limits
             settings = self._defaults.copy()
-            settings.update(entry.settings)
+            settings.update(self._effective_settings(entry))
             settings.update({"filter_low": "" if limits.lower is None else str(limits.lower),
                              "filter_high": "" if limits.upper is None else str(limits.upper),
                              "filter_mode": limits.mode.value, "curve_color": color,
-                             "curve_style": profile.style_selector.currentIndex(),
                              "crop_x_start": 0, "crop_x_end": len(values) - 1,
                              "crop_y_start": 0, "crop_y_end": 0})
             staged.append((document, name, settings, color, limits))

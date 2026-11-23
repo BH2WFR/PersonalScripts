@@ -80,8 +80,10 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         for checkbox in (self.signal_grid, self.derivative_grid, self.y_lock, self.auto_y):
             axes_layout.addWidget(checkbox)
         self.scaling_buttons: dict[FigureView, QtWidgets.QPushButton] = {}
+        self.profile_scope = QtWidgets.QLabel("Multiple matrices: line width and point size apply to all. Rendering, line style, point shape and color apply to the active matrix/channel.")
+        self.profile_scope.setWordWrap(True)
         self._page("1D", window.appearance_locks[AppearancePage.SIGNAL],
-                   self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)
+                   self.profile_scope, self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)
         self._page("2D", window.appearance_locks[AppearancePage.IMAGE], self._scaling_group(FigureView.IMAGE), window.image_controls)
         self.z_lock = QtWidgets.QCheckBox("Lock Z range (expand only)")
         self.z_lock.setToolTip("3D geometry only; independent of the shared 2D/3D color range lock.")
@@ -158,6 +160,7 @@ class ViewSettingsDialog(QtWidgets.QDialog):
             button.setEnabled(window.scaling.available(view))
         self.source.setText(f"Editing: {window._channel_label(entry)}" if entry else "No matrix selected")
         self.profile_stack.setCurrentIndex(int(window._profile_uses_overlay))
+        self.profile_scope.setVisible(window.multiple_matrix_mode.isChecked())
         profile = window.overlay_profile if window._profile_uses_overlay else window.profile_view
         for checkbox, pane in ((self.signal_grid, profile.signal_pane), (self.derivative_grid, profile.derivative_pane)):
             with QtCore.QSignalBlocker(checkbox):

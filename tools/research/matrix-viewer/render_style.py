@@ -31,6 +31,51 @@ class CurveStyle(IntEnum):
         return {CurveStyle.LINE: "Line", CurveStyle.POINTS: "Points", CurveStyle.BOTH: "Line + points"}[self]
 
 
+class LineStyle(IntEnum):
+    """Qt's built-in visible pen patterns; values match Qt.PenStyle."""
+
+    SOLID = 1
+    DASH = 2
+    DOT = 3
+    DASH_DOT = 4
+    DASH_DOT_DOT = 5
+
+    @property
+    def label(self) -> str:
+        """Return the user-facing pen pattern name."""
+        return {LineStyle.SOLID: "Solid", LineStyle.DASH: "Dashed", LineStyle.DOT: "Dotted",
+                LineStyle.DASH_DOT: "Dash-dot", LineStyle.DASH_DOT_DOT: "Dash-dot-dot"}[self]
+
+
+class PointShape(StrEnum):
+    """All built-in pyqtgraph scatter symbols, using stable library keys."""
+
+    CIRCLE = "o"
+    SQUARE = "s"
+    DIAMOND = "d"
+    TRIANGLE_UP = "t1"
+    TRIANGLE_DOWN = "t"
+    TRIANGLE_RIGHT = "t2"
+    TRIANGLE_LEFT = "t3"
+    PLUS = "+"
+    CROSS = "x"
+    PENTAGON = "p"
+    HEXAGON = "h"
+    STAR = "star"
+    VERTICAL_BAR = "|"
+    HORIZONTAL_BAR = "_"
+    ARROW_UP = "arrow_up"
+    ARROW_RIGHT = "arrow_right"
+    ARROW_DOWN = "arrow_down"
+    ARROW_LEFT = "arrow_left"
+    CROSSHAIR = "crosshair"
+
+    @property
+    def label(self) -> str:
+        """Return a readable symbol name without exposing library keys."""
+        return self.name.replace("_", " ").capitalize()
+
+
 class ImageStyle(StrEnum):
     """Render a matrix as filled pixels or discrete sample centers."""
 
