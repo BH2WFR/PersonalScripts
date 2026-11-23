@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from time import monotonic
 from typing import Protocol
 
 from utils import ConfigStore
@@ -44,6 +45,15 @@ class LeftKeyMode(StrEnum):
         return "Left key: Caps Lock (default)" if self is LeftKeyMode.NATIVE else f"Left key: Layer ({self.value})"
 
 
+@dataclass(frozen=True)
+class KeyRepeat:
+    """A backend's repeat event and its system delay and interval in seconds."""
+
+    delay: float
+    interval: float
+    send: Callable[[], None]
+
+
 class Output(Protocol):
     mac: bool
     mode: LeftKeyMode
@@ -51,7 +61,8 @@ class Output(Protocol):
     def target(self) -> int: ...
     def locks(self) -> dict[str, bool]: ...
     def hold(self, name: str, down: bool) -> None: ...
-    def key(self, name: str, modifiers: list[str]) -> None: ...
+    def key_down(self, name: str, modifiers: list[str]) -> KeyRepeat | None: ...
+    def key_up(self) -> None: ...
     def language(self) -> None: ...
     def reset(self) -> None: ...
 
@@ -148,15 +159,17 @@ class KeyboardState:
         self.reset()
         return True
 
-    def send_key(self, name: str) -> None:
+    def press_key(self, name: str) -> KeyRepeat | None:
         if name == "Layer":
             name = "CapsLock"
         if name in NUMPAD_NAVIGATION and not self.output.locks()["NumLock"]:
             name = NUMPAD_NAVIGATION[name][0]
-        self.output.key(name, self.modifiers())
+        return self.output.key_down(name, self.modifiers())
 
     def press(self, name: str) -> None:
         self.check_target()
+        if self.pressed is not None:
+            self.release()
         self.cancel()
         if not self.target:
             return
@@ -175,17 +188,24 @@ class KeyboardState:
                 self.held.remove(name)
                 self.locked.discard(name)
         else:
-            self.send_key(name)
-            if name not in {"Layer", "CapsLock", "ScrollLock", "NumLock"}:
-                self.schedule(450, lambda: self.repeat(name))
-            else:
+            repeat = self.press_key(name)
+            if repeat is not None:
+                self.schedule_repeat(name, repeat, monotonic() + repeat.delay)
+            if name in {"Layer", "CapsLock", "ScrollLock", "NumLock"}:
                 self.lock_states = self.output.locks()
         self.refresh()
 
-    def repeat(self, name: str) -> None:
-        if not self.check_target() and self.pressed == name:
-            self.send_key(name)
-            self.schedule(45, lambda: self.repeat(name))
+    def schedule_repeat(self, name: str, repeat: KeyRepeat, deadline: float) -> None:
+        """Follow the system cadence without accumulating dispatch time or replaying missed events."""
+        def fire() -> None:
+            if self.pressed != name or self.check_target():
+                return
+            repeat.send()
+            now = monotonic()
+            following = deadline + repeat.interval
+            self.schedule_repeat(name, repeat, following if following > now else now + repeat.interval)
+
+        self.schedule(max(1, round((deadline - monotonic()) * 1000)), fire)
 
     def lock(self, name: str) -> None:
         if self.pressed == name and name in self.held:
@@ -196,6 +216,8 @@ class KeyboardState:
         self.cancel()
         name, self.pressed = self.pressed, None
         if name and not self.check_target() and not self.sticky(name):
+            if name != "language":
+                self.output.key_up()
             for held in reversed(self.held.copy()):
                 if held not in self.locked:
                     self.output.hold(held, False)

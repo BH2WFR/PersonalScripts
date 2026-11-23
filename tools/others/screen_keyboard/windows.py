@@ -7,7 +7,7 @@ from functools import cache
 from utils import Keyboard, ScanCodePrefix
 from utils.windows_input import EXTENDED, KEYUP, SCANCODE, InputPacket, WindowsInput, keyboard_packet
 from .layout import NUMPAD_NAVIGATION
-from .state import LeftKeyMode
+from .state import KeyRepeat, LeftKeyMode
 
 ALIASES = {
     "CapsLock": "caps_lock", "NumLock": "num_lock", "ScrollLock": "scroll_lock",
@@ -19,6 +19,15 @@ ALIASES = {
 # With NumLock off Windows translates the same physical keypad positions to navigation keys.
 ALIASES.update({nav: ALIASES[key] for key, (nav, _) in NUMPAD_NAVIGATION.items()})
 LOCK_CODES = {"CapsLock": 0x14, "NumLock": 0x90, "ScrollLock": 0x91}
+SPI_GETKEYBOARDSPEED = 0x000A
+SPI_GETKEYBOARDDELAY = 0x0016
+SPI_GETFILTERKEYS = 0x0032
+FKF_FILTERKEYSON = 0x0001
+
+
+class _FilterKeys(C.Structure):
+    _fields_ = [("size", W.UINT), ("flags", W.DWORD), ("wait", W.DWORD),
+                ("delay", W.DWORD), ("interval", W.DWORD), ("bounce", W.DWORD)]
 
 
 @cache
@@ -50,8 +59,11 @@ class WindowsOutput(WindowsInput):
         self.api.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
         self.api.GetKeyboardLayout.argtypes = [W.DWORD]
         self.api.GetKeyboardLayout.restype = W.HANDLE
+        self.api.SystemParametersInfoW.argtypes = [W.UINT, W.UINT, C.c_void_p, W.UINT]
+        self.api.SystemParametersInfoW.restype = W.BOOL
         self.mode = LeftKeyMode.NATIVE
         self.owned: list[str] = []
+        self.chord: list[str] = []
 
     def target(self) -> int:
         return self.api.GetForegroundWindow() or 0
@@ -73,38 +85,75 @@ class WindowsOutput(WindowsInput):
             self.send_packets([packet(key, False)])
             self.owned.remove(key)
 
-    def key(self, name: str, modifiers: list[str]) -> None:
-        if self.mode is not LeftKeyMode.NATIVE:
-            if name not in self.owned:
-                self.send_packets([packet(name, True), packet(name, False)])
-            return
+    def repeat_timing(self) -> tuple[float, float] | None:
+        """Return the configured repeat delay and interval in seconds."""
+        query = self.api.SystemParametersInfoW
+        filters = _FilterKeys(size=C.sizeof(_FilterKeys))
+        if not query(SPI_GETFILTERKEYS, filters.size, C.byref(filters), 0):
+            raise C.WinError(C.get_last_error())
+        if filters.flags & FKF_FILTERKEYSON:
+            return (filters.delay / 1000, filters.interval / 1000) if filters.interval else None
+        delay, speed = W.UINT(), W.DWORD()
+        if not (query(SPI_GETKEYBOARDDELAY, 0, C.byref(delay), 0)
+                and query(SPI_GETKEYBOARDSPEED, 0, C.byref(speed), 0)):
+            raise C.WinError(C.get_last_error())
+        # Win32 specifies a speed range from roughly 2.5 to 30 repeats per second.
+        return (delay.value + 1) * .25, 1 / (2.5 + (30 - 2.5) * speed.value / 31)
+
+    def key_down(self, name: str, modifiers: list[str]) -> KeyRepeat | None:
+        """Hold the scan code and any one-shot modifiers until pointer release."""
+        if name in self.owned:
+            return None
         press = []
-        for modifier in modifiers:
-            vk = Keyboard.windows_virtual_key(ALIASES.get(modifier, modifier))
-            if vk is not None and self.api.GetAsyncKeyState(vk) >= 0:
-                press.append(modifier)
-        packets = [packet(key, True) for key in press]
-        packets.extend((packet(name, True), packet(name, False)))
-        if set(press).intersection({"LWin", "RWin", "LAlt", "RAlt"}):
+        if self.mode is LeftKeyMode.NATIVE:
+            for modifier in modifiers:
+                vk = Keyboard.windows_virtual_key(ALIASES.get(modifier, modifier))
+                if vk is not None and self.api.GetAsyncKeyState(vk) >= 0:
+                    press.append(modifier)
+        press.append(name)
+        self.send_packets([packet(key, True) for key in press])
+        self.chord = press
+        if name in LOCK_CODES:
+            return None
+        timing = self.repeat_timing()
+        if timing is None:
+            return None
+        delay, interval = timing
+        return KeyRepeat(delay, interval, lambda: self.send_packets([packet(name, True)]))
+
+    def key_up(self) -> None:
+        if not self.chord:
+            return
+        modifiers = self.chord[:-1]
+        packets = [packet(self.chord[-1], False)]
+        if set(modifiers).intersection({"LWin", "RWin", "LAlt", "RAlt"}):
             packets.extend(keyboard_packet(0, flag, 0xE8) for flag in (0, KEYUP))
-        packets.extend(packet(key, False) for key in reversed(press))
+        packets.extend(packet(key, False) for key in reversed(modifiers))
         self.send_packets(packets)
+        self.chord.clear()
 
     def language(self) -> None:
         if self.mode is not LeftKeyMode.NATIVE:
-            self.key(self.mode.value, [])
+            self.key_down(self.mode.value, [])
+            self.key_up()
             return
         thread = self.api.GetWindowThreadProcessId(self.target(), None)
         lang = self.api.GetKeyboardLayout(thread) & 0x3FF
         if lang == 4:
-            self.key("Space", ["LControl"])
+            self.key_down("Space", ["LControl"])
+            self.key_up()
         elif lang == 0x11:
-            self.key("`", ["LAlt"])
+            self.key_down("`", ["LAlt"])
+            self.key_up()
         elif lang == 0x12:
             self.send_packets([keyboard_packet(0, flags, 0x15) for flags in (0, KEYUP)])
 
     def reset(self) -> None:
         errors = []
+        try:
+            self.key_up()
+        except RuntimeError as exc:
+            errors.append(str(exc))
         for key in reversed(self.owned.copy()):
             try:
                 self.send_packets([packet(key, False)])

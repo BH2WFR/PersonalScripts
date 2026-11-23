@@ -13,7 +13,7 @@ def frontmost_target() -> int:
 
 
 def post_key(code: int, down: bool, flags: int | None, tap: int | None = None, *,
-             modifier: bool = False, text: str = "") -> None:
+             modifier: bool = False, text: str = "", repeat: bool = False) -> None:
     """Post one Quartz event. Use the default tap for session input and None for native flags."""
     import Quartz as Q  # pyright: ignore[reportMissingImports]
 
@@ -27,6 +27,8 @@ def post_key(code: int, down: bool, flags: int | None, tap: int | None = None, *
         Q.CGEventSetType(event, Q.kCGEventKeyDown if down else Q.kCGEventKeyUp)
     if flags is not None:
         Q.CGEventSetFlags(event, flags)
+    if repeat:
+        Q.CGEventSetIntegerValueField(event, Q.kCGKeyboardEventAutorepeat, 1)
     if text:
         Q.CGEventKeyboardSetUnicodeString(event, len(text.encode("utf-16-le")) // 2, text)
     Q.CGEventPost(Q.kCGSessionEventTap if tap is None else tap, event)

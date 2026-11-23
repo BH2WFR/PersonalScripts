@@ -1,14 +1,22 @@
 """Session-level Mac input and Karabiner's primary/secondary HID route."""
 
+from collections.abc import Callable
 from functools import cache
+from math import isfinite
 import time
+from typing import Any, cast
 
-import Quartz as Q  # pyright: ignore[reportMissingImports]
+import AppKit  # pyright: ignore[reportMissingImports]
+import Quartz  # pyright: ignore[reportMissingImports]
 
 from utils import Keyboard
 from utils.macos_input import frontmost_target, post_key as post
 from .input_sources import switch_input_source
-from .state import LeftKeyMode
+from .state import KeyRepeat, LeftKeyMode
+
+# PyObjC supplies these framework members dynamically.
+A = cast(Any, AppKit)
+Q = cast(Any, Quartz)
 
 # Key code, generic flag and side flag from IOLLEvent.h.
 DIRECT = {
@@ -19,6 +27,7 @@ DIRECT = {
 }
 ADAPTED = {**DIRECT, "LControl": DIRECT["Fn"], "RAlt": DIRECT["RControl"], "Fn": (110, 0, 0)}
 CAPS_KEYCODE = 57
+LANGUAGE_F18_DELAY_MS = 80
 ALIASES = {"PgUp": "page_up", "PgDn": "page_down", "Insert": "help", "Application": "menu",
            "NumpadDiv": "kp/", "NumpadMult": "kp*", "NumpadSub": "kp-", "NumpadAdd": "kp+",
            "NumpadEnter": "kp_enter", "NumpadDot": ".", "NumpadDel": "delete", "NumpadIns": "help",
@@ -40,10 +49,12 @@ def keycode(name: str) -> int:
 class MacOutput:
     mac = True
 
-    def __init__(self) -> None:
+    def __init__(self, call_later: Callable[[int, Callable[[], None]], object]) -> None:
+        self.call_later = call_later
         self.mode = LeftKeyMode.NATIVE
         self.numeric = True
         self.held: list[str] = []
+        self.pressed_key: tuple[int, int, int] | None = None
         self.previous_source: str | None = None
 
     def target(self) -> int:
@@ -79,14 +90,15 @@ class MacOutput:
             post(code, down, self.flags(held), self.tap, modifier=bool(generic))
         self.held = held
 
-    def key(self, name: str, modifiers: list[str]) -> None:
+    def key_down(self, name: str, modifiers: list[str]) -> KeyRepeat | None:
+        """Press the resolved key and supply AppKit's cadence for Quartz autorepeat events."""
         if "Layer" in self.held and name == self.mode.value:
-            return
+            return None
         if name == "NumLock":
             self.numeric = not self.numeric
-            return
+            return None
         if name == "NumpadClear":
-            return  # Centre keypad position has no navigation output on macOS.
+            return None  # Centre keypad position has no navigation output on macOS.
         if not Q.CGPreflightPostEventAccess():
             raise RuntimeError("Allow Accessibility access for this application in System Settings.")
         if name == "CapsLock":
@@ -95,7 +107,7 @@ class MacOutput:
                 time.sleep(0.2)
             finally:
                 post(CAPS_KEYCODE, False, None, Q.kCGSessionEventTap)
-            return
+            return None
         direct = name.startswith("Numpad") or name in {"Screenshot", "Application", "F13"}
         tap = Q.kCGSessionEventTap if direct else self.tap
         flags = Q.CGEventSourceFlagsState(0) if direct else self.flags(modifiers)
@@ -106,13 +118,39 @@ class MacOutput:
         if ALIASES.get(name, "").startswith("kp"):
             flags |= Q.kCGEventFlagMaskNumericPad
         post(code, True, flags, tap)
-        post(code, False, flags, tap)
+        self.pressed_key = code, flags, tap
+
+        # Karabiner holds this key on its virtual HID keyboard; macOS generates its repeats.
+        if tap == Q.kCGHIDEventTap:
+            return None
+        delay, interval = A.NSEvent.keyRepeatDelay(), A.NSEvent.keyRepeatInterval()
+        if not (isfinite(delay) and isfinite(interval) and delay >= 0 and interval > 0):
+            return None
+        return KeyRepeat(delay, interval, lambda: post(code, True, flags, tap, repeat=True))
+
+    def key_up(self) -> None:
+        if self.pressed_key is not None:
+            code, flags, tap = self.pressed_key
+            post(code, False, flags, tap)
+            self.pressed_key = None
 
     def language(self) -> None:
-        self.previous_source = switch_input_source(self.previous_source)
+        self.previous_source, pid = switch_input_source(self.previous_source)
+
+        def tap_f18() -> None:
+            if self.target() == pid:
+                code = keycode("F18")
+                post(code, True, 0)
+                post(code, False, 0)
+
+        self.call_later(LANGUAGE_F18_DELAY_MS, tap_f18)
 
     def reset(self) -> None:
         errors = []
+        try:
+            self.key_up()
+        except Exception as exc:
+            errors.append(str(exc))
         for key in reversed(self.held.copy()):
             try:
                 self.hold(key, False)

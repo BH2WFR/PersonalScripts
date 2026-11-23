@@ -4,8 +4,14 @@ from contextlib import contextmanager
 from collections.abc import Iterable, Iterator, Mapping
 import ctypes as c
 import importlib
+import plistlib
 import time
-from typing import Any
+from typing import Any, cast
+
+import CoreFoundation  # pyright: ignore[reportMissingImports]
+import objc  # pyright: ignore[reportMissingImports]
+
+from utils.macos_input import frontmost_target
 
 _TIS = c.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
 _CF = c.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
@@ -24,6 +30,17 @@ for library, name, result, arguments in (
 ):
     function = getattr(library, name)
     function.restype, function.argtypes = result, arguments
+
+# The Input menu asks the target's Text Services Manager to perform the switch.
+# These two entry points are private and may be absent on other macOS versions.
+# Protocol reference: https://github.com/laishulu/macism/blob/master/TSMUtils.swift
+_tsm: dict[str, Any] = {}
+objc.loadBundleFunctions(None, _tsm, [
+    ('CFMessagePortCreatePerProcessRemote', b'^{__CFMessagePort=}^{__CFAllocator=}^{__CFString=}i', '',
+     {'retval': {'already_cfretained': True}}),
+    ('_CreateFlattenedInputSource', b'B^vo^@', '', {'arguments': {1: {'already_cfretained': True}}}),
+], skip_undefined=True)
+_TSM_SELECT_INPUT_SOURCE = 7
 
 
 def _constant(name: str) -> int | None:
@@ -73,13 +90,46 @@ def _enabled_sources() -> Iterator[dict[str, int]]:
         _CF.CFRelease(array)
 
 
-def _select(source_id: str, source: int) -> None:
+def _select_in_target(source: int, pid: int) -> bool:
+    """Ask the frontmost text client to activate the source, keeping keyboard focus there."""
+    remote = _tsm.get('CFMessagePortCreatePerProcessRemote')
+    flatten = _tsm.get('_CreateFlattenedInputSource')
+    if remote is None or flatten is None:
+        return False
+    port = remote(None, 'com.apple.tsm.portname', pid)
+    if port is None:
+        return False
+    ok, flat = flatten(source, None)
+    if not ok or flat is None:
+        return False
+    cf = cast(Any, CoreFoundation)
+    request, error = cf.CFPropertyListCreateData(None, {'tsmInputSourceSelectedInpSrcKey': flat},
+                                                  cf.kCFPropertyListXMLFormat_v1_0, 0, None)
+    if request is None:
+        raise RuntimeError(f'Could not encode input source: {error}')
+    status, reply = cf.CFMessagePortSendRequest(port, _TSM_SELECT_INPUT_SOURCE, request, .3, .3,
+                                                cf.kCFRunLoopDefaultMode, None)
+    if status != cf.kCFMessagePortSuccess:
+        raise RuntimeError(f'The text client did not acknowledge the input source switch ({status}).')
+    if reply:
+        error_code = plistlib.loads(bytes(reply)).get('tsmInputModeReplyToServerErrorKey', 0)
+        if error_code:
+            raise RuntimeError(f'The text client rejected the input source switch ({error_code}).')
+    return True
+
+
+def _select(source_id: str, source: int) -> int:
+    pid = frontmost_target()
+    if not pid:
+        raise RuntimeError('No foreground application to switch input sources.')
+    if _select_in_target(source, pid):
+        return pid
     status = _TIS.TISSelectInputSource(source)
     if status:
         raise RuntimeError(f'Input source switch failed ({status}).')
     for _ in range(20):
         if current_input_source() == source_id:
-            return
+            return pid
         time.sleep(.01)
     raise RuntimeError('Input source did not change.')
 
@@ -98,12 +148,12 @@ def choose_input_source(current: str, enabled: Iterable[str], previous: str | No
     raise RuntimeError('No other enabled keyboard input source.')
 
 
-def switch_input_source(previous: str | None = None) -> str:
-    """Select the previous source; return the old ID for the next toggle."""
+def switch_input_source(previous: str | None = None) -> tuple[str, int]:
+    """Switch sources and return the old source ID and the target application's PID."""
     F: Any = importlib.import_module('Foundation')
     preferences = F.NSUserDefaults.standardUserDefaults().persistentDomainForName_('com.apple.HIToolbox') or {}
     current = current_input_source()
     with _enabled_sources() as sources:
         target = choose_input_source(current, sources, previous, preferences.get('AppleInputSourceHistory', []))
-        _select(target, sources[target])
-    return current
+        pid = _select(target, sources[target])
+    return current, pid

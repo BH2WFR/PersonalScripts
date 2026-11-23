@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -282,19 +282,78 @@ class WindowTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "darwin", "Cocoa panel")
 class CocoaWindowTests(unittest.TestCase):
+    def test_globe_tap_delivers_delayed_f18_to_the_same_app(self) -> None:
+        from tools.others.screen_keyboard import macos
+        from tools.others.screen_keyboard.mac_ui import A, F, PanelController, create_panel
+        from tools.others.screen_keyboard.state import LeftKeyMode
+        from utils import ConfigStore
+
+        with (patch.object(ConfigStore, "load", return_value={}),
+              patch.object(macos, "frontmost_target", return_value=123) as frontmost,
+              patch.object(macos, "switch_input_source") as switch,
+              patch.object(macos, "post") as post):
+            A.NSApplication.sharedApplication()
+            panel = create_panel()
+            self.addCleanup(panel.close)
+            controller = PanelController.alloc().init()
+            controller.setup(panel, LeftKeyMode.CAPS)
+            globe = controller.buttons["language"]
+            switch.side_effect = [("English", 123), ("Chinese", 123), ("English", 123)]
+            for old_source in (None, "English"):
+                post.reset_mock()
+                globe.performClick_(None)
+                switch.assert_called_with(old_source)
+                post.assert_not_called()
+                F.NSRunLoop.mainRunLoop().runUntilDate_(F.NSDate.dateWithTimeIntervalSinceNow_(.15))
+                self.assertEqual(post.call_args_list, [call(79, True, 0), call(79, False, 0)])
+
+            post.reset_mock()
+            globe.performClick_(None)
+            frontmost.return_value = 456
+            F.NSRunLoop.mainRunLoop().runUntilDate_(F.NSDate.dateWithTimeIntervalSinceNow_(.15))
+            post.assert_not_called()
+
+    def test_panel_blocks_zoom_and_edge_fill(self) -> None:
+        from tools.others.screen_keyboard.mac_ui import A, F, PanelController, create_panel
+
+        A.NSApplication.sharedApplication()
+        panel = create_panel()
+        self.addCleanup(panel.close)
+        controller = PanelController.alloc().init()
+        panel.setDelegate_(controller)
+        self.addCleanup(panel.setDelegate_, None)
+        before = panel.frame()
+        zoom = panel.standardWindowButton_(A.NSWindowZoomButton)
+        self.assertFalse(zoom.isEnabled())
+        self.assertTrue(panel.collectionBehavior() & A.NSWindowCollectionBehaviorFullScreenDisallowsTiling)
+        zoom.performClick_(None)
+        panel.performZoom_(None)
+        self.assertEqual(panel.frame(), before)
+
+        available = A.NSScreen.mainScreen().visibleFrame().size
+        resize = controller.windowWillResize_toSize_
+        self.assertEqual(resize(panel, available), before.size)
+        with (patch.object(panel, "inLiveResize", return_value=True),
+              patch.object(panel, "screen", return_value=A.NSScreen.mainScreen())):
+            self.assertEqual(resize(panel, F.NSMakeSize(550, 250)), (550, 250))
+            self.assertEqual(resize(panel, F.NSMakeSize(available.width, 250)), (before.size.width, 250))
+            self.assertEqual(resize(panel, F.NSMakeSize(550, available.height)), (550, before.size.height))
+
     def test_globe_and_live_resize(self) -> None:
-        from tools.others.screen_keyboard.layout import DEFAULT_SIZE, TOOLBAR_TIPS
-        from tools.others.screen_keyboard.mac_ui import A, KeyboardPanel, PanelController
+        from tools.others.screen_keyboard.layout import TOOLBAR_TIPS
+        from tools.others.screen_keyboard.mac_ui import A, PanelController, create_panel
         from utils import ConfigStore
 
         with tempfile.TemporaryDirectory() as scratch, patch.object(ConfigStore, "directory", return_value=Path(scratch)):
             A.NSApplication.sharedApplication()
-            panel = KeyboardPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-                ((0, 0), DEFAULT_SIZE), A.NSWindowStyleMaskNonactivatingPanel, A.NSBackingStoreBuffered, False)
-            panel.setReleasedWhenClosed_(False)
+            panel = create_panel()
             try:
                 controller = PanelController.alloc().init()
                 controller.setup(panel)
+                panel.setDelegate_(controller)
+                controller.toggle_numpad()
+                self.assertFalse(controller.buttons["NumpadEnter"].isHidden())
+                controller.toggle_numpad()
                 for name, tip in TOOLBAR_TIPS.items():
                     self.assertEqual(controller.buttons[name].toolTip(), tip)
                 globe = controller.buttons["language"]

@@ -4,7 +4,6 @@ from pathlib import Path
 import sys
 import importlib.util
 import tempfile
-from types import ModuleType
 import unittest
 from unittest.mock import Mock, call, patch
 
@@ -13,7 +12,7 @@ from tools.others.screen_keyboard.layout import (
     DEFAULT_SIZE, EXTENDED_KEYS, MAC_EXTENDED, MAC_ROWS, NUMPAD_KEYS, NUMPAD_NAVIGATION,
     ROWS, frames, mac_frame_near_pointer, panel_width,
 )
-from tools.others.screen_keyboard.state import KeyboardState, LeftKeyMode, WindowLayout
+from tools.others.screen_keyboard.state import KeyboardState, KeyRepeat, LeftKeyMode, WindowLayout
 from tools.others.screen_keyboard.windows import WindowsOutput
 from utils import ConfigStore
 
@@ -27,6 +26,7 @@ class KeyboardTests(unittest.TestCase):
         self.addCleanup(directory.stop)
         self.output = Mock(mac=False)
         self.output.target.return_value = 10
+        self.output.key_down.return_value = None
         self.output.locks.return_value = {"CapsLock": False, "NumLock": True, "ScrollLock": False}
         self.schedule = Mock()
         self.state = self.new_state()
@@ -40,7 +40,7 @@ class KeyboardTests(unittest.TestCase):
 
     def test_native_caps_and_separate_platform_preferences(self) -> None:
         self.click("Layer")
-        self.output.key.assert_called_once_with("CapsLock", [])
+        self.output.key_down.assert_called_once_with("CapsLock", [])
         self.assertFalse(self.state.held)
         self.assertEqual(self.state.status(), "Normal")
         self.state.set_mode(LeftKeyMode.F24)
@@ -69,7 +69,7 @@ class KeyboardTests(unittest.TestCase):
                     self.click(name)
                 self.assertEqual(self.state.status(), f"Layer {i}")
                 self.click("2")
-                self.output.key.assert_called_with("2", modifiers)
+                self.output.key_down.assert_called_with("2", modifiers)
                 self.assertFalse(self.state.held)
                 self.assertEqual(self.state.status(), "Normal")
 
@@ -188,8 +188,13 @@ class KeyboardTests(unittest.TestCase):
             self.assertEqual(self.state.colors(keys[0]), baseline)
             self.assertEqual(self.state.label(keys[0], label), label)
 
-    def test_repeat_lock_and_target_switch(self) -> None:
-        self.state.set_mode(LeftKeyMode.F24)
+    @patch("tools.others.screen_keyboard.state.monotonic")
+    def test_repeat_lock_and_target_switch(self, clock: Mock) -> None:
+        clock.return_value = 10.0
+        self.output.mac = True
+        self.state = self.new_state()
+        self.state.set_mode(LeftKeyMode.F1)
+        self.output.key_down.return_value = KeyRepeat(.6, .025, self.output.repeat_key)
         self.state.press("Layer")
         ms, lock = self.schedule.call_args.args
         self.assertEqual(ms, 500)
@@ -199,20 +204,100 @@ class KeyboardTests(unittest.TestCase):
         self.assertEqual(self.state.locked, {"Layer"})
         self.state.press("b")
         ms, repeat = self.schedule.call_args.args
-        self.assertEqual(ms, 450)
+        self.assertEqual(ms, 600)
+        clock.return_value = 10.602
         repeat()
-        self.assertEqual(self.schedule.call_args.args[0], 45)
+        self.output.repeat_key.assert_called_once_with()
+        self.assertEqual(self.schedule.call_args.args[0], 23)
         self.output.target.return_value = 20
-        self.output.key.reset_mock()
+        self.output.reset_mock()
         repeat()
         self.assertFalse(self.state.locked)
         self.assertFalse(self.state.held)
-        self.output.key.assert_not_called()
+        self.output.repeat_key.assert_not_called()
+        self.output.reset.assert_called_once_with()
+
+    def test_press_repeats_and_release_keep_one_chord(self) -> None:
+        self.output.key_down.return_value = KeyRepeat(.6, .025, self.output.repeat_key)
+        for name in ("Backspace", "e"):
+            self.click("LShift")
+            self.output.reset_mock()
+            self.state.press(name)
+            repeat = self.schedule.call_args.args[1]
+            repeat()
+            repeat()
+            self.output.key_up.assert_not_called()
+            self.state.release()
+            repeat()
+            events = [c for c in self.output.method_calls if c[0] in {"key_down", "repeat_key", "key_up", "hold"}]
+            self.assertEqual(events, [call.key_down(name, ["LShift"]), call.repeat_key(), call.repeat_key(),
+                                      call.key_up(), call.hold("LShift", False)])
+
+    def test_windows_holds_scan_code_until_release_or_reset(self) -> None:
+        from tools.others.screen_keyboard.windows import key_fields
+        from utils.windows_input import KEYUP
+
+        # Use the real Windows backend and packet builder, recording only the user32 calls.
+        output = WindowsOutput.__new__(WindowsOutput)
+        output.api = Mock()
+        output.api.GetForegroundWindow.return_value = 10
+        output.api.GetAsyncKeyState.return_value = output.api.GetKeyState.return_value = 0
+        output.owned, output.chord = [], []
+        with (patch.object(output, "send_packets") as send,
+              patch.object(output, "repeat_timing", return_value=(.5, 1 / 30))):
+            self.state = KeyboardState(output, self.schedule, Mock(), Mock())
+            for name, finish in (("Backspace", self.state.release), ("e", self.state.reset)):
+                send.reset_mock()
+                self.click("LShift")
+                self.schedule.reset_mock()
+                self.state.press(name)
+                repeat = self.schedule.call_args.args[1]
+                downs = send.call_args.args[0]
+                self.assertEqual([(p.data.keyboard.scan, p.data.keyboard.flags) for p in downs],
+                                 [key_fields(k)[:2] for k in ("LShift", name)])
+                send.assert_called_once()
+                repeat()
+                repeat()
+                for repeated in send.call_args_list[1:]:
+                    self.assertEqual([(p.data.keyboard.scan, p.data.keyboard.flags) for p in repeated.args[0]],
+                                     [key_fields(name)[:2]])
+                finish()
+                self.state.release()
+                repeat()
+                self.assertEqual(send.call_count, 4)
+                ups = send.call_args.args[0]
+                self.assertEqual([(p.data.keyboard.scan, p.data.keyboard.flags) for p in ups],
+                                 [(key_fields(k)[0], key_fields(k)[1] | KEYUP) for k in (name, "LShift")])
+
+    def test_windows_system_repeat_timing(self) -> None:
+        from tools.others.screen_keyboard.windows import (
+            FKF_FILTERKEYSON, SPI_GETFILTERKEYS, SPI_GETKEYBOARDDELAY, SPI_GETKEYBOARDSPEED,
+        )
+
+        output = WindowsOutput.__new__(WindowsOutput)
+        output.api = Mock()
+        settings = {SPI_GETKEYBOARDDELAY: 1, SPI_GETKEYBOARDSPEED: 31}
+        filters = {"flags": 0, "delay": 650, "interval": 75}
+
+        def query(action, size, pointer, flags):
+            if action == SPI_GETFILTERKEYS:
+                for name, value in filters.items():
+                    setattr(pointer._obj, name, value)
+            else:
+                pointer._obj.value = settings[action]
+            return True
+
+        output.api.SystemParametersInfoW.side_effect = query
+        self.assertEqual(output.repeat_timing(), (.5, 1 / 30))
+        filters["flags"] = FKF_FILTERKEYSON
+        self.assertEqual(output.repeat_timing(), (.65, .075))
+        filters["interval"] = 0
+        self.assertIsNone(output.repeat_timing())
 
     def test_keypad_and_failed_save(self) -> None:
         self.output.locks.return_value["NumLock"] = False
         self.click("Numpad7")
-        self.output.key.assert_called_with("NumpadHome", [])
+        self.output.key_down.assert_called_with("NumpadHome", [])
         self.assertEqual(self.state.label("Numpad7", "7"), "Home")
         with patch.object(self.state.store, "update", side_effect=OSError("busy")), self.assertRaises(OSError):
             self.state.set_mode(LeftKeyMode.F1)
@@ -337,7 +422,10 @@ class KeyboardTests(unittest.TestCase):
         quartz = Mock(kCGHIDEventTap=0, kCGSessionEventTap=1, kCGEventFlagMaskAlphaShift=1 << 16,
                       kCGEventFlagMaskNumericPad=1 << 21)
         quartz.CGEventSourceFlagsState.return_value = 0
-        imports = {"Quartz": quartz, "AppKit": ModuleType("AppKit"), f"{package}.input_sources": Mock()}
+        appkit = Mock()
+        appkit.NSEvent.keyRepeatDelay.return_value = .5
+        appkit.NSEvent.keyRepeatInterval.return_value = .025
+        imports = {"Quartz": quartz, "AppKit": appkit, f"{package}.input_sources": Mock()}
         path = Path(__file__).resolve().parents[1] / "tools/others/screen_keyboard/macos.py"
         spec = importlib.util.spec_from_file_location(f"{package}.mac_backend_test", path)
         assert spec and spec.loader
@@ -349,18 +437,21 @@ class KeyboardTests(unittest.TestCase):
                 backend.post(57, down, 0, quartz.kCGHIDEventTap)
                 quartz.CGEventSetType.assert_called_with(event, kind)
                 quartz.CGEventPost.assert_called_with(quartz.kCGHIDEventTap, event)
+            backend.post(14, True, 0, quartz.kCGSessionEventTap, repeat=True)
+            quartz.CGEventSetIntegerValueField.assert_called_once_with(event, quartz.kCGKeyboardEventAutorepeat, 1)
         for name in [*(n for row in MAC_ROWS for n, _, _ in row), *(n for n, _ in MAC_EXTENDED),
                      *(row[0] for row in NUMPAD_KEYS), *(nav for nav, _ in NUMPAD_NAVIGATION.values())]:
             if name not in {"Layer", "NumLock", "NumpadClear", "language", "Screenshot", *backend.DIRECT}:
                 self.assertIsInstance(backend.keycode(name), int, name)
-        out = backend.MacOutput()
+        out = backend.MacOutput(Mock())
         with patch.object(backend, "post") as post:
             out.hold("Fn", True)
             post.assert_called_with(63, True, 1 << 23, 1, modifier=True)
             out.reset()
             out.mode = LeftKeyMode.F1
             out.hold("Layer", True)
-            out.key("F1", [])
+            self.assertIsNone(out.key_down("F1", []))
+            out.key_up()
             out.reset()
             self.assertEqual(post.call_args_list[-2:], [call(122, True, 0, 0), call(122, False, 0, 0)])
             out.mode = LeftKeyMode.CAPS
@@ -368,15 +459,52 @@ class KeyboardTests(unittest.TestCase):
             post.assert_called_with(57, True, 0, 0)
             out.hold("LAlt", True)
             self.assertEqual(out.held, ["Layer", "LAlt"])
-            out.key("a", ["LAlt"])
-            post.assert_called_with(0, False, (1 << 19) | 0x20, 0)
+            self.assertIsNone(out.key_down("a", ["LAlt"]))
+            out.key_up()
+            flags = (1 << 19) | 0x20
+            self.assertEqual(post.call_args_list[-2:], [call(0, True, flags, 0), call(0, False, flags, 0)])
             quartz.CGEventSourceFlagsState.return_value = 1 << 20
-            out.key("NumpadEnter", ["LAlt"])
-            post.assert_called_with(76, False, (1 << 20) | (1 << 21), 1)
+            repeat = out.key_down("NumpadEnter", ["LAlt"])
+            assert repeat is not None
+            self.assertEqual((repeat.delay, repeat.interval), (.5, .025))
+            repeat.send()
+            post.assert_called_with(76, True, (1 << 20) | (1 << 21), 1, repeat=True)
             post.reset_mock()
             out.reset()
-            self.assertEqual(post.call_args_list, [call(58, False, 0, 0, modifier=True), call(57, False, 0, 0)])
+            self.assertEqual(post.call_args_list, [call(76, False, (1 << 20) | (1 << 21), 1),
+                             call(58, False, 0, 0, modifier=True), call(57, False, 0, 0)])
             self.assertFalse(out.held)
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS text input services")
+    def test_input_source_switch_goes_to_the_target_on_every_toggle(self) -> None:
+        import plistlib
+        from tools.others.screen_keyboard import input_sources as sources
+
+        bridge = Mock()
+        bridge.kCFMessagePortSuccess = 0
+        bridge.CFPropertyListCreateData.return_value = (b"request", None)
+        bridge.CFMessagePortSendRequest.return_value = (0, plistlib.dumps({"tsmInputModeReplyToServerErrorKey": 0}))
+        flatten = Mock(side_effect=lambda source, _: (True, {"source": source}))
+        remote = Mock(return_value="target port")
+        with (patch.object(sources, "frontmost_target", return_value=123),
+              patch.dict(sources._tsm, _CreateFlattenedInputSource=flatten, CFMessagePortCreatePerProcessRemote=remote),
+              patch.object(sources, "CoreFoundation", bridge),
+              patch.object(sources, "_TIS") as carbon):
+            for source in (1, 2, 1, 2):
+                sources._select(str(source), source)
+                remote.assert_called_with(None, "com.apple.tsm.portname", 123)
+                flatten.assert_called_with(source, None)
+            self.assertEqual(bridge.CFMessagePortSendRequest.call_count, 4)
+            bridge.CFMessagePortSendRequest.return_value = (0, plistlib.dumps({"tsmInputModeReplyToServerErrorKey": -1}))
+            with self.assertRaisesRegex(RuntimeError, "rejected"):
+                sources._select("1", 1)
+            carbon.TISSelectInputSource.assert_not_called()
+
+            remote.return_value = None
+            carbon.TISSelectInputSource.return_value = 0
+            with patch.object(sources, "current_input_source", return_value="1"):
+                sources._select("1", 1)
+            carbon.TISSelectInputSource.assert_called_once_with(1)
 
 
 if __name__ == "__main__":

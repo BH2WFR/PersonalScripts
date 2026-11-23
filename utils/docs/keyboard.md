@@ -27,12 +27,14 @@ The caller owns key selection, modifier policy and foreground-window checks.
 
 The auto typer and screen keyboard import `frontmost_target()` and `post_key()`
 from `utils.macos_input`. The target is an external application PID or zero.
-`post_key(code, down, flags, tap=None, *, modifier=False, text="")` defaults to
+`post_key(code, down, flags, tap=None, *, modifier=False, text="", repeat=False)` defaults to
 the session event tap. Pass `flags=None` for native Caps Lock flags or
 `modifier=True` for a flags-changed event. The caller pairs downs and ups and
 chooses the HID tap for input intended for a remapper. On that tap ordinary
 keys carry explicit key-down/key-up events, including a momentary Caps Lock
-layer trigger. Modifier transitions use flags-changed events.
+layer trigger. Modifier transitions use flags-changed events. For a held key,
+pass `repeat=True` on subsequent downs so the receiving app's text input system
+can distinguish autorepeat from fresh presses. Send one up on release.
 
 ## Code spaces and aliases
 

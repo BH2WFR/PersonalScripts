@@ -167,7 +167,7 @@ class ScreenKeyboard:
         if self.reopen_requested and (mode := self.reopen_requested()) is not None:
             self.perform(lambda: self.state.apply_launch_mode(None if mode is LeftKeyMode.NATIVE else mode))
             self.perform(lambda: self.native.place_near_cursor(reopen=True))
-        if self.state.held:
+        if self.state.pressed is not None or self.state.held:
             self.perform(self.state.check_target)
         current = self.state.output.locks()
         if self.state.lock_states != current:

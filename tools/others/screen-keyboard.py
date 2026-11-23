@@ -12,10 +12,10 @@ from utils import *  # noqa: E402
 
 HELP = """SCREEN KEYBOARD
 
-Type into the focused window with a floating keyboard that appears near the
-pointer. Enable Remember window size in Prefs to restore its size on launch.
-The left key defaults to Caps Lock. Layer mode can send CapsLock or F1 on
-either platform, or F24 on Windows.
+Type into the focused window with a floating keyboard near the pointer.
+Held keys repeat at the system rate until release. On macOS, compatible apps
+can show the accent menu for held letters.
+The left key defaults to Caps Lock and can act as a custom layer key.
 
 Requirements:
   Windows 10+ with Tkinter and administrator privileges, or macOS with
@@ -26,8 +26,7 @@ Requirements:
 
 Usage:
   python screen-keyboard.py [--force-layer=capslock|f1|f24]
-  Override Prefs for this launch or reopen. F24 is Windows-only.
-  Unsupported arguments show a warning and use the saved preference.
+  --force-layer overrides Prefs for this launch or reopen. F24 is Windows-only.
 """
 
 

@@ -3,9 +3,11 @@
 from collections.abc import Callable
 from functools import cache
 from pathlib import Path
+from typing import Any, cast
 
-import AppKit as A  # pyright: ignore[reportMissingImports]
-import Foundation as F  # pyright: ignore[reportMissingImports]
+import AppKit  # pyright: ignore[reportMissingImports]
+import Foundation  # pyright: ignore[reportMissingImports]
+from Foundation import NSRect, NSSize  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
 import objc  # pyright: ignore[reportMissingImports]
 
 from utils import System
@@ -13,6 +15,10 @@ from .layout import (DEFAULT_SIZE, EXTRA_HEIGHT, MAC_EXTENDED, MAC_LABELS, MAC_R
                      TOOLBAR, TOOLBAR_DIVIDERS, TOOLBAR_TIPS, WINDOW_TITLE, frames, mac_frame_near_pointer, panel_width)
 from .macos import MacOutput
 from .state import KeyboardState, LeftKeyMode, WindowLayout, hover_color
+
+# PyObjC resolves framework members at runtime from Objective-C metadata.
+A = cast(Any, AppKit)
+F = cast(Any, Foundation)
 
 SHOW_NOTIFICATION = "PersonalScripts.ScreenKeyboard.Show"
 
@@ -103,7 +109,7 @@ class PanelController(F.NSObject):
         self.closed = self.resizing = False
         self.timer = None
         self.buttons = {}
-        self.state = KeyboardState(MacOutput(), self.schedule, self.cancel, self.refresh, force_layer)
+        self.state = KeyboardState(MacOutput(self.call_later), self.schedule, self.cancel, self.refresh, force_layer)
         saved = self.state.window_layout
         self.expanded, self.numpad = saved.expanded, saved.numpad
         self.labels = {n: label for row in MAC_ROWS for n, label, _ in row}
@@ -215,9 +221,17 @@ class PanelController(F.NSObject):
     @objc.python_method
     def schedule(self, ms: int, callback: Callable[[], None]) -> None:
         self.cancel()
-        self.timer = F.NSTimer.timerWithTimeInterval_repeats_block_(ms / 1000, False,
-                                                                    lambda _: self.perform(callback))
-        F.NSRunLoop.mainRunLoop().addTimer_forMode_(self.timer, F.NSRunLoopCommonModes)
+        self.timer = self.call_later(ms, callback)
+
+    @objc.python_method
+    def call_later(self, ms: int, callback: Callable[[], None]) -> Any:
+        def fire(_timer: Any) -> None:
+            if not self.closed:
+                self.perform(callback)
+
+        timer = F.NSTimer.timerWithTimeInterval_repeats_block_(ms / 1000, False, fire)
+        F.NSRunLoop.mainRunLoop().addTimer_forMode_(timer, F.NSRunLoopCommonModes)
+        return timer
 
     @objc.python_method
     def paint(self, name: str) -> None:
@@ -331,6 +345,23 @@ class PanelController(F.NSObject):
     def windowDidResize_(self, note) -> None:
         self.layout()
 
+    def windowShouldZoom_toFrame_(self, window: KeyboardPanel, frame: NSRect) -> bool:
+        return False
+
+    def windowWillResize_toSize_(self, window: KeyboardPanel, size: NSSize) -> NSSize:
+        current = window.frame().size
+        # AppKit also calls this delegate for a double-click on a resize edge.
+        if not window.inLiveResize():
+            return current
+        screen = window.screen()
+        if screen is not None:
+            available = screen.visibleFrame().size
+            if size.width >= available.width and size.width > current.width:
+                size.width = current.width
+            if size.height >= available.height and size.height > current.height:
+                size.height = current.height
+        return size
+
     def contextChanged_(self, note) -> None:
         self.perform(self.state.check_target)
 
@@ -389,9 +420,8 @@ def run(force_layer: LeftKeyMode | None = None, warning: str = "") -> int:
         notifications.removeObserver_(controller)
 
 
-def run_panel(app, controller: PanelController) -> int:
-    if not System.check_macos_accessibility_permission(prompt=True):
-        raise RuntimeError("Allow Accessibility access in System Settings, then reopen Screen Keyboard.")
+def create_panel() -> KeyboardPanel:
+    """Create a manually resizable floating keyboard on every Space."""
     mask = (A.NSWindowStyleMaskTitled | A.NSWindowStyleMaskClosable | A.NSWindowStyleMaskResizable
             | A.NSWindowStyleMaskNonactivatingPanel)
     panel = KeyboardPanel.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -404,7 +434,16 @@ def run_panel(app, controller: PanelController) -> int:
     panel.setBecomesKeyOnlyIfNeeded_(True)
     panel.setLevel_(A.NSFloatingWindowLevel)
     panel.setCollectionBehavior_(A.NSWindowCollectionBehaviorCanJoinAllSpaces
-                                 | A.NSWindowCollectionBehaviorFullScreenAuxiliary)
+                                 | A.NSWindowCollectionBehaviorFullScreenAuxiliary
+                                 | A.NSWindowCollectionBehaviorFullScreenDisallowsTiling)
+    panel.standardWindowButton_(A.NSWindowZoomButton).setEnabled_(False)
+    return panel
+
+
+def run_panel(app, controller: PanelController) -> int:
+    if not System.check_macos_accessibility_permission(prompt=True):
+        raise RuntimeError("Allow Accessibility access in System Settings, then reopen Screen Keyboard.")
+    panel = create_panel()
     controller.setup(panel, controller.launch_mode)
     panel.setDelegate_(controller)
     app.setDelegate_(controller)

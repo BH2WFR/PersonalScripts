@@ -16,7 +16,7 @@ ROWS = [
     + [("[", "[ {", 1), ("]", "] }", 1), ("\\", "\\ |", 1.5), ("End", "End", 1)],
     [("Layer", "Layer", 2)] + [(c, c.upper(), 1) for c in "asdfghjkl"]
     + [(";", "; :", 1), ("'", "' \"", 1), ("Enter", "Enter", 2), ("PgUp", "PgUp", 1)],
-    [("LShift", "Shift", 1.5), ("vkE2sc056", "\\ |", 1)]
+    [("LShift", "Shift", 1.5), ("vkE2sc056", "§ ±", 1)]
     + [(c, c.upper(), 1) for c in "zxcvbnm"]
     + [(",", ", <", 1), (".", ". >", 1), ("/", "/ ?", 1), ("RShift", "Shift", 1.5),
        ("Up", "↑", 1), ("PgDn", "PgDn", 1)],
