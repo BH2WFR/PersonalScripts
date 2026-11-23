@@ -93,6 +93,7 @@ class PathTests(ScratchCase):
         path = self.root / "launcher-config.yaml"
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         document["gui-tools-list"] = ["others/viewer.py"]
+        document["elevation-needed-list"] = ["others/viewer.py", "others/admin.py"]
         document["ignore-list"]["linux-gui-specific"] = {
             "no-gui": ["others/hook.py"], "wayland": ["others/capture.py"], "x11": [],
         }
@@ -103,7 +104,11 @@ class PathTests(ScratchCase):
                 launcher, "_platform_key", return_value=platform_key,
             ), patch.object(launcher.System, "get_linux_gui", return_value=desktop):
                 config = launcher._load_launcher_config(str(self.root))
-                self.assertIn("[GUI]", launcher._format_script_path("others/viewer.py", config))
+                combined = f" {launcher.FLYellow}[GUI]{launcher.CRst}{launcher.FLCyan}[SUDO]{launcher.CRst}"
+                self.assertTrue(launcher._format_script_path(r"others\viewer.py", config).endswith(combined))
+                self.assertTrue(launcher._format_script_path("others/admin.py", config).endswith(
+                    f" {launcher.FLCyan}[SUDO]{launcher.CRst}"))
+                self.assertNotIn("[SUDO]", launcher._format_script_path("others/hook.py", config))
                 self.assertNotIn("[GUI]", launcher._format_script_path("others/hook.py", config))
                 self.assertIn("[GUI]", launcher._format_script_path("others/viewer.py", config, "test"))
                 for name in ("viewer", "hook"):

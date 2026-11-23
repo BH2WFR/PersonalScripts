@@ -19,7 +19,7 @@ Clear recent-item history, browser data, caches and selected system/application
 traces. Cleanup can permanently remove saved data and sign-in state.
 
 {FLYellow}Requirements:{CRst}
-  macOS built-in tools; root for system cleanup. trash is optional.
+  macOS built-in tools; root privileges. trash is optional.
 
 {FLYellow}Usage:{CRst}
   python privacy-cleaner.py [--force] [--skip-recent] [--skip-caches]
@@ -32,13 +32,8 @@ if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
     raise SystemExit(0)
 
 
-HOME = Path.home()
+HOME = Path(f"~{os.environ.get('SUDO_USER', '')}").expanduser()
 LIB = HOME / "Library"
-
-
-def print_help() -> None:
-
-    print(HELP)
 
 
 def run(
@@ -439,36 +434,24 @@ def print_banner(args: argparse.Namespace) -> None:
     if not args.skip_apps:
         print("    5. Application MRU / developer traces")
     print()
-    if not System.is_elevated() and not args.skip_system:
-        print(f"  {FGray}System cleanup will partially skip root-only steps unless elevation succeeds.{CRst}")
-        print()
 
 
 def main() -> None:
-    if sys.platform != "darwin":
-        err_msg(f"This script only runs on macOS. Current platform: {FGray}{sys.platform}{CRst}")
-        raise SystemExit(1)
-
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = Console.argument_parser(HELP)
     parser.add_argument("-f", "--force", action="store_true")
     parser.add_argument("--skip-recent", action="store_true")
     parser.add_argument("--skip-caches", action="store_true")
     parser.add_argument("--skip-browsers", action="store_true")
     parser.add_argument("--skip-system", action="store_true")
     parser.add_argument("--skip-apps", action="store_true")
-    parser.add_argument("-h", "--help", action="store_true")
     args = parser.parse_args()
 
-    if args.help:
-        print_help()
-        return
+    if sys.platform != "darwin":
+        err_msg(f"This script only runs on macOS. Current platform: {FGray}{sys.platform}{CRst}")
+        raise SystemExit(1)
 
+    System.restart_elevated()
     print_banner(args)
-    if not System.is_elevated():
-        warn_msg(f"Root privileges not detected. Trying {FGray}sudo{CRst}.")
-        elevated = System.try_restart_elevated()
-        if not elevated:
-            warn_msg("Elevation unavailable. Root-only cleanup will be skipped.")
 
     start_time = time.time()
 

@@ -219,10 +219,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
     args = _parse_args(argv)
 
-    # Elevate before printing operational output so the shared helper can keep
-    # the cleanup in the same terminal when gsudo or sudo is available.
-    if not System.is_elevated():
-        System.restart_elevated()
+    System.restart_elevated(entry=__file__, args=argv)
 
     Console.set_locale_utf8()
     Console.print_banner("EVENT LOG CLEANER")

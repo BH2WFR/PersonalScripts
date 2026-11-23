@@ -28,6 +28,8 @@ class LauncherWorkflowTests(unittest.TestCase):
         (ROOT / "tmp").mkdir(exist_ok=True)
         directory = tempfile.TemporaryDirectory(dir=ROOT / "tmp", prefix="merged-app-")
         self.addCleanup(directory.cleanup)
+        self.enterContext(patch.dict(os.environ, {"SUDO_UID": ""}))
+        self.enterContext(patch.object(app.System, "restart_elevated"))
         self.root = Path(directory.name)
         self.target = self.root / "target.py"
         self.target.touch()
@@ -51,7 +53,7 @@ class LauncherWorkflowTests(unittest.TestCase):
         for platform in ("win32", "darwin", "linux"):
             output = io.StringIO()
             with self.subTest(platform=platform), patch.object(sys, "platform", platform), \
-                    patch.object(app.System, "try_restart_elevated") as elevate, \
+                    patch.object(app.System, "restart_elevated") as elevate, \
                     patch.object(app.Environment, "select_python_environment") as select, \
                     contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as result:
                 app.main(["--help"])
@@ -72,25 +74,25 @@ class LauncherWorkflowTests(unittest.TestCase):
         prompt.assert_not_called()
         self.assertFalse((self.root / "launchers").exists())
 
-    def test_windows_elevation_failure_uses_writable_destination(self) -> None:
-        original_argv = sys.argv
-        replayed: list[str] = []
+    def test_elevation_failure_prevents_installation_on_all_platforms(self) -> None:
+        for platform in ("win32", "darwin", "linux"):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform), \
+                    patch.object(app.System, "restart_elevated", side_effect=SystemExit(1)), \
+                    patch("builtins.input") as prompt, self.assertRaises(SystemExit) as raised:
+                app.main(self.arguments())
+            self.assertEqual(raised.exception.code, 1)
+            prompt.assert_not_called()
+            self.assertFalse((self.root / "launchers").exists())
 
-        def fail_elevation() -> bool:
-            """Capture the replay arguments without requesting administrator access."""
-            replayed.extend(sys.argv)
-            return False
-
+    def test_windows_creates_launcher_after_elevation(self) -> None:
         output = io.StringIO()
         with patch.object(sys, "platform", "win32"), \
-                patch.object(app.System, "is_elevated", return_value=False), \
-                patch.object(app.System, "try_restart_elevated", side_effect=fail_elevation), \
+                patch.object(app.System, "restart_elevated") as elevate, \
                 patch.object(app.Environment, "select_python_environment", return_value=(self.runtime, None)), \
                 patch.object(app, "_create_app_bundle") as bundle, \
                 patch("builtins.input", return_value=""), contextlib.redirect_stdout(output):
             self.assertEqual(app.main(self.arguments()), 0)
-        self.assertIs(sys.argv, original_argv)
-        self.assertEqual(replayed, [str(ROOT / "tools/others/script-to-app.py"), *self.arguments()])
+        elevate.assert_called_once_with(entry=app.__file__, args=self.arguments())
         bundle.assert_not_called()
         launcher = self.root / "launchers/Example.cmd"
         data = launcher.read_bytes()
@@ -100,10 +102,10 @@ class LauncherWorkflowTests(unittest.TestCase):
         self.assertIn(str(launcher), output.getvalue())
         self.assertIn("Created:", output.getvalue())
 
-    def test_macos_uses_bundle_backend_without_elevation(self) -> None:
+    def test_macos_uses_bundle_backend_after_elevation(self) -> None:
         output = io.StringIO()
         with patch.object(sys, "platform", "darwin"), \
-                patch.object(app.System, "try_restart_elevated") as elevate, \
+                patch.object(app.System, "restart_elevated") as elevate, \
                 patch.object(app.Environment, "select_python_environment", return_value=(self.runtime, None)), \
                 patch.object(app, "_create_app_bundle") as bundle, \
                 patch.object(app, "_write_info_plist") as plist, \
@@ -115,7 +117,7 @@ class LauncherWorkflowTests(unittest.TestCase):
         bundle.assert_called_once_with(launcher, str(self.target), self.runtime, None)
         self.assertEqual(plist.call_args.args[:2], (os.path.join(launcher, "Contents"), "Example.app"))
         cmd.assert_not_called()
-        elevate.assert_not_called()
+        elevate.assert_called_once_with(entry=app.__file__, args=self.arguments())
         self.assertIn(launcher, output.getvalue())
         self.assertIn("Created:", output.getvalue())
 

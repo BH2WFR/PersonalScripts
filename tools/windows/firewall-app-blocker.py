@@ -12,7 +12,6 @@ import argparse
 import hashlib
 import json
 import os
-import signal
 import stat
 import subprocess
 import sys
@@ -1194,21 +1193,6 @@ def _select_main_action() -> _Action:
     )
 
 
-def _restart_elevated_without_parent_interrupt() -> None:
-    """Elevate while preventing the waiting launcher from echoing Ctrl+C.
-
-    The elevated child retains Python's normal SIGINT handler. Only the
-    non-elevated parent ignores Ctrl+C while it waits for that child, so one
-    interrupt produces one exit message instead of one from each process.
-    """
-    previous_handler = signal.getsignal(signal.SIGINT)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    try:
-        System.restart_elevated()
-    finally:
-        signal.signal(signal.SIGINT, previous_handler)
-
-
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the elevated interactive firewall application-rule manager.
 
@@ -1230,8 +1214,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
     _parse_args(argv)
 
-    if not System.is_elevated():
-        _restart_elevated_without_parent_interrupt()
+    System.restart_elevated(entry=__file__, args=argv)
 
     Console.print_banner("WINDOWS FIREWALL APP BLOCKER")
     powershell = Environment.find_pwsh()

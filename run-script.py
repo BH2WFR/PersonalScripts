@@ -122,6 +122,7 @@ class _LauncherConfig:
     folder_name_rules: tuple[_HighlightRule, ...]
     ignore_spec: IgnoreSpec
     gui_spec: IgnoreSpec
+    elevation_spec: IgnoreSpec
 
     @property
     def supported_extensions(self) -> tuple[str, ...]:
@@ -400,6 +401,8 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         "gui-tools-list",
     )
 
+    elevation_patterns = _read_pattern_list(root.get("elevation-needed-list"), "elevation-needed-list")
+
     platform_key = _platform_key()
     if platform_key is not None:
         patterns.extend(
@@ -436,6 +439,7 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
     try:
         ignore_spec = PathSpec.from_lines("gitwildmatch", patterns)
         gui_spec = PathSpec.from_lines("gitwildmatch", gui_patterns)
+        elevation_spec = PathSpec.from_lines("gitwildmatch", elevation_patterns)
     except Exception as exc:
         raise ValueError(f"invalid Gitignore pattern: {exc}") from exc
 
@@ -481,6 +485,7 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         folder_name_rules=folder_name_rules,
         ignore_spec=ignore_spec,
         gui_spec=gui_spec,
+        elevation_spec=elevation_spec,
     )
 
 
@@ -801,12 +806,16 @@ def _format_script_path(
     config: _LauncherConfig,
     display_prefix: Optional[str] = None,
 ) -> str:
-    """Highlight a script and mark configured GUI tools relative to its discovery root.
+    """Highlight a script and mark configured GUI and privileged tools relative to its discovery root.
 
     An optional display-only prefix labels Test paths without affecting matching.
     """
     normalized = relative_path.replace("\\", "/")
-    gui_suffix = f" {FLYellow}[GUI]{CRst}" if _is_ignored(config.gui_spec, normalized) else ""
+    suffix = f"{FLYellow}[GUI]{CRst}" if _is_ignored(config.gui_spec, normalized) else ""
+    if _is_ignored(config.elevation_spec, normalized):
+        suffix += f"{FLCyan}[SUDO]{CRst}"
+    if suffix:
+        suffix = f" {suffix}"
     if display_prefix:
         normalized = f"{display_prefix}/{normalized}"
     subdirectory, separator, filename = normalized.rpartition("/")
@@ -816,8 +825,8 @@ def _format_script_path(
     highlighted_filename = _highlight_filename(filename, config)
 
     if subdirectory:
-        return f"{_highlight_subdirectory(subdirectory, config)}{highlighted_filename}{gui_suffix}"
-    return f"{highlighted_filename}{gui_suffix}"
+        return f"{_highlight_subdirectory(subdirectory, config)}{highlighted_filename}{suffix}"
+    return f"{highlighted_filename}{suffix}"
 
 
 def _highlight_filename(filename: str, config: _LauncherConfig) -> str:

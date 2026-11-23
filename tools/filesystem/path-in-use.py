@@ -164,16 +164,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _require_elevation() -> bool:
-    """Request elevation through the shared helper on every supported platform."""
-    if not System.is_elevated():
-        System.restart_elevated()
-    if not System.is_elevated():
-        print(f"{FLRed}Elevation failed; no scan was started.{CRst}")
-        return False
-    return True
-
-
 def _run_windows_query(command: list[str], timeout: float) -> subprocess.CompletedProcess[bytes]:
     """Restart only our worker after a stalled query, skipping its PID/handle pair."""
     if sys.platform != "win32":
@@ -837,12 +827,12 @@ def main() -> int:
             raise ValueError("Invalid internal query skip record")
         return _windows_worker(args._windows_worker, args.pid, args.path,
                                {(item[0], item[1]) for item in skipped})
-    if not _require_elevation():
-        return 1
-    Console.print_banner("PATH IN USE")
     if sys.platform not in SUPPORTED_PLATFORMS:
         print(f"{FLRed}Unsupported platform: {sys.platform}{CRst}")
         return 1
+
+    System.restart_elevated()
+    Console.print_banner("PATH IN USE")
 
     # ── dependencies and input ──────────────────────────────
     try:

@@ -537,10 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{FGray}Run with --help to see supported options.{CRst}")
         return 2
 
-    # Elevate before operational output so the selection and confirmation
-    # appear only in the administrator process after UAC.
-    if not System.is_elevated():
-        System.restart_elevated()
+    System.restart_elevated(entry=__file__, args=argv)
 
     Console.set_locale_utf8()
     Console.print_banner("SERVICE RESTARTER")

@@ -19,7 +19,7 @@ Mount NTFS partitions read-write through ntfs-3g or read-only through macOS,
 and safely eject disks.
 
 {FLYellow}Requirements:{CRst}
-  macOS; ntfs-3g and macFUSE for read-write mounts; required mount privileges.
+  macOS; ntfs-3g and macFUSE for read-write mounts; root privileges.
 
 {FLYellow}Usage:{CRst}
   python ntfs-3g-mount-manager.py
@@ -28,22 +28,6 @@ and safely eject disks.
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
     print(HELP)
     raise SystemExit(0)
-
-
-# ============ system checks ============
-if sys.platform != "darwin":
-    print(f"{FLRed}ERROR: This script only runs on macOS. Current platform: {sys.platform}{CRst}\n")
-    sys.exit(1)
-
-if not Environment.check_commands(CmdCheck("ntfs-3g", hints={
-    "macos": f"{FGray}brew install ntfs-3g{CRst}",
-})):
-    sys.exit(1)
-
-if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(HELP)
-    sys.exit(0)
 
 
 # ============ helpers ============
@@ -168,10 +152,10 @@ def _ensure_dir(path: str) -> bool:
     if os.path.isdir(path):
         return True
     try:
-        _run(["sudo", "mkdir", "-p", path], capture=False)
+        os.makedirs(path, exist_ok=True)
         print(f"{FGray}  Created directory: {path}{CRst}")
         return True
-    except Exception as e:
+    except OSError as e:
         print(f"{FLRed}  Failed to create directory: {e}{CRst}")
         return False
 
@@ -314,7 +298,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
     # If mounted by macOS, unmount first
     if selected["is_mounted"]:
         print(f"{FLYellow}  Unmounting from macOS default mount...{CRst}")
-        r = _run(["sudo", "diskutil", "unmount", selected["disk"]], capture=False)
+        r = _run(["diskutil", "unmount", selected["disk"]], capture=False)
         if r.returncode != 0:
             print(f"{FLRed}  Failed to unmount.{CRst}\n")
             return False
@@ -322,7 +306,7 @@ def _remount_by_ntfs_3g(partitions: list[dict]) -> bool:
     # Mount
     dev_path = f"/dev/{selected['disk']}"
     print(f"{FLYellow}  Mounting {dev_path} -> {mount_dir} via ntfs-3g...{CRst}")
-    r = _run(["sudo", "ntfs-3g", dev_path, mount_dir,
+    r = _run(["ntfs-3g", dev_path, mount_dir,
               "-o", "volname=NTFS", "-o", "local", "-o", "allow_other",
               "-o", "auto_xattr"], capture=False)
     if r.returncode == 0:
@@ -386,14 +370,14 @@ def _remount_by_system(partitions: list[dict]) -> bool:
     # Unmount from ntfs-3g first if needed
     if selected["is_ntfs3g"]:
         print(f"{FLYellow}  Unmounting ntfs-3g from {selected['mount_point']}...{CRst}")
-        r = _run(["sudo", "umount", selected["mount_point"]], capture=False)
+        r = _run(["umount", selected["mount_point"]], capture=False)
         if r.returncode != 0:
             print(f"{FLRed}  -> Unmount failed.{CRst}\n")
             return False
 
     # Mount with macOS default driver
     print(f"{FLYellow}  Mounting with macOS default driver...{CRst}")
-    r = _run(["sudo", "diskutil", "mount", selected["disk"]], capture=False)
+    r = _run(["diskutil", "mount", selected["disk"]], capture=False)
     if r.returncode == 0:
         print(f"{FLGreen}  -> Done. {selected['disk']} now mounted read-only via macOS.{CRst}\n")
         return True
@@ -452,7 +436,7 @@ def do_eject(partitions: list[dict]) -> bool:
         return False
 
     print(f"{FLYellow}  Ejecting {selected['disk']}...{CRst}")
-    r = _run(["sudo", "diskutil", "eject", selected["disk"]], capture=False)
+    r = _run(["diskutil", "eject", selected["disk"]], capture=False)
     if r.returncode == 0:
         print(f"{FLGreen}  -> Ejected.{CRst}\n")
         return True
@@ -483,7 +467,15 @@ def _print_partitions(partitions: list[dict]):
     print()
 
 
-def main():
+def main() -> int:
+    Console.argument_parser(HELP).parse_args()
+    if sys.platform != "darwin":
+        Console.print_error_and_exit(f"This script only runs on macOS. Current platform: {sys.platform}")
+    System.restart_elevated()
+    if not Environment.check_commands(CmdCheck("ntfs-3g", hints={
+        "macos": f"{FGray}brew install ntfs-3g{CRst}",
+    })):
+        return 1
     Console.print_banner("NTFS-3G MOUNT MANAGER")
 
     while True:
@@ -512,6 +504,8 @@ def main():
         elif choice == "Q":
             Console.print_exit_message("Bye.")
             break
+
+    return 0
 
 
 def _pause():

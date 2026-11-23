@@ -28,7 +28,8 @@ macOS or Linux. Passes file paths to the script; Python and dependencies are not
 bundled. The target script and interpreter must remain at their recorded paths.
 
 {FLYellow}Requirements:{CRst}
-  Windows, macOS or Linux desktop; target Python environment and dependencies.
+  Administrator/root privileges on Windows, macOS and Linux desktops.
+  The target Python environment and its dependencies must be installed.
   macOS: osacompile/Terminal. Linux: Bash/desktop terminal. Conda when selected.
   Optional: Windows gsudo; Linux update-desktop-database.
 
@@ -601,10 +602,11 @@ def _write_linux_launcher(
         content += f"MimeType={mime_list};\n"
     with open(runner_path, "w", encoding="utf-8", newline="\n") as stream:
         stream.write(runner)
-    os.chmod(runner_path, 0o700)
+    mode = 0o755 if os.name == "posix" and os.geteuid() == 0 else 0o700
+    os.chmod(runner_path, mode)
     with open(launcher_path, "w", encoding="utf-8", newline="\n") as stream:
         stream.write(content)
-    os.chmod(launcher_path, 0o700)
+    os.chmod(launcher_path, mode)
 
 
 def _refresh_linux_desktop_database(output_dir: str) -> None:
@@ -645,6 +647,20 @@ def _refresh_linux_desktop_database(output_dir: str) -> None:
         print(f"{FLYellow}Desktop entry was created, but its MIME cache could not be refreshed: {exc}{CRst}")
 
 
+def _desktop_install_user(output_override: str | None) -> tuple[str, int, int] | None:
+    """Restore the invoking user's home and identify per-user POSIX installs."""
+    if os.name == "nt" or os.geteuid() != 0 or not os.environ.get("SUDO_UID"):
+        return None
+    import pwd
+
+    user = pwd.getpwuid(int(os.environ["SUDO_UID"]))
+    os.environ["HOME"] = user.pw_dir
+    destination = os.path.realpath(_resolve_output_dir(output_override))
+    if output_override is None or os.path.commonpath((destination, user.pw_dir)) == user.pw_dir:
+        return user.pw_name, user.pw_uid, user.pw_gid
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Interactively create the current platform's Open With launcher.
 
@@ -659,12 +675,11 @@ def main(argv: list[str] | None = None) -> int:
             destination, permission failure, or AppleScript compilation failure.
 
     Side effects:
-        Prompts for paths, runtime and confirmation. Windows may relaunch with
-        elevation. Writes the launcher after confirmation; registers macOS apps
+        Requests elevation before prompts. Writes the confirmed launcher,
+        registers macOS apps
         with Launch Services or refreshes Linux desktop MIME recommendations,
         and prints the resulting paths and usage instructions.
     """
-    Console.print_banner("SCRIPT TO APP")
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     if sys.platform not in ("win32", "darwin", "linux"):
@@ -674,29 +689,18 @@ def main(argv: list[str] | None = None) -> int:
     suffix = _launcher_suffix()
     if (args.mime_type is not None or args.all_files) and not linux:
         parser.error("--mime-type and --all-files are supported on Linux only")
+    System.restart_elevated(entry=__file__, args=argv)
+    install_user = _desktop_install_user(args.output_dir)
+    Console.print_banner("SCRIPT TO APP")
     if linux:
         if System.get_linux_gui() not in (LinuxGui.X11, LinuxGui.WAYLAND):
             Console.print_error_and_exit("A Linux X11 or Wayland desktop session is required (DISPLAY or WAYLAND_DISPLAY).")
         if not Environment.check_commands(CmdCheck("/bin/bash", required=True)):
             Console.print_error_and_exit("Linux desktop launchers require /bin/bash.")
 
-    # ── Windows elevation ─────────────────────────────────
-    if windows and not System.is_elevated():
-        original_argv = sys.argv
-        sys.argv = [os.path.abspath(__file__), *(sys.argv[1:] if argv is None else argv)]
-        try:
-            elevated = System.try_restart_elevated()
-        finally:
-            sys.argv = original_argv
-        if not elevated:
-            print(
-                f"{FLYellow}Elevation unavailable. Continuing with current permissions; "
-                f"use a writable --output-dir if needed.{CRst}"
-            )
-
     # ── shared inputs and interpreter selection ───────────
     if not (sys.argv[1:] if argv is None else argv):
-        print(help_message)
+        print(HELP)
     target_script = _resolve_target_script(args.target_script)
     app_name = _resolve_app_name(args.app_name, target_script)
     output_dir = _resolve_output_dir(args.output_dir)
@@ -734,6 +738,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── platform-specific output ──────────────────────────
     try:
+        if sys.platform != "win32" and install_user is not None:
+            # The desktop account must own its launcher, bundle and MIME cache.
+            name, uid, gid = install_user
+            os.initgroups(name, gid)
+            os.setgid(gid)
+            os.setuid(uid)
+            os.environ.update(USER=name, LOGNAME=name)
         os.makedirs(output_dir, exist_ok=True)
         if windows:
             _write_launcher(launcher_path, target_script, runtime, conda_executable)
@@ -755,9 +766,7 @@ def main(argv: list[str] | None = None) -> int:
             if os.path.exists(lsregister):
                 subprocess.run([lsregister, "-f", launcher_path], capture_output=True)
     except PermissionError:
-        advice = ("Run as Administrator or use a writable --output-dir."
-                  if windows else "Use a writable --output-dir.")
-        Console.print_error_and_exit(f"Permission denied: {output_dir}. {advice}")
+        Console.print_error_and_exit(f"Permission denied: {output_dir}. Use a writable --output-dir.")
 
     # ── creation result and file association instructions ─
     print(f"{FLGreen}Created:{CRst} {FLCyan}{launcher_path}{CRst}")

@@ -214,9 +214,6 @@ def main() -> int:
         print(f"{FLRed}This script requires Windows 10+. Current platform: {sys.platform}{CRst}")
         return 1
     System.restart_elevated()
-    if not System.is_elevated():
-        print(f"{FLRed}Administrator privileges are required.{CRst}")
-        return 1
     Console.print_banner("DEVICE EJECTION HISTORY")
     return _show_events(args.minutes, args.limit, args.pid, args.process, args.device)
 

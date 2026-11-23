@@ -311,7 +311,7 @@ else:
 
     def test_help_and_invalid_arguments_never_elevate(self) -> None:
         for arguments, status in ((["--help"], 0), (["--timeout", "nan"], 2), (["--pid", "0"], 2)):
-            with patch.object(sys, "argv", ["path-in-use.py", *arguments]), patch.object(runner, "_require_elevation") as elevate:
+            with patch.object(sys, "argv", ["path-in-use.py", *arguments]), patch.object(runner.System, "restart_elevated") as elevate:
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     with self.assertRaises(SystemExit) as caught:
                         runner.main()
@@ -319,35 +319,17 @@ else:
                 elevate.assert_not_called()
 
     def test_failed_elevation_never_queries_or_prompts(self) -> None:
-        with patch.object(sys, "argv", ["path-in-use.py"]), patch.object(runner, "_require_elevation", return_value=False):
+        with patch.object(sys, "argv", ["path-in-use.py"]), patch.object(runner.System, "restart_elevated", side_effect=SystemExit(7)):
             with patch.object(runner, "_native_scan") as scan, patch.object(runner.Input, "resolve_input_path") as prompt:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(runner.main(), 1)
+                    with self.assertRaises(SystemExit) as caught:
+                        runner.main()
+                    self.assertEqual(caught.exception.code, 7)
                 scan.assert_not_called()
                 prompt.assert_not_called()
-        for platform in ("linux", "darwin", "win32"):
-            with self.subTest(platform=platform), patch.object(sys, "platform", platform):
-                with patch.object(runner.System, "is_elevated", return_value=False):
-                    with patch.object(runner.System, "restart_elevated") as restart, contextlib.redirect_stdout(io.StringIO()):
-                        self.assertFalse(runner._require_elevation())
-                        restart.assert_called_once()
-
-    def test_elevation_uses_shared_helper_and_preserves_its_exit(self) -> None:
-        for platform in ("linux", "darwin", "win32"):
-            with self.subTest(platform=platform), patch.object(sys, "platform", platform):
-                with patch.object(runner.System, "is_elevated", return_value=True):
-                    with patch.object(runner.System, "restart_elevated") as restart:
-                        self.assertTrue(runner._require_elevation())
-                        restart.assert_not_called()
-                with patch.object(runner.System, "is_elevated", return_value=False):
-                    with patch.object(runner.System, "restart_elevated", side_effect=SystemExit(7)) as restart:
-                        with self.assertRaises(SystemExit) as caught:
-                            runner._require_elevation()
-                        self.assertEqual(caught.exception.code, 7)
-                        restart.assert_called_once()
 
     def test_main_uses_real_path_and_propagates_scan_failure(self) -> None:
-        with patch.object(sys, "argv", ["path-in-use.py", str(ROOT)]), patch.object(runner, "_require_elevation", return_value=True):
+        with patch.object(sys, "argv", ["path-in-use.py", str(ROOT)]), patch.object(runner.System, "restart_elevated"):
             with patch.object(runner, "_backend_command", return_value=["backend"]), patch.object(runner, "_native_scan", side_effect=RuntimeError("backend failed")):
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error:
                     self.assertEqual(runner.main(), 1)

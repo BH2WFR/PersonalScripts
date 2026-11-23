@@ -22,7 +22,7 @@ Empty Recycle Bins across fixed/removable drives, including stuck contents that
 normal emptying leaves behind. Permanently deletes recycled files.
 
 {FLYellow}Requirements:{CRst}
-  Windows; administrator privileges recommended for protected contents.
+  Windows; administrator privileges.
 
 {FLYellow}Usage:{CRst}
   python recycle-bin-cleaner.py [--force-run]
@@ -276,38 +276,11 @@ def _forceful_clear(drive: str) -> tuple[int, int, int, int]:
 
 # ============ main ============
 def main() -> int:
-    # ── CLI flags ──────────────────────────────────────────────
-    force_run = "--force-run" in sys.argv
-    sys.argv = [a for a in sys.argv if a != "--force-run"]
-
-    if "--help" in sys.argv or "-h" in sys.argv:
-
-        print(HELP)
-        return 0
-
+    parser = Console.argument_parser(HELP)
+    parser.add_argument("--force-run", action="store_true")
+    force_run = parser.parse_args().force_run
+    System.restart_elevated()
     Console.print_banner("RECYCLE BIN CLEANER")
-
-    # ── admin check ────────────────────────────────────────────
-    if not System.is_elevated():
-        print(
-            f"{FLYellow}This operation may require administrator privileges.{CRst}\n"
-        )
-        if force_run:
-            System.restart_elevated()
-        else:
-            choice = Menu.select(
-                [
-                    MenuOption(["Y"], "Elevate and continue"),
-                    MenuOption(["N"], "Continue without elevation"),
-                    MenuOption(["Q"], "Quit"),
-                ],
-                prompt="Choice",
-                default_key="Y",
-            )
-            if choice == "Q" or choice is None:
-                Console.print_exit_message_and_exit("Cancelled.")
-            if choice == "Y":
-                System.restart_elevated()
 
     # ── scan ──────────────────────────────────────────────────
     drives = get_available_drives()

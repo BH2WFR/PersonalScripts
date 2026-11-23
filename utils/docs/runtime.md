@@ -9,8 +9,8 @@ Implementation: [environment.py](../environment.py), [system.py](../system.py), 
 | Need | Use |
 | --- | --- |
 | Admin / root detection | `System.is_elevated() -> bool` |
-| Re-execute as admin (force) | `System.restart_elevated()` — supports source/bundled apps and paths containing spaces; gsudo uses a Windows PowerShell bootstrap |
-| Re-execute as admin (soft, can fallback) | `System.try_restart_elevated() -> bool` — never re-runs after a helper starts |
+| Re-execute as admin (force) | `System.restart_elevated()` — supports source and bundled apps, preserves arguments and keeps interactive Windows tools in the caller's console. |
+| Legacy elevation entry | `System.try_restart_elevated()` delegates to `restart_elevated()` and returns `True` only when already elevated. |
 | Check if a CLI tool is in PATH | `Environment.check_commands(*CmdCheck)` or `Environment.which(name)` |
 | OS name / arch / hostname / Linux GUI | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()`, `System.get_linux_gui() -> LinuxGui \| None` |
 | Native disk inventory | `System.scan_disks() -> DiskScan`; returns `DiskInfo` trees with mounts, labels, filesystems, native IDs, platform details, and partial-query warnings. Windows uses PowerShell 7 Storage/CIM; Linux uses lsblk; macOS uses diskutil. Read-only, never mounts/elevates. Each query times out after 60 seconds. |
@@ -51,6 +51,23 @@ inspection and volume-backed synchronization. `DiskInfo`/`DiskScan` preserve
 unknown metadata and partial-scan warnings. Before writing to a volume, callers
 must validate scan completeness and the current mount identity.
 
-For scripts requiring privileges, use `System.restart_elevated()`; when a useful
-unprivileged mode exists, use `System.try_restart_elevated()` and handle failure.
-Keep help accessible without elevation; check privileges before protected work.
+Privileged Python entries call `System.restart_elevated()` once after argument
+parsing and platform checks, before operational output. It returns only in an
+elevated process. Entries with explicit arguments pass `entry=__file__, args=argv`
+so a relaunch replays the same script and options. Windows prefers gsudo with
+interactive input, then Windows sudo in inline mode. Settings that force a new
+window or disable input are skipped. Before requesting native UAC elevation,
+a warning dialog identifies `ShellExecuteExW` and recommends `scoop install gsudo`.
+For console tools, UAC starts a hidden helper that attaches to the caller's console before launching
+the tool. Windows may show its usual consent dialog. A console-less GUI can
+relaunch directly. A console tool needs an attached console for this fallback.
+The caller waits and returns the elevated tool's exit status.
+
+The PowerShell helper receives the executable and Windows argument string as
+Base64-encoded UTF-8 JSON. Empty arguments, Unicode, quotes, repeated spaces,
+forward slashes, trailing backslashes, and UNC paths reach the child unchanged.
+Commands exceeding gsudo's wrapper length limit skip directly to the next helper.
+If elevation fails at that point, the error suggests an Administrator PowerShell
+window or installing gsudo with `scoop install gsudo`.
+Linux and macOS re-execute through sudo. Linux passes the desktop display and
+XDG data variables through sudo for per-user launcher installation.

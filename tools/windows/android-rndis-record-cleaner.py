@@ -21,7 +21,7 @@ Find stale Android USB-tethering network records and delete selected registry
 entries. Deletion changes system network configuration.
 
 {FLYellow}Requirements:{CRst}
-  Windows; administrator privileges for deletion. No extra Python packages.
+  Windows; administrator privileges. No extra Python packages.
 
 {FLYellow}Usage:{CRst}
   python android-rndis-record-cleaner.py [--match TEXT] [--force]
@@ -442,27 +442,8 @@ def main() -> int:
         except re.error as exc:
             Console.print_error_and_exit(f"Invalid --match regex: {raw_pattern}\n  {exc}")
 
+    System.restart_elevated()
     Console.print_banner("ANDROID RNDIS RECORD CLEANER")
-
-    # ── elevation check ────────────────────────────────────
-    if not System.is_elevated():
-        print(
-            f"{FLYellow}Administrator privileges are required to delete HKLM "
-            f"network records.{CRst}\n"
-        )
-        if args.force:
-            System.restart_elevated()
-        choice = Menu.select(
-            [
-                MenuOption(["Y"], "Elevate and continue"),
-                MenuOption(["N"], "Exit"),
-            ],
-            prompt="Choice",
-            default_key="Y",
-        )
-        if choice != "Y":
-            Console.print_exit_message_and_exit("Cancelled.")
-        System.restart_elevated()
 
     # ── scan registry ──────────────────────────────────────
     print(f"\n{FGray}Network records: HKLM\\{NETWORK_CONNECTIONS_KEY}{CRst}")

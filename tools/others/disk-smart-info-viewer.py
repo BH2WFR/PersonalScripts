@@ -15,7 +15,7 @@ Inspect physical-disk health and SMART attributes through smartmontools.
 Available data depends on the disk, enclosure and access permissions.
 
 {FLYellow}Requirements:{CRst}
-  smartmontools; administrator/root privileges may be needed.
+  smartmontools; administrator/root privileges.
 
 {FLYellow}Usage:{CRst}
   python disk-smart-info-viewer.py
@@ -24,20 +24,6 @@ Available data depends on the disk, enclosure and access permissions.
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
     print(HELP)
     raise SystemExit(0)
-
-
-# ============ smartctl check ============
-if not Environment.check_commands(CmdCheck("smartctl", hints={
-    "windows": f"{FGray}scoop install smartmontools{CRst}",
-    "macos": f"{FGray}brew install smartmontools{CRst}",
-    "linux": f"{FGray}sudo apt install smartmontools{CRst}",
-})):
-    sys.exit(1)
-
-if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(HELP)
-    sys.exit(0)
 
 
 # ============ helpers ============
@@ -97,7 +83,15 @@ def _get_device_info(dev_path: str, dev_type: str) -> dict:
 
 
 # ============ main ============
-def main():
+def main() -> int:
+    Console.argument_parser(HELP).parse_args()
+    System.restart_elevated()
+    if not Environment.check_commands(CmdCheck("smartctl", hints={
+        "windows": f"{FGray}scoop install smartmontools{CRst}",
+        "macos": f"{FGray}brew install smartmontools{CRst}",
+        "linux": f"{FGray}sudo apt install smartmontools{CRst}",
+    })):
+        return 1
     Console.print_banner("DISK SMART INFO VIEWER")
     print()
 

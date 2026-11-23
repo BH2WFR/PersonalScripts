@@ -8,16 +8,22 @@ import os
 import platform
 import plistlib
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 from dataclasses import dataclass, field
 from typing import cast
 
 from .ansi import *
+
+
+# gsudo can wrap Windows PowerShell in cmd.exe (8191 characters including its options).
+_GSUDO_POWERSHELL_LIMIT = 8000
 
 
 class LinuxGui(StrEnum):
@@ -532,13 +538,13 @@ class System:
                 return False
 
     @staticmethod
-    def _restart_command() -> list[str]:
+    def _restart_command(entry: str | None = None, args: Sequence[str] | None = None) -> list[str]:
         """Return the command that re-launches the current program."""
         executable = os.path.abspath(sys.executable)
-        args = sys.argv[1:]
+        args = sys.argv[1:] if args is None else args
         if getattr(sys, "frozen", False) or "__compiled__" in globals():
             return [executable, *args]
-        return [executable, os.path.abspath(sys.argv[0]), *args]
+        return [executable, os.path.abspath(entry or sys.argv[0]), *args]
 
     @staticmethod
     def _elevation_command(
@@ -547,198 +553,207 @@ class System:
         restart_command: list[str],
     ) -> list[str]:
         """Wrap a restart command for the selected elevation helper."""
-        if sys.platform == "win32" and helper_name == "gsudo":
-            return System._windows_gsudo_command(
-                helper_executable,
-                restart_command,
-            )
-        return [helper_executable, *restart_command]
+        if sys.platform == "win32":
+            flags = ["--direct", "--wait"] if helper_name == "gsudo" else ["--inline"]
+            return [helper_executable, *flags, *System._windows_restart_powershell(restart_command)]
+        command = [helper_executable, "-u", "root"]
+        if sys.platform == "linux":
+            desktop_vars = ("DISPLAY", "WAYLAND_DISPLAY", "XDG_DATA_HOME", "XDG_DATA_DIRS")
+            preserved = ",".join(name for name in desktop_vars if name in os.environ)
+            if preserved:
+                command.append(f"--preserve-env={preserved}")
+        return [*command, *restart_command]
 
     @staticmethod
-    def _windows_gsudo_command(
-        helper_executable: str,
-        restart_command: list[str],
-    ) -> list[str]:
-        """Build a gsudo command that preserves arbitrary Windows arguments."""
+    def _windows_restart_powershell(restart_command: list[str], *, console_pid: int | None = None) -> list[str]:
+        """Build a PowerShell invocation that preserves the target's Windows argv.
+
+        gsudo can collapse consecutive spaces after an embedded double quote.
+        Quote the target arguments with list2cmdline, then carry the executable
+        path and command line together as Base64-encoded UTF-8 JSON. Only the
+        Base64 text enters PowerShell source. ProcessStartInfo passes the
+        decoded command line directly to the child.
+        """
         command_data = {
             "program": restart_command[0],
             "argument_line": subprocess.list2cmdline(restart_command[1:]),
         }
-        command_json = json.dumps(command_data, ensure_ascii=False)
-        command_payload = base64.b64encode(
-            command_json.encode("utf-8"),
-        ).decode("ascii")
+        command_json = json.dumps(command_data, ensure_ascii=False, separators=(",", ":"))
+        payload = base64.b64encode(command_json.encode("utf-8")).decode("ascii")
+        attach = ""
+        if console_pid is not None:
+            # runas grants a new token. Attach the hidden helper before starting
+            # the target so it inherits the original console and its input buffer.
+            attach = (
+                "Add-Type -Namespace PersonalScripts -Name NativeConsole -MemberDefinition '"
+                '[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern bool FreeConsole(); '
+                '[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)] '
+                "public static extern bool AttachConsole(uint pid); "
+                "public static void WaitThroughInterrupts() { System.Console.CancelKeyPress += (s,e) => e.Cancel = true; }'; "
+                "[void][PersonalScripts.NativeConsole]::FreeConsole(); "
+                f"if (![PersonalScripts.NativeConsole]::AttachConsole({console_pid})) {{ throw "
+                "(New-Object ComponentModel.Win32Exception) }; "
+                "[PersonalScripts.NativeConsole]::WaitThroughInterrupts(); "
+            )
         bootstrap = (
-            "$ProgressPreference = 'SilentlyContinue'\n"
-            "$commandJson = [Text.Encoding]::UTF8.GetString("
-            "[Convert]::FromBase64String('"
-            f"{command_payload}'))\n"
-            "$command = ConvertFrom-Json -InputObject $commandJson\n"
-            "$startInfo = New-Object System.Diagnostics.ProcessStartInfo\n"
-            "$startInfo.FileName = [string]$command.program\n"
-            "$startInfo.Arguments = [string]$command.argument_line\n"
-            "$startInfo.UseShellExecute = $false\n"
-            "$process = [Diagnostics.Process]::Start($startInfo)\n"
-            "$process.WaitForExit()\n"
-            "exit $process.ExitCode\n"
+            f"$ErrorActionPreference = 'Stop'; {attach}"
+            f"$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}')); "
+            "$command = ConvertFrom-Json -InputObject $json; "
+            "$startInfo = [Diagnostics.ProcessStartInfo]::new($command.program, $command.argument_line); "
+            "$startInfo.UseShellExecute = $false; "
+            "$process = [Diagnostics.Process]::Start($startInfo); "
+            "$process.WaitForExit(); "
+            "exit $process.ExitCode"
         )
-        encoded_bootstrap = base64.b64encode(
-            bootstrap.encode("utf-16le"),
-        ).decode("ascii")
         return [
-            helper_executable,
-            "--direct",
-            r"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-OutputFormat",
-            "Text",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-EncodedCommand",
-            encoded_bootstrap,
+            os.path.expandvars(r"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", bootstrap,
         ]
 
     @staticmethod
-    def restart_elevated() -> None:
+    def _windows_helper_available(name: str, executable: str) -> bool:
+        """Probe supported gsudo syntax and inbox sudo settings without elevation."""
+        if name == "gsudo":
+            result = subprocess.run(
+                [executable, "--help"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                check=False, timeout=10,
+            )
+            if result.returncode or b"--direct" not in result.stdout:
+                return False
+            settings = subprocess.run(
+                [executable, "config"], capture_output=True, check=False, timeout=10,
+            )
+            lines = settings.stdout.lower().splitlines()
+            return settings.returncode == 0 and all(
+                any(line.startswith(key + b' = "false"') for line in lines)
+                for key in (b"newwindow.force", b"securityenforceuacisolation")
+            )
+        # Only inbox sudo has a documented interactive --inline mode.
+        inbox_sudo = os.path.expandvars(r"%SystemRoot%\System32\sudo.exe")
+        if os.path.normcase(executable) != os.path.normcase(inbox_sudo):
+            return False
+        import winreg
+
+        access = winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+        for key, optional in ((r"SOFTWARE\Microsoft\Windows\CurrentVersion\Sudo", False),
+                              (r"SOFTWARE\Policies\Microsoft\Windows\Sudo", True)):
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key, 0, access) as settings:
+                    mode, _ = winreg.QueryValueEx(settings, "Enabled")
+            except FileNotFoundError:
+                if optional:
+                    continue
+                return False
+            if not isinstance(mode, int) or mode < 3:  # 3 permits inline I/O.
+                return False
+        return True
+
+    @staticmethod
+    def _windows_native_restart(restart_command: list[str]) -> int:
+        """Attach a UAC-approved process to the original console and return its status."""
+        from ._windows_elevation import has_console, is_gui_executable, run_as_admin
+
+        if has_console():
+            command = System._windows_restart_powershell(restart_command, console_pid=os.getpid())
+            return run_as_admin(command, hidden=True)
+        if is_gui_executable(restart_command[0]):
+            return run_as_admin(restart_command, hidden=False)
+        raise OSError("No original Windows console is available for interactive elevation")
+
+    @staticmethod
+    def _restart_windows(restart_command: list[str]) -> None:
+        """Try interactive helpers in order, stopping once a process has started."""
+        failures: list[str] = []
+        for name in ("gsudo", "sudo"):
+            executable = shutil.which(name)
+            if executable is None:
+                failures.append(f"{name}: not found in PATH")
+                continue
+            try:
+                if not System._windows_helper_available(name, executable):
+                    failures.append(f"{name} is disabled or unsupported")
+                    continue
+                command = System._elevation_command(name, executable, restart_command)
+                if name == "gsudo" and len(subprocess.list2cmdline(command)) > _GSUDO_POWERSHELL_LIMIT:
+                    failures.append("gsudo: command too long for its PowerShell wrapper")
+                    continue
+                result = subprocess.run(command, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                failures.append(f"{name}: failed to start ({exc})")
+                continue
+            if result.returncode:
+                print(f"{FLRed}{name} exited with status {result.returncode}.{CRst}", file=sys.stderr)
+            raise SystemExit(result.returncode)
+
+        try:
+            code = System._windows_native_restart(restart_command)
+        except OSError as exc:
+            failures.append(f"Windows UAC: {exc}")
+        else:
+            if code:
+                print(f"{FLRed}Windows UAC helper or elevated tool exited with status {code}.{CRst}", file=sys.stderr)
+            raise SystemExit(code)
+
+        print(f"{FLRed}Elevation failed: {'; '.join(failures)}.{CRst}", file=sys.stderr)
+        print(
+            f"{FLYellow}Run this script from an Administrator PowerShell "
+            f"window, or install gsudo with Scoop and retry.{CRst}\n"
+            f"  {FGray}scoop install gsudo{CRst}", file=sys.stderr,
+        )
+        sys.exit(1)
+
+    @staticmethod
+    def restart_elevated(*, entry: str | None = None, args: Sequence[str] | None = None) -> None:
         """Re-execute the current script with administrator/root privileges.
 
-        **Must be called at the very beginning of the program**, before any
-        output is written to stdout.  On Windows the Win32 API fallback spawns
-        a fresh console window that cannot render ANSI escape sequences; any
-        prior output will appear garbled or be lost.
+        Call once after help, argument validation and platform checks, before
+        operational output or work. Returns only when already elevated.
+        Linux and macOS replace the process using sudo. Windows tries interactive
+        gsudo, inline Windows sudo and finally native UAC in the original console.
+        A started tool's exit status is final.
 
-        If already elevated, returns immediately.  Does **not** return when
-        elevation succeeds — the current process is replaced via ``os.execv``
-        or ``sys.exit(0)``.
+        Args:
+            entry: Script path for a programmatic entry point. Defaults to sys.argv[0].
+            args: Arguments excluding the script name. Defaults to sys.argv[1:].
 
-        Elevation order
-            **Linux / macOS** — ``sudo`` only.
-            **Windows** — ``gsudo`` → ``sudo`` → Win32 ``ShellExecuteW``
-            (last resort; spawns a separate Python console window with no ANSI
-            support).  All in-place helpers are called via ``subprocess.run``
-            instead of ``os.execv`` to avoid stdin contention.
-
-        Once a helper starts, the parent exits with the child's status instead
-        of trying another helper.
+        Raises:
+            SystemExit: The elevated process finished or elevation failed.
         """
         if System.is_elevated():
             return
 
-        restart_command = System._restart_command()
+        restart_command = System._restart_command(entry, args)
 
         if sys.platform == "win32":
-            # 1) gsudo — in-place elevation, preserves ANSI escapes.
-            # 2) sudo  — same-terminal elevation fallback.
-            # Use subprocess.run instead of os.execv: scoop's sudo does not
-            # properly detach stdin, causing two processes to compete for input
-            # and producing doubled keystrokes / cursor glitches.
-            failures: list[str] = []
-            for name in ("gsudo", "sudo"):
-                executable = shutil.which(name)
-                if executable is None:
-                    failures.append(f"{name}: not found in PATH")
-                    continue
-                try:
-                    result = subprocess.run(
-                        System._elevation_command(
-                            name,
-                            executable,
-                            restart_command,
-                        ),
-                        check=False,
-                    )
-                except OSError as exc:
-                    failures.append(f"{name}: failed to start ({exc})")
-                    continue
-                raise SystemExit(result.returncode)
-
-            # 3) ShellExecuteW — last resort.  Spawns a fresh console window;
-            #    ANSI escape sequences are not carried over.
-            sys.stdout.flush()
-            print()
-            params = subprocess.list2cmdline(restart_command[1:])
+            # The elevated foreground tool owns Ctrl+C while its parent waits.
+            previous = None
+            if threading.current_thread() is threading.main_thread():
+                previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
-                ret = ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", restart_command[0], params, None, 1,
-                )
-            except OSError as exc:
-                failures.append(f"Windows UAC: failed to start ({exc})")
-            else:
-                if ret > 32:
-                    sys.exit(0)
-                failures.append(f"Windows UAC: ShellExecuteW error {ret}")
+                System._restart_windows(restart_command)
+            finally:
+                if previous is not None:
+                    signal.signal(signal.SIGINT, previous)
+            return
 
-            print(f"{FLRed}Elevation failed: {'; '.join(failures)}.{CRst}")
-            print(
-                f"{FLYellow}Run this script from an Administrator PowerShell "
-                f"window and try again.{CRst}"
+        sudo = shutil.which("sudo")
+        if sudo is None:
+            print(f"{FLRed}Cannot elevate: sudo not found in PATH.{CRst}", file=sys.stderr)
+            raise SystemExit(1)
+        try:
+            os.execv(
+                sudo,
+                System._elevation_command("sudo", sudo, restart_command),
             )
-            sys.exit(1)
-        else:
-            sudo = shutil.which("sudo")
-            if sudo:
-                os.execv(
-                    sudo,
-                    System._elevation_command("sudo", sudo, restart_command),
-                )
-            print(f"{FLRed}Cannot elevate: sudo not found in PATH.{CRst}")
-            sys.exit(1)
+        except OSError as exc:
+            print(f"{FLRed}Cannot start sudo: {exc}{CRst}", file=sys.stderr)
+            raise SystemExit(1) from exc
 
     @staticmethod
     def try_restart_elevated() -> bool:
-        """Re-launch via a helper that waits for the child to finish.
-
-        **Should be called as early as possible**, before significant output,
-        though the in-place helpers (``gsudo`` / ``sudo``) preserve the
-        terminal state and are more forgiving than the Win32 API fallback.
-
-        Unlike :meth:`restart_elevated`, this does **not** fall back to
-        ``ShellExecuteW`` spawning a new window. Missing helpers and launch
-        errors fall through to the next helper. Once a helper starts, a
-        non-zero child status returns ``False`` without running the program a
-        second time through another helper.
-
-        If already elevated, returns ``True`` immediately so the caller can
-        simply proceed.
-
-        Elevation order
-            **Linux / macOS** — ``sudo`` only.
-            **Windows** — ``gsudo`` → ``sudo`` (both in-place).
-
-        Raises ``SystemExit(0)`` when the child exits successfully.
-        Returns ``False`` if no helper could be started or the launched child
-        exited with a non-zero code. The caller should continue with reduced
-        privileges.
-        """
-        if System.is_elevated():
-            return True
-
-        helpers: list[str] = (
-            ["gsudo", "sudo"] if sys.platform == "win32" else ["sudo"]
-        )
-        restart_command = System._restart_command()
-
-        for name in helpers:
-            executable = shutil.which(name)
-            if executable is None:
-                continue
-            try:
-                result = subprocess.run(
-                    System._elevation_command(
-                        name,
-                        executable,
-                        restart_command,
-                    ),
-                    check=False,
-                )
-            except OSError:
-                continue
-            if result.returncode == 0:
-                raise SystemExit(0)
-            return False
-        return False
+        """Compatibility entry for mandatory elevation. Failures raise SystemExit."""
+        System.restart_elevated()
+        return True
 
     @staticmethod
     def open_with_default_app(path: str) -> None:

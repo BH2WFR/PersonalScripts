@@ -26,7 +26,7 @@ a restart; WinHTTP actions do not change browser or VPN proxy settings.
 
 {FLYellow}Requirements:{CRst}
   Windows 10+ built-in network tools; PowerShell 7 for diagnosis.
-  Administrator privileges for repairs.
+  Administrator privileges.
 
 {FLYellow}Usage:{CRst}
   python network-repair.py [--action ACTION] [--dry-run]
@@ -125,7 +125,7 @@ def _parse_args() -> Options:
     """Parse and validate CLI options before any commands or elevation."""
     parser = Console.argument_parser(HELP)
     parser.add_argument("--action", type=Action, choices=list(Action), help="run this action directly")
-    parser.add_argument("--dry-run", action="store_true", help="preview without commands/elevation; defaults to reset")
+    parser.add_argument("--dry-run", action="store_true", help="preview without executing repair commands; defaults to reset")
     parser.add_argument("-y", "--yes", action="store_true", help="confirm the explicit --action without prompting")
     parser.add_argument("--menu", action="store_true", help="open the menu after the explicit action")
     parser.add_argument("--adapter", help="DHCP adapter name or wildcard; default: all DHCP adapters")
@@ -198,11 +198,10 @@ def _select_action() -> Action | None:
         return choice if isinstance(choice, Action) else None
 
 
-def _execute_action(action: Action, options: Options, *, return_to_menu: bool, assume_yes: bool) -> int:
-    """Preview, confirm and execute one action, relaunching as admin if needed.
+def _execute_action(action: Action, options: Options, *, assume_yes: bool) -> int:
+    """Preview, confirm and execute one action.
 
-    Returns a process-style status (0/1/2). May raise SystemExit when the
-    shared elevation helper relaunches the script. Only repair actions mutate
+    Returns a process-style status (0/1/2). Only repair actions mutate
     network settings. Command output is inherited by the terminal.
     """
     steps = _build_steps(action, options)
@@ -232,19 +231,6 @@ def _execute_action(action: Action, options: Options, *, return_to_menu: bool, a
             if confirmed is not True:
                 print(f"{FGray}Cancelled. No network settings changed.{CRst}")
                 return 0
-        if not System.is_elevated():
-            # Preserve the selected action/options through the shared relaunch.
-            original_argv = sys.argv
-            sys.argv = [original_argv[0], "--action", action.value, "--yes",
-                        "--test-ip", options.test_ip, "--host", options.host]
-            if options.adapter:
-                sys.argv.extend(["--adapter", options.adapter])
-            if return_to_menu:
-                sys.argv.append("--menu")
-            try:
-                System.restart_elevated()
-            finally:
-                sys.argv = original_argv
 
     # ── bounded execution and result summary ────────────────
     failures: list[str] = []
@@ -291,6 +277,7 @@ def main() -> int:
     options = _parse_args()
     if sys.platform != "win32":
         Console.print_error_and_exit(f"This script only runs on Windows. Current platform: {sys.platform}")
+    System.restart_elevated()
     Console.print_banner("NETWORK REPAIR")
     action = options.action
     if action is None and options.dry_run:
@@ -304,12 +291,12 @@ def main() -> int:
     status = 0
     try:
         if action is not None:
-            status = _execute_action(action, options, return_to_menu=open_menu, assume_yes=options.yes)
+            status = _execute_action(action, options, assume_yes=options.yes)
         while open_menu:
             selected = _select_action()
             if selected is None:
                 break
-            result = _execute_action(selected, options, return_to_menu=True, assume_yes=False)
+            result = _execute_action(selected, options, assume_yes=False)
             status = max(status, result)
     except EOFError:
         print(f"{FLYellow}Input closed. No further actions will run.{CRst}")

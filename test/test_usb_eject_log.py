@@ -106,9 +106,11 @@ class UsbEjectLogTests(unittest.TestCase):
 
     def test_elevation_failure_prevents_query(self) -> None:
         with patch.object(sys, "platform", "win32"), patch.object(sys, "argv", ["device-ejection-history.py"]):
-            with patch.object(runner.System, "restart_elevated"), patch.object(runner.System, "is_elevated", return_value=False):
+            with patch.object(runner.System, "restart_elevated", side_effect=SystemExit(1)):
                 with patch.object(runner, "_show_events") as query, redirect_stdout(io.StringIO()):
-                    self.assertEqual(runner.main(), 1)
+                    with self.assertRaises(SystemExit) as caught:
+                        runner.main()
+                    self.assertEqual(caught.exception.code, 1)
                 query.assert_not_called()
 
 

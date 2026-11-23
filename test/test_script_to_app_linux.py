@@ -34,6 +34,8 @@ class LinuxLauncherTests(unittest.TestCase):
         (ROOT / "tmp").mkdir(exist_ok=True)
         directory = tempfile.TemporaryDirectory(dir=ROOT / "tmp", prefix="linux-app-")
         self.addCleanup(directory.cleanup)
+        self.enterContext(patch.dict(os.environ, {"SUDO_UID": ""}))
+        self.enterContext(patch.object(app.System, "restart_elevated"))
         self.root = Path(directory.name)
         self.target = self.root / "target.py"
         self.target.touch()
@@ -99,7 +101,7 @@ class LinuxLauncherTests(unittest.TestCase):
             app._build_arg_parser().parse_args(["--all-files", "--mime-type", "text/plain"])
         self.assertEqual(result.exception.code, 2)
 
-    def test_x11_and_wayland_create_user_entries_without_elevation(self) -> None:
+    def test_x11_and_wayland_create_user_entries_after_elevation(self) -> None:
         for gui in (app.LinuxGui.X11, app.LinuxGui.WAYLAND):
             data_home = self.root / gui.value
             output = io.StringIO()
@@ -108,7 +110,7 @@ class LinuxLauncherTests(unittest.TestCase):
                     patch.object(app.System, "get_linux_gui", return_value=gui), \
                     patch.object(app.Environment, "check_commands", return_value=True), \
                     patch.object(app.Environment, "select_python_environment", return_value=(self.runtime, None)), \
-                    patch.object(app.System, "try_restart_elevated") as elevate, \
+                    patch.object(app.System, "restart_elevated") as elevate, \
                     patch.object(app, "_refresh_linux_desktop_database") as refresh, \
                     patch("builtins.input", return_value=""), contextlib.redirect_stdout(output):
                 self.assertEqual(app.main([
@@ -123,7 +125,8 @@ class LinuxLauncherTests(unittest.TestCase):
             self.assertTrue(Path(f"{entry}.sh").is_file())
             self.assertIn(str(entry), output.getvalue())
             self.assertIn(f"{entry}.sh", output.getvalue())
-            elevate.assert_not_called()
+            elevate.assert_called_once()
+            self.assertEqual(elevate.call_args.kwargs["entry"], app.__file__)
             refresh.assert_called_once_with(str(entry.parent))
             self.assertFalse((data_home / "mimeapps.list").exists())
 
@@ -181,7 +184,7 @@ class LinuxLauncherTests(unittest.TestCase):
         for platform in ("win32", "darwin"):
             for args in (["--mime-type", "text/plain"], ["--all-files"]):
                 with self.subTest(platform=platform, args=args), patch.object(sys, "platform", platform), \
-                        patch.object(app.System, "try_restart_elevated") as elevate, \
+                        patch.object(app.System, "restart_elevated") as elevate, \
                         contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
                         self.assertRaises(SystemExit) as result:
                     app.main(args)
@@ -206,7 +209,7 @@ class LinuxLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertIn(json.dumps(arguments, ensure_ascii=False), result.stdout)
         self.assertIn("exit code: 7", result.stdout)
-        self.assertEqual(stat.S_IMODE(entry.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(entry.stat().st_mode), 0o755 if os.geteuid() == 0 else 0o700)
         self.assertFalse(entry.read_bytes().startswith(b"\xef\xbb\xbf"))
 
     @unittest.skipUnless(sys.platform == "linux", "Linux GIO desktop-entry integration")

@@ -116,6 +116,24 @@ gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no
     - "others/script-to-app.py"
     - "others/unicode-inspector.py"
 
+elevation-needed-list: # 下列程序，启动时需要提权，启动器中列出时会带上 `[SUDO]` 的尾巴
+    - "windows/keyboard-remapper.py"
+    - "windows/android-rndis-record-cleaner.py"
+    - "windows/device-ejection-history.py"
+    - "windows/event-log-cleaner.py"
+    - "windows/file-association-manager.py"
+    - "windows/firewall-app-blocker.py"
+    - "windows/network-repair.py"
+    - "windows/privacy-cleaner.py"
+    - "windows/recycle-bin-cleaner.py"
+    - "windows/service-restarter.py"
+    - "filesystem/executable-bit-setter.sh"
+    - "filesystem/path-in-use.py"
+    - "macos/ntfs-3g-mount-manager.py"
+    - "macos/privacy-cleaner.py"
+    - "others/disk-smart-info-viewer.py"
+    - "others/script-to-app.py"
+
 extra-env-paths:
     # 规范：all-platforms, windows, linux, macos
     all-platforms:

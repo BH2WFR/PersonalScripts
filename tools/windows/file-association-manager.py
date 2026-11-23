@@ -8,14 +8,10 @@ target the selected source rather than all registrations for the extension.
 from __future__ import annotations
 
 import argparse
-import base64
-import binascii
 import ctypes
-import json
 import os
 import re
 import sys
-import winreg
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -29,7 +25,7 @@ Inspect Open With registrations for an extension, remove selected entries or
 register an executable for the current user or machine.
 
 {FLYellow}Requirements:{CRst}
-  Windows 10+; administrator privileges for machine-wide changes.
+  Windows 10+; administrator privileges.
 
 {FLYellow}Usage:{CRst}
   python file-association-manager.py [--view EXTENSION]
@@ -38,6 +34,10 @@ register an executable for the current user or machine.
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
     print(HELP)
     raise SystemExit(0)
+
+
+if sys.platform == "win32":
+    import winreg
 
 
 CLASSES_PATH = r"Software\Classes"
@@ -858,120 +858,6 @@ def _print_inspection(extension: str, references: list[AssociationReference]) ->
             _print_definition(definition)
 
 
-def _encode_payload(payload: dict[str, str | list[int]]) -> str:
-    """Encode a confirmed operation for command-line elevation re-entry."""
-    raw_payload = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-    return base64.urlsafe_b64encode(raw_payload.encode("utf-8")).decode("ascii")
-
-
-def _decode_payload(encoded_payload: str) -> dict[str, str | list[int]]:
-    """Decode and structurally validate an elevation re-entry payload."""
-    try:
-        raw_payload = base64.urlsafe_b64decode(encoded_payload.encode("ascii"))
-        decoded: object = json.loads(raw_payload.decode("utf-8"))
-    except (binascii.Error, ValueError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("The elevated operation payload is invalid.") from exc
-    if not isinstance(decoded, dict):
-        raise ValueError("The elevated operation payload must be an object.")
-
-    payload: dict[str, str | list[int]] = {}
-    for raw_key, raw_value in decoded.items():
-        if not isinstance(raw_key, str):
-            raise ValueError("The elevated operation payload has an invalid key.")
-        if isinstance(raw_value, str):
-            payload[raw_key] = raw_value
-            continue
-        if isinstance(raw_value, list) and all(
-            isinstance(item, int) for item in raw_value
-        ):
-            payload[raw_key] = raw_value
-            continue
-        raise ValueError(f"The elevated operation field '{raw_key}' is invalid.")
-    return payload
-
-
-def _payload_string(payload: dict[str, str | list[int]], key: str) -> str:
-    """Return one required string field from a decoded operation payload."""
-    value = payload.get(key)
-    if not isinstance(value, str):
-        raise ValueError(f"The elevated operation field '{key}' is missing.")
-    return value
-
-
-def _encode_deletion_spec(spec: DeletionSpec) -> str:
-    """Serialize one confirmed exact deletion request."""
-    return _encode_payload({
-        "extension": spec.extension,
-        "source": spec.source,
-        "scope": spec.scope.name,
-        "view_flags": list(spec.view_flags),
-        "kind": spec.kind.name,
-        "path": spec.path,
-        "value_name": spec.value_name if spec.value_name is not None else "",
-        "handler_id": spec.handler_id,
-    })
-
-
-def _decode_deletion_spec(encoded_payload: str) -> DeletionSpec:
-    """Deserialize and validate one elevated deletion request."""
-    payload = _decode_payload(encoded_payload)
-    raw_flags = payload.get("view_flags")
-    if not isinstance(raw_flags, list) or not raw_flags:
-        raise ValueError("The elevated deletion payload has no registry view.")
-    delete_kind = DeleteKind[_payload_string(payload, "kind")]
-    raw_value_name = _payload_string(payload, "value_name")
-    spec = DeletionSpec(
-        extension=_normalize_extension(_payload_string(payload, "extension")),
-        source=_payload_string(payload, "source"),
-        scope=RegistryScope[_payload_string(payload, "scope")],
-        view_flags=tuple(raw_flags),
-        kind=delete_kind,
-        path=_payload_string(payload, "path"),
-        value_name=raw_value_name if delete_kind is DeleteKind.VALUE else None,
-        handler_id=_payload_string(payload, "handler_id"),
-    )
-    _validate_deletion_spec(spec)
-    return spec
-
-
-def _encode_add_spec(spec: AddSpec) -> str:
-    """Serialize one fully confirmed file-handler registration request."""
-    return _encode_payload({
-        "extension": spec.extension,
-        "method": spec.method.name,
-        "executable_path": spec.executable_path,
-        "app_name": spec.app_name,
-        "app_id": spec.app_id,
-        "progid": spec.progid,
-        "arguments": spec.arguments,
-        "scope": spec.scope.name,
-    })
-
-
-def _decode_add_spec(encoded_payload: str) -> AddSpec:
-    """Deserialize and validate one elevated registration request."""
-    payload = _decode_payload(encoded_payload)
-    spec = AddSpec(
-        extension=_normalize_extension(_payload_string(payload, "extension")),
-        method=RegistrationMethod[_payload_string(payload, "method")],
-        executable_path=os.path.abspath(_payload_string(payload, "executable_path")),
-        app_name=_payload_string(payload, "app_name"),
-        app_id=_payload_string(payload, "app_id"),
-        progid=_payload_string(payload, "progid"),
-        arguments=_payload_string(payload, "arguments"),
-        scope=RegistryScope[_payload_string(payload, "scope")],
-    )
-    _validate_add_spec(spec)
-    return spec
-
-
-def _restart_elevated(operation_flag: str, encoded_payload: str) -> None:
-    """Re-enter this script through the shared in-place elevation helper."""
-    sys.argv = [os.path.abspath(sys.argv[0]), operation_flag, encoded_payload]
-    System.restart_elevated()
-    raise RuntimeError("The elevation helper returned without elevating the process.")
-
-
 def _validate_deletion_spec(spec: DeletionSpec) -> None:
     """Reject malformed or over-broad registry deletion targets."""
     expected_targets: dict[str, tuple[DeleteKind, str, Optional[str]]] = {
@@ -1374,14 +1260,10 @@ def _confirm_delete(spec: DeletionSpec) -> bool:
 
 
 def _execute_deletion(spec: DeletionSpec) -> bool:
-    """Elevate when needed, apply an exact deletion, and report its outcome."""
-    if spec.scope is RegistryScope.MACHINE and not System.is_elevated():
-        _restart_elevated("--apply-delete-spec", _encode_deletion_spec(spec))
+    """Apply an exact deletion and report its outcome."""
     try:
         deleted_count = _apply_deletion(spec)
     except PermissionError:
-        if not System.is_elevated():
-            _restart_elevated("--apply-delete-spec", _encode_deletion_spec(spec))
         print(f"{FLRed}Deletion failed: the registry entry is protected.{CRst}")
         return False
     except OSError as exc:
@@ -1623,9 +1505,7 @@ def _confirm_registration_conflicts(spec: AddSpec) -> bool:
 
 
 def _execute_registration(spec: AddSpec) -> bool:
-    """Elevate for machine scope, apply the plan, and report its outcome."""
-    if spec.scope is RegistryScope.MACHINE and not System.is_elevated():
-        _restart_elevated("--apply-add-spec", _encode_add_spec(spec))
+    """Apply the registration plan and report its outcome."""
     try:
         changed_count = _apply_registration(spec)
     except PermissionError as exc:
@@ -1702,77 +1582,24 @@ def _interactive_action() -> Optional[str]:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """Run direct management, elevated re-entry, or the interactive menu."""
+    """Manage an extension directly or open the interactive menu."""
     parser = _build_arg_parser()
     parser.add_argument(
         "--view",
         metavar="EXTENSION",
         help="manage all registry handler entries for one extension",
     )
-    parser.add_argument("--apply-delete-spec", help=argparse.SUPPRESS)
-    parser.add_argument("--apply-add-spec", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    deletion_payload = (
-        args.apply_delete_spec
-        if isinstance(args.apply_delete_spec, str)
-        else None
-    )
-    add_payload = (
-        args.apply_add_spec
-        if isinstance(args.apply_add_spec, str)
-        else None
-    )
-    view_extension = args.view if isinstance(args.view, str) else None
 
     if sys.platform != "win32":
         Console.print_error_and_exit(
             f"This script only runs on Windows. Current platform: {sys.platform}"
         )
 
-    try:
-        deletion_spec = (
-            _decode_deletion_spec(deletion_payload)
-            if deletion_payload is not None
-            else None
-        )
-        add_spec = (
-            _decode_add_spec(add_payload)
-            if add_payload is not None
-            else None
-        )
-    except (KeyError, ValueError) as exc:
-        print(f"{FLRed}Invalid elevated operation:{CRst} {exc}", file=sys.stderr)
-        return 2
-    if deletion_spec is not None and add_spec is not None:
-        print(f"{FLRed}Only one elevated operation may be applied at a time.{CRst}")
-        return 2
-
-    if deletion_spec is not None and not System.is_elevated():
-        if deletion_payload is None:
-            raise RuntimeError("The validated deletion payload is missing.")
-        _restart_elevated("--apply-delete-spec", deletion_payload)
-    if (
-        add_spec is not None
-        and add_spec.scope is RegistryScope.MACHINE
-        and not System.is_elevated()
-    ):
-        if add_payload is None:
-            raise RuntimeError("The validated registration payload is missing.")
-        _restart_elevated("--apply-add-spec", add_payload)
-
+    System.restart_elevated(entry=__file__, args=argv)
     Console.print_banner("FILE ASSOCIATION MANAGER")
-    if deletion_spec is not None:
-        _execute_deletion(deletion_spec)
-        print()
-        return _manage_extension(deletion_spec.extension)
-    if add_spec is not None:
-        if not _execute_registration(add_spec):
-            return 1
-        print()
-        return _manage_extension(add_spec.extension)
-
-    if view_extension is not None:
-        return _manage_extension(view_extension)
+    if args.view is not None:
+        return _manage_extension(args.view)
 
     while True:
         action = _interactive_action()

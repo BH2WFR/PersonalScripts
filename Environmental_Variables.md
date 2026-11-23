@@ -59,6 +59,9 @@ real user configuration, decrypted credentials or tokens.
   `setlocal`; these are not user settings. The Bash exit-code variable is local.
 - `RCLONE_CONFIG` / `RCLONE_CONFIG_PASS` remain native rclone integration variables;
   explicit command-line options and saved credentials supply the relevant values.
+- After POSIX elevation, `script-to-app` uses `SUDO_UID` to resolve the desktop
+  user's home and install per-user launchers with that user's ownership.
+  The macOS privacy cleaner resolves user paths with `SUDO_USER`.
 - `XDG_DATA_HOME`, `XDG_DATA_DIRS`, `DISPLAY` and `WAYLAND_DISPLAY` still affect
   Linux desktop entries and desktop detection. They do not relocate user config.
 - Task YAML may explicitly define its own child environment and use ordinary

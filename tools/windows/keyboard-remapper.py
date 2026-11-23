@@ -94,8 +94,6 @@ def main() -> int:
         if args.read_only and args.admin_draft:
             parser.error("--read-only cannot be combined with an administrator draft")
         handoff = app.decode_handoff(args.admin_draft) if args.admin_draft else None
-        # Every GUI session requires administrator privileges. Help has already
-        # exited; an optional handoff still only stages a draft for review.
         System.restart_elevated()
         importlib.import_module("PySide6")
         return int(app.run(handoff, read_only=args.read_only))

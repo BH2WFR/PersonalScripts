@@ -20,7 +20,7 @@ Clear Explorer history, browser data, event logs, caches and local usage traces.
 Cleanup can permanently remove saved data and sign-in state.
 
 {FLYellow}Requirements:{CRst}
-  Windows built-in tools; administrator privileges for protected system traces.
+  Windows built-in tools; administrator privileges.
   sudo or gsudo is optional for elevation.
 
 {FLYellow}Usage:{CRst}
@@ -35,15 +35,6 @@ if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
 
 
 SectionFunc = Callable[[], None]
-
-
-def print_help() -> None:
-
-    print(HELP)
-
-
-def is_windows() -> bool:
-    return sys.platform == "win32"
 
 
 def run(
@@ -427,35 +418,22 @@ def print_banner(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    Console.set_locale_utf8()
-
-    if not is_windows():
-        err_msg(f"This script only runs on Windows. Current platform: {FGray}{sys.platform}{CRst}")
-        raise SystemExit(1)
-
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = Console.argument_parser(HELP)
     parser.add_argument("-f", "--force", action="store_true")
     parser.add_argument("--skip-shell-history", action="store_true")
     parser.add_argument("--skip-event-logs", action="store_true")
     parser.add_argument("--skip-dns-cache", action="store_true")
     parser.add_argument("--skip-additional", action="store_true")
     parser.add_argument("--skip-browsers", action="store_true")
-    parser.add_argument("-h", "--help", action="store_true")
     args = parser.parse_args()
 
-    if args.help:
-        print_help()
-        return
+    if sys.platform != "win32":
+        err_msg(f"This script only runs on Windows. Current platform: {FGray}{sys.platform}{CRst}")
+        raise SystemExit(1)
 
+    System.restart_elevated()
+    Console.set_locale_utf8()
     print_banner(args)
-    if not System.is_elevated():
-        warn_msg(
-            "Administrator privileges not detected. Trying "
-            f"{FGray}gsudo{CRst}, then {FGray}sudo{CRst}."
-        )
-        elevated = System.try_restart_elevated()
-        if not elevated:
-            warn_msg("Elevation unavailable. Admin-only cleanup may be skipped or only partially work.")
 
     start_time = time.time()
 

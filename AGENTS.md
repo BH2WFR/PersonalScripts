@@ -31,8 +31,8 @@ After context compaction, reread this file before project work.
   choices and extra script roots.
 - Whenever adding a feature, renaming a tool, or converting a tool to a GUI,
   update `launcher-config.yaml` in the same change, including affected discovery,
-  platform exclusions and `gui-tools-list` entries. Do not automatically add unrelevant
-  comments to this file.
+  platform exclusions, `gui-tools-list` and `elevation-needed-list`. Never add
+  unnecessary comments when editing `launcher-config.yaml`.
 - Read the affected module/package's README and sample configuration as needed.
   Keep implementation details there rather than expanding this project prompt.
 
@@ -87,9 +87,15 @@ conda run -n base python run-script.py <name> [args...]
   `Environment.check_commands()` with `CmdCheck` for external tools and give
   actionable hints for missing Python packages. Load optional integrations only
   when their feature is needed.
-- For required privileges use `System.restart_elevated()`; for a usable fallback
-  use `System.try_restart_elevated()`. Check before privileged work, keeping
-  help available without elevation.
+- Every tool that needs elevation must elevate on every supported platform.
+  In Python entries, call `System.restart_elevated()` once in `main()` after
+  help, argument validation and platform checks, before output, prompts or work.
+  Entries accepting explicit `argv` pass `entry=__file__, args=argv` to preserve
+  the invocation. Windows console tools must keep the caller's console and return
+  the elevated child's exit status. The helper returns only when already elevated and exits on failure. Bash
+  entries check `EUID` and use `exec sudo -u root bash "$0" "$@"` with the original
+  arguments. Keep the tool's path in `launcher-config.yaml`'s
+  `elevation-needed-list` in sync when adding, renaming or changing an entry.
 - Catch Ctrl+C at the entry boundary with
   `Console.print_keyboard_interrupt_message_and_exit()`; allow cleanup before
   it and do not swallow cancellation in retry loops.

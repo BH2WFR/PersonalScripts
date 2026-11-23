@@ -33,7 +33,6 @@ class NetworkRepairTests(unittest.TestCase):
         self.stack.enter_context(contextlib.redirect_stderr(self.output))
         self.stack.enter_context(patch.object(sys, "platform", "win32"))
         self.elevate = self.stack.enter_context(patch.object(REPAIR.System, "restart_elevated"))
-        self.is_admin = self.stack.enter_context(patch.object(REPAIR.System, "is_elevated", return_value=True))
         self.interactive = self.stack.enter_context(
             patch.object(REPAIR.Console, "has_interactive_input", return_value=True)
         )
@@ -47,14 +46,15 @@ class NetworkRepairTests(unittest.TestCase):
         with patch.object(sys, "argv", [str(SCRIPT), *arguments]):
             return REPAIR.main()
 
-    def test_help_and_every_preview_avoid_commands_and_elevation(self) -> None:
+    def test_help_skips_elevation_and_previews_skip_commands(self) -> None:
         with self.assertRaises(SystemExit) as raised:
             self.invoke("--help")
         self.assertEqual(raised.exception.code, 0)
+        self.elevate.assert_not_called()
         self.assertEqual(self.invoke("--dry-run"), 0)
         for action in REPAIR.Action:
             self.assertEqual(self.invoke("--action", action.value, "--dry-run"), 0)
-        self.elevate.assert_not_called()
+        self.assertEqual(self.elevate.call_count, 1 + len(REPAIR.Action))
         self.run.assert_not_called()
         self.menu.assert_not_called()
 
@@ -63,20 +63,19 @@ class NetworkRepairTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 0)
         self.assertEqual(self.menu.call_count, 3)
         self.run.assert_not_called()
-        self.elevate.assert_not_called()
+        self.elevate.assert_called_once_with()
 
     def test_proxy_menu_inspects_then_returns_to_main_menu(self) -> None:
         self.menu.side_effect = ["proxy", REPAIR.Action.PROXY_CHECK, False]
         self.assertEqual(self.invoke(), 0)
         self.assertEqual(self.run.call_args.args[0][1:], ["winhttp", "show", "proxy"])
-        self.elevate.assert_not_called()
+        self.elevate.assert_called_once_with()
 
-    def test_read_only_actions_work_without_admin_or_confirmation(self) -> None:
-        self.is_admin.return_value = False
+    def test_read_only_actions_elevate_without_repair_confirmation(self) -> None:
         self.interactive.return_value = False
         for action in ("diagnose", "proxy-check"):
             self.assertEqual(self.invoke("--action", action), 0)
-        self.elevate.assert_not_called()
+        self.assertEqual(self.elevate.call_count, 2)
         self.menu.assert_not_called()
 
     def test_dhcp_renewal_preserves_adapter_as_one_argument(self) -> None:
@@ -114,8 +113,7 @@ class NetworkRepairTests(unittest.TestCase):
         for call in self.run.call_args_list:
             self.assertEqual(call.kwargs, {"check": False, "timeout": 30})
 
-    def test_cancel_eof_and_noninteractive_repair_do_not_elevate(self) -> None:
-        self.is_admin.return_value = False
+    def test_cancel_eof_and_noninteractive_repair_skip_commands(self) -> None:
         self.assertEqual(self.invoke("--action", "reset"), 0)
         self.menu.side_effect = EOFError
         self.assertEqual(self.invoke("--action", "reset"), 2)
@@ -123,7 +121,7 @@ class NetworkRepairTests(unittest.TestCase):
         self.assertEqual(self.invoke("--action", "renew"), 2)
         self.assertEqual(self.invoke(), 2)
         self.assertEqual(self.invoke("--action", "reset", "--yes", "--menu"), 2)
-        self.elevate.assert_not_called()
+        self.assertEqual(self.elevate.call_count, 5)
         self.run.assert_not_called()
 
     def test_invalid_arguments_cannot_run_commands(self) -> None:
@@ -136,25 +134,12 @@ class NetworkRepairTests(unittest.TestCase):
         self.elevate.assert_not_called()
         self.run.assert_not_called()
 
-    def test_elevation_preserves_selected_action_and_returns_to_menu(self) -> None:
-        self.is_admin.return_value = False
-        self.menu.side_effect = [REPAIR.Action.RENEW, True]
-        relaunched: list[str] = []
-
-        def relaunch() -> None:
-            relaunched.extend(sys.argv)
-            raise SystemExit(0)
-
-        self.elevate.side_effect = relaunch
-        original_argv = [str(SCRIPT), "--adapter", "Ethernet 2"]
-        with patch.object(sys, "argv", original_argv), self.assertRaises(SystemExit):
-            try:
-                REPAIR.main()
-            finally:
-                self.assertIs(sys.argv, original_argv)
-        self.assertEqual(relaunched[1:4], ["--action", "renew", "--yes"])
-        self.assertIn("--menu", relaunched)
-        self.assertEqual(relaunched[relaunched.index("--adapter") + 1], "Ethernet 2")
+    def test_failed_startup_elevation_prevents_any_menu_or_command(self) -> None:
+        self.elevate.side_effect = SystemExit(1)
+        with self.assertRaises(SystemExit) as raised:
+            self.invoke("--adapter", "Ethernet 2")
+        self.assertEqual(raised.exception.code, 1)
+        self.menu.assert_not_called()
         self.run.assert_not_called()
 
     def test_yes_does_not_apply_to_later_menu_choices(self) -> None:
@@ -176,6 +161,8 @@ class NetworkRepairTests(unittest.TestCase):
     def test_missing_prerequisite_and_platform_rejection(self) -> None:
         with patch.object(REPAIR.Environment, "check_commands", return_value=False):
             self.assertEqual(self.invoke("--action", "diagnose"), 1)
+        self.elevate.assert_called_once_with()
+        self.elevate.reset_mock()
         with patch.object(sys, "platform", "linux"), self.assertRaises(SystemExit):
             self.invoke("--action", "reset", "--yes")
         self.elevate.assert_not_called()

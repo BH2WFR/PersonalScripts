@@ -25,3 +25,4 @@ PySide6
 markdown-it-py
 # For offline formula preview, see the MathJax installation command in requirements-optional.txt.
 tqdm
+win10toast; sys_platform == "win32"

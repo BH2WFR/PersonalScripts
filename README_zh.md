@@ -113,7 +113,7 @@
 
   - 建议**安装 PowerShell 7**（不是系统自带的 PowerShell 5）
 
-  - 部分脚本需要**在当前窗口中提权运行**，建议安装 **`gsudo`**（仅需运行 `scoop install gsudo`，项目：[https://github.com/gerardog/gsudo](https://github.com/gerardog/gsudo)）；否则只能从具有管理员权限的命令行中启动这些脚本；
+  - 带 `[SUDO]` 标记的脚本会在当前终端以管理员权限运行。Windows 依次尝试 `gsudo`、支持原窗口交互的 Windows sudo 和系统 UAC 授权。可通过 `scoop install gsudo` 安装 [gsudo](https://github.com/gerardog/gsudo)。
 
   - 如需 Bash 支持，可**安装 Git**，启动器启动时会从 `git` 命令所在路径推导出 Git Bash 的所在路径；
 
@@ -190,7 +190,7 @@
 - Windows 中执行 `run-script.ps1`，Linux/macOS 中执行 `run-script.sh`；包装脚本会查找可用的 Python 解释器，再启动真正的启动器 `run-script.py`。
 - **无参数启动启动器**时，会先检测系统/平台/架构，并检测 Conda/Python/PowerShell/Bash 环境可用性；Linux 下还会显示当前图形环境（`no-gui`/`x11`/`wayland`）。检测完毕后，会**列出当前系统/平台/架构中支持的所有脚本**；列出所有脚本后通过键盘交互选择脚本并启动，支持参数透传：
   - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-mount-manager.py`、`ntfs-3g-mount-manager`）
-  - `launcher-config.yaml` 中 `gui-tools-list` 列出的工具会附上黄色 `[GUI]` 标记；Linux 无桌面环境下会隐藏这些工具及额外的 `no-gui` 排除项。
+  - `launcher-config.yaml` 中，`gui-tools-list` 列出的工具会在启动器列出时，附上 `[GUI]` 标记；Linux 无桌面环境下会在启动器中隐藏这些工具。`elevation-needed-list` 中的工具会附上 `[SUDO]` 标记。
   - 将数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/display-manager --list`、`display-manager --list`）
 - **有参数启动启动器**时，会根据参数自动查找脚本，并**透传剩余的参数**，此时不会打印出支持的脚本列表，直接启动目标脚本
   （如 `run-script.sh ntfs-3g-mount-manager --list`，会自动找到 `macos/ntfs-3g-mount-manager` 后执行，并透传 `--list` 参数到 `macos/ntfs-3g-mount-manager` 中）
@@ -301,7 +301,7 @@
 | 脚本                                | 描述                                                         | 依赖                                    |
 | ----------------------------------- | ------------------------------------------------------------ | --------------------------------------- |
 | [`tools/windows/file-association-manager.py`](tools/windows/file-association-manager.py) | **仅 Windows**，**为指定扩展名的文件在系统中注册指定 EXE 作为打开方式的工具**：<br />可用于给一些便携软件注册对指定扩展名的打开方式 | **仅 Windows**<br />**需要提权** |
-| [`tools/others/script-to-app.py`](tools/others/script-to-app.py) |**以「应用」的方式创建 Python 脚本的启动器**的工具：（不是打包！）<br />不会打包脚本，支持绑定 conda 环境。Windows 下输出 .cmd，macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式。|**Windows / macOS / Linux 桌面**<br />Windows 需提权或使用可写目录；Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选）|
+| [`tools/others/script-to-app.py`](tools/others/script-to-app.py) |**以「应用」的方式创建 Python 脚本的启动器**的工具：（不是打包！）<br />不会打包脚本，支持绑定 conda 环境。Windows 下输出 .cmd，macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式。|**Windows / macOS / Linux 桌面**<br />Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选）<br />**需要提权**|
 
 ### 文本处理
 
@@ -343,7 +343,7 @@
 | [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **仅 Windows**，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py)           | **充电器与电池信息查看器**：<br />**macOS 中，还能查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
 | [`tools/others/system-event-viewer.py`](tools/others/system-event-viewer.py) | **(GUI) 系统日志/事件查看器**：<br />（支持全平台）集中查看电源、登录、故障、系统活动，包括设备/网络变化、更新和资源/服务问题，含 SSH 和 Windows RDP/SMB 的连接和验证记录，和外设设备弹出受阻的相关记录。 | **macOS / Windows 10+ / 使用 systemd 的 Linux**；覆盖范围取决于留存日志、报告和系统服务，Windows Security/共享访问事件需要预先开启审计，Linux 锁屏与无响应检测支持有限<br />**Python 库**：`PySide6` |
-| [`tools/others/disk-smart-info-viewer.py`](tools/others/disk-smart-info-viewer.py)         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools` |
+| [`tools/others/disk-smart-info-viewer.py`](tools/others/disk-smart-info-viewer.py)         | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools`；<br />**需要提权** |
 | [`tools/macos/rdp-clipboard-image-repair.py`](tools/macos/rdp-clipboard-image-repair.py)  | **仅 macOS**，**剪贴板图像修复工具**：<br />修复在 macOS 中通过 Windows App (RDP) 远程控制 Windows 设备时，从 Windows 复制到剪贴板后，无法在 macOS 中正常粘贴的图片。可将剪贴板中伪装成 png 的 tiff 图片恢复成有效的 PNG 剪贴板数据。<br /> 加 `--force` 参数时无需确认，直接恢复。 | **仅 macOS**；<br />系统内置 `osascript` 和 AppKit           |
 
 ### 软件启动

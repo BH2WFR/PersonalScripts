@@ -7,7 +7,7 @@ Recursively mark selected file extensions executable, with exclusion patterns.
 Changes filesystem permissions, not Git index metadata.
 
 Requirements:
-  Bash, chmod and a filesystem supporting executable permissions.
+  Bash, chmod, root privileges and a filesystem supporting executable permissions.
 
 Usage:
   bash executable-bit-setter.sh [TARGET] [--suffix "py;sh"] [--ignore "PATTERN;..."]
@@ -28,6 +28,7 @@ show_help() {
 }
 
 # ============ 参数解析 ============
+ORIGINAL_ARGS=("$@")
 TARGET=""
 SUFFIXES=()
 IGNORE_PATTERNS=()
@@ -80,11 +81,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ============ root 权限检查 ============
-if [ "$(id -u)" -ne 0 ]; then
-    printf "${FLYellow}Not running as root, re-launching with sudo...${CRst}\n"
-    exec sudo bash "$0" "$@"
-    printf "${FLRed}ERROR: Failed to elevate privileges. Please run manually with sudo.${CRst}\n"
-    exit 1
+if (( EUID != 0 )); then
+    if ! command -v sudo >/dev/null 2>&1; then
+        printf "${FLRed}ERROR: Cannot elevate: sudo not found in PATH.${CRst}\n" >&2
+        exit 1
+    fi
+    exec sudo -u root bash "$0" "${ORIGINAL_ARGS[@]}"
 fi
 
 # ============ 用户交互 ============

@@ -114,7 +114,7 @@ Most scripts support both interactive mode and command-line arguments. Run `pyth
 
   - **PowerShell 7** is recommended instead of the built-in Windows PowerShell 5.
 
-  - Some scripts need to **elevate within the current terminal**. Installing **`gsudo`** is recommended (`scoop install gsudo`; project: [https://github.com/gerardog/gsudo](https://github.com/gerardog/gsudo)). Otherwise, launch these scripts from an administrator terminal.
+  - Scripts marked `[SUDO]` run with administrator privileges in the current terminal. Windows first tries `gsudo`, then Windows sudo in inline mode, and finally the system UAC prompt. You can install [gsudo](https://github.com/gerardog/gsudo) with `scoop install gsudo`.
 
   - For Bash support, **install Git**. At startup, the launcher derives the Git Bash path from the location of the `git` command.
 
@@ -191,7 +191,7 @@ Core utility package: `utils/` — shared console, environment, system, path, in
 - Run `run-script.ps1` on Windows and `run-script.sh` on Linux/macOS. These wrapper scripts locate an available Python interpreter and then start the actual launcher, `run-script.py`.
 - When started **without arguments**, the launcher detects the operating system, platform, architecture, and the availability of Conda/Python/PowerShell/Bash; on Linux, it also shows the current graphical environment (`no-gui`/`x11`/`wayland`). It then **lists every script supported by the current environment** and lets you select and launch one interactively, with argument pass-through:
   - Select a script by **number** or **name**, such as `15`, `macos/ntfs-3g-mount-manager.py`, or `ntfs-3g-mount-manager`.
-  - Tools in `launcher-config.yaml`'s `gui-tools-list` carry a yellow `[GUI]` suffix and are hidden on Linux without a desktop, along with any additional `no-gui` exclusions.
+  - The launcher marks tools listed in `gui-tools-list` in `launcher-config.yaml` with `[GUI]` and hides them on Linux without a desktop. It marks tools in `elevation-needed-list` with `[SUDO]`.
   - Arguments after the number or name are passed to the target script, such as `15 --help`, `macos/display-manager --list`, or `display-manager --list`.
 - When started **with arguments**, the launcher finds the requested script and **passes through all remaining arguments**. It runs the target directly without printing the supported-script list.
   For example, `run-script.sh ntfs-3g-mount-manager --list` finds `macos/ntfs-3g-mount-manager`, runs it, and passes `--list` to it.
@@ -303,7 +303,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
 | [`tools/windows/file-association-manager.py`](tools/windows/file-association-manager.py) | **Windows only. Register an executable as an Open With handler**<br />Associate selected file extensions with an application, including portable applications. | **Windows only**<br />**Elevation required** |
-| [`tools/others/script-to-app.py`](tools/others/script-to-app.py) | **App-style launchers for Python scripts**<br />Launch an existing script in a chosen Conda environment without packaging it. Create a `.cmd` launcher on Windows, a movable or renameable app on macOS, or a Linux file handler for selected MIME types or all files. | **Windows / macOS / Linux desktop**<br />Windows requires elevation or a writable directory. Linux requires Bash and a desktop terminal (`desktop-file-utils` optional). |
+| [`tools/others/script-to-app.py`](tools/others/script-to-app.py) | **App-style launchers for Python scripts**<br />Launch an existing script in a chosen Conda environment without packaging it. Create a `.cmd` launcher on Windows, a movable or renameable app on macOS, or a Linux file handler for selected MIME types or all files. | **Windows / macOS / Linux desktop**<br />Linux requires Bash and a desktop terminal (`desktop-file-utils` optional).<br />**Elevation required on all platforms** |
 
 ### Text Processing
 
@@ -345,7 +345,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 | [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **Windows only. Force-restart system services**<br />Choose whether to wait for the restart. The `Windows Audio` preset **can temporarily restore sound redirection from the remote computer in an RDP session**. | **Windows only**<br />**Elevation required** |
 | [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py) | **Charger and battery information viewer**<br />**On macOS, see how much power the computer is drawing to charge.** Readings come from `ioreg` on macOS, PowerShell CIM/WMI on Windows and `/sys/class/power_supply` on Linux. Available fields depend on firmware and drivers. **macOS provides the most complete readings.** | **Best on macOS**; other systems are also supported, with some fields unavailable because of firmware or driver limitations |
 | [`tools/others/system-event-viewer.py`](tools/others/system-event-viewer.py) | **(GUI) Cross-platform system log and event viewer**<br />Review power events, logins, faults, device and network changes, updates, and resource or service issues. Includes SSH and Windows RDP/SMB connection and authentication records, plus logs showing why a device could not be ejected. | **macOS / Windows 10+ / Linux with systemd**; coverage depends on retained logs/reports and OS services; Windows Security/share events require prior auditing; Linux lock and hang detection is limited<br />**Python pkg:** `PySide6` |
-| [`tools/others/disk-smart-info-viewer.py`](tools/others/disk-smart-info-viewer.py) | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools` |
+| [`tools/others/disk-smart-info-viewer.py`](tools/others/disk-smart-info-viewer.py) | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools`<br />**Elevation required** |
 | [`tools/macos/rdp-clipboard-image-repair.py`](tools/macos/rdp-clipboard-image-repair.py) | **macOS only. RDP clipboard image repair**<br />When an image copied from Windows through Windows App (RDP) will not paste on macOS, convert TIFF clipboard data mislabeled as PNG into a valid PNG. Use `--force` to repair without confirmation. | **macOS only**<br />Built-in `osascript` and AppKit |
 
 ### Software Launching
