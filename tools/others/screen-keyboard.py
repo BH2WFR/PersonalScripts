@@ -73,10 +73,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    import os
-    if trace := os.environ.get("KEYBOARD_TEST_TRACE"):
-        sys.stderr = open(trace, "a", buffering=1)
-        print("launch", os.getpid(), file=sys.stderr)
     try:
         sys.exit(main())
     except KeyboardInterrupt:
