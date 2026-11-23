@@ -5,9 +5,10 @@ from functools import partial
 import re
 import sys
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase, QFont
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QStyle, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -27,18 +28,39 @@ def _combo(labels: Iterable[str]) -> NoWheelComboBox:
     return control
 
 
-def _button(label: str, action: Callable[[], object]) -> QPushButton:
+def _button(label: str, action: Callable[[], object], *, bold: bool = False) -> QPushButton:
     control = QPushButton(label)
+    if bold:
+        font = control.font()
+        font.setBold(True)
+        control.setFont(font)
     control.clicked.connect(action)
     return control
 
 
-def _row(*widgets: QWidget) -> QHBoxLayout:
-    layout = QHBoxLayout()
+def _divider(shape: QFrame.Shape = QFrame.Shape.VLine) -> QFrame:
+    frame = QFrame()
+    frame.setFrameShape(shape)
+    frame.setFrameShadow(QFrame.Shadow.Sunken)
+    return frame
+
+
+def _section(layout: QGridLayout, title: str, *widgets: QWidget) -> None:
+    """Align the labels in a tab and separate consecutive groups with a rule."""
+    row = 0
+    if layout.count():
+        row = layout.rowCount()
+        layout.addWidget(_divider(QFrame.Shape.HLine), row, 0, 1, 2)
+        row += 1
+    else:
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setColumnStretch(1, 1)
+    layout.addWidget(QLabel(f"{title}:"), row, 0)
+    controls = QHBoxLayout()
     for widget in widgets:
-        layout.addWidget(widget)
-    layout.addStretch()
-    return layout
+        controls.addWidget(widget)
+    controls.addStretch()
+    layout.addLayout(controls, row, 1)
 
 
 def _raw(editor: QPlainTextEdit) -> str:
@@ -106,11 +128,17 @@ class TextProcessor(QWidget):
         wrap.setChecked(True)
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        top.addWidget(QLabel("Input"))
+        top.addWidget(QLabel("Input:"))
         top.addStretch()
         top.addWidget(wrap)
-        top.addWidget(_button("Paste from Clipboard", self.source.paste))
+        top.addWidget(_divider())
+        top.addWidget(_button("Get paths from clipboard", self._get_clipboard_paths, bold=True))
+        top.addWidget(_button("Paste from Clipboard", self.source.paste, bold=True))
         layout.addLayout(top)
+        self.clipboard_notice = QLabel("No file paths found on the clipboard.")
+        self.clipboard_notice.setWordWrap(True)
+        self.clipboard_notice.hide()
+        layout.addWidget(self.clipboard_notice)
         layout.addWidget(self.source, 1)
 
         tabs = QTabWidget()
@@ -124,12 +152,15 @@ class TextProcessor(QWidget):
         self.regex = RegexDialog(self)
         controls = QHBoxLayout()
         self.chain = QCheckBox("Use result for the next operation")
+        controls.addWidget(QLabel("Chaining:"))
         controls.addWidget(self.chain)
         controls.addStretch()
+        controls.addWidget(_divider())
+        controls.addWidget(QLabel("Find and replace:"))
         controls.addWidget(_button("Regex replace…", self.regex.exec))
         layout.addLayout(controls)
         bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("Result"))
+        bottom.addWidget(QLabel("Result:"))
         bottom.addStretch()
         apply_result = _button("Apply", lambda: self.source.setPlainText(_raw(self.result)))
         apply_result.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
@@ -138,17 +169,10 @@ class TextProcessor(QWidget):
         reset_result = _button("Reset", lambda: self.result.setPlainText(_raw(self.source)))
         reset_result.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
         bottom.addWidget(reset_result)
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFrameShadow(QFrame.Shadow.Sunken)
-        bottom.addWidget(divider)
+        bottom.addWidget(_divider())
         bottom.addWidget(_button("Clear result", self.result.clear))
         bottom.addWidget(_button("Clear all", self._clear_all))
-        copy_result = _button("Copy result", lambda: QApplication.clipboard().setText(_raw(self.result)))
-        copy_font = copy_result.font()
-        copy_font.setBold(True)
-        copy_result.setFont(copy_font)
-        bottom.addWidget(copy_result)
+        bottom.addWidget(_button("Copy result", lambda: QApplication.clipboard().setText(_raw(self.result)), bold=True))
         layout.addLayout(bottom)
         layout.addWidget(self.result, 1)
         self.preference_notice = QLabel()
@@ -207,23 +231,19 @@ class TextProcessor(QWidget):
         self._lines(lambda line: paths.transform_quoted_path(line, transform))
 
     def _get_clipboard_paths(self) -> None:
-        source, copied = read_clipboard_paths()
-        self.source.setPlainText(source)
+        _, copied = read_clipboard_paths(preserve_text_separators=True)
         self.clipboard_notice.setVisible(not copied)
         if copied:
-            self.result.setPlainText("\n".join(copied))
+            self.source.setPlainText("\n".join(copied))
+            self.result.setPlainText("\n".join(paths.forward_path(path) for path in copied))
 
     def _path_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QGridLayout(tab)
         quick = _button("Quick clean paths", lambda: self._lines(
             lambda line: paths.forward_path(paths.remove_file_prefix(paths.remove_quotes(line.strip())))))
         quick.setToolTip("Remove paired quotes and file://, then convert backslashes to forward slashes.")
-        get_paths = _button("Get paths from clipboard", self._get_clipboard_paths)
-        self.clipboard_notice = QLabel("No file paths found on the clipboard.")
-        self.clipboard_notice.setWordWrap(True)
-        self.clipboard_notice.hide()
-        layout.addLayout(_row(quick, get_paths, self.clipboard_notice))
+        _section(layout, "Cleanup", quick)
         source = _combo(paths.SEPARATORS)
         target = _combo(paths.SEPARATORS)
         target.setCurrentText("Forward slash")
@@ -231,9 +251,9 @@ class TextProcessor(QWidget):
         def separator() -> str:
             return paths.SEPARATORS[target.currentText()]
 
-        layout.addLayout(_row(QLabel("From"), source, QLabel("to"), target,
-                              _button("Convert", lambda: self._paths(partial(paths.convert_separators,
-                                      source=paths.SEPARATORS[source.currentText()], target=separator())))))
+        _section(layout, "Separators", source, QLabel("to"), target,
+                 _button("Convert", lambda: self._paths(partial(paths.convert_separators,
+                         source=paths.SEPARATORS[source.currentText()], target=separator()))))
         conversions: dict[str, Transform] = {
             "Windows → MSYS Bash": paths.to_msys,
             "MSYS → Windows (backslash)": partial(paths.from_msys, separator="\\"),
@@ -259,31 +279,31 @@ class TextProcessor(QWidget):
             else:
                 self._paths(conversions[name])
 
-        layout.addLayout(_row(action, _button("Apply to lines", apply_path_action)))
+        _section(layout, "Path operation", action, _button("Apply to lines", apply_path_action))
         return tab
 
     def _environment_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QGridLayout(tab)
         shell = self.variable_syntax = _combo(paths.ENV_STYLES)
-        layout.addLayout(_row(QLabel("Variable syntax"), shell))
-        layout.addLayout(_row(
-            QLabel("Home path"),
+        _section(layout, "Variable syntax", shell)
+        _section(
+            layout, "Home path",
             _button("To ~", lambda: self._paths(partial(paths.home_path, target="~"))),
             _button("To absolute", lambda: self._paths(partial(paths.home_path, target="Absolute"))),
             _button("To home variable", lambda: self._paths(partial(paths.home_path, target=shell.currentText()))),
-        ))
-        layout.addLayout(_row(
-            QLabel("System paths"),
+        )
+        _section(
+            layout, "System paths",
             _button("Use longest variable", lambda: self._paths(partial(paths.shorten_environment, style=shell.currentText()))),
             _button("Expand variable", lambda: self._paths(paths.expand_environment)),
-        ))
+        )
         return tab
 
     def _text_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.addLayout(_row(_button("Clean copied PDF text", lambda: self._apply(transforms.clean_pdf))))
+        layout = QGridLayout(tab)
+        _section(layout, "PDF text", _button("Clean copied PDF text", lambda: self._apply(transforms.clean_pdf)))
         actions: dict[str, Transform] = {
             "Expand ligatures": transforms.expand_ligatures,
             "Normalize spaces": transforms.normalize_spaces,
@@ -293,38 +313,36 @@ class TextProcessor(QWidget):
             "Uppercase": str.upper, "Lowercase": str.lower, "Title case": transforms.title_words,
         }
         action = _combo(actions)
-        layout.addLayout(_row(action, _button("Apply", lambda: self._apply(actions[action.currentText()]))))
-        layout.addStretch()
+        _section(layout, "Text operation", action, _button("Apply", lambda: self._apply(actions[action.currentText()])))
         return tab
 
     def _letter_style_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QGridLayout(tab)
         styles = NoWheelComboBox()
         for style in transforms.LETTER_STYLES:
             preview = transforms.style_letters("123ABCabc", style)
             styles.addItem(f"{style}  {preview}", style)
-        layout.addLayout(_row(styles,
-                              _button("Style letters and digits", lambda: self._apply(
-                                  partial(transforms.style_letters, style=styles.currentData())))))
-        layout.addLayout(_row(_button("Restore plain letters and digits", lambda: self._apply(transforms.plain_letters))))
-        layout.addStretch()
+        _section(layout, "Style", styles,
+                 _button("Style letters and digits", lambda: self._apply(
+                     partial(transforms.style_letters, style=styles.currentData()))),
+                 _button("Restore plain letters and digits", lambda: self._apply(transforms.plain_letters)))
         return tab
 
     def _url_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.addLayout(_row(_button("Extract URL hostnames", lambda: self._lines(transforms.url_hostname))))
-        layout.addStretch()
+        layout = QGridLayout(tab)
+        _section(layout, "Hostnames", _button("Extract URL hostnames", lambda: self._lines(transforms.url_hostname)))
         return tab
 
     def _line_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QGridLayout(tab)
         trim: dict[str, Transform] = {"Trim both sides": str.strip, "Trim left": str.lstrip, "Trim right": str.rstrip}
         side = _combo(trim)
-        layout.addLayout(_row(side, _button("Trim lines", lambda: self._lines(trim[side.currentText()])),
-                              _button("Remove blank lines", lambda: self._apply(transforms.remove_blank_lines))))
+        _section(layout, "Trim", side, _button("Trim lines", lambda: self._lines(trim[side.currentText()])),
+                 _divider(), QLabel("Blank lines:"),
+                 _button("Remove blank lines", lambda: self._apply(transforms.remove_blank_lines)))
         unit = _combo(("Spaces", "Tab"))
         width = NoWheelSpinBox()
         width.setRange(1, 32)
@@ -333,11 +351,11 @@ class TextProcessor(QWidget):
         def prefix() -> str:
             return "\t" if unit.currentText() == "Tab" else " " * width.value()
 
-        layout.addLayout(_row(QLabel("Indent with"), unit, QLabel("Space / tab width"), width))
-        layout.addLayout(_row(_button("Indent", lambda: self._lines(lambda line: prefix() + line)),
-                              _button("Unindent", lambda: self._lines(lambda line: line.removeprefix(prefix()))),
-                              _button("Tabs to spaces", lambda: self._lines(
-                                  partial(transforms.expand_tabs, width=width.value())))))
+        _section(layout, "Indent", unit, QLabel("Width:"), width,
+                 _button("Indent", lambda: self._lines(lambda line: prefix() + line)),
+                 _button("Unindent", lambda: self._lines(lambda line: line.removeprefix(prefix()))),
+                 _divider(), QLabel("Tabs:"),
+                 _button("Tabs to spaces", lambda: self._lines(partial(transforms.expand_tabs, width=width.value()))))
         return tab
 
 

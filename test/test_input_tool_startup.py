@@ -41,5 +41,28 @@ class InputToolStartupTests(unittest.TestCase):
                       patch.dict(sys.modules, {mac_module: backend, "auto_typer.panel": Mock()}),
                       patch.object(System, "restart_elevated") as elevate):
                     self.assertEqual(main(), 0)
-                    getattr(backend, mac_entry).assert_called_once_with()
+                    expected = (None, "") if filename == "screen-keyboard.py" else ()
+                    getattr(backend, mac_entry).assert_called_once_with(*expected)
                     elevate.assert_not_called()
+
+    def test_forced_layer_and_invalid_argument_fallback(self) -> None:
+        entry = TOOLS / "screen-keyboard.py"
+        for platform, module, argv, expected, warned in (
+            ("win32", "windows_ui", ["--force-layer=F24"], "F24", False),
+            ("win32", "windows_ui", ["--force-layer=capslock"], "CapsLock", False),
+            ("darwin", "mac_ui", ["--force-layer=F1"], "F1", False),
+            ("darwin", "mac_ui", ["--force-layer=f24"], None, True),
+            ("win32", "windows_ui", ["--force-layer=f23"], None, True),
+            ("win32", "windows_ui", ["--force-layer"], None, True),
+            ("win32", "windows_ui", ["--force-layer=f1", "--other"], None, True),
+            ("win32", "windows_ui", ["--help=oops"], None, True),
+        ):
+            backend = Mock()
+            with (self.subTest(argv=argv, platform=platform), patch.object(sys, "path", sys.path.copy()),
+                  patch.object(sys, "argv", [str(entry), *argv]), patch.object(sys, "platform", platform),
+                  patch.dict(sys.modules, {f"screen_keyboard.{module}": backend}),
+                  patch.object(System, "restart_elevated")):
+                runpy.run_path(str(entry))["main"]()
+                mode, warning = backend.run.call_args.args
+                self.assertEqual(mode, expected)
+                self.assertEqual(bool(warning), warned)

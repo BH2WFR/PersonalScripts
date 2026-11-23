@@ -49,7 +49,6 @@ class ConfigUserTests(unittest.TestCase):
         for platform in ("darwin", "linux"):
             with (self.subTest(platform=platform), patch.object(sys, "platform", platform),
                   patch.object(os, "geteuid", return_value=0, create=True),
-                  patch.object(os, "getgrouplist", return_value=[20], create=True),
                   patch.dict(os.environ, {"SUDO_UID": "501", "HOME": "/root"}),
                   patch.dict(sys.modules, {"pwd": accounts})):
                 self.assertEqual(ConfigStore().path, home / ".config" / "PersonalScripts" / GENERAL_CONFIG)
@@ -63,6 +62,32 @@ class ConfigUserTests(unittest.TestCase):
                 del os.environ["SUDO_UID"]
                 self.assertEqual(ConfigStore.directory(), Path.home() / ".config" / "PersonalScripts")
 
+    def test_sudo_config_child_with_many_group_memberships(self) -> None:
+        groups = list(range(20, 100))
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            path = home / "launcher.yaml"
+            path.touch()
+            user = _ConfigUser(home, 501, 20, "config-user")
+            for platform in ("darwin", "linux"):
+                with (self.subTest(platform=platform), patch.object(sys, "platform", platform),
+                      patch.object(os, "getgrouplist", return_value=groups, create=True) as lookup,
+                      patch("utils.config.subprocess.run", return_value=Mock(returncode=0, stdout=b"conda-environment: base")) as run):
+                    self.assertEqual(ConfigStore._read_file(path, user), {"conda-environment": "base"})
+                    command = ["/bin/cat", str(path)]
+                    options = run.call_args.kwargs
+                    self.assertEqual(options["env"]["HOME"], str(home))
+                    if platform == "darwin":
+                        lookup.assert_not_called()
+                        self.assertEqual(run.call_args.args[0], ["/usr/bin/sudo", "-n", "-H", "-u", "#501", "--", *command])
+                        self.assertIsNone(options["extra_groups"])
+                        self.assertIsNone(options["user"])
+                        self.assertIsNone(options["group"])
+                    else:
+                        lookup.assert_called_once_with("config-user", 20)
+                        self.assertEqual(run.call_args.args[0], command)
+                        self.assertEqual((options["user"], options["group"], options["extra_groups"]), (501, 20, groups))
+
     @unittest.skipUnless(os.name == "posix" and os.geteuid() == 0, "requires a POSIX root test process")
     def test_sudo_settings_are_owned_and_editable_by_invoker(self) -> None:
         import pwd
@@ -71,7 +96,7 @@ class ConfigUserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             os.chown(home, account.pw_uid, account.pw_gid)
-            user = _ConfigUser(home, account.pw_uid, account.pw_gid, ())
+            user = _ConfigUser(home, account.pw_uid, account.pw_gid, account.pw_name)
             with patch.object(_ConfigUser, "sudo_invoker", return_value=user):
                 store = ConfigStore()
                 self.assertEqual(store.load(), {})
@@ -88,7 +113,7 @@ class ConfigUserTests(unittest.TestCase):
     def test_user_redirect_retains_invoker_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary).resolve()
-            user = _ConfigUser(home, 501, 20, (20,))
+            user = _ConfigUser(home, 501, 20, "config-user")
             final = home / "schemas" / "final.yaml"
             with (patch.object(_ConfigUser, "sudo_invoker", return_value=user),
                   patch.object(ConfigStore, "_read_locked", side_effect=[{"redirect": "~/schemas/final.yaml"}, {}]) as read):

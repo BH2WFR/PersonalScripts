@@ -2,10 +2,11 @@
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from utils import ConfigStore
-from .layout import DEFAULT_SIZE, MAC_LABELS, MODIFIERS, NUMPAD_NAVIGATION, key_color
+from .layout import ACCENT_LOCK_KEYS, DEFAULT_SIZE, MAC_LABELS, MODIFIERS, NUMPAD_NAVIGATION, key_color
 
 
 @dataclass(frozen=True)
@@ -28,13 +29,27 @@ class WindowLayout:
         return cls(width, height, value.get("expanded") is True, value.get("numpad") is True)
 
 
+class LeftKeyMode(StrEnum):
+    NATIVE = "native"
+    CAPS = "CapsLock"
+    F1 = "F1"
+    F24 = "F24"
+
+    @classmethod
+    def supported(cls, mac: bool) -> tuple["LeftKeyMode", ...]:
+        return (cls.NATIVE, cls.CAPS, cls.F1) if mac else tuple(cls)
+
+    @property
+    def menu_label(self) -> str:
+        return "Left key: Caps Lock (default)" if self is LeftKeyMode.NATIVE else f"Left key: Layer ({self.value})"
+
+
 class Output(Protocol):
     mac: bool
-    adapted: bool
+    mode: LeftKeyMode
 
     def target(self) -> int: ...
     def locks(self) -> dict[str, bool]: ...
-    def layer_status(self, held: list[str]) -> str: ...
     def hold(self, name: str, down: bool) -> None: ...
     def key(self, name: str, modifiers: list[str]) -> None: ...
     def language(self) -> None: ...
@@ -45,17 +60,24 @@ class KeyboardState:
     """Keep pointer, one-shot modifier and long-press state across redraws."""
 
     def __init__(self, output: Output, schedule: Callable[[int, Callable[[], None]], None],
-                 cancel: Callable[[], None], refresh: Callable[[], None]) -> None:
+                 cancel: Callable[[], None], refresh: Callable[[], None], force_layer: LeftKeyMode | None = None) -> None:
         self.output = output
+        self.space_modifiers = ("LWin", "RWin") if output.mac else ("LAlt", "RAlt")
         self.schedule = schedule
         self.cancel = cancel
         self.refresh = refresh
         self.store = ConfigStore("screen-keyboard.yaml")
-        self.setting = "adapt_to_custom_karabiner_config" if output.mac else "adapt_to_custom_autohotkey_config"
         settings = self.store.load()
-        self.output.adapted = settings.get(self.setting) is True
+        self.setting = "macos_left_key" if output.mac else "windows_left_key"
+        self.modes = LeftKeyMode.supported(output.mac)
+        saved = settings.get(self.setting)
+        self.preferred_mode = next((mode for mode in self.modes if mode.value == saved), LeftKeyMode.NATIVE)
+        self.force_layer = force_layer
+        self.output.mode = force_layer or self.preferred_mode
         self.window_setting = "macos_window" if output.mac else "windows_window"
-        self.window_layout = WindowLayout.from_config(settings.get(self.window_setting))
+        window = settings.get(self.window_setting)
+        self.remember_size = isinstance(window, dict) and window.get("remember_size") is True
+        self.window_layout = WindowLayout.from_config(window) if self.remember_size else WindowLayout()
         self.target = output.target()
         self.held: list[str] = []
         self.locked: set[str] = set()
@@ -64,20 +86,41 @@ class KeyboardState:
 
     @property
     def adapted(self) -> bool:
-        return self.output.adapted
+        return self.output.mode is not LeftKeyMode.NATIVE
 
-    def set_adapted(self, enabled: bool) -> None:
+    def set_mode(self, mode: LeftKeyMode) -> None:
         """Release the old route before switching and persisting the preference."""
-        if enabled == self.adapted:
+        if mode not in self.modes:
+            raise ValueError(f"Unsupported left key mode: {mode}")
+        if self.force_layer is not None or mode == self.output.mode:
             return
         self.reset()
-        self.store.update({self.setting: enabled})
-        self.output.adapted = enabled
+        self.store.update({self.setting: mode.value})
+        self.preferred_mode = mode
+        self.output.mode = mode
         self.refresh()
+
+    def apply_launch_mode(self, force_layer: LeftKeyMode | None) -> None:
+        """Apply a relaunch override without saving it or retaining keys from the old route."""
+        mode = force_layer or self.preferred_mode
+        if mode != self.output.mode:
+            self.reset()
+        self.force_layer = force_layer
+        self.output.mode = mode
+        self.refresh()
+
+    def set_remember_size(self, enabled: bool, layout: WindowLayout) -> None:
+        """Save the current size on opt-in and discard the saved layout on opt-out."""
+        if enabled == self.remember_size:
+            return
+        window = {"remember_size": enabled, **(asdict(layout) if enabled else {})}
+        self.store.edit(lambda settings: settings.update({self.window_setting: window}))
+        self.remember_size = enabled
+        self.window_layout = layout if enabled else WindowLayout()
 
     def save_window(self, layout: WindowLayout) -> None:
         """Persist the current platform's layout after a completed resize."""
-        if layout != self.window_layout:
+        if self.remember_size and layout != self.window_layout:
             self.store.update({self.window_setting: asdict(layout)})
             self.window_layout = layout
 
@@ -161,10 +204,18 @@ class KeyboardState:
 
     def status(self) -> str:
         if not self.adapted or "Layer" not in self.held:
-            return "普通输入"
-        return self.output.layer_status(self.held)
+            return "Normal"
+        shift = "LShift" in self.held or "RShift" in self.held
+        upper_layer = any(key in self.space_modifiers or key in ("LAlt", "RAlt") for key in self.held)
+        return f"Layer {1 + shift + 2 * upper_layer}"
+
+    def shows_layer_hint(self, name: str) -> bool:
+        """Show the hint while the keyboard holds Layer across pointer clicks."""
+        return self.adapted and "Layer" in self.held and name in self.space_modifiers
 
     def label(self, name: str, label: str) -> str:
+        if self.shows_layer_hint(name):
+            return "L3/4"
         if name == "Layer":
             return "Layer" if self.adapted else "⇪" if self.output.mac else "CapsLock"
         if self.output.mac and not self.lock_states["NumLock"]:
@@ -181,15 +232,18 @@ class KeyboardState:
         if name == "language":
             return ("#185337" if active else key_color(name)), "white"
         lock = "CapsLock" if name == "Layer" and not self.adapted else name
+        palette_key = "NumLock" if lock == "CapsLock" and not self.adapted else name
         if lock in self.lock_states:
-            accent = lock in {"NumLock", "ScrollLock"}
+            accent = palette_key in ACCENT_LOCK_KEYS
             if active:
                 return ("#f4bd9d" if accent else "#99db9d"), "#202124"
             if self.lock_states[lock]:
                 return ("#9f4929" if accent else "#185337"), "white"
         if name in self.locked:
             return "#7a202a", "#ffe160"
-        return ("#34657c", "white") if active else (key_color(name), "#202124")
+        if self.shows_layer_hint(name):
+            palette_key = "Layer"
+        return ("#34657c", "white") if active else (key_color(palette_key), "#202124")
 
 
 def hover_color(color: str) -> str:

@@ -7,6 +7,7 @@ from functools import cache
 from utils import Keyboard, ScanCodePrefix
 from utils.windows_input import EXTENDED, KEYUP, SCANCODE, InputPacket, WindowsInput, keyboard_packet
 from .layout import NUMPAD_NAVIGATION
+from .state import LeftKeyMode
 
 ALIASES = {
     "CapsLock": "caps_lock", "NumLock": "num_lock", "ScrollLock": "scroll_lock",
@@ -49,7 +50,7 @@ class WindowsOutput(WindowsInput):
         self.api.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
         self.api.GetKeyboardLayout.argtypes = [W.DWORD]
         self.api.GetKeyboardLayout.restype = W.HANDLE
-        self.adapted = False
+        self.mode = LeftKeyMode.NATIVE
         self.owned: list[str] = []
 
     def target(self) -> int:
@@ -58,16 +59,10 @@ class WindowsOutput(WindowsInput):
     def locks(self) -> dict[str, bool]:
         return {name: bool(self.api.GetKeyState(vk) & 1) for name, vk in LOCK_CODES.items()}
 
-    @staticmethod
-    def layer_status(held: list[str]) -> str:
-        shift = bool({"LShift", "RShift"}.intersection(held))
-        alt = bool({"LAlt", "RAlt"}.intersection(held))
-        return f"Layer {1 + shift + 2 * alt}"
-
     def hold(self, name: str, down: bool) -> None:
-        if not self.adapted:
+        if self.mode is LeftKeyMode.NATIVE:
             return
-        key = "F24" if name == "Layer" else name
+        key = self.mode.value if name == "Layer" else name
         if down:
             vk = Keyboard.windows_virtual_key(ALIASES.get(key, key))
             if key in self.owned or (vk is not None and self.api.GetAsyncKeyState(vk) < 0):
@@ -79,7 +74,7 @@ class WindowsOutput(WindowsInput):
             self.owned.remove(key)
 
     def key(self, name: str, modifiers: list[str]) -> None:
-        if self.adapted:
+        if self.mode is not LeftKeyMode.NATIVE:
             if name not in self.owned:
                 self.send_packets([packet(name, True), packet(name, False)])
             return
@@ -96,8 +91,8 @@ class WindowsOutput(WindowsInput):
         self.send_packets(packets)
 
     def language(self) -> None:
-        if self.adapted:
-            self.key("F24", [])
+        if self.mode is not LeftKeyMode.NATIVE:
+            self.key(self.mode.value, [])
             return
         thread = self.api.GetWindowThreadProcessId(self.target(), None)
         lang = self.api.GetKeyboardLayout(thread) & 0x3FF

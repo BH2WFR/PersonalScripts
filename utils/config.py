@@ -29,7 +29,7 @@ class _ConfigUser:
     home: Path
     uid: int
     gid: int
-    groups: tuple[int, ...]
+    name: str
 
     @classmethod
     def sudo_invoker(cls) -> "_ConfigUser | None":
@@ -53,12 +53,20 @@ class _ConfigUser:
         home = Path(account.pw_dir)
         if not home.is_absolute():
             raise ValueError(f"Invalid home directory for sudo user {uid}.")
-        return cls(home, account.pw_uid, account.pw_gid, tuple(os.getgrouplist(account.pw_name, account.pw_gid)))
+        return cls(home, account.pw_uid, account.pw_gid, account.pw_name)
 
     def run(self, command: list[str], data: bytes = b"") -> bytes:
         """Perform filesystem operations as the account, including through symlinks."""
-        result = subprocess.run(command, input=data, capture_output=True, cwd="/", user=self.uid,
-                                group=self.gid, extra_groups=self.groups, umask=0o077,
+        uid = gid = groups = None
+        if sys.platform == "darwin":
+            # Let macOS initialize group membership; the directory-service list can
+            # exceed the number of explicit group IDs accepted by Python's subprocess.
+            command = ["/usr/bin/sudo", "-n", "-H", "-u", f"#{self.uid}", "--", *command]
+        else:
+            uid, gid = self.uid, self.gid
+            groups = os.getgrouplist(self.name, gid)
+        result = subprocess.run(command, input=data, capture_output=True, cwd="/", user=uid,
+                                group=gid, extra_groups=groups, umask=0o077,
                                 env={"PATH": os.defpath, "HOME": str(self.home)})
         if result.returncode:
             raise OSError(result.stderr.decode(errors="replace").strip() or "User configuration I/O failed.")

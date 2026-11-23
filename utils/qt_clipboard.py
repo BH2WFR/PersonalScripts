@@ -67,11 +67,13 @@ def _local_path(url: QUrl, windows: bool) -> str:
     return path.replace("/", "\\") if windows else path
 
 
-def read_clipboard_paths() -> tuple[str, list[str]]:
+def read_clipboard_paths(*, preserve_text_separators: bool = False) -> tuple[str, list[str]]:
     """Return the clipboard's displayable source and its extracted file paths.
 
     Prefer explicit plain text for the source, including quotes and URL escapes.
     A file-only selection supplies its Finder filenames or encoded URLs instead.
+    Set preserve_text_separators to keep the slash spelling of pasted path text.
+    Native file selections retain their platform's separators in either mode.
     Non-path text is returned alongside an empty list.
     """
     mime = QGuiApplication.clipboard().mimeData()
@@ -91,13 +93,15 @@ def read_clipboard_paths() -> tuple[str, list[str]]:
     for line in re.split(r"\r\n|[\r\n]", source):
         if not line.strip():
             continue
-        value = remove_quotes(line.strip())
+        value = remove_quotes(line if preserve_text_separators else line.strip())
         if value.lower().startswith("file://"):
             value = remove_file_prefix(value)
         elif not (ntpath.isabs(value) if windows else value.startswith("/")):
             return source, []
         if value:
-            found.append(forward_path(value).replace("/", "\\") if windows else value)
+            if windows and not preserve_text_separators:
+                value = forward_path(value).replace("/", "\\")
+            found.append(value)
     return source, found
 
 

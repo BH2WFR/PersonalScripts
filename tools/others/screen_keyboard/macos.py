@@ -8,6 +8,7 @@ import Quartz as Q  # pyright: ignore[reportMissingImports]
 from utils import Keyboard
 from utils.macos_input import frontmost_target, post_key as post
 from .input_sources import switch_input_source
+from .state import LeftKeyMode
 
 # Key code, generic flag and side flag from IOLLEvent.h.
 DIRECT = {
@@ -40,10 +41,9 @@ class MacOutput:
     mac = True
 
     def __init__(self) -> None:
-        self.adapted = False
+        self.mode = LeftKeyMode.NATIVE
         self.numeric = True
         self.held: list[str] = []
-        self.secondary: set[str] = set()
         self.previous_source: str | None = None
 
     def target(self) -> int:
@@ -53,15 +53,12 @@ class MacOutput:
         return {"CapsLock": bool(Q.CGEventSourceFlagsState(0) & Q.kCGEventFlagMaskAlphaShift),
                 "NumLock": self.numeric}
 
-    def layer_status(self, held: list[str]) -> str:
-        return "Secondary" if self.secondary else "Primary"
-
     @property
     def tap(self) -> int:
-        return Q.kCGHIDEventTap if self.adapted else Q.kCGSessionEventTap
+        return Q.kCGSessionEventTap if self.mode is LeftKeyMode.NATIVE else Q.kCGHIDEventTap
 
     def flags(self, held: list[str]) -> int:
-        table = ADAPTED if self.adapted else DIRECT
+        table = DIRECT if self.mode is LeftKeyMode.NATIVE else ADAPTED
         flags = Q.CGEventSourceFlagsState(0) & Q.kCGEventFlagMaskAlphaShift
         for key in held:
             if key == "Layer":
@@ -75,20 +72,16 @@ class MacOutput:
         if down:
             held.append(name)
         if name == "Layer":
-            post(CAPS_KEYCODE, down, self.flags(held), self.tap)
+            code = keycode("F1") if self.mode is LeftKeyMode.F1 else CAPS_KEYCODE
+            post(code, down, self.flags(held), self.tap)
         else:
-            code, generic, _ = (ADAPTED if self.adapted else DIRECT)[name]
+            code, generic, _ = (DIRECT if self.mode is LeftKeyMode.NATIVE else ADAPTED)[name]
             post(code, down, self.flags(held), self.tap, modifier=bool(generic))
         self.held = held
-        if name == "Layer" and not down:
-            self.secondary.clear()
-        elif "Layer" in held and name in {"LAlt", "LWin", "RWin"}:
-            if down:
-                self.secondary.add(name)
-            else:
-                self.secondary.clear()
 
     def key(self, name: str, modifiers: list[str]) -> None:
+        if "Layer" in self.held and name == self.mode.value:
+            return
         if name == "NumLock":
             self.numeric = not self.numeric
             return

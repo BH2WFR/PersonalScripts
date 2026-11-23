@@ -24,6 +24,9 @@ decrypted values or commit user configuration.
 On macOS and Linux, `directory()` resolves a nonzero `SUDO_UID` through the
 system account database when the process runs as root. Named stores read,
 create and replace user settings with the invoking account's permissions.
+On macOS, the elevated process runs configuration I/O through the system
+`sudo -n -H -u '#UID'` so macOS initializes the account's group membership.
+On Linux, the child process receives the account's UID, GID and group list.
 The parent holds the same sidecar lock as ordinary callers while it runs an
 `edit()` callback. The callback retains the caller's privileges. The shared
 directory resolver returns a path only; callers writing other assets there

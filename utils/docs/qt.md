@@ -21,7 +21,9 @@ order. Windows Explorer file selections use Qt's local file URLs and produce
 native backslashes, including UNC prefixes. On macOS, PyObjC enables direct
 access to Finder's filename list or its per-item property lists. Qt local file
 URLs also work without PyObjC. Absolute paths copied as text and textual
-`file://` URLs use the shared path decoders. An empty list means no usable paths.
+`file://` URLs use the shared path decoders. Pass `preserve_text_separators=True`
+to `read_clipboard_paths()` to retain the slash spelling of path text after removing
+paired quotes and decoding file URLs. An empty list means no usable paths.
 
 ## Image operations
 

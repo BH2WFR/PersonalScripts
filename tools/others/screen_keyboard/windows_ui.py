@@ -5,18 +5,21 @@ import tkinter as tk
 from tkinter import messagebox
 
 from utils import System, TkDpi
-from .layout import DEFAULT_SIZE, EXTRA_HEIGHT, EXTENDED_KEYS, MINIMUM_SIZE, NUMPAD_KEYS, ROWS, TOOLBAR, frames, panel_width
-from .state import KeyboardState, WindowLayout, hover_color
-from .window import NonactivatingWindow
+from .layout import (DEFAULT_SIZE, EXTRA_HEIGHT, EXTENDED_KEYS, MINIMUM_SIZE, NUMPAD_KEYS, ROWS, TOOLBAR,
+                     TOOLBAR_DIVIDERS, TOOLBAR_TIPS, WINDOW_TITLE, frames, panel_width)
+from .state import KeyboardState, LeftKeyMode, WindowLayout, hover_color
+from .window import NonactivatingWindow, reopen_signal
 from .windows import WindowsOutput
 
 
 class ScreenKeyboard:
-    def __init__(self) -> None:
+    def __init__(self, reopen_requested: Callable[[], LeftKeyMode | None] | None = None,
+                 force_layer: LeftKeyMode | None = None) -> None:
+        self.reopen_requested = reopen_requested
         System.enable_dpi_awareness()
         self.window = root = tk.Tk()
         root.withdraw()
-        root.title("屏幕键盘 — Custom Autohotkey Config")
+        root.title(WINDOW_TITLE)
         root.configure(background="#f1f3f5")
         self.dpi = TkDpi(root)
         self.closing = False
@@ -32,13 +35,23 @@ class ScreenKeyboard:
                         "reset": lambda: self.state.reset(), "redraw": self.redraw, "size": self.reset_size,
                         "settings": self.popup}
         self.state = KeyboardState(WindowsOutput(),
-                                   self.schedule, self.cancel, self.refresh)
+                                   self.schedule, self.cancel, self.refresh, force_layer)
         saved = self.state.window_layout
         self.expanded, self.numpad = saved.expanded, saved.numpad
-        self.status = tk.Label(root, anchor="w", background="#f1f3f5", foreground="#505760")
+        self.content = tk.Frame(root, background="#f1f3f5")
+        self.content.place(x=0, y=0, relwidth=1, relheight=1)
+        self.header = tk.Frame(self.content, background="#f1f3f5")
+        self.footer = tk.Frame(self.content, background="#e4e8eb")
+        self.status = tk.Label(self.content, anchor="w", background="#f1f3f5", foreground="#505760")
+        self.drag_offset: tuple[int, int] | None = None
+        self.dividers = {name: tk.Frame(self.content, background="#aab2b8") for name in TOOLBAR_DIVIDERS.values()}
+        for grip in (self.header, self.footer, self.status, *self.dividers.values()):
+            grip.bind("<ButtonPress-1>", self.start_drag)
+            grip.bind("<B1-Motion>", self.drag)
+            grip.bind("<ButtonRelease-1>", self.end_drag)
         for name, label in [*TOOLBAR, *self.labels.items()]:
             toolbar = name in self.actions
-            button = tk.Label(root, text=label, cursor="hand2" if toolbar else "arrow", borderwidth=0,
+            button = tk.Label(self.content, text=label, cursor="hand2" if toolbar else "arrow", borderwidth=0,
                               highlightthickness=int(not toolbar or name in {"extended", "numpad"}),
                               highlightcolor="#c1c9ce", highlightbackground="#c1c9ce")
             if toolbar:
@@ -49,18 +62,23 @@ class ScreenKeyboard:
             button.bind("<Leave>", lambda e, n=name: self.hover(n, False))
             button.bind("<Unmap>", lambda e, n=name: self.hover(n, False))
             self.buttons[name] = button
-        self.selection = tk.BooleanVar(root, self.state.adapted)
+        self.selection = tk.StringVar(root, self.state.output.mode.value)
         self.menu = tk.Menu(root, tearoff=False)
-        for enabled, label in ((False, "左侧键：CapsLock（默认）"),
-                               (True, "左侧键：Layer（适配 custom-autohotkey-config）")):
-            self.menu.add_radiobutton(label=label, variable=self.selection, value=int(enabled),
-                                      command=lambda: self.perform(lambda: self.state.set_adapted(self.selection.get())))
+        for mode in self.state.modes:
+            self.menu.add_radiobutton(label=mode.menu_label, variable=self.selection, value=mode.value,
+                                      command=lambda m=mode: self.perform(lambda: self.state.set_mode(m)))
+        self.remember_size = tk.BooleanVar(root, self.state.remember_size)
+        self.menu.add_separator()
+        self.menu.add_checkbutton(label="Remember window size", variable=self.remember_size,
+                                  command=lambda: self.perform(lambda: self.state.set_remember_size(
+                                      self.remember_size.get(), self.current_layout())))
         self.buttons["Layer"].bind("<Button-3>", self.popup)
         self.status.bind("<Button-3>", self.popup)
         root.bind("<ButtonRelease-1>", lambda e: self.perform(self.state.release))
         root.bind("<Configure>", lambda e: self.layout() if e.widget is root else None)
         self.dpi.start(lambda scale: self.rescaled())
-        self.native = NonactivatingWindow(root, self.finish_resize)
+        self.native = NonactivatingWindow(root, self.content.winfo_id(), self.finish_resize)
+        self.native.add_tooltips({self.buttons[name].winfo_id(): tip for name, tip in TOOLBAR_TIPS.items()})
         self.layout()
         root.bind("<Unmap>", self.unmapped)
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -75,11 +93,29 @@ class ScreenKeyboard:
         button = self.buttons["settings"]
         x, y = ((event.x_root, event.y_root) if event else
                 (button.winfo_rootx(), button.winfo_rooty() + button.winfo_height()))
-        self.selection.set(self.state.adapted)
+        self.selection.set(self.state.output.mode.value)
+        for index in range(len(self.state.modes)):
+            self.menu.entryconfigure(index, state="disabled" if self.state.force_layer else "normal")
+        self.remember_size.set(self.state.remember_size)
         try:
             self.menu.tk_popup(x, y)
         finally:
             self.menu.grab_release()
+
+    def start_drag(self, event: tk.Event) -> str:
+        x, y = self.native.position()
+        self.drag_offset = (event.x_root - x, event.y_root - y)
+        return "break"
+
+    def drag(self, event: tk.Event) -> str:
+        if self.drag_offset is not None:
+            x, y = self.drag_offset
+            self.native.move(event.x_root - x, event.y_root - y)
+        return "break"
+
+    def end_drag(self, event: tk.Event) -> str:
+        self.drag_offset = None
+        return "break"
 
     def perform(self, action: Callable[[], object]) -> None:
         try:
@@ -88,7 +124,7 @@ class ScreenKeyboard:
             try:
                 self.state.reset()
             finally:
-                messagebox.showerror("屏幕键盘", str(exc), parent=self.window)
+                messagebox.showerror(WINDOW_TITLE, str(exc), parent=self.window)
 
     def schedule(self, milliseconds: int, callback: Callable[[], None]) -> None:
         self.cancel()
@@ -128,6 +164,9 @@ class ScreenKeyboard:
                 self.buttons[name].configure(text=self.state.label(name, self.labels[name]))
 
     def poll_locks(self) -> None:
+        if self.reopen_requested and (mode := self.reopen_requested()) is not None:
+            self.perform(lambda: self.state.apply_launch_mode(None if mode is LeftKeyMode.NATIVE else mode))
+            self.perform(lambda: self.native.place_near_cursor(reopen=True))
         if self.state.held:
             self.perform(self.state.check_target)
         current = self.state.output.locks()
@@ -148,14 +187,15 @@ class ScreenKeyboard:
         unit = (width - 2 * self.dpi.pixels(4) + self.dpi.pixels(3)) / (20 if self.numpad else 16)
         key_size = 8 if unit * 16 < self.dpi.pixels(600) else 9
         main = {n for row in ROWS for n, _, _ in row}
-        for name, widget in {"status": self.status, **self.buttons}.items():
+        controls = {"header": self.header, "footer": self.footer, "status": self.status, **self.dividers, **self.buttons}
+        for name, widget in controls.items():
             if name not in bounds:
                 widget.place_forget()
                 continue
             x, y, w, h = bounds[name]
             points = key_size if name in main else 8
-            family = "Microsoft YaHei UI" if name in self.actions or name in {"status", "language"} else "Segoe UI"
-            widget.configure(font=(family, -self.dpi.pixels(points * 96 / 72)))
+            if isinstance(widget, tk.Label):
+                widget.configure(font=("Segoe UI", -self.dpi.pixels(points * 96 / 72)))
             widget.place(x=x, y=y, width=w, height=h)
 
     def rescaled(self) -> None:
@@ -194,10 +234,13 @@ class ScreenKeyboard:
         self.resize(*DEFAULT_SIZE, logical=True)
         self.save_window()
 
-    def save_window(self) -> None:
+    def current_layout(self) -> WindowLayout:
         scale = self.dpi.scale
-        self.state.save_window(WindowLayout(round(self.window.winfo_width() / scale),
-                                            round(self.window.winfo_height() / scale), self.expanded, self.numpad))
+        return WindowLayout(round(self.window.winfo_width() / scale), round(self.window.winfo_height() / scale),
+                            self.expanded, self.numpad)
+
+    def save_window(self) -> None:
+        self.state.save_window(self.current_layout())
 
     def finish_resize(self) -> None:
         self.rescaled()
@@ -222,11 +265,17 @@ class ScreenKeyboard:
             self.window.destroy()
 
 
-def run() -> int:
-    keyboard = ScreenKeyboard()
-    try:
-        keyboard.window.mainloop()
-    finally:
-        if not keyboard.closing:
-            keyboard.close()
+def run(force_layer: LeftKeyMode | None = None, warning: str = "") -> int:
+    if warning:
+        System.enable_dpi_awareness()
+        messagebox.showwarning(WINDOW_TITLE, warning)
+    with reopen_signal(force_layer) as requested:
+        if requested is None:
+            return 0
+        keyboard = ScreenKeyboard(requested, force_layer)
+        try:
+            keyboard.window.mainloop()
+        finally:
+            if not keyboard.closing:
+                keyboard.close()
     return 0

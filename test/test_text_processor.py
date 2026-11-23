@@ -15,7 +15,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools/others"))
 
 from PySide6.QtCore import QMimeData, QUrl
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QPushButton, QPlainTextEdit, QTabWidget
+from PySide6.QtWidgets import (
+    QApplication, QCheckBox, QComboBox, QFrame, QPushButton, QPlainTextEdit, QSpinBox, QTabWidget,
+)
 from text_processor.window import TextProcessor
 from utils import ConfigStore, path_text as paths, text_transforms as text
 
@@ -158,6 +160,38 @@ class WindowTests(unittest.TestCase):
         box = next(c for c in self.window.findChildren(QComboBox) if c.findText(label) >= 0)
         box.setCurrentText(label)
 
+    def test_toolbar_and_group_layout(self) -> None:
+        self.window.show()
+        tabs = self.window.findChild(QTabWidget)
+        assert tabs is not None
+        buttons = {b.text(): b for b in self.window.findChildren(QPushButton)}
+        get_paths = buttons["Get paths from clipboard"]
+        paste = buttons["Paste from Clipboard"]
+        wrap = next(c for c in self.window.findChildren(QCheckBox) if c.text() == "Word wrap")
+        self.assertTrue(get_paths.font().bold() and paste.font().bold())
+        self.assertLess(get_paths.geometry().right(), paste.x())
+        self.assertTrue(any(frame.frameShape() == QFrame.Shape.VLine
+                            and wrap.geometry().right() < frame.x() < get_paths.x()
+                            and wrap.geometry().contains(wrap.x(), frame.geometry().center().y())
+                            for frame in self.window.findChildren(QFrame)))
+        for i in range(tabs.count()):
+            tabs.setCurrentIndex(i)
+            QApplication.processEvents()
+            self.assertTrue(get_paths.isVisible() and paste.isVisible())
+            page = tabs.currentWidget()
+            if tabs.tabText(i) == "Letter Style":
+                controls = [*page.findChildren(QComboBox), *page.findChildren(QPushButton)]
+            elif tabs.tabText(i) == "Lines":
+                controls = [page.findChildren(QComboBox)[-1], *page.findChildren(QSpinBox),
+                            *(buttons[name] for name in ("Indent", "Unindent", "Tabs to spaces"))]
+            else:
+                continue
+            center_y = controls[0].geometry().center().y()
+            for control in controls:
+                self.assertTrue(control.geometry().top() <= center_y <= control.geometry().bottom())
+                self.assertTrue(page.rect().contains(control.geometry()))
+                self.assertGreaterEqual(control.width(), control.minimumSizeHint().width())
+
     def test_spaced_letters_and_home_actions(self) -> None:
         self.window.source.setPlainText("t h i s  i s   a")
         self.select("Join spaced letters")
@@ -203,7 +237,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.result.toPlainText(), "")
 
     @patch("utils.qt_clipboard.sys", platform="win32")
-    def test_get_paths_displays_clipboard_source_and_processed_paths(self, _platform: Mock) -> None:
+    def test_get_paths_only_converts_backslashes_in_result(self, _platform: Mock) -> None:
         clipboard = QApplication.clipboard()
         mime = QMimeData()
         mime.setUrls([QUrl("file:///C:/a%20b/report%2520.txt"), QUrl("file://nas/share/资料"),
@@ -213,23 +247,24 @@ class WindowTests(unittest.TestCase):
         self.window.source.setPlainText("original")
         self.window.result.setPlainText("previous result")
         self.click("Get paths from clipboard")
-        self.assertEqual(self.window.result.toPlainText(), "\n".join(
+        self.assertEqual(self.window.source.toPlainText(), "\n".join(
             [r"C:\a b\report%20.txt", r"\\nas\share\资料", r"D:\folder", r"\\localhost\share\doc"]))
         self.assertEqual(clipboard.text(), "Explorer display names")
-        self.assertEqual(self.window.source.toPlainText(), "Explorer display names")
+        self.assertEqual(self.window.result.toPlainText(),
+                         "C:/a b/report%20.txt\n//nas/share/资料\nD:/folder\n//localhost/share/doc")
         self.assertEqual(len(clipboard.mimeData().urls()), 4)
-        clipboard.setText('"C:\\a b.txt"\r\n"file://nas/share/x%20y"')
+        clipboard.setText('"C:\\a b.txt"\r\n"file://nas/share/x%20y"\r\n' + r"'file://D:\mix/one\\two'")
         self.click("Get paths from clipboard")
-        expected = "C:\\a b.txt\n\\\\nas\\share\\x y"
-        self.assertEqual(self.window.result.toPlainText(), expected)
-        original = '"C:\\a b.txt"\n"file://nas/share/x%20y"'
-        self.assertEqual(self.window.source.toPlainText(), original)
+        source = "C:\\a b.txt\n//nas/share/x y\n" + r"D:\mix/one\\two"
+        result = "C:/a b.txt\n//nas/share/x y\nD:/mix/one/two"
+        self.assertEqual(self.window.source.toPlainText(), source)
+        self.assertEqual(self.window.result.toPlainText(), result)
         for content in ("unrelated", "", "https://example.com/"):
             clipboard.setText(content)
             self.click("Get paths from clipboard")
-            self.assertEqual(self.window.result.toPlainText(), expected)
+            self.assertEqual(self.window.result.toPlainText(), result)
             self.assertFalse(self.window.clipboard_notice.isHidden())
-            self.assertEqual(self.window.source.toPlainText(), content)
+            self.assertEqual(self.window.source.toPlainText(), source)
 
     @patch("utils.qt_clipboard.sys", platform="darwin")
     def test_finder_prefers_native_list_then_item_plists_then_file_urls(self, _platform: Mock) -> None:
@@ -243,7 +278,7 @@ class WindowTests(unittest.TestCase):
         QApplication.clipboard().setMimeData(mime)
         with patch.dict(sys.modules, {"AppKit": native}):
             self.click("Get paths from clipboard")
-            self.assertEqual(self.window.result.toPlainText(), "\n".join(values))
+            self.assertEqual(self.window.result.toPlainText(), "/Users/甲/file%20 \n/Users/甲/a/b")
             self.assertEqual(self.window.source.toPlainText(), "\n".join(values))
             board.propertyListForType_.return_value = None
             first, second = Mock(), Mock()
@@ -254,11 +289,12 @@ class WindowTests(unittest.TestCase):
             second.stringForType_.return_value = plistlib.dumps(values[1:]).decode()
             board.pasteboardItems.return_value = [first, second]
             self.click("Get paths from clipboard")
-            self.assertEqual(self.window.result.toPlainText(), "\n".join(values))
+            self.assertEqual(self.window.source.toPlainText(), "\n".join(values))
+            self.assertEqual(self.window.result.toPlainText(), "/Users/甲/file%20 \n/Users/甲/a/b")
             board.pasteboardItems.return_value = []
             self.click("Get paths from clipboard")
             self.assertEqual(self.window.result.toPlainText(), "/Users/a/other folder")
-            self.assertEqual(self.window.source.toPlainText(), "file:///Users/a/other%20folder")
+            self.assertEqual(self.window.source.toPlainText(), "/Users/a/other folder")
 
     def test_dedicated_tabs_actions_and_reset_from_current_input(self) -> None:
         tabs = self.window.findChild(QTabWidget)
