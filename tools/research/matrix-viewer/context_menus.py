@@ -559,6 +559,7 @@ class WorkspaceMenus(QtCore.QObject):
             appearance.addSeparator()
             self._combo_menu(appearance, "Rendering style", profile.style_selector)
             self._combo_menu(appearance, "Line style", profile.line_style)
+            self._number_menu(appearance, "Dash scale", profile.dash_scale)
             self._combo_menu(appearance, "Point shape", profile.point_shape)
             shared = " (all matrices)" if window.multiple_matrix_mode.isChecked() else ""
             self._number_menu(appearance, f"Line width{shared}", profile.line_width)

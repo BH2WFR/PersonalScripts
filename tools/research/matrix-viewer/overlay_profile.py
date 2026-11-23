@@ -20,7 +20,7 @@ import pyqtgraph as pg
 from .clipping import clip_curve
 from .data_model import FloatArray, RealArray
 from .derivatives import DerivativeResult, differentiate
-from .profile_view import CurvePane, ProfileView, _compact_sample
+from .profile_view import CurvePane, ProfileView, _compact_sample, profile_pen
 from .workspace import ProfileSeries, RenderLayer
 from .value_markers import curve_markers
 from .render_style import CurveStyle, PointShape
@@ -45,6 +45,7 @@ class OverlayProfile(ProfileView):
         self.point_size.valueChanged.connect(lambda _size: self.settings_changed.emit())
         self.line_width.setToolTip("Signal/slice and derivative line width for all open matrices/channels in multiple mode.")
         self.line_width.valueChanged.connect(lambda _width: self.settings_changed.emit())
+        self.dash_scale.valueChanged.connect(lambda _scale: self.settings_changed.emit())
         for control in (self.style_selector, self.line_style, self.point_shape):
             control.setToolTip(f"{control.toolTip()}\nApplies only to the selected matrix/channel in multiple mode.")
             control.currentIndexChanged.connect(lambda _index: self.settings_changed.emit())
@@ -88,7 +89,7 @@ class OverlayProfile(ProfileView):
         return tuple(
             (series.key, series.mapping, series.layer.color, series.layer.clip_color, series.layer.markers,
              series.layer.profile_point_size, series.layer.profile_line_width, series.layer.profile_curve_style,
-             series.layer.profile_line_style, series.layer.profile_point_shape, series.label)
+             series.layer.profile_line_style, series.layer.profile_dash_scale, series.layer.profile_point_shape, series.label)
             for series in self._series)
 
     def _clear_pane(self, pane: CurvePane, index: int) -> None:
@@ -101,10 +102,13 @@ class OverlayProfile(ProfileView):
                color: str, name: str | None = None, *, layer: RenderLayer, cap: bool = False) -> None:
         mode, line_width = layer.profile_curve_style, layer.profile_line_width
         points = mode != CurveStyle.LINE or len(x) == 1
+        pen = None
+        if cap:
+            pen = pg.mkPen(color, width=max(3, line_width + 2))
+        elif mode != CurveStyle.POINTS:
+            pen = profile_pen(color, line_width, layer.profile_line_style, layer.profile_dash_scale)
         curve = pg.PlotDataItem(x=x, y=y, name=name, connect="finite",
-            pen=pg.mkPen(color, width=max(3, line_width + 2) if cap else line_width,
-                         style=QtCore.Qt.PenStyle.SolidLine if cap else QtCore.Qt.PenStyle(layer.profile_line_style.value))
-                if cap or mode != CurveStyle.POINTS else None,
+            pen=pen,
             symbol=layer.profile_point_shape.value if points else None, symbolSize=layer.profile_point_size,
             symbolBrush=color, symbolPen=color if layer.profile_point_shape == PointShape.CROSSHAIR else None)
         pane.plot_item.addItem(curve)

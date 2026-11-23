@@ -142,7 +142,7 @@ from .view_extrema import ViewExtrema
 from .plot_support import pyside_graphics_view
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .profile_view import CHANNEL_COLORS, JumpMode
-from .render_style import (DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE,
+from .render_style import (DEFAULT_DASH_SCALE, DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE,
                            CurveStyle, ImageStyle, LineStyle, PointShape, SurfaceStyle)
 from .surface_view import ProfileStyle
 from .slice_snapshot import freeze_slice
@@ -161,10 +161,11 @@ SETTINGS: tuple[str, ...] = (
     "show_nonfinite", "highlight_clipped", "nonfinite_size",
 )
 PROFILE_SETTINGS: tuple[str, ...] = ("jump_mode", "jump_threshold", "curve_style", "curve_color", "profile_point_size",
-                                    "profile_line_width", "profile_line_style", "profile_point_shape")
+                                    "profile_line_width", "profile_line_style", "profile_dash_scale", "profile_point_shape")
 PROFILE_SIZE_SETTINGS: tuple[str, ...] = ("profile_point_size", "profile_line_width")
 APPEARANCE_SETTINGS: dict[AppearancePage, tuple[str, ...]] = {
-    AppearancePage.SIGNAL: ("curve_style", "profile_point_size", "profile_line_width", "profile_line_style", "profile_point_shape"),
+    AppearancePage.SIGNAL: ("curve_style", "profile_point_size", "profile_line_width", "profile_line_style",
+                            "profile_dash_scale", "profile_point_shape"),
     AppearancePage.IMAGE: ("image_style", "image_point_size"),
     AppearancePage.SURFACE: ("surface_style", "point_size"),
     AppearancePage.COLORS: ("curve_color", "colormap", "clip_color", "nonfinite_positive_color",
@@ -623,6 +624,7 @@ class WorkspaceWindow(ViewerWindow):
                 "profile_point_size": profile.point_size.value(),
                 "profile_line_width": profile.line_width.value(),
                 "profile_line_style": int(profile.line_style.currentData()),
+                "profile_dash_scale": profile.dash_scale.value(),
                 "profile_point_shape": str(profile.point_shape.currentData()),
                 "curve_color": self.profile_view.color.name()}
 
@@ -803,13 +805,15 @@ class WorkspaceWindow(ViewerWindow):
             with (QtCore.QSignalBlocker(profile.jump_mode), QtCore.QSignalBlocker(profile.jump_threshold),
                   QtCore.QSignalBlocker(profile.style_selector), QtCore.QSignalBlocker(profile.point_size),
                   QtCore.QSignalBlocker(profile.line_width), QtCore.QSignalBlocker(profile.line_style),
-                  QtCore.QSignalBlocker(profile.point_shape)):
+                  QtCore.QSignalBlocker(profile.point_shape), QtCore.QSignalBlocker(profile.dash_scale)):
                 profile.jump_mode.setCurrentIndex(int(entry.settings.get("jump_mode", JumpMode.GAPS_ONLY)))
                 profile.jump_threshold.setValue(float(entry.settings.get("jump_threshold", 1.0)))
                 profile.style_selector.setCurrentIndex(int(entry.settings.get("curve_style", 0)))
                 profile.point_size.setValue(float(entry.settings.get("profile_point_size", DEFAULT_POINT_SIZE)))
                 profile.line_width.setValue(float(entry.settings.get("profile_line_width", DEFAULT_LINE_WIDTH)))
                 profile.line_style.setCurrentIndex(profile.line_style.findData(int(entry.settings.get("profile_line_style", LineStyle.SOLID.value))))
+                profile.dash_scale.setValue(float(entry.settings.get("profile_dash_scale", DEFAULT_DASH_SCALE)))
+                profile.sync_dash_control()
                 profile.point_shape.setCurrentIndex(profile.point_shape.findData(str(entry.settings.get("profile_point_shape", PointShape.CIRCLE.value))))
                 profile.sync_jump_controls()
             if profile is self.profile_view and previous_jump != (profile.jump_mode.currentIndex(), profile.jump_threshold.value()):
@@ -2210,6 +2214,7 @@ class WorkspaceWindow(ViewerWindow):
                 profile_line_width=float(entry.settings.get("profile_line_width", DEFAULT_LINE_WIDTH)),
                 profile_curve_style=CurveStyle(int(entry.settings.get("curve_style", CurveStyle.LINE))),
                 profile_line_style=LineStyle(int(entry.settings.get("profile_line_style", LineStyle.SOLID))),
+                profile_dash_scale=float(entry.settings.get("profile_dash_scale", DEFAULT_DASH_SCALE)),
                 profile_point_shape=PointShape(str(entry.settings.get("profile_point_shape", PointShape.CIRCLE)))))
         return tuple(layers)
 

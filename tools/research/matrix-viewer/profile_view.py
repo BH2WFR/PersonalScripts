@@ -16,7 +16,7 @@ are shown directly as sample values without extra marker annotations.
 Current full-resolution traces are exposed read-only for independent slice copies.
 Line width and point diameter style signals and cached derivatives together;
 changing appearance never recalculates derivatives or changes numeric data.
-LineStyle exposes Qt's five standard visible pen patterns; PointShape exposes
+LineStyle exposes Qt pen patterns and scalable dash presets; PointShape exposes
 all 19 pyqtgraph built-in symbols. They apply to ordinary and image-channel
 traces while omission/nonfinite/clipping annotations retain their meaning.
 Nonfinite and undefined-derivative annotations keep their separate marker sizes.
@@ -39,6 +39,7 @@ import math
 from dataclasses import dataclass, replace
 from collections.abc import Sequence
 from time import perf_counter
+from typing import cast
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -54,7 +55,7 @@ from .plot_support import EndpointAxis, RangeNotes, compact_axis, graphics_scene
 from .profile_legend import ProfileLegend
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .value_markers import MarkerStyle, curve_markers
-from .render_style import (DEFAULT_POINT_SIZE, MIN_POINT_SIZE, MAX_POINT_SIZE, CurveStyle, LineStyle, PointShape,
+from .render_style import (DASH_PRESETS, DEFAULT_DASH_SCALE, DEFAULT_POINT_SIZE, MIN_POINT_SIZE, MAX_POINT_SIZE, CurveStyle, LineStyle, PointShape,
                            DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, MIN_LINE_WIDTH, MAX_LINE_WIDTH)
 
 WHEEL_ZOOM_FACTOR = 1.15
@@ -76,6 +77,33 @@ ANNOTATION_Z_VALUE = 1
 MIN_PROFILE_PLOT_HEIGHT = 160
 PROFILE_TITLE_POINT_INCREMENT = 1.0
 DERIVATIVE_CONTROL_VERTICAL_PADDING = 4
+
+
+def profile_pen(color: str | QtGui.QColor, width: float, style: LineStyle, scale: float) -> QtGui.QPen:
+    """Build a screen-space pen with equally scaled strokes and spaces."""
+    pen = cast(QtGui.QPen, pg.mkPen(color, width=width))
+    pattern = DASH_PRESETS.get(style)
+    if pattern is None:
+        pen.setStyle(QtCore.Qt.PenStyle(style.value))
+        if style == LineStyle.SOLID or scale == DEFAULT_DASH_SCALE:
+            return pen
+        pattern = tuple(pen.dashPattern())
+    pen.setDashPattern([length * scale for length in pattern])
+    # A square cap can fill the entire gap in a dense pattern.
+    if min(pen.dashPattern()[1::2]) <= 1:
+        pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
+    return pen
+
+
+def _mono_outline(pen: QtGui.QPen) -> QtGui.QPen:
+    """Widen a monochrome stroke while keeping the dashes aligned on screen."""
+    shadow = QtGui.QPen(pen)
+    shadow.setColor(QtGui.QColor(MONO_OUTLINE_COLOR))
+    shadow.setWidthF(pen.widthF() + MONO_OUTLINE_WIDTH - DEFAULT_LINE_WIDTH)
+    if pattern := pen.dashPattern():
+        shadow.setDashPattern([length * pen.widthF() / shadow.widthF() for length in pattern])
+        shadow.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
+    return shadow
 
 
 def _channel_label(channel: ImageMember | None, alpha_weighted: bool) -> str:
@@ -286,7 +314,8 @@ class CurvePane(QtWidgets.QWidget):
                     color: QtGui.QColor, mode: CurveStyle, x_start: int = 0,
                     x_values: RealArray | None = None, *, channel: ImageMember | None = None,
                     point_size: float = DEFAULT_POINT_SIZE, line_width: float = DEFAULT_LINE_WIDTH,
-                    line_style: LineStyle = LineStyle.SOLID, point_shape: PointShape = PointShape.CIRCLE) -> None:
+                    line_style: LineStyle = LineStyle.SOLID, point_shape: PointShape = PointShape.CIRCLE,
+                    dash_scale: float = DEFAULT_DASH_SCALE) -> None:
         """Render samples with gaps, optional markers and a common curve style.
 
         Args:
@@ -299,7 +328,8 @@ class CurvePane(QtWidgets.QWidget):
             channel: Named image curve, or None for the ordinary single curve.
             point_size: Sample diameter in screen pixels.
             line_width: Signal or derivative line width in screen pixels.
-            line_style: Qt's built-in pen pattern.
+            line_style: Built-in pen pattern or dash preset.
+            dash_scale: Multiplier for both strokes and spaces.
             point_shape: Built-in pyqtgraph sample symbol.
         """
         y = np.where(valid, values, np.nan)
@@ -307,15 +337,14 @@ class CurvePane(QtWidgets.QWidget):
         ordered = x_values is None or bool(np.all(np.isfinite(x_values)) and np.all(x_values[1:] >= x_values[:-1]))
         curve = self.curve if channel is None else self.channel_curves[channel]
         outlined = self._dark and channel == ImageMember.MONO
+        pen = profile_pen(color, line_width, line_style, dash_scale) if mode != CurveStyle.POINTS else None
         curve.setData(
             np.arange(x_start, x_start + len(y)) if x_values is None else x_values, y, connect="finite",
-            pen=pg.mkPen(color, width=line_width, style=QtCore.Qt.PenStyle(line_style.value)) if mode != CurveStyle.POINTS else None,
+            pen=pen,
             symbol=point_shape.value if mode != CurveStyle.LINE or len(y) == 1 else None,
             symbolSize=point_size, symbolBrush=color,
             symbolPen=MONO_OUTLINE_COLOR if outlined else color if point_shape == PointShape.CROSSHAIR else None,
-            shadowPen=pg.mkPen(MONO_OUTLINE_COLOR, width=line_width + MONO_OUTLINE_WIDTH - DEFAULT_LINE_WIDTH,
-                               style=QtCore.Qt.PenStyle(line_style.value))
-            if outlined and mode != CurveStyle.POINTS else None,
+            shadowPen=_mono_outline(pen) if outlined and pen is not None else None,
             autoDownsample=ordered and bool(np.all(valid)), downsampleMethod="peak", clipToView=ordered,
         )
 
@@ -366,13 +395,7 @@ class CurvePane(QtWidgets.QWidget):
         monochrome = self.channel_curves.get(ImageMember.MONO)
         if monochrome is not None:
             pen = monochrome.opts.get("pen")
-            width = pen.widthF() if isinstance(pen, QtGui.QPen) else DEFAULT_LINE_WIDTH
-            monochrome.setShadowPen(pg.mkPen(MONO_OUTLINE_COLOR, width=width + MONO_OUTLINE_WIDTH - DEFAULT_LINE_WIDTH)
-                                    if dark and pen is not None else None)
-            shadow = monochrome.opts.get("shadowPen")
-            if isinstance(shadow, QtGui.QPen) and isinstance(pen, QtGui.QPen):
-                shadow.setStyle(pen.style())
-                monochrome.setShadowPen(shadow)
+            monochrome.setShadowPen(_mono_outline(pen) if dark and isinstance(pen, QtGui.QPen) else None)
             monochrome.setSymbolPen(MONO_OUTLINE_COLOR if dark else CHANNEL_COLORS[ImageMember.MONO]
                                     if monochrome.opts.get("symbol") == PointShape.CROSSHAIR.value else None)
         for name in ("left", "bottom"):
@@ -445,6 +468,18 @@ class ProfileView(QtWidgets.QWidget):
         self.line_style.setToolTip("Line pattern for this signal/slice and its derivative.")
         self.line_style.currentIndexChanged.connect(self._redraw)
         self.appearance_form.addRow("Line style", self.line_style)
+        self.dash_scale = NoWheelDoubleSpinBox()
+        self.dash_scale.setRange(0.25, 8.0)
+        self.dash_scale.setSingleStep(0.25)
+        self.dash_scale.setValue(DEFAULT_DASH_SCALE)
+        self.dash_scale.setSuffix("×")
+        self.dash_scale.setKeyboardTracking(False)
+        self.dash_scale.setToolTip("Multiply dash and gap lengths for this curve. 1× uses the original pattern.")
+        self.dash_scale.valueChanged.connect(self._redraw)
+        self.appearance_form.addRow("Dash scale", self.dash_scale)
+        self.line_style.currentIndexChanged.connect(self.sync_dash_control)
+        self.style_selector.currentIndexChanged.connect(self.sync_dash_control)
+        self.sync_dash_control()
         self.point_shape = NoWheelComboBox()
         for shape in PointShape:
             self.point_shape.addItem(shape.label, shape.value)
@@ -824,6 +859,11 @@ class ProfileView(QtWidgets.QWidget):
         self._derivative_timer.stop()
         super().hideEvent(event)
 
+    def sync_dash_control(self) -> None:
+        """Enable dash scaling when the current rendering draws a patterned line."""
+        self.dash_scale.setEnabled(self.line_style.currentData() != LineStyle.SOLID.value
+                                   and self.style_selector.currentIndex() != CurveStyle.POINTS)
+
     def _redraw(self) -> None:
         if self.values is None or self.valid is None or self.display_values is None:
             return
@@ -840,12 +880,14 @@ class ProfileView(QtWidgets.QWidget):
                                               self.x_start, curve.x, channel=trace.channel, point_size=self.point_size.value(),
                                               line_width=self.line_width.value(),
                                               line_style=LineStyle(int(self.line_style.currentData())),
+                                              dash_scale=self.dash_scale.value(),
                                               point_shape=PointShape(str(self.point_shape.currentData())))
             else:
                 self.signal_pane.set_samples(trace.shown, trace.valid, color, mode,
                                               self.x_start, self.x_values, channel=trace.channel, point_size=self.point_size.value(),
                                               line_width=self.line_width.value(),
                                               line_style=LineStyle(int(self.line_style.currentData())),
+                                              dash_scale=self.dash_scale.value(),
                                               point_shape=PointShape(str(self.point_shape.currentData())))
             if self.marker_style.highlight_clipped and curve is not None and trace.clipped is not None:
                 caps_x.append(curve.cap_x)
@@ -909,6 +951,7 @@ class ProfileView(QtWidgets.QWidget):
                 self.derivative_pane.set_samples(result.values, result.valid, color, mode, self.x_start,
                                                  channel=channel, point_size=self.point_size.value(), line_width=self.line_width.value(),
                                                  line_style=LineStyle(int(self.line_style.currentData())),
+                                                 dash_scale=self.dash_scale.value(),
                                                  point_shape=PointShape(str(self.point_shape.currentData())))
                 markers.append(result.undefined_indices + self.x_start)
             else:
@@ -918,6 +961,7 @@ class ProfileView(QtWidgets.QWidget):
                                                  mode, x_values=self.x_values[order], channel=channel,
                                                  point_size=self.point_size.value(), line_width=self.line_width.value(),
                                                  line_style=LineStyle(int(self.line_style.currentData())),
+                                                 dash_scale=self.dash_scale.value(),
                                                  point_shape=PointShape(str(self.point_shape.currentData())))
                 markers.append(self.x_values[result.undefined_indices])
         marker_x = np.concatenate(markers)

@@ -13,6 +13,7 @@ DEFAULT_POINT_SIZE = 2.0
 MIN_POINT_SIZE = 0.5
 MAX_POINT_SIZE = 64.0
 DEFAULT_LINE_WIDTH = 1.0
+DEFAULT_DASH_SCALE = 1.0
 DEFAULT_LINE_COLOR = "#0066ff"
 MIN_LINE_WIDTH = 0.5
 MAX_LINE_WIDTH = 20.0
@@ -32,19 +33,32 @@ class CurveStyle(IntEnum):
 
 
 class LineStyle(IntEnum):
-    """Qt's built-in visible pen patterns; values match Qt.PenStyle."""
+    """Stable pattern IDs; the first five match Qt's visible built-in styles."""
 
     SOLID = 1
     DASH = 2
     DOT = 3
     DASH_DOT = 4
     DASH_DOT_DOT = 5
+    LONG_DASH = 6
+    LONG_SHORT = 7
+    DASH_THREE_DOTS = 8
 
     @property
     def label(self) -> str:
         """Return the user-facing pen pattern name."""
         return {LineStyle.SOLID: "Solid", LineStyle.DASH: "Dashed", LineStyle.DOT: "Dotted",
-                LineStyle.DASH_DOT: "Dash-dot", LineStyle.DASH_DOT_DOT: "Dash-dot-dot"}[self]
+                LineStyle.DASH_DOT: "Dash-dot", LineStyle.DASH_DOT_DOT: "Dash-dot-dot",
+                LineStyle.LONG_DASH: "Long dash", LineStyle.LONG_SHORT: "Alternating long / short",
+                LineStyle.DASH_THREE_DOTS: "Dash and three dots"}[self]
+
+
+# Alternating strokes and spaces in Qt pen-width units.
+DASH_PRESETS: dict[LineStyle, tuple[float, ...]] = {
+    LineStyle.LONG_DASH: (10, 3),
+    LineStyle.LONG_SHORT: (8, 3, 3, 3),
+    LineStyle.DASH_THREE_DOTS: (6, 2, 1, 2, 1, 2, 1, 2),
+}
 
 
 class PointShape(StrEnum):

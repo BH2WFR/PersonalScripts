@@ -80,7 +80,7 @@ class ViewSettingsDialog(QtWidgets.QDialog):
         for checkbox in (self.signal_grid, self.derivative_grid, self.y_lock, self.auto_y):
             axes_layout.addWidget(checkbox)
         self.scaling_buttons: dict[FigureView, QtWidgets.QPushButton] = {}
-        self.profile_scope = QtWidgets.QLabel("Multiple matrices: line width and point size apply to all. Rendering, line style, point shape and color apply to the active matrix/channel.")
+        self.profile_scope = QtWidgets.QLabel("Multiple matrices: line width and point size apply to all. Rendering, line style, dash scale, point shape and color apply to the active matrix/channel.")
         self.profile_scope.setWordWrap(True)
         self._page("1D", window.appearance_locks[AppearancePage.SIGNAL],
                    self.profile_scope, self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)

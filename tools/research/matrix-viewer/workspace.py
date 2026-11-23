@@ -16,7 +16,7 @@ from .data_model import (BoolArray, Component, Crop, Document, FloatArray, Frame
 from .coordinates import AxisMap
 from .import_catalog import ImportChoice
 from .value_markers import MarkerStyle
-from .render_style import DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE, CurveStyle, ImageStyle, LineStyle, PointShape, SurfaceStyle
+from .render_style import DEFAULT_DASH_SCALE, DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE, CurveStyle, ImageStyle, LineStyle, PointShape, SurfaceStyle
 
 COLORS: tuple[str, ...] = ("#e53935", "#1976d2", "#279638", "#ab47bc", "#ef8c00", "#00a6a6", "#bc557f")
 AUTO_HEIGHT_FRACTION = 0.3
@@ -348,6 +348,7 @@ class RenderLayer:
     profile_curve_style: CurveStyle = CurveStyle.LINE
     profile_line_style: LineStyle = LineStyle.SOLID
     profile_point_shape: PointShape = PointShape.CIRCLE
+    profile_dash_scale: float = DEFAULT_DASH_SCALE
 
     @property
     def z_mapping(self) -> AxisMap:
