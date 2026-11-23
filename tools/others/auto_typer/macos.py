@@ -2,10 +2,11 @@
 
 from functools import cache
 import os
+from typing import Any, cast
 
-import AppKit as A  # pyright: ignore[reportMissingImports]
-import objc  # pyright: ignore[reportMissingImports]
-import Quartz as Q  # pyright: ignore[reportMissingImports]
+import AppKit  # pyright: ignore[reportMissingImports]
+import objc as pyobjc  # pyright: ignore[reportMissingImports]
+import Quartz  # pyright: ignore[reportMissingImports]
 from PySide6.QtGui import QWindow
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -13,6 +14,11 @@ from utils import Keyboard, System
 from utils.macos_input import frontmost_target, post_key as _post
 from .panel import run
 from .strokes import ascii_key
+
+# PyObjC resolves native framework and bridge members at runtime.
+A = cast(Any, AppKit)
+Q = cast(Any, Quartz)
+objc = cast(Any, pyobjc)
 
 
 @cache
@@ -73,9 +79,9 @@ class AutoTyperPanel(A.NSPanel):
     def canBecomeMainWindow(self) -> bool:
         return False
 
-    def close(self) -> None:
-        QApplication.quit()
-        objc.super(AutoTyperPanel, self).close()
+    def windowWillClose_(self, notification: object) -> None:
+        """End the Qt event loop when AppKit closes the native panel."""
+        QApplication.exit(0)
 
 
 def show_panel(widget: QWidget) -> tuple[object, QWindow]:
@@ -85,17 +91,20 @@ def show_panel(widget: QWidget) -> tuple[object, QWindow]:
     """
     style = (A.NSWindowStyleMaskNonactivatingPanel | A.NSWindowStyleMaskTitled
              | A.NSWindowStyleMaskClosable | A.NSWindowStyleMaskResizable)
+    # Cocoa and the embedded Qt view must start at the same layout-safe size.
+    minimum = widget.minimumSizeHint()
+    widget.resize(widget.size().expandedTo(minimum))
     rect = A.NSMakeRect(0, 0, widget.width(), widget.height())
     panel = AutoTyperPanel.alloc().initWithContentRect_styleMask_backing_defer_(
         rect, style, A.NSBackingStoreBuffered, False)
     panel.setReleasedWhenClosed_(False)
+    panel.setDelegate_(panel)
     panel.setTitle_(widget.windowTitle())
     panel.setFloatingPanel_(True)
     panel.setHidesOnDeactivate_(False)
     panel.setLevel_(A.NSFloatingWindowLevel)
     panel.setCollectionBehavior_(A.NSWindowCollectionBehaviorCanJoinAllSpaces
                                  | A.NSWindowCollectionBehaviorFullScreenAuxiliary)
-    minimum = widget.minimumSizeHint()
     panel.setContentMinSize_(A.NSMakeSize(minimum.width(), minimum.height()))
     host = QWindow.fromWinId(objc.pyobjc_id(panel.contentView()))
     view = objc.objc_object(c_void_p=int(widget.winId()))

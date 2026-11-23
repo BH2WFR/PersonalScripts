@@ -5,7 +5,9 @@ import importlib
 import os
 from pathlib import Path
 import string
+import subprocess
 import sys
+from textwrap import dedent
 import unittest
 from unittest.mock import Mock, call, patch
 
@@ -63,6 +65,33 @@ class KeyEventTests(unittest.TestCase):
                 sender.send("😀")
                 self.assertEqual(quartz.CGEventKeyboardSetUnicodeString.call_args_list,
                                  [call(event, 2, "😀"), call(event, 2, "😀")])
+
+
+@unittest.skipUnless(sys.platform == "darwin", "macOS native close button")
+class MacPanelTests(unittest.TestCase):
+    def test_title_bar_close_exits_process(self) -> None:
+        # Exercise the Cocoa button in its own process with a running Qt event loop.
+        script = dedent("""
+            import sys
+            from unittest.mock import patch
+            sys.path.insert(0, "tools/others")
+            from auto_typer import macos
+            from PySide6.QtCore import QTimer
+            from PySide6.QtWidgets import QApplication
+
+            show_panel = macos.show_panel
+            def show_and_close(widget):
+                panel, host = show_panel(widget)
+                button = panel.standardWindowButton_(macos.A.NSWindowCloseButton)
+                QTimer.singleShot(0, lambda: button.performClick_(None))
+                return panel, host
+
+            with patch.object(macos, "show_panel", show_and_close), patch.object(QApplication, "clipboard") as clipboard:
+                clipboard.return_value.text.return_value = ""
+                sys.exit(macos.run_macos())
+        """)
+        subprocess.run([sys.executable, "-c", script], cwd=ROOT, check=True, timeout=10,
+                       env={**os.environ, "QT_QPA_PLATFORM": "cocoa"})
 
 
 class PanelTests(unittest.TestCase):
