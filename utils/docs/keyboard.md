@@ -14,6 +14,26 @@ Implementation: [keyboard.py](../keyboard.py).
 | Keyboard selector catalog | `Keyboard.windows_scan_entries() -> tuple[tuple[str, WindowsScanCode], ...]`; immutable known physical labels and regional aliases sorted by code/name, no OS calls; multiple names may share a code, unknown words and Disable are not included |
 | Other platform key codes | `Keyboard.macos_key_name(vk, chars=None)`, `macos_virtual_key(name) -> int \| None`, `macos_media_name(code) -> str \| None`, `hid_usage_name(usage)`, `x11_keysym_name(name)`; HID usages refer specifically to keyboard/keypad page 0x07, including International1-9 and LANG1-9; they are not Windows scan words |
 
+## Windows input batches
+
+Windows tools can explicitly import `WindowsInput` and `keyboard_packet(scan, flags, vk=0)`
+from `utils.windows_input`. Construct the list of downs and ups before calling
+`send_packets(packets)`. It submits one Win32 batch and attempts to release only
+accepted downs if the OS rejects part of it, then raises `RuntimeError`. The auto
+typer uses Unicode/scan packets and the screen keyboard uses physical key positions.
+The caller owns key selection, modifier policy and foreground-window checks.
+
+## macOS keyboard output
+
+The auto typer and screen keyboard import `frontmost_target()` and `post_key()`
+from `utils.macos_input`. The target is an external application PID or zero.
+`post_key(code, down, flags, tap=None, *, modifier=False, text="")` defaults to
+the session event tap. Pass `flags=None` for native Caps Lock flags or
+`modifier=True` for a flags-changed event. The caller pairs downs and ups and
+chooses the HID tap for input intended for a remapper. On that tap ordinary
+keys carry explicit key-down/key-up events, including a momentary Caps Lock
+layer trigger. Modifier transitions use flags-changed events.
+
 ## Code spaces and aliases
 
 Windows virtual keys, Windows scan words, macOS codes and USB HID usages are

@@ -21,6 +21,16 @@ name. Application filenames and encrypted-value keys belong to the consuming
 module. Fixed keys provide obfuscation, not a security boundary; never log
 decrypted values or commit user configuration.
 
+On macOS and Linux, `directory()` resolves a nonzero `SUDO_UID` through the
+system account database when the process runs as root. Named stores read,
+create and replace user settings with the invoking account's permissions.
+The parent holds the same sidecar lock as ordinary callers while it runs an
+`edit()` callback. The callback retains the caller's privileges. The shared
+directory resolver returns a path only; callers writing other assets there
+are responsible for their own I/O. A root session without a sudo invoker
+continues to use its own home. An invalid or unknown `SUDO_UID` raises
+`ValueError`. Existing files in root's configuration directory are not migrated.
+
 Keep configuration keys and native environment-variable support documented in
 [Environmental_Variables.md](../../Environmental_Variables.md). Missing/empty
 configuration is distinct from malformed YAML; callers must not overwrite a

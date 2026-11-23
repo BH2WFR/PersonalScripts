@@ -596,13 +596,14 @@ class Environment:
         return None
 
     @staticmethod
-    def print_env_info(*, probe_versions: bool = True) -> None:
+    def print_env_info(*, probe_versions: bool = True, show_elevation: bool = False) -> None:
         """Print Conda, Python, operating-system, display, and shell information.
 
         Args:
             probe_versions: Whether to start external Conda, PowerShell, and
                 Bash processes to read their versions. When ``False``, their
                 resolved paths are still shown without the version probes.
+            show_elevation: Include the current process's elevation status below Arch.
 
         Side effects:
             Prints environment information and, when ``probe_versions`` is
@@ -612,6 +613,9 @@ class Environment:
 
         lines.append(f"{FLYellow}OS:{CRst}           {System.get_os_name()}")
         lines.append(f"{FLYellow}Arch:{CRst}         {FGray}{System.get_arch()}{CRst}")
+        if show_elevation:
+            elevated = System.is_elevated()
+            lines.append(f"{FLCyan}Elevated:{CRst}     {FLGreen if elevated else FGray}{elevated}{CRst}")
         linux_gui = System.get_linux_gui()
         if linux_gui is not None:
             gui_color = FLRed if linux_gui is LinuxGui.NO_GUI else FGray

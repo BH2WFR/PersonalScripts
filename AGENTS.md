@@ -63,6 +63,9 @@ conda run -n base python run-script.py <name> [args...]
   I/O. Encrypted-value keys belong to the consuming module. Document settings
   and supported native variables in
   [Environmental_Variables.md](Environmental_Variables.md).
+- On Linux and macOS, elevated scripts must resolve reads and writes of
+  home-relative user files, including configuration, against the invoking
+  user's home directory (under `sudo`, look up `SUDO_UID` in the OS account database).
 
 ## Script structure and platforms
 
@@ -87,15 +90,17 @@ conda run -n base python run-script.py <name> [args...]
   `Environment.check_commands()` with `CmdCheck` for external tools and give
   actionable hints for missing Python packages. Load optional integrations only
   when their feature is needed.
-- Every tool that needs elevation must elevate on every supported platform.
-  In Python entries, call `System.restart_elevated()` once in `main()` after
+- A tool may require elevation on only some supported operating systems.
+  Request elevation only on those platforms and use the caller's existing
+  privileges elsewhere. On platforms requiring elevation, Python entries
+  call `System.restart_elevated()` once in `main()` after
   help, argument validation and platform checks, before output, prompts or work.
   Entries accepting explicit `argv` pass `entry=__file__, args=argv` to preserve
   the invocation. Windows console tools must keep the caller's console and return
   the elevated child's exit status. The helper returns only when already elevated and exits on failure. Bash
-  entries check `EUID` and use `exec sudo -u root bash "$0" "$@"` with the original
-  arguments. Keep the tool's path in `launcher-config.yaml`'s
-  `elevation-needed-list` in sync when adding, renaming or changing an entry.
+  entries that require elevation on the current platform check `EUID` and use
+  `exec sudo -u root bash "$0" "$@"` with the original arguments. Keep the tool's
+  path and platform scope in sync with `elevation-needed-list` in `launcher-config.yaml`.
 - Catch Ctrl+C at the entry boundary with
   `Console.print_keyboard_interrupt_message_and_exit()`; allow cleanup before
   it and do not swallow cancellation in retry loops.

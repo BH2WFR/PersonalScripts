@@ -6,9 +6,16 @@ owned by `APP_DIRECTORY_NAME` in `utils/config.py`. Call `ConfigStore.directory(
 in code instead of reproducing that path. `ConfigStore.initialize()` creates only
 a missing general config.yaml; each application owns its own filename and initialization.
 
+On macOS and Linux, a process running as root under `sudo` uses `SUDO_UID` to
+look up the invoking account's home directory. New configuration directories,
+YAML files and lock files belong to that user. A direct root session without
+`SUDO_UID` uses its own home directory.
+
 | User file | Settings |
 | --- | --- |
 | `config.yaml` | General tool settings; empty initially. `rclone-sync.config-password` stores an optional encrypted rclone password. `network-info-uploader` retains the `upload-ipaddress` section, which contains `bucket`, `endpoint`, `access-id`, `secret`. |
+| `text-processor.yaml` | Text Processor saves each preference when changed. `use_result_for_next_operation` defaults to true. `variable_syntax` accepts `cmd`, `Bash` or `PowerShell` and defaults to `cmd` on Windows and `Bash` elsewhere. |
+| `screen-keyboard.yaml` | The Settings menu saves the left key mode in `adapt_to_custom_autohotkey_config` or `adapt_to_custom_karabiner_config`. Both default to false (CapsLock). `windows_window` and `macos_window` remember the client width and height in logical units and whether the extended row and number pad are open. |
 | `config-pdf-tools.yaml` | Shared PDF open/save directories. The `ocr` section stores recognition/language, tiling, anchor-margin and preprocessing settings, plus preview font/color; page exclusions and recognized text remain session-only. The `image-ocr` section stores batch recognition settings. Its `vision.text` and `vision.formula` mappings store transcription instructions, output format, document and math formatting, and per-request context reset. Conversations are session-only and scoped to mode and endpoint. The provider profile in `llm.yaml` sets the total images per request (default 5). The OCR model manager stores explicitly downloaded language extensions in `models/pdf-ocr` beneath the same ConfigStore directory; its catalog and SHA-256 checksums come from the installed RapidOCR registry. Bundled models stay in the package. Image to Text and Formula stores its optional formula model in `models/image-ocr/LaTeX_OCR_rec`. |
 | `llm.yaml` | `active_source` selects the last URL; `sources` maps canonical endpoints to model/parameters and encrypted `api_key` / `balance_key`. `reasoning_effort` defaults to `auto` (enabled); `default` omits controls, `none` disables, or select a supported `minimal`/`low`/`medium`/`high`/`xhigh`/`max` level. Owned by utils.Llm. Startup/Load reads; Save/window close writes. |
 | `launcher.yaml` | `conda-environment` (default `base`) and `additional-paths` (YAML list, default empty). Relative extra paths use the repository root. This is distinct from repository `launcher-config.yaml` and its optional patch. |
@@ -18,6 +25,9 @@ a missing general config.yaml; each application owns its own filename and initia
 Explicit command-line options override the relevant user configuration fields.
 No custom environment-variable fallback is retained. Native `PATH`, Conda,
 rclone, desktop and operating-system variables retain their existing meanings.
+
+On macOS, Auto Typer sets Qt's `QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM`
+while its panel is running so launching it preserves the target application's focus.
 
 A redirect entry contains only `redirect: '/path/to/tasks.yaml'`. Relative paths
 resolve against each redirect file's directory. Missing targets, cycles, mixed
@@ -53,6 +63,7 @@ real user configuration, decrypted credentials or tokens.
   TLS certificate/hostname checks for inference, API tests, model lists and balances.
   The default is false, including older configurations. HTTP local endpoints need
   no TLS opt-out. GUI Save/window close persists the per-source checkbox.
+- Text Processor shortens paths using the longest matching directory in the current environment. The [path conversion reference](utils/docs/text_transforms.md) lists the native variables and shell forms.
 - command-runner sends inline Conda Python payloads through a temporary JSON file
   removed after the child exits. No project environment variable carries it.
 - Generated Windows script-to-app runners use local `_APP_*` bookkeeping inside

@@ -177,6 +177,15 @@ def _read_pattern_list(value: object, yaml_key: str) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+def _platform_patterns(value: object, yaml_key: str, platform_key: str | None) -> list[str]:
+    """Combine shared patterns with the current platform's additions."""
+    rules = _read_mapping(value, yaml_key)
+    patterns = _read_pattern_list(rules.get("all-platforms"), f"{yaml_key}.all-platforms")
+    if platform_key is not None:
+        patterns.extend(_read_pattern_list(rules.get(platform_key), f"{yaml_key}.{platform_key}"))
+    return patterns
+
+
 def _read_mapping(value: object, yaml_key: str) -> dict[str, object]:
     """Validate and return a string-keyed YAML mapping."""
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
@@ -401,9 +410,12 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         "gui-tools-list",
     )
 
-    elevation_patterns = _read_pattern_list(root.get("elevation-needed-list"), "elevation-needed-list")
-
     platform_key = _platform_key()
+    elevation = root.get("elevation-needed-list")
+    if isinstance(elevation, dict):
+        elevation_patterns = _platform_patterns(elevation, "elevation-needed-list", platform_key)
+    else:
+        elevation_patterns = _read_pattern_list(elevation, "elevation-needed-list")
     if platform_key is not None:
         patterns.extend(
             _read_pattern_list(
@@ -443,21 +455,7 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
     except Exception as exc:
         raise ValueError(f"invalid Gitignore pattern: {exc}") from exc
 
-    extra_env_path_rules = _read_mapping(
-        root.get("extra-env-paths", {}),
-        "extra-env-paths",
-    )
-    configured_extra_env_paths = _read_pattern_list(
-        extra_env_path_rules.get("all-platforms"),
-        "extra-env-paths.all-platforms",
-    )
-    if platform_key is not None:
-        configured_extra_env_paths.extend(
-            _read_pattern_list(
-                extra_env_path_rules.get(platform_key),
-                f"extra-env-paths.{platform_key}",
-            )
-        )
+    configured_extra_env_paths = _platform_patterns(root.get("extra-env-paths", {}), "extra-env-paths", platform_key)
     extra_env_paths = Paths.resolve_directories(configured_extra_env_paths, project_dir)
 
     return _LauncherConfig(
@@ -1156,7 +1154,7 @@ def main() -> int:
 
     Console.print_banner("PERSONAL SCRIPT LAUNCHER")
     Environment.print_env_info(
-        probe_versions=invocation.probe_environment_versions
+        probe_versions=invocation.probe_environment_versions, show_elevation=True
     )
     if Environment.get_conda_env() is not None:
         print(

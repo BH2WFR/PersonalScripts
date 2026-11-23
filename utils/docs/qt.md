@@ -10,6 +10,19 @@ Implementations: [qt_widgets.py](../qt_widgets.py) and [qt_images.py](../qt_imag
 | --- | --- |
 | Qt inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
 
+## Clipboard file paths
+
+Import `read_clipboard_paths()` from [qt_clipboard.py](../qt_clipboard.py) and
+call it on the Qt GUI thread to get the original text and extracted paths together.
+When only file objects are available, the source text contains the native Finder
+filename list or encoded file URLs, one per line. `clipboard_file_paths()` returns
+only the paths. Both helpers read copied files and folders in clipboard
+order. Windows Explorer file selections use Qt's local file URLs and produce
+native backslashes, including UNC prefixes. On macOS, PyObjC enables direct
+access to Finder's filename list or its per-item property lists. Qt local file
+URLs also work without PyObjC. Absolute paths copied as text and textual
+`file://` URLs use the shared path decoders. An empty list means no usable paths.
+
 ## Image operations
 
 Import these functions explicitly from `utils.qt_images`.

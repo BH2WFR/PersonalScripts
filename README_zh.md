@@ -56,10 +56,14 @@
 >   - 基于 BBDown 的 B 站视频下载工具
 >   - 基于 yt-dlp 的网页视频下载工具（包括 m3u8）
 >   - 基于 ffmpeg 的视频时间裁剪工具
-> - Unicode 字符解析查看工具
+> - **符号/键盘工具**
+>     - **通过模拟键盘事件自动打字的工具**（适用于向不支持粘贴文本的网页版 VNC 会话中，通过发送自动打字键盘事件的方法变相输入文本的场景）
+>     - 屏幕键盘
+>     - **文本与路径处理工具**（将 Explorer/Finder 中复制文件后，从剪贴板扒出文件完整路径；路径中环境变量前缀的处理；windows 路径斜杠处理、MSYS路径转换；PDF中复制的文本之去换行/连字拆解；数字/字母花体字转换；文本空白字符转换/去除；全角半角转换等）
+>     - Unicode 字符解析查看工具
+>     - **全局键盘鼠标钩子测试器**
 > - **系统工具**
 >     - **系统日志查看工具**（含开关机、睡眠、USB弹出、错误、升级、网络认证等，支持 Windows/Linux/macOS）
->     - **全局键盘鼠标钩子测试器**
 >     - 带 profile 的快捷命令执行工具
 >     - 网络修复工具
 
@@ -222,6 +226,12 @@
 
   - 多路径输入提示支持通配符（`*`/`?`/`[abc]`）批量匹配文件；
     未匹配到文件的模式按原样字面路径处理
+    
+- **程序配置管理：**
+  
+  本项目中部分脚本需要保存/读取配置，配置路径在 `~/.config/PersonalScripts/` 中，格式均为 `*.yaml`。
+  
+  特别提示：Linux/macOS 中，如果在用户自己账户下，以 sudo 方式提权启动本项目的工具，其配置文件仍然会位于用户自己 HOME 路径下的 `~/.config/PersonalScripts/` 中；仅以 root 登录时才会使用 `/root/.config/PersonalScripts`。
 
 ---
 
@@ -307,6 +317,9 @@
 
 | 脚本                            | 描述                                                         | 依赖                                 |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------ |
+| [`tools/others/auto-typer.py`](tools/others/auto-typer.py) | **(GUI) 自动打字工具**：将剪贴板或手动编辑的文本通过模拟打字的方式逐字输入到当前窗口中<br />可向不支持粘贴的网页版 VNC 会话中，通过模拟按键事件的方式快速实现类似粘贴文本的效果。ASCII 字符通过模拟键盘按键事件发送，其他字符尝试通过系统 Unicode 事件发送。 | Windows 10+ 或 macOS，`PySide6`。macOS 还需 `pyobjc-framework-Cocoa`、`pyobjc-framework-Quartz` 和辅助功能权限。 <br />**仅 Windows 下需要提权** |
+| [`tools/others/screen-keyboard.py`](tools/others/screen-keyboard.py) | **(GUI) 屏幕键盘**<br />支持一次性修饰键、长按锁定和数字小键盘。<br />其中 Layer 模式会把 `CapsLock` 键改为针对 [custom-karabiner-config](https://github.com/BH2WFR/custom-karabiner-config) 和 [custom-autohotkey-config](https://github.com/BH2WFR/custom-autohotkey-config) 项目的特殊层功能键 | Windows 10+ 和 Tkinter，或 macOS、PyObjC Cocoa/Quartz 和辅助功能权限。<br />Layer 模式下，macOS 还需启用 CGEventTap fallback。<br />**仅 Windows 下需要提权** |
+| [`tools/others/text-processor.py`](tools/others/text-processor.py) | **(GUI) 文本与路径处理工具**：<br />**1.** 可从复制的文件和文件夹中（Explorer/Finder）提取完整路径，按行转换，支持处理路径中的环境变量，windows下支持处理路径中的斜杠，支持转换为 MSYS 路径，支持加入/删除 `file://` 前缀。<br />**2.** 支持对从 PDF 复制的文本进行换行转空格、拆解连字等处理。<br />**3.** 支持对数字和字母转换为 Unicode 花体字，对文本调整空格和缩进，或进行全角/半角转换。 | **Python 库**：`PySide6`。macOS 可选 `pyobjc-framework-Cocoa` 以读取 Finder 原生文件名列表。 |
 | [`tools/others/unicode-inspector.py`](tools/others/unicode-inspector.py) | **(GUI) Unicode 文本查看器**：显示码点、UTF-8 字节、名称与分类，标注不可见字符，并提供文本统计与可复制报告。 | **Python 库**：`Tkinter` |
 
 ### 输入法工具

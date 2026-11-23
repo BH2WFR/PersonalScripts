@@ -1,0 +1,337 @@
+"""Nonactivating Cocoa panel using the Windows keyboard's six-row geometry."""
+
+from collections.abc import Callable
+from functools import cache
+
+import AppKit as A  # pyright: ignore[reportMissingImports]
+import Foundation as F  # pyright: ignore[reportMissingImports]
+import objc  # pyright: ignore[reportMissingImports]
+
+from utils import System
+from .layout import DEFAULT_SIZE, EXTRA_HEIGHT, MAC_EXTENDED, MAC_LABELS, MAC_ROWS, MINIMUM_SIZE, NUMPAD_KEYS, TOOLBAR, frames, panel_width
+from .macos import MacOutput
+from .state import KeyboardState, WindowLayout, hover_color
+
+
+@cache
+def color(rgb: str):
+    if rgb == "white":
+        return A.NSColor.whiteColor()
+    return A.NSColor.colorWithSRGBRed_green_blue_alpha_(*(int(rgb[i:i + 2], 16) / 255 for i in (1, 3, 5)), 1)
+
+
+class KeyboardPanel(A.NSPanel):
+    def canBecomeKeyWindow(self) -> bool:
+        return False
+
+    def canBecomeMainWindow(self) -> bool:
+        return False
+
+
+class KeyButton(A.NSButton):
+    def acceptsFirstMouse_(self, event) -> bool:
+        return True
+
+    def needsPanelToBecomeKey(self) -> bool:
+        return False
+
+    def mouseDownCanMoveWindow(self) -> bool:
+        return False
+
+    def mouseDown_(self, event) -> None:
+        if not self.isEnabled():
+            return
+        name, view = str(self.identifier()), self.target()
+        if name == "Layer" and event.modifierFlags() & A.NSEventModifierFlagControl:
+            self.rightMouseDown_(event)
+            return
+        if name not in view.actions:
+            view.perform(lambda: view.state.press(name))
+        else:
+            self.tracking_toolbar = True
+
+    def mouseUp_(self, event) -> None:
+        if not self.isEnabled():
+            return
+        name, view = str(self.identifier()), self.target()
+        if name in view.actions:
+            if self.tracking_toolbar and A.NSPointInRect(self.convertPoint_fromView_(event.locationInWindow(), None),
+                                                         self.bounds()):
+                view.perform(view.actions[name])
+            self.tracking_toolbar = False
+        else:
+            view.perform(view.state.release)
+
+    def rightMouseDown_(self, event) -> None:
+        if str(self.identifier()) == "Layer":
+            self.target().update_menu()
+            A.NSMenu.popUpContextMenu_withEvent_forView_(self.target().menu, event, self)
+
+    def mouseEntered_(self, event) -> None:
+        self.hovered = True
+        self.target().paint(str(self.identifier()))
+
+    def mouseExited_(self, event) -> None:
+        self.hovered = False
+        self.target().paint(str(self.identifier()))
+
+    def performClick_(self, sender) -> None:
+        name, view = str(self.identifier()), self.target()
+        if name in view.actions:
+            view.perform(view.actions[name])
+        else:
+            view.perform(lambda: view.state.press(name))
+            view.perform(view.state.release)
+
+
+class PanelController(F.NSObject):
+    @objc.python_method
+    def setup(self, panel) -> None:
+        self.panel = panel
+        self.closed = self.resizing = False
+        self.timer = None
+        self.buttons = {}
+        self.state = KeyboardState(MacOutput(), self.schedule, self.cancel, self.refresh)
+        saved = self.state.window_layout
+        self.expanded, self.numpad = saved.expanded, saved.numpad
+        self.labels = {n: label for row in MAC_ROWS for n, label, _ in row}
+        self.labels.update(MAC_EXTENDED)
+        self.labels.update((n, label) for n, label, *_ in NUMPAD_KEYS)
+        self.actions = {"extended": self.toggle_extended, "numpad": self.toggle_numpad,
+                        "reset": self.state.reset, "redraw": self.redraw, "size": self.reset_size,
+                        "settings": self.show_settings}
+        self.menu = A.NSMenu.alloc().initWithTitle_("Layer")
+        for enabled, label in ((False, "左侧键：CapsLock（默认）"),
+                               (True, "左侧键：Layer（适配 custom-karabiner-config）")):
+            item = self.menu.addItemWithTitle_action_keyEquivalent_(label, "adapt:", "")
+            item.setTag_(int(enabled))
+            item.setTarget_(self)
+        content = panel.contentView()
+        content.setWantsLayer_(True)
+        content.layer().setBackgroundColor_(color("#f1f3f5").CGColor())
+        self.status = A.NSTextField.labelWithString_("")
+        self.status.setTextColor_(color("#505760"))
+        self.status.setFont_(A.NSFont.systemFontOfSize_(11))
+        content.addSubview_(self.status)
+        for name, label in [*TOOLBAR, *self.labels.items()]:
+            button = KeyButton.alloc().initWithFrame_(((0, 0), (40, 20)))
+            button.setIdentifier_(name)
+            button.setTitle_(label)
+            if name == "language":
+                button.setImage_(A.NSImage.imageWithSystemSymbolName_accessibilityDescription_("globe", "Switch input source"))
+                button.setImagePosition_(A.NSImageOnly)
+                button.setContentTintColor_(A.NSColor.whiteColor())
+            button.setTarget_(self)
+            button.setRefusesFirstResponder_(True)
+            button.setBordered_(False)
+            button.cell().setWraps_(False)
+            button.cell().setUsesSingleLineMode_(True)
+            button.setWantsLayer_(True)
+            button.layer().setActions_({"backgroundColor": F.NSNull.null()})
+            button.layer().setBorderColor_(color("#c1c9ce").CGColor())
+            button.layer().setBorderWidth_(int(name not in self.actions or name in {"extended", "numpad"}))
+            button.hovered = button.tracking_toolbar = False
+            button.appearance_key = None
+            button.setToolTip_("Right-click for Layer settings" if name == "Layer" else label)
+            tracking = A.NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+                button.bounds(), A.NSTrackingMouseEnteredAndExited | A.NSTrackingActiveAlways
+                | A.NSTrackingInVisibleRect, button, None)
+            button.addTrackingArea_(tracking)
+            content.addSubview_(button)
+            self.buttons[name] = button
+        self.resize(saved.width, saved.height)
+
+    def adapt_(self, sender) -> None:
+        self.perform(lambda: self.state.set_adapted(bool(sender.tag())))
+
+    @objc.python_method
+    def update_menu(self) -> None:
+        for item in self.menu.itemArray():
+            item.setState_(int(bool(item.tag()) == self.state.adapted))
+
+    @objc.python_method
+    def show_settings(self) -> None:
+        self.update_menu()
+        self.menu.popUpMenuPositioningItem_atLocation_inView_(None, (0, 0), self.buttons["settings"])
+
+    @objc.python_method
+    def perform(self, action: Callable[[], None]) -> None:
+        try:
+            action()
+        except Exception as exc:
+            try:
+                self.state.reset()
+            finally:
+                alert = A.NSAlert.alloc().init()
+                alert.setMessageText_("屏幕键盘")
+                alert.setInformativeText_(str(exc))
+                alert.runModal()
+
+    @objc.python_method
+    def cancel(self) -> None:
+        if self.timer:
+            self.timer.invalidate()
+            self.timer = None
+
+    @objc.python_method
+    def schedule(self, ms: int, callback: Callable[[], None]) -> None:
+        self.cancel()
+        self.timer = F.NSTimer.timerWithTimeInterval_repeats_block_(ms / 1000, False,
+                                                                    lambda _: self.perform(callback))
+        F.NSRunLoop.mainRunLoop().addTimer_forMode_(self.timer, F.NSRunLoopCommonModes)
+
+    @objc.python_method
+    def paint(self, name: str) -> None:
+        button = self.buttons[name]
+        if name in self.actions:
+            active = (name == "extended" and self.expanded) or (name == "numpad" and self.numpad)
+            bg, fg = ("#34657c", "white") if active else ("#f1f3f5", "#202124")
+            label = dict(TOOLBAR)[name]
+        else:
+            bg, fg = self.state.colors(name)
+            label = self.state.label(name, self.labels[name])
+            button.setEnabled_(name != "Numpad5" or self.state.lock_states["NumLock"])
+        size = self.panel.contentView().bounds().size
+        unit = (size.width - 5) / (20 if self.numpad else 16)
+        points = 14 if name in MAC_LABELS or label == "⇪" else (11 if unit * 16 < 600 else 12)
+        appearance = (label, bg, fg, points, button.hovered)
+        if button.appearance_key == appearance:
+            return
+        button.appearance_key = appearance
+        button.layer().setBackgroundColor_(color(hover_color(bg) if button.hovered else bg).CGColor())
+        title = F.NSAttributedString.alloc().initWithString_attributes_(label, {
+            A.NSForegroundColorAttributeName: color(fg), A.NSFontAttributeName: A.NSFont.systemFontOfSize_(points)})
+        button.setAttributedTitle_(title)
+
+    @objc.python_method
+    def refresh(self) -> None:
+        if not self.resizing:
+            self.status.setStringValue_(self.state.status())
+            self.status.setToolTip_(self.state.status())
+            for name in self.buttons:
+                self.paint(name)
+
+    @objc.python_method
+    def layout(self) -> None:
+        if self.resizing:
+            return
+        size = self.panel.contentView().bounds().size
+        width, height = round(size.width), round(size.height)
+        bounds = frames(width, height, 1, self.expanded, self.numpad, mac=True)
+        for name, control in {"status": self.status, **self.buttons}.items():
+            control.setHidden_(name not in bounds)
+            if name in bounds:
+                x, y, w, h = bounds[name]
+                control.setFrame_(((x, height - y - h), (w, h)))
+        self.refresh()
+
+    @objc.python_method
+    def resize(self, width: float, height: float) -> None:
+        self.panel.setContentMinSize_((round(MINIMUM_SIZE[0] * (1.25 if self.numpad else 1)),
+                                      MINIMUM_SIZE[1] + EXTRA_HEIGHT * self.expanded))
+        top = self.panel.frame().origin.y + self.panel.frame().size.height
+        self.panel.setContentSize_((width, height))
+        f = self.panel.frame()
+        f.origin.y = top - f.size.height
+        self.panel.setFrame_display_(self.panel.constrainFrameRect_toScreen_(f, self.panel.screen()), True)
+        self.layout()
+
+    @objc.python_method
+    def toggle_extended(self) -> None:
+        self.expanded = not self.expanded
+        size = self.panel.contentView().bounds().size
+        self.resize(size.width, size.height + (EXTRA_HEIGHT if self.expanded else -EXTRA_HEIGHT))
+        self.save_window()
+
+    @objc.python_method
+    def toggle_numpad(self) -> None:
+        self.numpad = not self.numpad
+        size = self.panel.contentView().bounds().size
+        self.resize(panel_width(round(size.width), self.numpad, 1), size.height)
+        self.save_window()
+
+    @objc.python_method
+    def reset_size(self) -> None:
+        self.expanded = self.numpad = False
+        self.resize(*DEFAULT_SIZE)
+        self.save_window()
+
+    @objc.python_method
+    def save_window(self) -> None:
+        size = self.panel.contentView().bounds().size
+        self.state.save_window(WindowLayout(round(size.width), round(size.height), self.expanded, self.numpad))
+
+    @objc.python_method
+    def redraw(self) -> None:
+        self.state.lock_states = self.state.output.locks()
+        for button in self.buttons.values():
+            button.appearance_key = None
+        self.layout()
+        self.panel.display()
+
+    def windowWillStartLiveResize_(self, note) -> None:
+        self.resizing = True
+
+    def windowDidEndLiveResize_(self, note) -> None:
+        self.resizing = False
+        self.layout()
+        self.perform(self.save_window)
+
+    def windowDidResize_(self, note) -> None:
+        self.layout()
+
+    def contextChanged_(self, note) -> None:
+        self.perform(self.state.check_target)
+
+    def windowWillClose_(self, note) -> None:
+        self.perform(self.save_window)
+        self.closed = True
+
+
+def run() -> int:
+    app = A.NSApplication.sharedApplication()
+    app.setActivationPolicy_(A.NSApplicationActivationPolicyAccessory)
+    if not System.check_macos_accessibility_permission(prompt=True):
+        raise RuntimeError("Allow Accessibility access in System Settings, then reopen Screen Keyboard.")
+    mask = (A.NSWindowStyleMaskTitled | A.NSWindowStyleMaskClosable | A.NSWindowStyleMaskResizable
+            | A.NSWindowStyleMaskNonactivatingPanel)
+    panel = KeyboardPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+        ((0, 0), DEFAULT_SIZE), mask, A.NSBackingStoreBuffered, False)
+    panel.setTitle_("屏幕键盘 — PersonalScripts")
+    panel.setContentMinSize_(MINIMUM_SIZE)
+    panel.setReleasedWhenClosed_(False)
+    panel.setHidesOnDeactivate_(False)
+    panel.setBecomesKeyOnlyIfNeeded_(True)
+    panel.setLevel_(A.NSFloatingWindowLevel)
+    panel.setCollectionBehavior_(A.NSWindowCollectionBehaviorCanJoinAllSpaces
+                                 | A.NSWindowCollectionBehaviorFullScreenAuxiliary)
+    controller = PanelController.alloc().init()
+    controller.setup(panel)
+    panel.setDelegate_(controller)
+    center = A.NSWorkspace.sharedWorkspace().notificationCenter()
+    center.addObserver_selector_name_object_(controller, "contextChanged:", A.NSWorkspaceDidActivateApplicationNotification, None)
+    mouse = A.NSEvent.mouseLocation()
+    screen = next((s for s in A.NSScreen.screens() if A.NSPointInRect(mouse, s.frame())), A.NSScreen.mainScreen())
+    area, frame = screen.visibleFrame(), panel.frame()
+    x, y = mouse.x + 12, mouse.y - 12 - frame.size.height
+    if x + frame.size.width > area.origin.x + area.size.width:
+        x = mouse.x - frame.size.width - 12
+    if y < area.origin.y:
+        y = mouse.y + 12
+    frame.origin.x, frame.origin.y = x, y
+    panel.setFrame_display_(panel.constrainFrameRect_toScreen_(frame, screen), True)
+    panel.orderFrontRegardless()
+    try:
+        while not controller.closed:
+            event = app.nextEventMatchingMask_untilDate_inMode_dequeue_(
+                A.NSEventMaskAny, F.NSDate.distantFuture(), F.NSDefaultRunLoopMode, True)
+            if event:
+                app.sendEvent_(event)
+            app.updateWindows()
+    finally:
+        center.removeObserver_(controller)
+        try:
+            controller.state.reset()
+        finally:
+            panel.orderOut_(None)
+    return 0

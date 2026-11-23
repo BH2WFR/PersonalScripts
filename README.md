@@ -56,10 +56,14 @@ Most tools run on the command line. Some have a graphical interface.
 >   - Bilibili video downloader based on BBDown
 >   - Web video downloader based on yt-dlp, including m3u8 streams
 >   - Video time-trimming tool based on FFmpeg
-> - Unicode character inspector
+> - **Symbol and keyboard tools**
+>   - **Auto Typer** simulates keystrokes to enter text in web VNC sessions that do not support pasting
+>   - On-screen keyboard
+>   - **Text and path processor** extracts full paths from files copied in Explorer or Finder, handles environment-variable prefixes, converts Windows path separators and MSYS paths, joins lines and expands ligatures in text copied from PDFs, converts styled letters and digits, replaces or removes whitespace, and converts between full-width and half-width characters
+>   - Unicode character inspector
+>   - **Global keyboard and mouse hook tester**
 > - **System tools**
 >   - **System log viewer** for startup, shutdown, sleep, USB ejection, errors, updates and network authentication on Windows, Linux and macOS
->   - **Global keyboard and mouse hook tester**
 >   - Run preset commands from a profile
 >   - Network repair tools
 
@@ -224,6 +228,12 @@ Core utility package: `utils/` — shared console, environment, system, path, in
   - Multiple-path prompts support glob patterns (`*`/`?`/`[abc]`) for batch matching.
     Patterns with no matches are treated as literal paths.
 
+- **Application settings**
+
+  Some scripts read and save their settings as `*.yaml` files in `~/.config/PersonalScripts/`.
+
+  On Linux and macOS, tools you start with `sudo` from your own account still use that directory in your home folder. Only a direct root login uses root's configuration directory (typically `/root/.config/PersonalScripts` on Linux).
+
 ---
 
 ## Script List
@@ -309,6 +319,9 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
+| [`tools/others/auto-typer.py`](tools/others/auto-typer.py) | **(GUI) Auto Typer** types clipboard or edited text into the focused window one character at a time, including web VNC sessions that do not support pasting.<br />It sends ASCII characters as keystrokes and attempts to send other characters as native Unicode events. | Windows 10+ or macOS with `PySide6`. macOS also requires `pyobjc-framework-Cocoa`, `pyobjc-framework-Quartz` and Accessibility permission.<br />**Administrator privileges are required on Windows only.** |
+| [`tools/others/screen-keyboard.py`](tools/others/screen-keyboard.py) | **(GUI) Screen Keyboard** supports one-shot modifiers, long-press locking and a numeric keypad.<br />Layer mode turns `CapsLock` into the layer key used by [custom-karabiner-config](https://github.com/BH2WFR/custom-karabiner-config) and [custom-autohotkey-config](https://github.com/BH2WFR/custom-autohotkey-config). | Windows 10+ with Tkinter, or macOS with PyObjC Cocoa/Quartz and Accessibility permission.<br />Layer mode on macOS also requires the CGEventTap fallback.<br />**Administrator privileges are required on Windows only.** |
+| [`tools/others/text-processor.py`](tools/others/text-processor.py) | **(GUI) Text and Path Processor**<br />**1.** Extract full paths from files and folders copied in Explorer or Finder, then convert them line by line. Handle environment variables, change Windows path separators, convert to MSYS paths, or add and remove the `file://` prefix.<br />**2.** Replace line breaks with spaces and expand ligatures in text copied from PDFs.<br />**3.** Convert letters and digits to styled Unicode characters, adjust spacing and indentation, or switch between full-width and half-width characters. | **Python package** `PySide6`. On macOS, `pyobjc-framework-Cocoa` is optional for reading native Finder filename lists. |
 | [`tools/others/unicode-inspector.py`](tools/others/unicode-inspector.py) | **(GUI) Unicode text inspector** displays code points, UTF-8 bytes, names and categories, highlights invisible characters, and provides text statistics and copyable reports. | **Python pkg:** `Tkinter` |
 
 ### Input Method Tools

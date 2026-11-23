@@ -3,15 +3,17 @@
 from pathlib import Path
 import multiprocessing
 from multiprocessing.synchronize import Event
+import os
 import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import *
+from utils.config import _ConfigUser
 
 TEST_KEY = b"xCpV9hSbjhOUMC20VRuFO2wCnau5G-vPO_UpBoQejaY="
 
@@ -37,6 +39,62 @@ def hold_lock(directory: str, ready: Event, release: Event) -> None:
         with ConfigStore._locked_path(ConfigStore().path):
             ready.set()
             release.wait(10)
+
+
+class ConfigUserTests(unittest.TestCase):
+    def test_sudo_directory_uses_account_database(self) -> None:
+        home = Path(tempfile.gettempdir()) / "invoking-user"
+        accounts = Mock()
+        accounts.getpwuid.return_value = Mock(pw_name="config-user", pw_dir=str(home), pw_uid=501, pw_gid=20)
+        for platform in ("darwin", "linux"):
+            with (self.subTest(platform=platform), patch.object(sys, "platform", platform),
+                  patch.object(os, "geteuid", return_value=0, create=True),
+                  patch.object(os, "getgrouplist", return_value=[20], create=True),
+                  patch.dict(os.environ, {"SUDO_UID": "501", "HOME": "/root"}),
+                  patch.dict(sys.modules, {"pwd": accounts})):
+                self.assertEqual(ConfigStore().path, home / ".config" / "PersonalScripts" / GENERAL_CONFIG)
+                accounts.getpwuid.assert_called_with(501)
+                with patch.object(os, "geteuid", return_value=501):
+                    self.assertEqual(ConfigStore.directory(), Path.home() / ".config" / "PersonalScripts")
+                with patch.dict(os.environ, {"SUDO_UID": "bad"}), self.assertRaises(ValueError):
+                    ConfigStore.directory()
+                with patch.object(accounts, "getpwuid", side_effect=KeyError), self.assertRaises(ValueError):
+                    ConfigStore.directory()
+                del os.environ["SUDO_UID"]
+                self.assertEqual(ConfigStore.directory(), Path.home() / ".config" / "PersonalScripts")
+
+    @unittest.skipUnless(os.name == "posix" and os.geteuid() == 0, "requires a POSIX root test process")
+    def test_sudo_settings_are_owned_and_editable_by_invoker(self) -> None:
+        import pwd
+
+        account = pwd.getpwnam("nobody")
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            os.chown(home, account.pw_uid, account.pw_gid)
+            user = _ConfigUser(home, account.pw_uid, account.pw_gid, ())
+            with patch.object(_ConfigUser, "sudo_invoker", return_value=user):
+                store = ConfigStore()
+                self.assertEqual(store.load(), {})
+                store.ensure({"first": 1})
+                store.edit(lambda data: data.update(second=2))
+                self.assertEqual(store.load(), {"first": 1, "second": 2})
+                lock = store.path.with_suffix(".yaml.lock")
+                for path in (home / ".config", store.directory(), lock, store.path):
+                    self.assertEqual(path.stat().st_uid, account.pw_uid)
+                user.run(["/bin/sh", "-ec", 'test -w "$1" && test -w "$2"', "config-test", str(store.path), str(lock)])
+                with ConfigStore._locked_path(store.path, user), self.assertRaises(ConfigBusyError):
+                    store.update({"third": 3})
+
+    def test_user_redirect_retains_invoker_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary).resolve()
+            user = _ConfigUser(home, 501, 20, (20,))
+            final = home / "schemas" / "final.yaml"
+            with (patch.object(_ConfigUser, "sudo_invoker", return_value=user),
+                  patch.object(ConfigStore, "_read_locked", side_effect=[{"redirect": "~/schemas/final.yaml"}, {}]) as read):
+                self.assertEqual(ConfigStore.resolve_file(Path("~/.config/PersonalScripts/config.yaml")), final)
+                self.assertEqual([args.args for args in read.call_args_list],
+                                 [(home / ".config" / "PersonalScripts" / GENERAL_CONFIG, user), (final, user)])
 
 
 class ConfigTests(unittest.TestCase):

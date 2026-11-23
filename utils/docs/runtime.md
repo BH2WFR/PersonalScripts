@@ -14,7 +14,7 @@ Implementation: [environment.py](../environment.py), [system.py](../system.py), 
 | Check if a CLI tool is in PATH | `Environment.check_commands(*CmdCheck)` or `Environment.which(name)` |
 | OS name / arch / hostname / Linux GUI | `System.get_os_name()`, `System.get_arch()`, `System.get_computer_name()`, `System.get_linux_gui() -> LinuxGui \| None` |
 | Native disk inventory | `System.scan_disks() -> DiskScan`; returns `DiskInfo` trees with mounts, labels, filesystems, native IDs, platform details, and partial-query warnings. Windows uses PowerShell 7 Storage/CIM; Linux uses lsblk; macOS uses diskutil. Read-only, never mounts/elevates. Each query times out after 60 seconds. |
-| Print env info (conda, python, shell) | `Environment.print_env_info(probe_versions=...)`; disabling probes avoids starting external tools; Python gets a yellow Conda tag only for an actual Conda interpreter, otherwise Conda details are hidden |
+| Print env info (conda, python, shell) | `Environment.print_env_info(probe_versions=..., show_elevation=...)`. The launcher enables `show_elevation` to display process elevation below Arch. Disabling version probes avoids starting external tools. Conda details appear only for a Conda interpreter. |
 | Desktop notification | `System.notify(title, body)` |
 | Open a file in the default app | `System.open_with_default_app(path)` |
 | Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |

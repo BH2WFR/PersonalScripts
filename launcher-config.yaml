@@ -65,6 +65,9 @@ ignore-list:
         - "INSTALL/"
         - "research/matrix-viewer/"
         - "network/rclone-sync/"
+        - "others/text_processor/"
+        - "others/auto_typer/"
+        - "others/screen_keyboard/"
         - "others/keyboard-hook-viewer/"
         - "others/system-event-viewer/"
         - "windows/keyboard-remapper/"
@@ -78,6 +81,8 @@ ignore-list:
         linux:
             - "windows/"
             - "macos/"
+            - "others/auto-typer.py"
+            - "others/screen-keyboard.py"
             - "filesystem/git-executable-bit-setter.ps1"
         macos:
             - "windows/"
@@ -103,6 +108,8 @@ ignore-list:
 gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no-gui 下也会被隐藏
     # 禁止有多余的注释
     - "windows/keyboard-remapper.py"
+    - "others/auto-typer.py"
+    - "others/screen-keyboard.py"
     - "others/system-event-viewer.py"
     - "document-processing/document-screenshot.py"
     - "document-processing/image-to-text-and-formula.py"
@@ -114,25 +121,31 @@ gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no
     - "document-processing/pdf-page-splitter.py"
     - "research/matrix-viewer.py"
     - "others/script-to-app.py"
+    - "others/text-processor.py"
     - "others/unicode-inspector.py"
 
 elevation-needed-list: # 下列程序，启动时需要提权，启动器中列出时会带上 `[SUDO]` 的尾巴
-    - "windows/keyboard-remapper.py"
-    - "windows/android-rndis-record-cleaner.py"
-    - "windows/device-ejection-history.py"
-    - "windows/event-log-cleaner.py"
-    - "windows/file-association-manager.py"
-    - "windows/firewall-app-blocker.py"
-    - "windows/network-repair.py"
-    - "windows/privacy-cleaner.py"
-    - "windows/recycle-bin-cleaner.py"
-    - "windows/service-restarter.py"
-    - "filesystem/executable-bit-setter.sh"
-    - "filesystem/path-in-use.py"
-    - "macos/ntfs-3g-mount-manager.py"
-    - "macos/privacy-cleaner.py"
-    - "others/disk-smart-info-viewer.py"
-    - "others/script-to-app.py"
+    all-platforms:
+        - "filesystem/executable-bit-setter.sh"
+        - "filesystem/path-in-use.py"
+        - "others/disk-smart-info-viewer.py"
+        - "others/script-to-app.py"
+    windows:
+        - "windows/keyboard-remapper.py"
+        - "windows/android-rndis-record-cleaner.py"
+        - "windows/device-ejection-history.py"
+        - "windows/event-log-cleaner.py"
+        - "windows/file-association-manager.py"
+        - "windows/firewall-app-blocker.py"
+        - "windows/network-repair.py"
+        - "windows/privacy-cleaner.py"
+        - "windows/recycle-bin-cleaner.py"
+        - "windows/service-restarter.py"
+        - "others/auto-typer.py"
+        - "others/screen-keyboard.py"
+    macos:
+        - "macos/ntfs-3g-mount-manager.py"
+        - "macos/privacy-cleaner.py"
 
 extra-env-paths:
     # 规范：all-platforms, windows, linux, macos

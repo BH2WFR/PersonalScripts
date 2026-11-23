@@ -115,6 +115,18 @@ class PathTests(ScratchCase):
                     self.assertEqual(config.ignore_spec.match_file(f"others/{name}.py"), desktop == "no-gui")
                 self.assertEqual(config.ignore_spec.match_file("others/capture.py"), desktop == "wayland")
 
+    def test_input_tools_have_elevation_labels_only_on_windows(self) -> None:
+        config_name = "launcher-config.yaml"
+        (self.root / config_name).write_bytes((ROOT / config_name).read_bytes())
+        for platform_key in ("windows", "macos"):
+            with self.subTest(platform=platform_key), patch.object(launcher, "_platform_key", return_value=platform_key):
+                config = launcher._load_launcher_config(str(self.root))
+                for entry in ("others/auto-typer.py", "others/screen-keyboard.py"):
+                    label = launcher._format_script_path(entry, config)
+                    self.assertIn("[GUI]", label)
+                    self.assertEqual("[SUDO]" in label, platform_key == "windows")
+                self.assertIn("[SUDO]", launcher._format_script_path("filesystem/path-in-use.py", config))
+
     def test_gui_list_patch_replaces_base_list_and_invalid_types_are_reported(self) -> None:
         """Use normal YAML patch semantics and reject malformed GUI declarations."""
         path = self.root / "launcher-config.yaml"
@@ -252,7 +264,7 @@ class LauncherTests(ScratchCase):
                 patch.object(subprocess, "run") as run, contextlib.redirect_stdout(stdout):
             self.assertEqual(launcher.main(), 19)
             resolve.assert_called_once_with("base")
-            info.assert_called_once_with(probe_versions=False)
+            info.assert_called_once_with(probe_versions=False, show_elevation=True)
             run.assert_not_called()
         self.assertIn("['--env=target-argument', 'value']", stdout.getvalue())
 

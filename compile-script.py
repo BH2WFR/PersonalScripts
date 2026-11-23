@@ -49,7 +49,8 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
-    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-tools", "keyboard-hook-viewer", "keyboard-remapper", "system-event-viewer"}
+    exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-tools", "auto_typer", "keyboard-hook-viewer", "keyboard-remapper", "system-event-viewer"}
+    exclude_dirs.update({"text_processor", "screen_keyboard"})
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -75,6 +76,8 @@ def find_py_scripts(script_dir: str) -> list[str]:
             if f.startswith("_"):
                 continue
             if not f.endswith(".py"):
+                continue
+            if sys.platform == "linux" and f in {"auto-typer.py", "screen-keyboard.py"}:
                 continue
             if root == script_dir and f in _SKIP_NAMES:
                 continue
