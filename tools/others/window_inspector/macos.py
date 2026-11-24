@@ -188,6 +188,18 @@ def controls(target: Window) -> Rows:
             for i, child in enumerate(_attribute(window, "AXChildren", []), 1)]
 
 
+def enable_controls(target: Window) -> tuple[int, int]:
+    raise NotImplementedError("Enable Controls requires Windows.")
+
+
+def enable_menu(target: Window) -> tuple[int, int]:
+    raise NotImplementedError("Enable Menus requires Windows.")
+
+
+def show_controls(target: Window) -> tuple[int, int]:
+    raise NotImplementedError("Show Controls requires Windows.")
+
+
 def _check_ax(error: int) -> None:
     if error:
         raise RuntimeError(f"The window did not respond or does not support this action (AX error {error}).")

@@ -12,7 +12,7 @@ import psutil
 from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QStandardItemModel
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMessageBox, QPushButton, QSizePolicy, QSplitter, QToolBar, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -58,7 +58,7 @@ def _vertical_separator() -> QFrame:
 
 
 class Inspector(QWidget):
-    def __init__(self, backend: Backend) -> None:
+    def __init__(self, backend: Backend, *, top: bool = False) -> None:
         super().__init__()
         self.backend = backend
         self.target: Window | None = None
@@ -73,7 +73,7 @@ class Inspector(QWidget):
         self.return_focus = QTimer(self, singleShot=True)
         self.return_focus.timeout.connect(self._restore_focus)
         self.setWindowTitle("Window Inspector")
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, top)
         initial_size = QSize(1080, 720)
         if screen := self.screen():
             initial_size = initial_size.boundedTo(screen.availableGeometry().size() * 0.95)
@@ -108,6 +108,11 @@ class Inspector(QWidget):
         bar.addAction(action)
         self.target_controls.append(action)
         return action
+
+    def _window_toggle(self, bar: QToolBar, label: str, tip: str) -> None:
+        action = self._action(bar, label, tip, partial(self._window_action, label))
+        action.setCheckable(True)
+        self.toggles[label] = action
 
     def _build(self) -> None:
         self.body = QVBoxLayout(self)
@@ -144,7 +149,7 @@ class Inspector(QWidget):
         options.addWidget(self.hidden_windows)
         self.pin = QCheckBox("Keep inspector on top")
         self.pin.setToolTip("Keep Window Inspector above other windows.")
-        self.pin.setChecked(True)
+        self.pin.setChecked(bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
         self.pin.toggled.connect(self._pin)
         options.addWidget(self.pin)
         options.addStretch()
@@ -214,28 +219,16 @@ class Inspector(QWidget):
         self._action(window_bar, "Close Window", "Ask the selected window to close.", partial(self._window_action, "Close Window"))
         if IS_WINDOWS:
             window_bar.addSeparator()
-            for label, tip in (("Always on Top", "Keep the selected window above other windows."),
-                               ("Click-through", "Let mouse clicks pass through the selected window.")):
-                toggle = self._action(window_bar, label, tip, partial(self._window_action, label))
-                toggle.setCheckable(True)
-                self.toggles[label] = toggle
-            window_row.addWidget(_vertical_separator())
-            opacity_label = QLabel("Opacity:")
-            opacity_label.setFont(caption_font)
-            self.opacity = NoWheelSpinBox()
-            self.opacity.setRange(MIN_OPACITY_PERCENT, 100)
-            self.opacity.setSuffix("%")
-            self.opacity.setKeyboardTracking(False)
-            self.opacity.setToolTip(f"Set window opacity ({MIN_OPACITY_PERCENT}–100%). Press Enter or leave the field to apply.")
-            opacity_label.setBuddy(self.opacity)
-            window_row.addWidget(opacity_label)
-            window_row.addWidget(self.opacity)
-            self.target_controls.append(self.opacity)
-            self._button(window_row, "Reset", "Restore the selected window to 100% opacity.",
-                         partial(self._window_action, "Opacity", 100))
-            self.opacity.lineEdit().textEdited.connect(self._mark_opacity_edited)
-            self.opacity.valueChanged.connect(lambda value: self.guard(partial(self._window_action, "Opacity", value)))
-            self.opacity.editingFinished.connect(self._finish_opacity_edit)
+            self._window_toggle(window_bar, "Always on Top", "Keep the selected window above other windows.")
+            self._action(window_bar, "Opacity", "Adjust the opacity of the selected window.", self._edit_opacity)
+            self._window_toggle(window_bar, "Click-through", "Let mouse clicks pass through the selected window.")
+            window_bar.addSeparator()
+            self._action(window_bar, "Enable Controls", "Enable disabled controls in the selected window.",
+                         self._enable_controls)
+            self._action(window_bar, "Show Controls", "Show hidden controls in the selected window.",
+                         self._show_controls)
+            self._action(window_bar, "Enable Menus", "Enable disabled menu items in the selected window.",
+                         self._enable_menus)
         window_row.addStretch()
 
         details_group = QGroupBox("Window details")
@@ -366,9 +359,6 @@ class Inspector(QWidget):
             self.priority.setCurrentIndex(-1)
         else:
             self.priority.clear()
-        if IS_WINDOWS:
-            self._opacity_edited = False
-            self.opacity.clear()
         for toggle in self.toggles.values():
             toggle.setChecked(False)
         for widget in self.target_controls:
@@ -439,10 +429,6 @@ class Inspector(QWidget):
             widget.setEnabled(True)
         self.priority.setEnabled(details.priority is not None and self.process is not None)
         if IS_WINDOWS:
-            with QSignalBlocker(self.opacity):
-                self.opacity.setValue(data.opacity)
-            self._observed_opacity = data.opacity
-            self._opacity_edited = False
             self.toggles["Always on Top"].setChecked(data.topmost)
             self.toggles["Click-through"].setChecked(data.through)
         self.status.setText(f"Inspecting window 0x{target.id:08X} (PID {target.pid}).")
@@ -512,6 +498,24 @@ class Inspector(QWidget):
         self.status.setText("Reading controls…")
         self._start_job(partial(self.backend.controls, target), render)
 
+    def _enable_controls(self) -> None:
+        target = self._checked()
+        total, enabled = self.backend.enable_controls(target)
+        self.status.setText(f"Enabled {enabled} of {total} controls.")
+
+    def _show_controls(self) -> None:
+        target = self._checked()
+        total, shown = self.backend.show_controls(target)
+        self.status.setText(f"Showed {shown} of {total} controls.")
+
+    def _enable_menus(self) -> None:
+        target = self._checked()
+        total, enabled = self.backend.enable_menu(target)
+        if total:
+            self.status.setText(f"Enabled {enabled} of {total} menu items.")
+        else:
+            self.status.setText("The selected window has no standard menu bar.")
+
     def _file(self, properties: bool) -> None:
         self._checked()
         path = self.fields["Path"].text()
@@ -530,15 +534,42 @@ class Inspector(QWidget):
         finally:
             self.refresh()
 
-    def _mark_opacity_edited(self) -> None:
-        self._opacity_edited = True
+    def _edit_opacity(self) -> None:
+        target = self._checked()
+        current = self.backend.snapshot(target).opacity
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Window opacity")
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        layout = QVBoxLayout(dialog)
+        spin = NoWheelSpinBox()
+        spin.setAccessibleName("Window opacity")
+        spin.setToolTip(f"Choose an opacity from {MIN_OPACITY_PERCENT}% to 100%.")
+        spin.setRange(MIN_OPACITY_PERCENT, 100)
+        spin.setSuffix("%")
+        spin.setValue(current)
+        layout.addWidget(spin)
+        buttons = QDialogButtonBox.StandardButton
+        box = QDialogButtonBox(buttons.Ok | buttons.Reset)
+        layout.addWidget(box)
+        ok, reset = box.button(buttons.Ok), box.button(buttons.Reset)
+        ok.setDefault(True)
+        ok.setToolTip("Apply this opacity to the selected window.")
+        reset.setToolTip("Restore the selected window to 100% opacity.")
+        box.accepted.connect(dialog.accept)
 
-    def _finish_opacity_edit(self) -> None:
-        # A window may already be below the floor. Explicitly entering 30 then
-        # commits the minimum even though the spin box itself was already at 30.
-        if self.target is not None and self._opacity_edited and self.opacity.value() != self._observed_opacity:
-            self.guard(partial(self._window_action, "Opacity", self.opacity.value()))
-        self._opacity_edited = False
+        def restore() -> None:
+            spin.setValue(100)
+            dialog.accept()
+
+        def apply() -> None:
+            if self.target == target:
+                self.guard(partial(self._window_action, "Opacity", spin.value()))
+
+        reset.clicked.connect(restore)
+        dialog.accepted.connect(apply)
+        dialog.open()
+        spin.setFocus()
+        spin.selectAll()
 
     def _confirm(self, action: str, message: str) -> bool:
         buttons = QMessageBox.StandardButton
@@ -617,12 +648,12 @@ class Inspector(QWidget):
         super().closeEvent(event)
 
 
-def run(backend: Backend, foreground: Window | None) -> int:
+def run(backend: Backend, foreground: Window | None, *, top: bool = False) -> int:
     """Open the inspector using the window captured before Qt takes focus."""
     app = QApplication.instance() or QApplication(sys.argv[:1])
     assert isinstance(app, QApplication)
     configure_qt_application(app)
-    inspector = Inspector(backend)
+    inspector = Inspector(backend, top=top)
     if foreground is not None:
         inspector.guard(partial(inspector.load, foreground))
     inspector.show()

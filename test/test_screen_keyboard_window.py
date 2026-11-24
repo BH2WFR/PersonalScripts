@@ -108,9 +108,9 @@ class WindowTests(unittest.TestCase):
                 keyboard.window.update()
                 keyboard.menu.invoke(1)
                 layer, left, right = (keyboard.buttons[key] for key in ("Layer", "LAlt", "RAlt"))
+                normal_colors = [button.cget("background") for button in (left, right)]
                 left.event_generate("<ButtonPress-1>")
                 left.event_generate("<ButtonRelease-1>")
-                normal_colors = [button.cget("background") for button in (left, right)]
                 layer_idle = layer.cget("background")
                 layer.event_generate("<ButtonPress-1>")
                 self.assertEqual(left.cget("text"), "L3/4")

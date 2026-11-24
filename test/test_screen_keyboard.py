@@ -75,6 +75,31 @@ class KeyboardTests(unittest.TestCase):
                 self.assertFalse(self.state.held)
                 self.assertEqual(self.state.status(), "Normal")
 
+    def test_leaving_layer_releases_locked_and_one_shot_modifiers(self) -> None:
+        for mac in (False, True):
+            self.output.mac = mac
+            self.state = self.new_state()
+            self.state.set_mode(LeftKeyMode.F1)
+            for finish in ("Layer", "a"):
+                with self.subTest(mac=mac, finish=finish):
+                    self.state.press("LControl")
+                    self.state.lock("LControl")
+                    self.state.release()
+                    self.state.press("Layer")
+                    if finish == "Layer":
+                        self.state.lock("Layer")
+                    self.state.release()
+                    modifier = "Fn" if mac else "RAlt"
+                    self.click(modifier)
+                    self.assertEqual(self.state.held, ["LControl", "Layer", modifier])
+                    self.output.reset_mock()
+                    self.click(finish)
+                    self.output.reset.assert_called_once_with()
+                    self.assertFalse(self.state.held)
+                    self.assertFalse(self.state.locked)
+                    self.click("b")
+                    self.output.key_down.assert_called_with("b", [])
+
     def test_supported_left_key_modes_round_trip(self) -> None:
         for mac in (False, True):
             self.output.mac = mac

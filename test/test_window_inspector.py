@@ -2,6 +2,7 @@
 
 import os
 import importlib.util
+import runpy
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,41 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools/others"))
 from window_inspector.model import CONTROLS_HINT, INITIAL_HINT, LOADED_HINT, PropertyGroup, Snapshot, Window, find_window
+
+
+class StartupTests(unittest.TestCase):
+    def test_elevation_preserves_foreground_only_on_windows(self) -> None:
+        import window_inspector
+        from utils import System
+
+        entry = str(ROOT / "tools/others/window-inspector.py")
+        main = runpy.run_path(entry)["main"]
+        original = Window(42, 123, "Original", "")
+        backend = Mock()
+        backend.foreground.return_value = original
+        view = Mock()
+        view.run.return_value = 0
+        with (patch.dict(sys.modules, {"window_inspector.view": view}),
+              patch.object(System, "enable_dpi_awareness"),
+              patch.object(System, "restart_elevated") as elevate):
+            with (patch.object(sys, "platform", "win32"),
+                  patch.object(window_inspector, "windows", backend, create=True)):
+                elevate.side_effect = SystemExit(0)
+                with patch.object(sys, "argv", [entry, "--top"]), self.assertRaises(SystemExit):
+                    main()
+                view.run.assert_not_called()
+                elevate.assert_called_once_with(entry=entry, args=["--startup-window", "42", "123", "--top"])
+                elevate.side_effect = None
+                with patch.object(sys, "argv", [entry, *elevate.call_args.kwargs["args"]]):
+                    self.assertEqual(main(), 0)
+                backend.foreground.assert_called_once_with()
+                view.run.assert_called_once_with(backend, original, top=True)
+            elevate.reset_mock()
+            with (patch.object(sys, "platform", "darwin"), patch.object(sys, "argv", [entry]),
+                  patch.object(window_inspector, "macos", backend, create=True)):
+                self.assertEqual(main(), 0)
+                view.run.assert_called_with(backend, original, top=False)
+                elevate.assert_not_called()
 
 
 class InspectorTests(unittest.TestCase):
@@ -42,6 +78,18 @@ class InspectorTests(unittest.TestCase):
         if self.ui.job is not None:
             self.ui.job.result(timeout=3)
             self.ui._finish_job()
+
+    def test_inspector_starts_on_top_only_when_requested(self) -> None:
+        from PySide6.QtCore import Qt
+        from window_inspector.view import Inspector
+
+        flag = Qt.WindowType.WindowStaysOnTopHint
+        self.assertFalse(self.ui.windowFlags() & flag)
+        self.assertFalse(self.ui.pin.isChecked())
+        pinned = Inspector(self.backend, top=True)
+        self.addCleanup(pinned.close)
+        self.assertTrue(pinned.windowFlags() & flag)
+        self.assertTrue(pinned.pin.isChecked())
 
     def test_list_prompt_and_selection(self) -> None:
         from PySide6.QtCore import Qt
@@ -164,47 +212,58 @@ class InspectorTests(unittest.TestCase):
         self.assertIn("Release", self.ui.finder.toolTip())
 
     @unittest.skipUnless(sys.platform == "win32", "Windows window opacity")
-    def test_opacity_toolbar_edits_the_selected_window(self) -> None:
+    def test_opacity_dialog_edits_the_selected_window(self) -> None:
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
-        from PySide6.QtWidgets import QPushButton
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QSpinBox, QToolBar
 
         snapshot = Snapshot(self.first, [], opacity=73)
         self.backend.snapshot.side_effect = None
         self.backend.snapshot.return_value = snapshot
         self.backend.act.side_effect = lambda w, action, value: setattr(snapshot, "opacity", value)
         self.ui.load(self.first)
-        spin = self.ui.opacity
-        self.assertEqual((spin.minimum(), spin.maximum(), spin.value()), (30, 100, 73))
         self.ui.show()
-        self.app.processEvents()
-        spin.setFocus()
-        spin.selectAll()
+        bar = next(bar for bar in self.ui.findChildren(QToolBar) if bar.windowTitle() == "Window")
+        actions = bar.actions()
+        index = next(i for i, action in enumerate(actions) if action.text() == "Always on Top")
+        opacity = actions[index + 1]
+        self.assertEqual(opacity.text(), "Opacity")
+
+        def open_editor() -> tuple[QDialog, QSpinBox, QDialogButtonBox]:
+            opacity.trigger()
+            dialog = self.app.activeModalWidget()
+            assert isinstance(dialog, QDialog)
+            spin, box = dialog.findChild(QSpinBox), dialog.findChild(QDialogButtonBox)
+            assert spin is not None and box is not None
+            return dialog, spin, box
+
+        dialog, spin, box = open_editor()
+        self.assertEqual((spin.minimum(), spin.maximum(), spin.value()), (30, 100, 73))
         QTest.keyClicks(spin, "42")
         self.backend.act.assert_not_called()
-        QTest.keyClick(spin, Qt.Key.Key_Return)
-        self.backend.act.assert_called_once_with(self.first, "Opacity", 42)
-        spin.selectAll()
-        QTest.keyClicks(spin, "30")
-        self.ui.list_button.setFocus()
-        self.app.processEvents()
-        self.backend.act.assert_called_with(self.first, "Opacity", 30)
-        self.backend.act.reset_mock()
-        snapshot.opacity = 15
-        self.ui.refresh()
+        QTest.keyClick(dialog, Qt.Key.Key_Escape)
         self.backend.act.assert_not_called()
-        spin.setFocus()
-        spin.selectAll()
-        QTest.keyClicks(spin, "30")
+
+        dialog, spin, box = open_editor()
+        QTest.keyClicks(spin, "42")
+        box.button(QDialogButtonBox.StandardButton.Ok).click()
+        self.backend.act.assert_called_once_with(self.first, "Opacity", 42)
+
+        self.backend.act.reset_mock()
+        dialog, spin, box = open_editor()
+        self.assertEqual(spin.value(), 42)
+        box.button(QDialogButtonBox.StandardButton.Reset).click()
+        self.backend.act.assert_called_once_with(self.first, "Opacity", 100)
+
+        snapshot.opacity = 15
+        self.backend.act.reset_mock()
+        dialog, spin, box = open_editor()
+        self.assertEqual(spin.value(), 30)
+        self.backend.act.assert_not_called()
         QTest.keyClick(spin, Qt.Key.Key_Return)
         self.backend.act.assert_called_once_with(self.first, "Opacity", 30)
-        reset = next(button for button in self.ui.findChildren(QPushButton) if button.text() == "Reset")
-        self.backend.act.reset_mock()
-        reset.click()
-        self.backend.act.assert_called_once_with(self.first, "Opacity", 100)
-        self.assertEqual(spin.value(), 100)
         self.ui._clear()
-        self.assertFalse(reset.isEnabled())
+        self.assertFalse(opacity.isEnabled())
 
     @unittest.skipUnless(sys.platform == "win32", "Windows scheduling classes")
     def test_priority_selection_applies_once(self) -> None:
@@ -254,6 +313,44 @@ class InspectorTests(unittest.TestCase):
             native.GetWindowLongW.return_value = 0
             windows._set_layer(123, 30)
             self.assertEqual(native.SetLayeredWindowAttributes.call_args.args[2], 77)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows child controls")
+    def test_enable_and_show_controls(self) -> None:
+        from window_inspector import windows
+
+        target = Window(99, os.getpid(), "", "")
+        with (patch.object(windows, "checked", return_value=target),
+              patch.object(windows, "_handles", return_value=[10, 11, 12, 13]),
+              patch.object(windows, "U") as native):
+            native.IsWindowEnabled.side_effect = [False, True, False, True]
+            total, enabled = windows.enable_controls(target)
+        self.assertEqual((total, enabled), (4, 2))
+        self.assertEqual(native.EnableWindow.call_count, 2)
+        with (patch.object(windows, "checked", return_value=target),
+              patch.object(windows, "_handles", return_value=[10, 11, 12, 13]),
+              patch.object(windows, "U") as native):
+            native.IsWindowVisible.side_effect = [True, False, False, True]
+            total, shown = windows.show_controls(target)
+        self.assertEqual((total, shown), (4, 2))
+        self.assertEqual(native.ShowWindowAsync.call_count, 2)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows menu bar")
+    def test_enable_menu(self) -> None:
+        from window_inspector import windows
+
+        target = Window(99, os.getpid(), "", "")
+        with (patch.object(windows, "checked", return_value=target),
+              patch.object(windows, "U") as native):
+            native.GetMenu.return_value = 0
+            self.assertEqual(windows.enable_menu(target), (0, 0))
+            native.GetMenu.return_value = 0x7000
+            native.GetMenuItemCount.return_value = 2
+            native.GetSubMenu.return_value = 0
+            with (patch.object(windows, "_menu_item_state",
+                               side_effect=[windows.MFS_DISABLED, windows.MFS_ENABLED]),
+                  patch.object(windows, "_set_menu_item_state", return_value=True) as set_state):
+                self.assertEqual(windows.enable_menu(target), (2, 1))
+            self.assertEqual(set_state.call_count, 1)
 
 
 class MacDiscoveryTests(unittest.TestCase):

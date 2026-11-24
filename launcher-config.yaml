@@ -131,6 +131,7 @@ gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no
 elevation-needed-list: # 下列程序，启动时需要提权，启动器中列出时会带上 `[SUDO]` 的尾巴
     all-platforms:
         - "filesystem/executable-bit-setter.sh"
+        - "filesystem/link-creator.py"
         - "filesystem/path-in-use.py"
         - "others/disk-smart-info-viewer.py"
         - "others/script-to-app.py"
@@ -147,6 +148,7 @@ elevation-needed-list: # 下列程序，启动时需要提权，启动器中列�
         - "windows/service-restarter.py"
         - "input-and-text/auto-typer.py"
         - "input-and-text/screen-keyboard.py"
+        - "others/window-inspector.py"
     macos:
         - "macos/ntfs-3g-mount-manager.py"
         - "macos/privacy-cleaner.py"

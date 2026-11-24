@@ -21,6 +21,9 @@ PTR = C.c_void_p
 LAYERED, TRANSPARENT, TOPMOST = 0x80000, 0x20, 0x8
 EXSTYLE, STYLE = -20, -16
 NO_ACTIVATE, ASYNC, NO_ZORDER = 0x10, 0x4000, 0x4
+SW_SHOW = 5
+MIIM_STATE = 0x1
+MFS_DISABLED, MFS_ENABLED = 0x3, 0x0
 
 
 class MonitorInfo(C.Structure):
@@ -32,13 +35,26 @@ class WindowPlacement(C.Structure):
                 ("minimized", W.POINT), ("maximized", W.POINT), ("normal", W.RECT)]
 
 
+class MenuItemInfo(C.Structure):
+    _fields_ = [("size", W.UINT), ("mask", W.UINT), ("type", W.UINT), ("state", W.UINT),
+                ("id", W.UINT), ("submenu", W.HANDLE), ("checked", W.HANDLE), ("unchecked", W.HANDLE),
+                ("data", C.c_size_t), ("type_data", W.LPWSTR), ("text", W.UINT), ("bitmap", W.HANDLE)]
+
+
 def _bind(dll: Any, name: str, result: Any, *args: Any) -> None:
     proc = getattr(dll, name)
     proc.restype, proc.argtypes = result, args
 
 
-for _name in ("IsWindowVisible", "IsIconic", "IsZoomed", "IsHungAppWindow", "SetForegroundWindow"):
+for _name in ("IsWindowVisible", "IsIconic", "IsZoomed", "IsHungAppWindow", "SetForegroundWindow", "IsWindowEnabled"):
     _bind(U, _name, W.BOOL, W.HWND)
+_bind(U, "EnableWindow", W.BOOL, W.HWND, W.BOOL)
+_bind(U, "GetMenu", W.HANDLE, W.HWND)
+_bind(U, "GetMenuItemCount", C.c_int, W.HANDLE)
+_bind(U, "GetSubMenu", W.HANDLE, W.HANDLE, C.c_int)
+_bind(U, "GetMenuItemInfoW", W.BOOL, W.HANDLE, W.UINT, W.BOOL, PTR)
+_bind(U, "SetMenuItemInfoW", W.BOOL, W.HANDLE, W.UINT, W.BOOL, PTR)
+_bind(U, "DrawMenuBar", W.BOOL, W.HWND)
 for _name in ("GetWindowTextW", "GetClassNameW"):
     _bind(U, _name, C.c_int, W.HWND, W.LPWSTR, C.c_int)
 _bind(U, "EnumWindows", W.BOOL, ENUM, W.LPARAM)
@@ -240,6 +256,86 @@ def controls(target: Window) -> Rows:
         rows.append((str(len(rows) + 1), f"0x{child:08X}", f"{kind}{counts[kind]}", buffer.value,
                      kind, f"{x}, {y}, {width} × {height}"))
     return rows
+
+
+def enable_controls(target: Window) -> tuple[int, int]:
+    """Enable disabled child controls in the selected window.
+
+    Returns (total, enabled). Windows may reject changes to a
+    higher-integrity window, in which case those controls stay as they were
+    while the count still records the attempt.
+    """
+    hwnd = checked(target).id
+    total = enabled = 0
+    for child in _handles(hwnd):
+        total += 1
+        if not U.IsWindowEnabled(child):
+            U.EnableWindow(child, True)
+            enabled += 1
+    return total, enabled
+
+
+def show_controls(target: Window) -> tuple[int, int]:
+    """Show hidden child controls in the selected window.
+
+    Returns (total, shown). Windows may reject changes to a higher-integrity
+    window, in which case those controls stay as they were while the count
+    still records the attempt.
+    """
+    hwnd = checked(target).id
+    total = shown = 0
+    for child in _handles(hwnd):
+        total += 1
+        if not U.IsWindowVisible(child):
+            U.ShowWindowAsync(child, SW_SHOW)
+            shown += 1
+    return total, shown
+
+
+def _menu_item_state(menu: int, index: int) -> int:
+    """Read a menu item's state, treating a failed read as already enabled."""
+    info = MenuItemInfo()
+    info.size = C.sizeof(info)
+    info.mask = MIIM_STATE
+    return info.state if U.GetMenuItemInfoW(menu, index, True, C.byref(info)) else MFS_ENABLED
+
+
+def _set_menu_item_state(menu: int, index: int, state: int) -> bool:
+    info = MenuItemInfo()
+    info.size = C.sizeof(info)
+    info.mask = MIIM_STATE
+    info.state = state
+    return bool(U.SetMenuItemInfoW(menu, index, True, C.byref(info)))
+
+
+def _enable_menu_items(menu: int) -> tuple[int, int]:
+    """Recursively enable disabled items in a menu and its submenus."""
+    total = enabled = 0
+    for index in range(U.GetMenuItemCount(menu)):
+        total += 1
+        if _menu_item_state(menu, index) & MFS_DISABLED and _set_menu_item_state(menu, index, MFS_ENABLED):
+            enabled += 1
+        if submenu := U.GetSubMenu(menu, index):
+            sub_total, sub_enabled = _enable_menu_items(submenu)
+            total += sub_total
+            enabled += sub_enabled
+    return total, enabled
+
+
+def enable_menu(target: Window) -> tuple[int, int]:
+    """Enable disabled items in the selected window's standard menu bar.
+
+    Returns (total, enabled) over the whole menu tree, or (0, 0) when the
+    window has no standard menu bar. Applications that re-disable items when a
+    menu opens may restore the disabled state, so the change may not persist.
+    """
+    hwnd = checked(target).id
+    menu = U.GetMenu(hwnd)
+    if not menu:
+        return 0, 0
+    total, enabled = _enable_menu_items(menu)
+    U.DrawMenuBar(hwnd)
+    return total, enabled
 
 
 def elevated(pid: int) -> bool | None:

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Implementation notes.
 
-Keep link-type dispatch platform-specific. Windows directory symlinks and
-junctions must use the appropriate mklink flags; preserve the selected target
+Keep link-type dispatch platform-specific and preserve the selected target
 path representation when constructing links.
 """
 
@@ -22,27 +21,23 @@ Create symbolic links or hard links, including flat links and mirrored directory
 trees. Windows also supports directory junctions.
 
 {FLYellow}Requirements:{CRst}
-  Project runtime and OS link support; Windows symlinks may require elevation.
+  Administrator privileges on Windows or root privileges on Linux and macOS.
+  The tool requests elevation automatically when needed.
 
 {FLYellow}Usage:{CRst}
   python link-creator.py [PATH ...]
 """
 
-if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
-
-
 def main() -> int:
-    Console.print_banner("LINK CREATOR")
-
-    if "--help" in sys.argv or "-h" in sys.argv:
-
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(HELP)
         return 0
 
-
+    System.restart_elevated()
+    Console.print_banner("LINK CREATOR")
     IS_WIN = os.name == "nt"
+    if sys.platform in {"linux", "darwin"} and "SUDO_UID" in os.environ:
+        os.environ["HOME"] = str(ConfigStore.user_home())
 
 
     #============ 用户交互 - 读取路径列表 ===========
@@ -51,7 +46,7 @@ def main() -> int:
         for i in range(1, len(sys.argv)):
             p = sys.argv[i].strip()
             if p:
-                paths.append(p)
+                paths.append(p if IS_WIN else os.path.expanduser(p))
     else:
         paths = Input.resolve_input_paths_multi(
             prompt_text="Enter source paths (one per line, supports wildcards like *.txt)",
@@ -230,7 +225,7 @@ def main() -> int:
     if not target_dir:
         print(f"{FLRed}No target directory provided. EXIT...{CRst}\n")
         return 1
-    target_dir = os.path.abspath(target_dir)
+    target_dir = os.path.abspath(target_dir if IS_WIN else os.path.expanduser(target_dir))
     if not os.path.exists(target_dir):
         print(f"{FLYellow}Target directory does not exist. Creating...{CRst}")
         os.makedirs(target_dir, exist_ok=True)
@@ -385,8 +380,9 @@ def main() -> int:
                 if link_type == LinkType.HARDLINK:
                     os.link(source, link_path)
                 elif link_type == LinkType.JUNCTION:
-                    subprocess.run(["cmd", "/c", "mklink", "/J", link_path, source],
-                                check=True, capture_output=True, shell=False)
+                    import _winapi
+
+                    _winapi.CreateJunction(source, link_path)
                 elif link_type == LinkType.SYMLINKD:
                     os.symlink(source, link_path, target_is_directory=True)
                 else:  # SYMLINK

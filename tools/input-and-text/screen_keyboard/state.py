@@ -170,6 +170,9 @@ class KeyboardState:
         self.check_target()
         if self.pressed is not None:
             self.release()
+        if name == "Layer" and name in self.held:
+            self.reset()
+            return
         self.cancel()
         if not self.target:
             return
@@ -216,6 +219,9 @@ class KeyboardState:
         self.cancel()
         name, self.pressed = self.pressed, None
         if name and not self.check_target() and not self.sticky(name):
+            if "Layer" in self.held and "Layer" not in self.locked:
+                self.reset()
+                return
             if name != "language":
                 self.output.key_up()
             for held in reversed(self.held.copy()):

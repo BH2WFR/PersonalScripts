@@ -132,10 +132,15 @@ class ConfigStore:
         self.name = name
 
     @staticmethod
+    def user_home() -> Path:
+        """Return the invoking user's home, resolving the account by UID under sudo."""
+        user = _ConfigUser.sudo_invoker()
+        return user.home if user else Path.home()
+
+    @staticmethod
     def directory() -> Path:
         """Return the invoking user's ~/.config/application directory, also under sudo."""
-        user = _ConfigUser.sudo_invoker()
-        return (user.home if user else Path.home()) / CONFIG_PARENT_NAME / APP_DIRECTORY_NAME
+        return ConfigStore.user_home() / CONFIG_PARENT_NAME / APP_DIRECTORY_NAME
 
     @staticmethod
     def _file_user(path: Path) -> _ConfigUser | None:
