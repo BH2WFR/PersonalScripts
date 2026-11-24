@@ -2,8 +2,9 @@
 """Implementation notes.
 
 Base builds may use user-site packages; other environments use isolated Python.
-Remove PYTHONPATH/PYTHONHOME in both modes and retain the spec's dependency-origin
-audit. Store successful environment/destination choices only after installation.
+The spec resolves the viewer's runtime dependency list against those installed
+packages and audits collected files. Remove PYTHONPATH/PYTHONHOME in both modes.
+Store successful environment/destination choices only after installation.
 Builds finish in BUILD/MatrixViewer/install-stage before touching the release.
 SHA-256 comparisons preserve identical destination files, including timestamps;
 changed files are replaced individually through temporary sibling files. Only
@@ -34,8 +35,8 @@ from utils import *  # noqa: E402
 
 HELP = f"""{FLYellow}MATRIX VIEWER BUILD AND INSTALL{CRst}
 
-Build and update a MatrixViewer directory release, preserving unchanged installed
-libraries. Close the installed viewer before updating it.
+Build a MatrixViewer release from its declared dependencies in the selected
+environment. Close the installed viewer before updating changed files.
 
 {FLYellow}Requirements:{CRst}
   Windows 10+, Conda, Python 3.13+, PyInstaller and viewer dependencies.

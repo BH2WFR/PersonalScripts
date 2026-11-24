@@ -5,6 +5,8 @@
 # Standalone executable builders used by compile-script.py
 Nuitka
 PyInstaller
+# MatrixViewer's PyInstaller spec resolves installed runtime requirements.
+packaging
 
 # Platform integrations used by optional/test code
 pyobjc-framework-Cocoa; sys_platform == "darwin"

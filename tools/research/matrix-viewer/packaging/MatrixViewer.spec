@@ -4,6 +4,8 @@
 Requirements: PyInstaller 6 and the viewer's runtime dependencies in the selected
 environment. Base can also use current-user site-packages when Python enables
 them; dedicated environments remain isolated. No packages are installed here.
+dependency_scope.py declares the viewer's runtime distributions. Installed
+metadata supplies their dependencies and the file inventory for the build audit.
 Usage from the repository root:
     conda run -n base python -P -X utf8 -m PyInstaller --clean \
         --distpath D:/Portable_Programs --workpath BUILD/MatrixViewer/work \
@@ -42,6 +44,9 @@ ENVIRONMENT_DIR = Path(sys.prefix).resolve()
 WORK_DIR = Path(CONF["workpath"]).resolve()
 STAGING_DIR = WORK_DIR / "viewer-source"
 PACKAGE_DIR = STAGING_DIR / PACKAGE_NAME
+sys.path.insert(0, str(PACKAGING_DIR))
+from dependency_scope import VIEWER_REQUIREMENTS, owned_files, runtime_distributions, unrelated_modules
+sys.path.pop(0)
 
 # Use only the selected environment and, for base, its enabled user-site.
 if sys.platform != "win32":
@@ -77,25 +82,19 @@ for source in modules:
 
 # The cache must also notice content-only source edits and package upgrades.
 # Custom hooksconfig entries participate in Analysis's cache identity.
-build_versions: dict[str, str] = {}
-for distribution in metadata.distributions():
-    # Keep the first distribution on sys.path, including user-site precedence.
-    build_versions.setdefault(distribution.metadata["Name"], distribution.version)
+runtime = runtime_distributions(VIEWER_REQUIREMENTS)
+build_tools = {name: metadata.distribution(name) for name in ("pyinstaller", "pyinstaller-hooks-contrib")}
+build_versions = {name: dist.version for name, dist in (runtime | build_tools).items()}
 build_inputs = [*modules, SOURCE_DIR.with_suffix(".py"), *sorted((PROJECT_DIR / "utils").glob("*.py")),
                 *sorted(PACKAGING_DIR.rglob("*.py")), PACKAGING_DIR / "MatrixViewer.spec"]
 input_hashes = {str(path.relative_to(PROJECT_DIR)): hashlib.sha256(path.read_bytes()).hexdigest() for path in build_inputs}
 
-excludes = [
+# Trim unused components within approved distributions and the standard library.
+unused_components = [
     "__main__",  # ModuleGraph adds this itself; include it upfront to keep its cache key stable.
-    "PyQt5", "PyQt6", "PySide2", "tkinter", "_tkinter",
+    "tkinter", "_tkinter",
     "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick",
     "PySide6.QtPdf", "PySide6.QtPdfWidgets",
-    "IPython", "ipykernel", "ipywidgets", "jupyter", "notebook",
-    "torch", "tensorflow", "jax", "cupy", "pandas", "sympy",
-    "trame", "trame_vtk", "trame_vuetify", "trame_pyvista", "cvista",
-    "pymupdf", "fitz", "win10toast", "pytest",
-    # Unused PyVista conversions and remote/movie I/O can pull large optional stacks from base.
-    "trimesh", "meshio", "pyarrow", "imageio", "fsspec",
     "vtk",  # PyVista uses vtkmodules; the eager vtk shim imports every module.
 ]
 hiddenimports = [PACKAGE_NAME, "openpyxl", "xlrd", "pyvista.plotting"]
@@ -110,20 +109,42 @@ analysis = Analysis(
     hookspath=[str(PACKAGING_DIR / "hooks")],
     hooksconfig={"matplotlib": {"backends": ["Agg"]},
                  "matrix_viewer": {"environment": build_versions, "inputs": input_hashes,
+                                   "distribution_paths": {n: str(d.locate_file("")) for n, d in runtime.items()},
                                    "package_roots": [str(root) for root in package_roots], "python": sys.version}},
     runtime_hooks=[],
-    excludes=excludes,
+    excludes=sorted(set(unrelated_modules(runtime)) | set(unused_components)),
     noarchive=False,
 )
 
 # Reject modules from other environments and unapproved external locations.
 # Windows system DLLs are legitimate dependencies.
 allowed_roots = (*package_roots, PROJECT_DIR, WORK_DIR, Path(os.environ["SystemRoot"]).resolve())
+site_roots = [Path(root).resolve() for root in [*site.getsitepackages(), site.getusersitepackages()]
+              if Path(root).name.casefold() == "site-packages"]
+approved_files = owned_files(runtime)
+# PyInstaller injects its own startup scripts and their support modules.
+for tool_file in owned_files(build_tools):
+    if "rthooks" in tool_file.parts or "fake-modules" in tool_file.parts:
+        approved_files.add(tool_file)
+
+# Some hooks copy metadata for optional integrations whenever they are installed.
+# Keep only the site-packages data owned by the selected runtime distributions.
+def keep_data(entry: tuple[str, str, str]) -> bool:
+    """Keep data from selected packages, plus non-package data for the origin audit."""
+    _name, source, kind = entry
+    if not source or kind != "DATA":
+        return True
+    path = Path(source).resolve()
+    return path in approved_files or not any(path.is_relative_to(root) for root in site_roots)
+
+
+analysis.datas = [entry for entry in analysis.datas if keep_data(entry)]
 foreign_sources: set[str] = set()
-for _name, source, _kind in [*analysis.pure, *analysis.binaries, *analysis.datas]:
+for _name, source, _kind in [*analysis.scripts, *analysis.pure, *analysis.binaries, *analysis.datas]:
     if source:
         path = Path(source).resolve()
-        if not any(path.is_relative_to(root) for root in allowed_roots):
+        if (not any(path.is_relative_to(root) for root in allowed_roots)
+                or (any(path.is_relative_to(root) for root in site_roots) and path not in approved_files)):
             foreign_sources.add(str(path))
 if foreign_sources:
     raise SystemExit(f"Files outside the selected package scope were collected: {sorted(foreign_sources)}")
@@ -138,7 +159,8 @@ manifest = {
     "build_environment": build_versions,
     "modules": sorted(name for name, _source, _kind in analysis.pure),
     "binaries": sorted(name for name, _source, _kind in analysis.binaries),
-    "excluded_optional_modules": excludes,
+    "runtime_requirements": VIEWER_REQUIREMENTS,
+    "excluded_optional_modules": unused_components,
 }
 manifest_path = WORK_DIR / "build-manifest.json"
 manifest_text = json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True)
