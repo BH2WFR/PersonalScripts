@@ -76,7 +76,7 @@ to discard redundant character maps. The result is cached for the installed
 family list. Display requires a font containing the glyph. PDF document font
 selection and embedded web content have their own rendering paths.
 
-On the Cocoa backend, application setup disables informational messages from
+On the Windows and Cocoa backends, application setup disables informational messages from
 `qt.text.font.db` for the process. Qt emits these when it tries a candidate
 font that lacks OpenType support for the requested script. Font matching and
 warning-level diagnostics continue normally.

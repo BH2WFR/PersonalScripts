@@ -127,7 +127,7 @@ def with_cjk_fallbacks(font: QtGui.QFont) -> QtGui.QFont:
 
 def configure_qt_application(application: QtWidgets.QApplication, style: str | QtWidgets.QStyle = "Fusion") -> None:
     """Apply the tool's Fusion style, font fallbacks and wheel guards before constructing widgets."""
-    if application.platformName() == "cocoa":
+    if application.platformName() in ("windows", "cocoa"):
         # Qt reports each rejected OpenType candidate at info level during font matching.
         QtCore.QLoggingCategory.setFilterRules("qt.text.font.db.info=false")
     application.setStyle(style)

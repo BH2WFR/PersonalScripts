@@ -23,6 +23,7 @@ pynput
 PySide6
 pyobjc-framework-Cocoa; sys_platform == "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices; sys_platform == "darwin"
 # Required by Image to Text and Formula: python -m pip install markdown-it-py
 markdown-it-py
 # For offline formula preview, see the MathJax installation command in requirements-optional.txt.
