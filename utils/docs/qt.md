@@ -69,8 +69,8 @@ On Windows and macOS, Qt can omit an installed font for a rare script. For
 example, the macOS fallback list can miss an installed font containing Tangut.
 The helper asks Qt to lay out sample text to identify native emoji, symbol and
 script faces, then adds other installed families. Rare-script fallback uses
-glyph coverage regardless of the family's name. On macOS it skips the LastResort placeholder font when
-building this list. Linux continues to use Qt's native fallback.
+glyph coverage regardless of the family's name. On macOS it skips the LastResort
+placeholder font when building this list. Linux continues to use Qt's native fallback.
 For large font collections the helper uses the project's `fonttools` package
 to discard redundant character maps. The result is cached for the installed
 family list. Display requires a font containing the glyph. PDF document font
