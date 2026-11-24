@@ -28,6 +28,8 @@ URLs also work without PyObjC. Absolute paths copied as text and textual
 `file://` URLs use the shared path decoders. Pass `preserve_text_separators=True`
 to `read_clipboard_paths()` to retain the slash spelling of path text after removing
 paired quotes and decoding file URLs. An empty list means no usable paths.
+Pass `parse_text_paths=False` to extract native file selections while preserving
+ordinary clipboard text, including quoted paths and file URLs, as the source.
 
 Linux file managers can supply a standard `text/uri-list`, a GNOME
 `x-special/gnome-copied-files` payload, or older Nautilus text starting with
@@ -35,6 +37,10 @@ Linux file managers can supply a standard `text/uri-list`, a GNOME
 KDE file managers can also supply `application/x-kde4-urilist` as a fallback.
 KDE cut flags and the GNOME `copy` or `cut` line are metadata. Only local file URLs contribute
 paths. Reading the list leaves the clipboard and files untouched.
+
+For file-manager drops, pass the event's `mimeData().urls()` to
+`local_file_paths(urls)`. It preserves the order of local file URLs and uses
+the same native path decoding as the clipboard reader without accessing the clipboard.
 
 For verbatim text inspection, `original_mime_text(mime)` returns plain text or
 `None` for non-text content. On the Windows Qt platform it reads external

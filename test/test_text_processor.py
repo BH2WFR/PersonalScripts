@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools/input-and-text"))
 
-from PySide6.QtCore import QMimeData, QUrl
+from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFrame, QPushButton, QPlainTextEdit, QSpinBox, QTabWidget,
 )
@@ -152,6 +153,27 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(reopened.chain.isChecked())
         self.assertEqual(reopened.variable_syntax.currentText(), "PowerShell")
 
+    @patch("utils.qt_clipboard._finder_paths", return_value=[])
+    def test_startup_clipboard_preserves_text_and_prefers_native_files(self, _finder: Mock) -> None:
+        clipboard = QApplication.clipboard()
+        self.addCleanup(clipboard.clear)
+        text = QMimeData()
+        text.setText('"/tmp/一 a"\nfile:///tmp/b%20c')
+        files = QMimeData()
+        files.setUrls([QUrl.fromLocalFile("/tmp/一 a"), QUrl.fromLocalFile("/tmp/b c")])
+        files.setText("display names")
+        unsupported = QMimeData()
+        unsupported.setData("application/octet-stream", b"data")
+        first, second = (str(Path("/tmp") / name) for name in ("一 a", "b c"))
+        for payload, expected in ((text, text.text()), (files, f"{first}\n{second}"), (unsupported, "")):
+            clipboard.setMimeData(payload)
+            window = TextProcessor(from_clipboard=True)
+            try:
+                self.assertEqual(window.source.toPlainText(), expected)
+                self.assertEqual(window.result.toPlainText(), expected)
+            finally:
+                window.close()
+
     def click(self, label: str) -> None:
         button = next(b for b in self.window.findChildren(QPushButton) if (b.accessibleName() or b.text()) == label)
         button.click()
@@ -165,8 +187,8 @@ class WindowTests(unittest.TestCase):
         tabs = self.window.findChild(QTabWidget)
         assert tabs is not None
         buttons = {b.text(): b for b in self.window.findChildren(QPushButton)}
-        get_paths = buttons["Get paths from clipboard"]
-        paste = buttons["Paste from Clipboard"]
+        get_paths = buttons["Load paths from clipboard"]
+        paste = buttons["Load text from clipboard"]
         wrap = next(c for c in self.window.findChildren(QCheckBox) if c.text() == "Word wrap")
         self.assertTrue(get_paths.font().bold() and paste.font().bold())
         self.assertLess(get_paths.geometry().right(), paste.x())
@@ -207,10 +229,39 @@ class WindowTests(unittest.TestCase):
         self.click("To ~")
         self.assertEqual(self.window.result.toPlainText(), "~/folder")
 
+    def test_drop_files_appends_native_paths_to_input(self) -> None:
+        self.window.show()
+        source = self.window.source
+        self.window.result.setPlainText("previous result")
+        source.setPlainText("existing input\n")
+        for platform, target, urls, expected in (
+            ("darwin", source.viewport(), ["file:///Users/me/My%20file%2520"], "/Users/me/My file%20"),
+            ("win32", self.window, ["file:///C:/a%20b", "file://nas/share/资料"], "C:\\a b\n\\\\nas\\share\\资料"),
+            ("linux", self.window.result.viewport(), ["file:///tmp/a%23b", "https://example.org",
+                                                      "file:///tmp/a%5Cb"], "/tmp/a#b\n/tmp/a\\b"),
+        ):
+            with self.subTest(platform=platform), patch("utils.qt_clipboard.sys", platform=platform):
+                before = source.toPlainText()
+                mime = QMimeData()
+                mime.setUrls([QUrl(url) for url in urls])
+                mime.setText("display names")
+                args = (QPoint(2, 2), Qt.DropAction.CopyAction | Qt.DropAction.MoveAction, mime,
+                        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                for event in (QDragEnterEvent(*args), QDragMoveEvent(*args), QDropEvent(*args)):
+                    QApplication.sendEvent(target, event)
+                    self.assertTrue(event.isAccepted())
+                    self.assertEqual(event.dropAction(), Qt.DropAction.CopyAction)
+                self.assertEqual(source.toPlainText(), before.rstrip("\n") + "\n" + expected)
+                self.assertEqual(self.window.result.document().toRawText(), source.document().toRawText())
+                source.undo()
+                self.assertEqual(source.toPlainText(), before)
+                source.redo()
+
     def test_clipboard_chaining_wrap_and_clearing(self) -> None:
         original = ' "file:///C:/a%20b" \n' + r"\\nas\share"
         QApplication.clipboard().setText(original)
-        self.click("Paste from Clipboard")
+        self.click("Load text from clipboard")
+        self.assertEqual(self.window.result.toPlainText(), original)
         self.click("Quick clean paths")
         self.assertEqual(self.window.result.toPlainText(), "C:/a b\n//nas/share")
         self.assertTrue(self.window.chain.isChecked())
@@ -236,8 +287,49 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.source.toPlainText(), "")
         self.assertEqual(self.window.result.toPlainText(), "")
 
+    def test_paste_syncs_whole_input_after_replacing_selection(self) -> None:
+        source = self.window.source
+        source.setPlainText("before OLD after")
+        self.assertTrue(source.find("OLD"))
+        self.window.result.setPlainText("stale")
+        self.window.chain.setChecked(False)
+        QApplication.clipboard().setText("two\xa0words\n第二行")
+        self.click("Load text from clipboard")
+        self.assertEqual(source.document().toRawText(), "before two\xa0words\u2029第二行 after")
+        self.assertEqual(self.window.result.document().toRawText(), source.document().toRawText())
+
+    def test_load_text_warns_on_blank_or_nontext_clipboard_and_allows_retry(self) -> None:
+        clipboard = QApplication.clipboard()
+        self.addCleanup(clipboard.clear)
+        self.window.source.setPlainText("input")
+        self.window.source.selectAll()
+        self.window.result.setPlainText("result")
+        image = QMimeData()
+        image.setData("image/png", b"image data")
+        files = QMimeData()
+        files.setUrls([QUrl.fromLocalFile("/tmp/example.txt")])
+        blank = QMimeData()
+        blank.setText(" \t\n\u3000")
+        clipboard.clear()
+        with patch("text_processor.window.QMessageBox.warning") as warning:
+            for payload in (None, blank, image, files):
+                if payload is not None:
+                    clipboard.setMimeData(payload)
+                self.click("Load text from clipboard")
+                warning.assert_called_once_with(
+                    self.window, "Load text from clipboard", "No non-blank text found on the clipboard."
+                )
+                warning.reset_mock()
+                self.assertEqual(self.window.source.toPlainText(), "input")
+                self.assertEqual(self.window.result.toPlainText(), "result")
+            clipboard.setText("  重试成功 \n")
+            self.click("Load text from clipboard")
+            warning.assert_not_called()
+            self.assertEqual(self.window.source.toPlainText(), "  重试成功 \n")
+            self.assertEqual(self.window.result.toPlainText(), "  重试成功 \n")
+
     @patch("utils.qt_clipboard.sys", platform="win32")
-    def test_get_paths_only_converts_backslashes_in_result(self, _platform: Mock) -> None:
+    def test_get_paths_preserves_native_separators_in_both_editors(self, _platform: Mock) -> None:
         clipboard = QApplication.clipboard()
         mime = QMimeData()
         mime.setUrls([QUrl("file:///C:/a%20b/report%2520.txt"), QUrl("file://nas/share/资料"),
@@ -246,25 +338,32 @@ class WindowTests(unittest.TestCase):
         clipboard.setMimeData(mime)
         self.window.source.setPlainText("original")
         self.window.result.setPlainText("previous result")
-        self.click("Get paths from clipboard")
+        self.click("Load paths from clipboard")
         self.assertEqual(self.window.source.toPlainText(), "\n".join(
             [r"C:\a b\report%20.txt", r"\\nas\share\资料", r"D:\folder", r"\\localhost\share\doc"]))
         self.assertEqual(clipboard.text(), "Explorer display names")
-        self.assertEqual(self.window.result.toPlainText(),
-                         "C:/a b/report%20.txt\n//nas/share/资料\nD:/folder\n//localhost/share/doc")
+        self.assertEqual(self.window.result.toPlainText(), self.window.source.toPlainText())
         self.assertEqual(len(clipboard.mimeData().urls()), 4)
         clipboard.setText('"C:\\a b.txt"\r\n"file://nas/share/x%20y"\r\n' + r"'file://D:\mix/one\\two'")
-        self.click("Get paths from clipboard")
+        self.click("Load paths from clipboard")
         source = "C:\\a b.txt\n//nas/share/x y\n" + r"D:\mix/one\\two"
-        result = "C:/a b.txt\n//nas/share/x y\nD:/mix/one/two"
         self.assertEqual(self.window.source.toPlainText(), source)
-        self.assertEqual(self.window.result.toPlainText(), result)
-        for content in ("unrelated", "", "https://example.com/"):
-            clipboard.setText(content)
-            self.click("Get paths from clipboard")
-            self.assertEqual(self.window.result.toPlainText(), result)
-            self.assertFalse(self.window.clipboard_notice.isHidden())
-            self.assertEqual(self.window.source.toPlainText(), source)
+        self.assertEqual(self.window.result.toPlainText(), source)
+        with patch("text_processor.window.QMessageBox.warning") as warning:
+            for content in ("unrelated", "", "https://example.com/"):
+                clipboard.setText(content)
+                self.click("Load paths from clipboard")
+                warning.assert_called_once_with(
+                    self.window, "Load paths from clipboard", "No file paths found on the clipboard."
+                )
+                warning.reset_mock()
+                self.assertEqual(self.window.result.toPlainText(), source)
+                self.assertEqual(self.window.source.toPlainText(), source)
+            clipboard.setText(r"C:\new.txt")
+            self.click("Load paths from clipboard")
+            warning.assert_not_called()
+            self.assertEqual(self.window.source.toPlainText(), r"C:\new.txt")
+            self.assertEqual(self.window.result.toPlainText(), r"C:\new.txt")
 
     @patch("utils.qt_clipboard.sys", platform="linux")
     def test_linux_file_manager_clipboard_formats(self, _platform: Mock) -> None:
@@ -290,9 +389,9 @@ class WindowTests(unittest.TestCase):
                     mime.setData(kind, "\n".join([form, *urls]).encode("utf-8"))
                     mime.setText("display names")
                 clipboard.setMimeData(mime)
-                self.click("Get paths from clipboard")
+                self.click("Load paths from clipboard")
                 self.assertEqual(self.window.source.toPlainText(), expected)
-                self.assertEqual(self.window.result.toPlainText(), expected.replace("\\", "/"))
+                self.assertEqual(self.window.result.toPlainText(), expected)
                 self.assertIs(clipboard.mimeData(), mime)
 
     @patch("utils.qt_clipboard.sys", platform="darwin")
@@ -306,8 +405,8 @@ class WindowTests(unittest.TestCase):
         mime.setUrls([QUrl("file:///Users/a/other%20folder")])
         QApplication.clipboard().setMimeData(mime)
         with patch.dict(sys.modules, {"AppKit": native}):
-            self.click("Get paths from clipboard")
-            self.assertEqual(self.window.result.toPlainText(), "/Users/甲/file%20 \n/Users/甲/a/b")
+            self.click("Load paths from clipboard")
+            self.assertEqual(self.window.result.toPlainText(), "\n".join(values))
             self.assertEqual(self.window.source.toPlainText(), "\n".join(values))
             board.propertyListForType_.return_value = None
             first, second = Mock(), Mock()
@@ -317,11 +416,11 @@ class WindowTests(unittest.TestCase):
             second.dataForType_.return_value = b"invalid"
             second.stringForType_.return_value = plistlib.dumps(values[1:]).decode()
             board.pasteboardItems.return_value = [first, second]
-            self.click("Get paths from clipboard")
+            self.click("Load paths from clipboard")
             self.assertEqual(self.window.source.toPlainText(), "\n".join(values))
-            self.assertEqual(self.window.result.toPlainText(), "/Users/甲/file%20 \n/Users/甲/a/b")
+            self.assertEqual(self.window.result.toPlainText(), "\n".join(values))
             board.pasteboardItems.return_value = []
-            self.click("Get paths from clipboard")
+            self.click("Load paths from clipboard")
             self.assertEqual(self.window.result.toPlainText(), "/Users/a/other folder")
             self.assertEqual(self.window.source.toPlainText(), "/Users/a/other folder")
 

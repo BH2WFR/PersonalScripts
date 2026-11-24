@@ -31,7 +31,7 @@ ownership and public exports.
 | [Tk DPI scaling](docs/tk_dpi.md) | TkDpi | [tk_dpi.py](tk_dpi.py) |
 | [Tk text input](docs/tk_input.md) | TkTextInput | [tk_input.py](tk_input.py) |
 | [Qt application setup and controls](docs/qt.md) | configure_qt_application, with_cjk_fallbacks, show_cursor_tooltip, show_nonactivating_tool, NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls | [qt_widgets.py](qt_widgets.py) |
-| [Qt clipboard text and paths](docs/qt.md#clipboard-file-paths) | original_mime_text, read_clipboard_paths, clipboard_file_paths | [qt_clipboard.py](qt_clipboard.py) |
+| [Qt clipboard text and file paths](docs/qt.md#clipboard-file-paths) | original_mime_text, local_file_paths, read_clipboard_paths, clipboard_file_paths | [qt_clipboard.py](qt_clipboard.py) |
 | [Qt images](docs/qt.md#image-operations) | qimage_from_pillow, copy_image_to_clipboard, save_png | [qt_images.py](qt_images.py) |
 
 ## Imports from category scripts

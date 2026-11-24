@@ -1,6 +1,6 @@
 # Path and text transformations
 
-[Utility index](../README.md) · [Text Processor](../../tools/input-and-text/text-processor.py)
+[Utility index](../README.md) · [Text and Path Processor](../../tools/input-and-text/text-path-processor.py)
 
 Import [path_text](../path_text.py) and [text_transforms](../text_transforms.py) explicitly. The modules operate on strings. The desktop interface owns the clipboard, operation selection and input/result chaining.
 

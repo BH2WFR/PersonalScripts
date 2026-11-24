@@ -176,6 +176,8 @@ can print `HELP` directly. Private implementation modules do not need a CLI.
   setup or call it unconditionally in every entry.
 - For PDF tools follow the [shared PDF policy](utils/docs/pdf.md): use
   `Pdf.open_document()` for existing inputs and `Pdf.save_new()` for output.
+- Show GUI errors in tooltips or dialogs by default. If an error message appears
+  inline, hide it or clear its text as soon as the error condition is resolved.
 - All GUIs must scale on high-DPI screens and update automatically when moved
   between monitors with different DPI. Scale fonts, controls, spacing and images
   together without clipping or losing input/state; do not hard-code physical

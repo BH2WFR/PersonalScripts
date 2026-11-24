@@ -5,15 +5,15 @@ from functools import partial
 import re
 import sys
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase, QFont
+from PySide6.QtCore import QEvent, QMimeData, QObject, Qt, Signal
+from PySide6.QtGui import QDropEvent, QFontDatabase, QFont, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QStyle, QTabWidget, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QStyle, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from utils import ConfigStore, path_text as paths, text_transforms as transforms
-from utils.qt_clipboard import read_clipboard_paths
+from utils.qt_clipboard import local_file_paths, read_clipboard_paths
 from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, with_cjk_fallbacks
 
 
@@ -68,6 +68,17 @@ def _raw(editor: QPlainTextEdit) -> str:
     return editor.document().toRawText().replace("\u2029", "\n")
 
 
+class InputEditor(QPlainTextEdit):
+    """Notify the processor after a paste through any of Qt's editor actions."""
+
+    pasted = Signal()
+
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        if self.canInsertFromMimeData(source):
+            super().insertFromMimeData(source)
+            self.pasted.emit()
+
+
 class RegexDialog(QDialog):
     """Keep the expression, replacement and validation feedback together."""
 
@@ -109,12 +120,16 @@ class RegexDialog(QDialog):
 class TextProcessor(QWidget):
     """Apply one operation to the input and show its selectable result."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, from_clipboard: bool = False) -> None:
         super().__init__()
-        self.setWindowTitle("Text Processor")
-        self.source = QPlainTextEdit()
+        self.setWindowTitle("Text and Path Processor")
+        self.source = InputEditor()
         self.result = QPlainTextEdit()
+        self.source.pasted.connect(self._sync_result_from_input)
         self.result.setReadOnly(True)
+        self.setAcceptDrops(True)
+        for target in (self, self.source.viewport(), self.result.viewport()):
+            target.installEventFilter(self)
         self.source.setAccessibleName("Input")
         self.result.setAccessibleName("Result")
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
@@ -132,13 +147,9 @@ class TextProcessor(QWidget):
         top.addStretch()
         top.addWidget(wrap)
         top.addWidget(_divider())
-        top.addWidget(_button("Get paths from clipboard", self._get_clipboard_paths, bold=True))
-        top.addWidget(_button("Paste from Clipboard", self.source.paste, bold=True))
+        top.addWidget(_button("Load paths from clipboard", self._get_clipboard_paths, bold=True))
+        top.addWidget(_button("Load text from clipboard", self._load_clipboard_text, bold=True))
         layout.addLayout(top)
-        self.clipboard_notice = QLabel("No file paths found on the clipboard.")
-        self.clipboard_notice.setWordWrap(True)
-        self.clipboard_notice.hide()
-        layout.addWidget(self.clipboard_notice)
         layout.addWidget(self.source, 1)
 
         tabs = QTabWidget()
@@ -166,7 +177,7 @@ class TextProcessor(QWidget):
         apply_result.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
         apply_result.setAccessibleName("Apply result to input")
         bottom.addWidget(apply_result)
-        reset_result = _button("Reset", lambda: self.result.setPlainText(_raw(self.source)))
+        reset_result = _button("Reset", self._sync_result_from_input)
         reset_result.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
         bottom.addWidget(reset_result)
         bottom.addWidget(_divider())
@@ -184,6 +195,36 @@ class TextProcessor(QWidget):
         self.chain.toggled.connect(partial(self._save_preference, _USE_RESULT))
         self.variable_syntax.currentTextChanged.connect(partial(self._save_preference, _VARIABLE_SYNTAX))
         self.resize(740, 660)
+        if from_clipboard:
+            try:
+                text, native_paths = read_clipboard_paths(parse_text_paths=False)
+            except (OSError, RuntimeError) as exc:
+                print(f"Could not load clipboard: {exc}", file=sys.stderr)
+            else:
+                self.source.setPlainText("\n".join(native_paths) if native_paths else text)
+                self._sync_result_from_input()
+            self.source.setFocus()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Route file drops on the window and its editors to the end of Input."""
+        if not isinstance(event, QDropEvent) or not event.mimeData().hasUrls():
+            return super().eventFilter(watched, event)
+        urls = event.mimeData().urls()
+        if not any(url.isLocalFile() for url in urls):
+            return super().eventFilter(watched, event)
+        if not (event.possibleActions() & Qt.DropAction.CopyAction):
+            event.ignore()
+            return True
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        if event.type() == QEvent.Type.Drop:
+            cursor = self.source.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            separator = "" if cursor.atBlockStart() else "\n"
+            cursor.insertText(separator + "\n".join(local_file_paths(urls)))
+            self.source.setTextCursor(cursor)
+            self._sync_result_from_input()
+        return True
 
     def _restore_preferences(self) -> None:
         try:
@@ -230,12 +271,27 @@ class TextProcessor(QWidget):
     def _paths(self, transform: Transform) -> None:
         self._lines(lambda line: paths.transform_quoted_path(line, transform))
 
+    def _sync_result_from_input(self) -> None:
+        self.result.setPlainText(_raw(self.source))
+
+    def _load_clipboard_text(self) -> None:
+        mime = QApplication.clipboard().mimeData()
+        # Qt also synthesizes text from file URLs when no plain text was copied.
+        if mime is not None and any(fmt.partition(";")[0] == "text/plain" for fmt in mime.formats()):
+            text = mime.text()
+            if text.strip():
+                self.source.insertPlainText(text)
+                self._sync_result_from_input()
+                return
+        QMessageBox.warning(self, "Load text from clipboard", "No non-blank text found on the clipboard.")
+
     def _get_clipboard_paths(self) -> None:
         _, copied = read_clipboard_paths(preserve_text_separators=True)
-        self.clipboard_notice.setVisible(not copied)
-        if copied:
-            self.source.setPlainText("\n".join(copied))
-            self.result.setPlainText("\n".join(paths.forward_path(path) for path in copied))
+        if not copied:
+            QMessageBox.warning(self, "Load paths from clipboard", "No file paths found on the clipboard.")
+            return
+        self.source.setPlainText("\n".join(copied))
+        self._sync_result_from_input()
 
     def _path_tab(self) -> QWidget:
         tab = QWidget()
@@ -359,11 +415,11 @@ class TextProcessor(QWidget):
         return tab
 
 
-def run() -> int:
+def run(*, from_clipboard: bool = False) -> int:
     """Open the editor in a Fusion-styled Qt application."""
     existing = QApplication.instance()
     app = existing if isinstance(existing, QApplication) else QApplication(sys.argv)
     configure_qt_application(app)
-    window = TextProcessor()
+    window = TextProcessor(from_clipboard=from_clipboard)
     window.show()
     return app.exec()

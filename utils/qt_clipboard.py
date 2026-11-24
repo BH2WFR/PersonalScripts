@@ -135,7 +135,13 @@ def _linux_file_urls(mime: QMimeData, plain: str | None) -> list[QUrl]:
     return [QUrl.fromEncoded(line) for line in lines[1:] if line]
 
 
-def read_clipboard_paths(*, preserve_text_separators: bool = False) -> tuple[str, list[str]]:
+def local_file_paths(urls: Sequence[QUrl]) -> list[str]:
+    """Decode Qt file URLs in order, using the current platform's separators."""
+    windows = sys.platform == "win32"
+    return [path for url in urls if url.isLocalFile() and (path := _local_path(url, windows))]
+
+
+def read_clipboard_paths(*, preserve_text_separators: bool = False, parse_text_paths: bool = True) -> tuple[str, list[str]]:
     """Return the clipboard's displayable source and its extracted file paths.
 
     Prefer explicit plain text for the source, including quotes and URL escapes.
@@ -143,6 +149,7 @@ def read_clipboard_paths(*, preserve_text_separators: bool = False) -> tuple[str
     Set preserve_text_separators to keep the slash spelling of pasted path text.
     Native file selections retain their platform's separators in either mode.
     Non-path text is returned alongside an empty list.
+    Disable parse_text_paths to return plain text verbatim alongside only native file paths.
     """
     mime = QGuiApplication.clipboard().mimeData()
     plain = mime.text() if mime is not None and mime.hasFormat("text/plain") else None
@@ -158,10 +165,12 @@ def read_clipboard_paths(*, preserve_text_separators: bool = False) -> tuple[str
         source = plain if plain is not None else "\n".join(
             url.toString(QUrl.ComponentFormattingOption.FullyEncoded) for url in urls
         )
-        return source, [path for url in urls if url.isLocalFile() and (path := _local_path(url, windows))]
+        return source, local_file_paths(urls)
 
     found = []
     source = plain if plain is not None else mime.text()
+    if not parse_text_paths:
+        return source, []
     for line in re.split(r"\r\n|[\r\n]", source):
         if not line.strip():
             continue

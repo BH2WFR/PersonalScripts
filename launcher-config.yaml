@@ -127,7 +127,7 @@ gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no
     - "document-processing/pdf-page-splitter.py"
     - "research/matrix-viewer.py"
     - "others/script-to-app.py"
-    - "input-and-text/text-processor.py"
+    - "input-and-text/text-path-processor.py"
     - "input-and-text/unicode-inspector.py"
 
 elevation-needed-list: # 下列程序，启动时需要提权，启动器中列出时会带上 `[SUDO]` 的尾巴
