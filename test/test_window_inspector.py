@@ -91,6 +91,26 @@ class InspectorTests(unittest.TestCase):
         self.assertTrue(pinned.windowFlags() & flag)
         self.assertTrue(pinned.pin.isChecked())
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS preview window level")
+    def test_preview_changes_pin_without_hiding_inspector(self) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QSignalSpy
+
+        self.ui.show()
+        handle = self.ui.windowHandle()
+        assert handle is not None
+        visibility = QSignalSpy(handle.visibleChanged)
+        flag = Qt.WindowType.WindowStaysOnTopHint
+        self.ui.pin.setChecked(True)
+        self.ui._pin(False)
+        self.assertFalse(handle.flags() & flag)
+        self.assertTrue(self.ui.pin.isChecked())
+        with patch("window_inspector.macos.activate_inspector"):
+            self.ui._finish_preview()
+        self.assertTrue(handle.flags() & flag)
+        self.assertTrue(handle.isVisible())
+        self.assertEqual(visibility.count(), 0)
+
     def test_list_prompt_and_selection(self) -> None:
         from PySide6.QtCore import Qt
 
@@ -120,7 +140,7 @@ class InspectorTests(unittest.TestCase):
         from window_inspector.model import ProcessInfo
         from PySide6.QtWidgets import QTreeWidgetItem
 
-        snapshot = Snapshot(self.first, [], paths={"Application bundle": "/Fixture.app", "Document": "/fixture file"})
+        snapshot = Snapshot(self.first, [], paths={"App Bundle": "/Fixture.app", "Document": "/fixture file"})
         self.backend.snapshot.side_effect = None
         self.backend.snapshot.return_value = snapshot
         details = ProcessInfo("Fixture", "/fixture", "fixture 'two words'", None, [], ["fixture", "two words"])

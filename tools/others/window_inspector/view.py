@@ -156,6 +156,7 @@ class Inspector(QWidget):
         finder_hint = QLabel("⬆️ Drag the finder onto a window")
         finder_hint.setIndent(max(0, (self.finder.width() - finder_hint.fontMetrics().horizontalAdvance("↑")) // 2))
         options.addWidget(finder_hint)
+        options.addStretch()
         self.hidden_windows = QCheckBox("Include hidden windows")
         self.hidden_windows.setToolTip("Include hidden windows when listing or searching.")
         self.hidden_windows.clicked.connect(lambda: self.guard(self.refresh_list) if self.loaded else None)
@@ -165,7 +166,7 @@ class Inspector(QWidget):
         self.pin.setChecked(bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
         self.pin.toggled.connect(self._pin)
         options.addWidget(self.pin)
-        options.addStretch()
+        options.addWidget(_vertical_separator())
         self._button(options, "Refresh Info", "Read the selected window and process details again.", self.refresh)
         self.window_controls.append(self._button(options, "Read Controls", "List the controls exposed by the selected window.", self.read_controls))
 
@@ -259,12 +260,19 @@ class Inspector(QWidget):
             field = QLineEdit(readOnly=True)
             field.setStyleSheet("max-height: 1.2em;")
             self.fields[label] = field
-            fields.addWidget(field, i, 1)
-        if IS_MACOS:
-            self.paths = NoWheelComboBox()
-            self.paths.setToolTip("Choose the executable, application bundle or window document.")
-            self.paths.currentIndexChanged.connect(lambda: self.fields["Path"].setText(self.paths.currentData() or ""))
-            fields.addWidget(self.paths, 2, 2)
+            if IS_MACOS and label == "Path":
+                self.paths = NoWheelComboBox()
+                self.paths.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+                self.paths.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                self.paths.setToolTip("Choose the executable, application bundle or window document.")
+                self.paths.currentIndexChanged.connect(lambda: self.fields["Path"].setText(self.paths.currentData() or ""))
+                path_row = QHBoxLayout()
+                path_row.setSpacing(fields.horizontalSpacing())
+                path_row.addWidget(self.paths)
+                path_row.addWidget(field, 1)
+                fields.addLayout(path_row, i, 1)
+            else:
+                fields.addWidget(field, i, 1)
         fields.setColumnStretch(1, 1)
         self.info, self.controls = _ValueTable(["Property", "Value"]), _Table(CONTROL_COLUMNS)
         self.info.setRootIsDecorated(True)
@@ -314,6 +322,11 @@ class Inspector(QWidget):
             self._feedback(str(exc))
 
     def _pin(self, checked: bool) -> None:
+        # QWidget.setWindowFlag hides a visible widget. Change the live Cocoa
+        # window's level through QWindow so a preview never unmaps the inspector.
+        if IS_MACOS and (handle := self.windowHandle()) is not None:
+            handle.setFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
+            return
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
         self.show()
 

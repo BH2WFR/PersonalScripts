@@ -231,9 +231,10 @@ def _application_details(w: Window) -> tuple[Properties, dict[str, str]]:
             else:
                 rows.append((PropertyGroup.FILE, "Binary type", binary.stdout.strip()))
         if url := app.bundleURL():
-            paths["Application bundle"] = str(url.path())
-            rows.append((PropertyGroup.BUNDLE, "Bundle path", paths["Application bundle"]))
-            bundle = A.NSBundle.bundleWithPath_(paths["Application bundle"])
+            bundle_path = str(url.path())
+            paths["App Bundle"] = bundle_path
+            rows.append((PropertyGroup.BUNDLE, "Bundle path", bundle_path))
+            bundle = A.NSBundle.bundleWithPath_(bundle_path)
             if bundle:
                 for label, key in (("Display name", "CFBundleDisplayName"), ("Name", "CFBundleName"),
                                    ("Identifier", "CFBundleIdentifier"), ("Short version", "CFBundleShortVersionString"),

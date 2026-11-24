@@ -4,6 +4,7 @@ import hashlib
 import os
 import sys
 import time
+from collections.abc import Callable
 from functools import partial
 from typing import Literal
 
@@ -24,6 +25,7 @@ from utils.qt_widgets import NoWheelSpinBox, configure_qt_application, show_nona
 if sys.platform == "darwin":
     import AppKit  # pyright: ignore[reportMissingImports]
     import objc  # pyright: ignore[reportMissingImports]
+    from .mac_cursor import track_panel_cursor
 
 
 ColorKey = Literal["background_color", "border_color"]
@@ -31,7 +33,7 @@ DEFAULT_COLORS: dict[ColorKey, str] = {"background_color": "#000000", "border_co
 WidthKey = Literal["border_width", "hollow_border_width"]
 DEFAULT_WIDTHS: dict[WidthKey, int] = {"border_width": 2, "hollow_border_width": 5}
 MAX_BORDER_WIDTH = 32
-RESIZE_MARGIN = 6
+RESIZE_MARGIN = 12
 MIN_OPENING = 8
 MIN_OPACITY = 31
 FULL_OPACITY = 100
@@ -50,18 +52,22 @@ class Mask(QWidget):
         self.widths = session.widths.copy()
         self.opacity_percent = FULL_OPACITY
         self.drag: tuple[QPoint, QRect, Qt.Edge] | None = None
+        self._stop_cursor_tracking: Callable[[], None] | None = None
         self.setWindowTitle("Screen Mask")
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
-        self.setMinimumSize(32, 20)
+        self.setMinimumSize(100, 50)
         self.resize(420, 78)
         if sys.platform == "darwin" and QGuiApplication.platformName() == "cocoa":
             self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
-            panel = objc.objc_object(c_void_p=int(self.winId())).window()
-            panel.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
-                                         | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary)
+            view = objc.objc_object(c_void_p=int(self.winId()))  # pyright: ignore[reportAttributeAccessIssue]
+            panel = view.window()
+            spaces = AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces  # pyright: ignore[reportAttributeAccessIssue]
+            auxiliary = AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary  # pyright: ignore[reportAttributeAccessIssue]
+            panel.setCollectionBehavior_(spaces | auxiliary)
+            self._stop_cursor_tracking = track_panel_cursor(self, view)
 
     @property
     def _width_key(self) -> WidthKey:
@@ -107,14 +113,17 @@ class Mask(QWidget):
 
     def edges_at(self, pos: QPoint) -> Qt.Edge:
         """Return the resize edges under a widget-local position."""
+        # Keep a draggable center on small blocks and draggable sides on small frames.
+        x_margin = min(RESIZE_MARGIN, self.width() // 3)
+        y_margin = min(RESIZE_MARGIN, self.height() // 3)
         edges = Qt.Edge(0)
-        if pos.x() < RESIZE_MARGIN:
+        if pos.x() < x_margin:
             edges |= Qt.Edge.LeftEdge
-        elif pos.x() >= self.width() - RESIZE_MARGIN:
+        elif pos.x() >= self.width() - x_margin:
             edges |= Qt.Edge.RightEdge
-        if pos.y() < RESIZE_MARGIN:
+        if pos.y() < y_margin:
             edges |= Qt.Edge.TopEdge
-        elif pos.y() >= self.height() - RESIZE_MARGIN:
+        elif pos.y() >= self.height() - y_margin:
             edges |= Qt.Edge.BottomEdge
         if self.hollow and edges in (Qt.Edge.TopEdge, Qt.Edge.BottomEdge, Qt.Edge.LeftEdge, Qt.Edge.RightEdge):
             return Qt.Edge(0)  # Move from any side; only corners resize a frame.
@@ -149,20 +158,23 @@ class Mask(QWidget):
                 new.setHeight(max(self.minimumHeight(), rect.height() + delta.y()))
             self.setGeometry(new)
             return
-        edges = self.edges_at(event.position().toPoint())
+        if self._stop_cursor_tracking is None:
+            self.setCursor(self.cursor_at(event.position().toPoint()))
+
+    def cursor_at(self, pos: QPoint) -> Qt.CursorShape:
+        """Return the pointer shape for the same hit target used to start a drag."""
+        edges = self.edges_at(pos)
         left, right = Qt.Edge.LeftEdge, Qt.Edge.RightEdge
         top, bottom = Qt.Edge.TopEdge, Qt.Edge.BottomEdge
         if edges in (left | top, right | bottom):
-            cursor = Qt.CursorShape.SizeFDiagCursor
+            return Qt.CursorShape.SizeFDiagCursor
         elif edges in (left | bottom, right | top):
-            cursor = Qt.CursorShape.SizeBDiagCursor
+            return Qt.CursorShape.SizeBDiagCursor
         elif edges & (left | right):
-            cursor = Qt.CursorShape.SizeHorCursor
+            return Qt.CursorShape.SizeHorCursor
         elif edges & (top | bottom):
-            cursor = Qt.CursorShape.SizeVerCursor
-        else:
-            cursor = Qt.CursorShape.SizeAllCursor
-        self.setCursor(cursor)
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.OpenHandCursor if sys.platform == "darwin" else Qt.CursorShape.SizeAllCursor
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self.drag = None
@@ -254,6 +266,9 @@ class Mask(QWidget):
             self.session.close_all()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._stop_cursor_tracking is not None:
+            self._stop_cursor_tracking()
+            self._stop_cursor_tracking = None
         self.session.blocks.discard(self)
         if not self.session.blocks:
             self.session.app.quit()

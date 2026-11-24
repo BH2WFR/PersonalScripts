@@ -71,6 +71,7 @@ class ScreenMaskTests(unittest.TestCase):
     @staticmethod
     def use_menu(block: Mask, interact: Callable[[QMenu], None]) -> None:
         """Run a real popup and propagate callback failures after its nested event loop."""
+        QApplication.processEvents()  # Finish showing the panels before opening a native popup.
         errors: list[Exception] = []
 
         def run_callback() -> None:
@@ -175,6 +176,27 @@ class ScreenMaskTests(unittest.TestCase):
         reloaded = Session(self.app, self.session.store)
         self.assertEqual(reloaded.widths["border_width"], 7)
 
+    def test_resize_targets_extend_along_each_corner(self) -> None:
+        for hollow in (False, True):
+            with self.subTest(hollow=hollow):
+                self.session.add_block(hollow=hollow)
+                block, = self.session.blocks
+                right, bottom = block.width() - 1, block.height() - 1
+                for x, inner_x, horizontal in ((0, 11, Qt.Edge.LeftEdge), (right, right - 11, Qt.Edge.RightEdge)):
+                    for y, inner_y, vertical in ((0, 11, Qt.Edge.TopEdge), (bottom, bottom - 11, Qt.Edge.BottomEdge)):
+                        for pos in (QPoint(inner_x, y), QPoint(x, inner_y)):
+                            self.assertEqual(block.edges_at(pos), horizontal | vertical)
+                self.assertEqual(block.edges_at(QPoint(12, 0)), Qt.Edge(0) if hollow else Qt.Edge.TopEdge)
+                if not hollow:
+                    self.assertEqual(block.edges_at(QPoint(right // 2, 11)), Qt.Edge.TopEdge)
+                    self.assertEqual(block.edges_at(QPoint(11, bottom // 2)), Qt.Edge.LeftEdge)
+                block.resize(1, 1)
+                self.assertEqual((block.width(), block.height()), (30, 15))
+                center = block.rect().center()
+                self.assertEqual(block.edges_at(center), Qt.Edge(0))
+                self.assertEqual(block.edges_at(QPoint(0, center.y())), Qt.Edge(0) if hollow else Qt.Edge.LeftEdge)
+                block.close()
+
     def test_hollow_frame_tracks_size_and_width_and_restores_solid(self) -> None:
         self.session.add_block()
         block, = self.session.blocks
@@ -254,6 +276,42 @@ class ScreenMaskTests(unittest.TestCase):
         self.choose(block, "Hollow frame")
         style = ctypes.windll.user32.GetWindowLongW(wintypes.HWND(int(block.winId())), -20)
         self.assertTrue(style & 0x08000000)  # WS_EX_NOACTIVATE
+
+    @unittest.skipUnless(sys.platform == "darwin", "Cocoa cursor tracking")
+    def test_cocoa_panel_cursor_tracks_without_qt_mouse_events(self) -> None:
+        if self.app.platformName() != "cocoa":
+            self.skipTest("requires a native Cocoa window")
+        import AppKit  # pyright: ignore[reportMissingImports]
+        import objc  # pyright: ignore[reportMissingImports]
+        from screen_mask.mac_cursor import ScreenMaskCursorOwner
+
+        for hollow in (False, True):
+            with self.subTest(hollow=hollow):
+                self.session.add_block(hollow=hollow)
+                block, = self.session.blocks
+                handle = block.windowHandle()
+                assert handle is not None
+                view = objc.objc_object(c_void_p=int(block.winId()))  # pyright: ignore[reportAttributeAccessIssue]
+                area, = [a for a in view.trackingAreas() if isinstance(a.owner(), ScreenMaskCursorOwner)]
+                self.assertTrue(area.options() & AppKit.NSTrackingActiveAlways)  # pyright: ignore[reportAttributeAccessIssue]
+                move = Qt.CursorShape.OpenHandCursor
+                positions = [
+                    (QPoint(1, 1), Qt.CursorShape.SizeFDiagCursor),
+                    (QPoint(block.width() - 2, 1), Qt.CursorShape.SizeBDiagCursor),
+                    (QPoint(1, 20), move if hollow else Qt.CursorShape.SizeHorCursor),
+                    (QPoint(20, 1), move if hollow else Qt.CursorShape.SizeVerCursor),
+                    (QPoint(1, 1), Qt.CursorShape.SizeFDiagCursor),
+                    (block.rect().center(), Qt.CursorShape.SizeFDiagCursor if hollow else move),
+                ]
+                for pos, expected in positions:
+                    location = view.convertPoint_toView_((pos.x(), pos.y()), None)
+                    event = AppKit.NSEvent.mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure_(  # pyright: ignore[reportAttributeAccessIssue]
+                        AppKit.NSEventTypeMouseMoved, location, 0, 0,  # pyright: ignore[reportAttributeAccessIssue]
+                        view.window().windowNumber(), None, 0, 0, 0)
+                    area.owner().mouseMoved_(event)
+                    self.assertEqual(handle.cursor().shape(), expected)
+                block.close()
+                self.assertNotIn(area, view.trackingAreas())
 
     def test_drag_fallback_moves_and_resizes_in_logical_coordinates(self) -> None:
         self.session.add_block()
