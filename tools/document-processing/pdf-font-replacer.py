@@ -33,8 +33,7 @@ Missing glyphs/styles fail explicitly; exports remove encryption and PDF/A tags.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 PACKAGE_NAME = "personal_pdf_tools"
@@ -60,6 +59,7 @@ def load_app(module: str = "font_replace.app") -> ModuleType:
 
 def main() -> int:
     """Start the desktop UI or its private worker; replacement settings are GUI-only."""
+    Console.initialize_ansi_output()
     if "--help" in sys.argv or "-h" in sys.argv:
         Console.print_banner("PDF FONT REPLACER")
         print(HELP)

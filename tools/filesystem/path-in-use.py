@@ -73,8 +73,7 @@ Restricted processes and alternate hard links may be missed.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 DEFAULT_TIMEOUT = 60.0
@@ -820,6 +819,7 @@ def main() -> int:
         May request administrator/root elevation; prompts when no path is supplied, invokes
         native read-only queries, and writes results/diagnostics to the terminal.
     """
+    Console.initialize_ansi_output()
     args = _parser().parse_args()
     if args._windows_worker is not None:
         skipped = {tuple(map(int, item.split(":"))) for item in args._skip}

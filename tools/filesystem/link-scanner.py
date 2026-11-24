@@ -26,11 +26,11 @@ targets, optionally remove broken links, and repair directory symlinks on Window
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     #* 交互输入或 argv[1] 读取
     Console.print_banner("LINK SCANNER")
 

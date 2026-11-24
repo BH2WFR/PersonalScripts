@@ -25,8 +25,7 @@ NAS folders. Preserves extensions and avoids name collisions with numeric suffix
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 def get_truncated_filename(name, limit, encoding, de_dupe_idx=0):
@@ -54,6 +53,7 @@ def get_truncated_filename(name, limit, encoding, de_dupe_idx=0):
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     #* 交互输入
     Console.print_banner("FILENAME SHORTENER")
 

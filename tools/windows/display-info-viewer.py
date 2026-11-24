@@ -26,8 +26,7 @@ using native APIs to avoid DPI-virtualized measurements.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 # ============ platform guard ============
@@ -280,6 +279,7 @@ def _extract_display_index(device_name: str, fallback: int) -> int:
 
 # ============ main ============
 def main() -> int:
+    Console.initialize_ansi_output()
     # ── help text ──────────────────────────────────────────
     if "--help" in sys.argv or "-h" in sys.argv:
 

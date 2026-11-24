@@ -34,8 +34,7 @@ to the configured API; recognition drafts stay in memory.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 PACKAGE_NAME = "personal_pdf_tools"
@@ -61,6 +60,7 @@ def load_app(module: str = "bookmarks.app") -> ModuleType:
 
 def main() -> int:
     """Start the desktop UI or its private worker; no terminal conversion mode."""
+    Console.initialize_ansi_output()
     if "--help" in sys.argv or "-h" in sys.argv:
         Console.print_banner("PDF BOOKMARK EDITOR")
         print(HELP)

@@ -22,8 +22,7 @@ Available data depends on the disk, enclosure and access permissions.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 # ============ helpers ============
@@ -84,6 +83,7 @@ def _get_device_info(dev_path: str, dev_type: str) -> dict:
 
 # ============ main ============
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.argument_parser(HELP).parse_args()
     System.restart_elevated()
     if not Environment.check_commands(CmdCheck("smartctl", hints={

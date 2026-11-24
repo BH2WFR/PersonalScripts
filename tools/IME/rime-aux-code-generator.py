@@ -82,6 +82,7 @@ def generate_aux_rows(
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.parse_args()
     Console.print_banner("RIME AUX CODE GENERATOR")

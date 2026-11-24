@@ -40,8 +40,7 @@ prove safe removal. Devices and logs are not modified.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 DEFAULT_MINUTES = 60
@@ -209,6 +208,7 @@ def main() -> int:
     Side effects:
         May request UAC elevation; reads the System log and prints recorded metadata.
     """
+    Console.initialize_ansi_output()
     args = _parser().parse_args()
     if sys.platform != "win32":
         print(f"{FLRed}This script requires Windows 10+. Current platform: {sys.platform}{CRst}")

@@ -19,10 +19,7 @@ _OS = sys.platform
 
 
 def main() -> int:
-
-    """Run the viewer; return zero after a clean stop or help display."""
-
-    Console.set_locale_utf8()
+    """Run the viewer and return zero after a clean stop."""
 
     print()
     print(f"{FLYellow}╔{'═' * 46}╗{CRst}")

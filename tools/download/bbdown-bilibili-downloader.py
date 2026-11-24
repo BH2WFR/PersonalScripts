@@ -24,11 +24,11 @@ multi-part videos and quality selection.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.print_banner("BBDOWN BILIBILI DOWNLOADER")
 
     if "--help" in sys.argv or "-h" in sys.argv:

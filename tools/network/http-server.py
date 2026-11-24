@@ -30,8 +30,7 @@ This is not a production server; files are accessible to clients that can reach 
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 def _resolve_dir(path_str):
@@ -134,6 +133,7 @@ def _prompt_quiet():
 
 
 def main():
+    Console.initialize_ansi_output()
 
 
     if "--help" in sys.argv or "-h" in sys.argv:

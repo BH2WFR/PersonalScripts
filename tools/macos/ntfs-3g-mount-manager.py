@@ -26,8 +26,7 @@ and safely eject disks.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 # ============ helpers ============
@@ -468,6 +467,7 @@ def _print_partitions(partitions: list[dict]):
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.argument_parser(HELP).parse_args()
     if sys.platform != "darwin":
         Console.print_error_and_exit(f"This script only runs on macOS. Current platform: {sys.platform}")

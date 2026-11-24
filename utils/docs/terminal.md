@@ -16,6 +16,8 @@ Implementation: [console.py](../console.py), [input.py](../input.py), [menu.py](
 | Standard exit message | `Console.print_exit_message_and_exit()` or `Console.print_error_and_exit()` |
 | Terminal width / CJK display width | `Console.get_terminal_width()`, `Console.display_width(s)` |
 | Detect interactive stdin (including Windows NUL) | `Console.has_interactive_input() -> bool` |
+| Initialize standard output at entry | `Console.initialize_ansi_output() -> None` silently enables ANSI processing on Windows for the current stdout and stderr independently, skipping unavailable or redirected streams. Safe to repeat. Other platforms need no setup. |
+| Show help before entering main | `Console.print_help_and_exit(HELP)` initializes standard output, prints authored help and exits with status 0. |
 | Prepare a terminal for ANSI redraws | `Console.enable_ansi_output(stream) -> bool` checks the output stream and enables VT processing on a Windows console while preserving existing mode flags. Redirected output returns false. |
 | Human-readable byte size | `Console.format_size(size_bytes, precision=1)` |
 | Current time string | `Console.get_time_str()` |
@@ -163,6 +165,12 @@ excessive or nonconforming help; see [AGENTS.md](../../AGENTS.md).
 The internal `_HelpArgumentParser` overrides only `format_help()`. Use the public
 `Console.argument_parser(HELP)` factory rather than duplicating parser subclasses. Subparsers without authored
 help retain native argparse help formatting.
+
+Call the startup initializer in the outer runnable script, before dispatching
+to its private app or worker. It uses the same per-stream check as ANSI redraws.
+Call `Console.enable_ansi_output(stream)` directly when a renderer needs to
+choose between cursor control and plain output. Initialization does not filter
+escape sequences from text written to a file or pipe.
 
 `Console.set_locale_utf8()` runs the shared Windows code-page/locale setup and
 prints a Unicode diagnostic line on all platforms. It is useful for encoding

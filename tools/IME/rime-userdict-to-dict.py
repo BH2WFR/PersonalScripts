@@ -76,6 +76,7 @@ def dictionary_rows(entries: list[RimeEntry], name: str) -> list[str]:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.parse_args()
     Console.print_banner("RIME USERDICT TO DICT")

@@ -36,8 +36,7 @@ Supports outbound-only or both inbound/outbound blocking.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 SUPPORTED_SUFFIXES = frozenset({".exe", ".com"})
@@ -1208,6 +1207,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         Requests administrator elevation, may open ``wf.msc``, and creates or
         removes local persistent firewall rules only after explicit confirmation.
     """
+    Console.initialize_ansi_output()
     if sys.platform != "win32":
         Console.print_error_and_exit(
             f"This script only runs on Windows. Current platform: {sys.platform}"

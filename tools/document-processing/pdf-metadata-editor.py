@@ -26,6 +26,7 @@ Usage:
 
 def main() -> int:
     """Start the GUI or serve requests from its private worker."""
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("source", nargs="?", type=Path)
     parser.add_argument("--pdf-tools-worker", action="store_true", help=argparse.SUPPRESS)

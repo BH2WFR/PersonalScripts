@@ -39,8 +39,7 @@ bundled. The target script and interpreter must remain at their recorded paths.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 SUBDIR = "PersonalScripts"
@@ -680,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
         with Launch Services or refreshes Linux desktop MIME recommendations,
         and prints the resulting paths and usage instructions.
     """
+    Console.initialize_ansi_output()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     if sys.platform not in ("win32", "darwin", "linux"):

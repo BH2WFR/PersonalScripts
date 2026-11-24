@@ -27,8 +27,7 @@ and APFS volumes can share capacity that must not be summed.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 def _display_text(value: str) -> str:
@@ -97,6 +96,7 @@ def main() -> int:
         Reads native disk information and prints the tree to stdout; diagnostics
         go to stderr. No prompts, clipboard writes, mounting, or file writes.
     """
+    Console.initialize_ansi_output()
     # ── help and arguments ──────────────────────────
     if "--help" in sys.argv or "-h" in sys.argv:
         Console.print_banner("DISK INVENTORY")

@@ -24,14 +24,14 @@ Thumbs.db and desktop.ini. Deletion affects the selected directory tree.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 JUNK_NAMES = {".DS_Store", "__MACOSX__", "Thumbs.db", ".AppleDouble", ".Spotlight-V100", ".Trashes", "desktop.ini"}
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.print_banner("OS JUNK CLEANER")
 
     if "--help" in sys.argv or "-h" in sys.argv:

@@ -32,8 +32,7 @@ Reported wattage depends on hardware/driver support and may be unavailable.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 def print_help() -> None:
@@ -681,6 +680,7 @@ def parse_args() -> tuple[bool, bool, float, int]:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     verbose, once, interval, parse_code = parse_args()
     if parse_code >= 0:
         return parse_code

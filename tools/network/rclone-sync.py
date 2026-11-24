@@ -77,6 +77,7 @@ def main() -> int:
     Returns:
         Application exit status; synchronization follows its explicit task flow.
     """
+    Console.initialize_ansi_output()
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(HELP)
         return 0

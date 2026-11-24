@@ -32,8 +32,7 @@ register an executable for the current user or machine.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 if sys.platform == "win32":
@@ -1583,6 +1582,7 @@ def _interactive_action() -> Optional[str]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Manage an extension directly or open the interactive menu."""
+    Console.initialize_ansi_output()
     parser = _build_arg_parser()
     parser.add_argument(
         "--view",

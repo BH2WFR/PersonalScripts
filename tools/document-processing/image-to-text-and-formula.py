@@ -28,6 +28,7 @@ Usage:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     if "-h" in sys.argv or "--help" in sys.argv:
         print(HELP)
         return 0

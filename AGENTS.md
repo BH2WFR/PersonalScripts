@@ -85,6 +85,11 @@ conda run -n base python run-script.py <name> [args...]
 - Runnable Python entries expose `main() -> int`, returning an exit status.
   Long-running GUI/hook entries may use `main() -> None`. Importing an entry must
   not start its operational work.
+- Start each runnable Python entry's `main()` with `Console.initialize_ansi_output()`.
+  In layered tools, the outer script owns console setup, public help, elevation
+  and final Ctrl+C handling. Private app and worker functions called by that
+  script inherit this setup, even when named `main()`. Direct help paths that
+  exit before the entry's `main()` use `Console.print_help_and_exit(HELP)`.
 - Handle `--help`/`-h` before prompts, dependency probes, elevation or work.
   Check hard dependencies before interactive work; use
   `Environment.check_commands()` with `CmdCheck` for external tools and give
@@ -132,6 +137,7 @@ Usage:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.parse_args()  # Help exits before operational checks or work.
     Console.print_banner("TOOL NAME")

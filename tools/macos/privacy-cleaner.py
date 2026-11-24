@@ -28,8 +28,7 @@ traces. Cleanup can permanently remove saved data and sign-in state.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 HOME = Path(f"~{os.environ.get('SUDO_USER', '')}").expanduser()
@@ -437,6 +436,7 @@ def print_banner(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("-f", "--force", action="store_true")
     parser.add_argument("--skip-recent", action="store_true")

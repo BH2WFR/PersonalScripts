@@ -16,8 +16,7 @@ Apply a selected crop region to all images in one or more directories.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 import cv2
@@ -119,6 +118,7 @@ def save_cropped_image(img: Image, output_dir: str) -> None:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.print_banner("IMAGE CROPPER")
 
     if "--help" in sys.argv or "-h" in sys.argv:

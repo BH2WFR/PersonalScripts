@@ -24,13 +24,13 @@ traverse them correctly.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 from typing import Optional
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     #* Windows only
     if(os.name != "nt"):
         print(f"{FLRed}ERROR: This script only runs on Windows. Current platform: {sys.platform}{CRst}\n")

@@ -27,8 +27,7 @@ protections or infringing copyright is not welcomed;
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 import mss # pip install mss
@@ -43,6 +42,7 @@ from PIL import Image # pip install Pillow
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.print_banner("Automatic Screen Capturing Tool for Document")
     if "--help" in sys.argv or "-h" in sys.argv:
 

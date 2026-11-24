@@ -25,6 +25,7 @@ Usage:
 
 def main() -> int:
     """Start the desktop editor after handling CLI help."""
+    Console.initialize_ansi_output()
     Console.argument_parser(HELP).parse_args()
     if str(SCRIPT_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPT_DIR))

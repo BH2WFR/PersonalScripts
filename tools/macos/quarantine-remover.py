@@ -23,8 +23,7 @@ Optionally remove provenance attributes; use only for files you trust.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 def _remove_attrs(file_path: str, clear_provenance: bool) -> tuple[bool, bool]:
@@ -41,6 +40,7 @@ def _remove_attrs(file_path: str, clear_provenance: bool) -> tuple[bool, bool]:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.print_banner("QUARANTINE REMOVER")
 
     if "--help" in sys.argv or "-h" in sys.argv:

@@ -17,8 +17,7 @@ Trim time ranges from video files with ffmpeg. This trims duration, not image ed
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 # 基于 ffmpeg 的视频裁剪工具
 # 需要先安装 ffmpeg，推荐使用 `scoop install ffmpeg` 安装
@@ -31,6 +30,7 @@ else:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     Console.print_banner("FFMPEG VIDEO TRIMMER")
 
     if "--help" in sys.argv or "-h" in sys.argv:

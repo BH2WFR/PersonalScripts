@@ -36,8 +36,7 @@ Key capture is limited to the focused window and authorized testing.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 PACKAGE_NAME = "personal_keyboard_remap"
@@ -82,6 +81,7 @@ def main() -> int:
         Requests elevation before opening the GUI, including in read-only mode.
         No startup path writes the registry.
     """
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("--read-only", action="store_true", help="Disable registry writing")
     parser.add_argument("--admin-draft", help=argparse.SUPPRESS)

@@ -26,6 +26,7 @@ invisible characters, with text statistics and copyable reports.
 
 def main() -> int:
     """Open the inspector after handling help and validating arguments."""
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("text", nargs="*", metavar="TEXT")
     parser.add_argument("--clip", "--from-clipboard", action="store_true", dest="clipboard")

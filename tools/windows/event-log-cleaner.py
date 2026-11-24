@@ -32,8 +32,7 @@ logging remains enabled and Windows may record that a log was cleared.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 PROGRESS_INTERVAL = 25
@@ -213,6 +212,7 @@ def _print_summary(summary: ClearSummary, elapsed_seconds: float) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Enumerate, confirm, and clear all Windows Event Log channels."""
+    Console.initialize_ansi_output()
     if sys.platform != "win32":
         Console.print_error_and_exit(
             f"This script only runs on Windows. Current platform: {sys.platform}"

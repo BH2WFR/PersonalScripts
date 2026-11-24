@@ -69,6 +69,7 @@ def load_app() -> ModuleType:
 
 def main() -> int:
     """Run the viewer and return its exit status; help never queries logs."""
+    Console.initialize_ansi_output()
     Console.argument_parser(HELP).parse_args()
     return cast(Callable[[], int], load_app().main)()
 

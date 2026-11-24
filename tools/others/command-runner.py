@@ -41,8 +41,7 @@ Supports validation and command previews; no automatic runtime installation.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -642,6 +641,7 @@ def main() -> int:
     Prints menus and plans; may prompt and start child processes. Configuration
     and launch failures return 2. KeyboardInterrupt propagates to the entrypoint.
     """
+    Console.initialize_ansi_output()
     parsed = _parser().parse_args()
     Console.print_banner("COMMAND RUNNER")
     try:

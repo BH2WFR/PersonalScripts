@@ -75,9 +75,11 @@ def load_app() -> ModuleType:
 
 def main() -> int:
     """Run the viewer and return its exit status; help never starts a hook."""
+    Console.initialize_ansi_output()
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(HELP)
         return 0
+    Console.set_locale_utf8()
     return cast(Callable[[], int], load_app().main)()
 
 

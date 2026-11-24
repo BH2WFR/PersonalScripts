@@ -31,14 +31,14 @@ sequences for projector-coordinate and phase-unwrapping workflows.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 try:
     import cv2  # noqa: E402
     import numpy as np  # noqa: E402
 except ImportError as e:
+    Console.initialize_ansi_output()
     print(f"{FLRed}ERROR: Missing dependency: {e.name}{CRst}")
     print(f"  Install with: {FGray}pip install opencv-python numpy{CRst}")
     sys.exit(1)
@@ -1173,6 +1173,7 @@ def _run_gray_code_workflow(projector: ProjectorSpec) -> None:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     if "--help" in sys.argv or "-h" in sys.argv:
 
         print(HELP)

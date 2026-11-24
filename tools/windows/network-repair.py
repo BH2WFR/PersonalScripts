@@ -35,8 +35,7 @@ a restart; WinHTTP actions do not change browser or VPN proxy settings.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 COMMAND_TIMEOUT_SECONDS = 120
@@ -274,6 +273,7 @@ def main() -> int:
         SystemExit: On invalid options, platform rejection, or admin relaunch.
         KeyboardInterrupt: On user interruption.
     """
+    Console.initialize_ansi_output()
     options = _parse_args()
     if sys.platform != "win32":
         Console.print_error_and_exit(f"This script only runs on Windows. Current platform: {sys.platform}")

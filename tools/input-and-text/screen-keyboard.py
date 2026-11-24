@@ -32,6 +32,7 @@ Usage:
 
 def main() -> int:
     """Open the keyboard using native input for the current desktop."""
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.allow_abbrev = False
     parser.exit_on_error = False

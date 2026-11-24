@@ -31,8 +31,7 @@ Plain array exports do not retain inverse-transform metadata.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 """Implementation notes.
 
@@ -414,6 +413,7 @@ def main() -> int:
         Selects PySide6 for this process, imports the viewer package, opens
         a Qt window and runs its event loop. Prints dependency errors.
     """
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("files", nargs="*", type=Path, metavar="file", help="Files to open in argument order; omit for an empty GUI")
     parser.add_argument("--key", help="Initial MAT variable, NPZ member, Excel worksheet or image matrix label for each file (e.g. R, G, B, A, Monochrome)")

@@ -31,8 +31,7 @@ Running status. Restarting can interrupt applications using the service.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 class LookupMode(StrEnum):
@@ -523,6 +522,7 @@ def main(argv: list[str] | None = None) -> int:
         May re-execute with administrator privileges, prompt on standard input,
         query installed services, and restart the selected service.
     """
+    Console.initialize_ansi_output()
     if sys.platform != "win32":
         Console.print_error_and_exit(
             f"This script only runs on Windows. Current platform: {sys.platform}"

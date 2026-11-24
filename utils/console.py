@@ -8,6 +8,9 @@ import typing
 
 from .ansi import *
 
+_ENABLE_PROCESSED_OUTPUT = 0x0001
+_ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+
 
 class _HelpArgumentParser(argparse.ArgumentParser):
     """Keep authored help separate from argparse's validation and error usage."""
@@ -45,21 +48,35 @@ class Console:
         return Console._terminal_mode(sys.stdin)
 
     @staticmethod
-    def enable_ansi_output(stream: typing.TextIO) -> bool:
-        """Return whether the terminal can redraw lines, enabling VT output on Windows."""
-        # Win32 requires both ENABLE_PROCESSED_OUTPUT and ENABLE_VIRTUAL_TERMINAL_PROCESSING.
-        return Console._terminal_mode(stream, enable_flags=0x0001 | 0x0004)
+    def initialize_ansi_output() -> None:
+        """Enable ANSI processing on each available Windows standard output stream."""
+        if os.name == "nt":
+            Console.enable_ansi_output(sys.stdout)
+            Console.enable_ansi_output(sys.stderr)
+
+    @staticmethod
+    def print_help_and_exit(help_text: str) -> typing.NoReturn:
+        """Print authored help on a direct startup path that bypasses main()."""
+        Console.initialize_ansi_output()
+        print(help_text)
+        raise SystemExit(0)
+
+    @staticmethod
+    def enable_ansi_output(stream: typing.TextIO | None) -> bool:
+        """Return whether a terminal can use ANSI output, enabling it on Windows."""
+        flags = _ENABLE_PROCESSED_OUTPUT | _ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        return Console._terminal_mode(stream, enable_flags=flags)
 
     @staticmethod
     def _terminal_mode(stream: typing.TextIO | None, *, enable_flags: int = 0) -> bool:
-        if stream is None or stream.closed or not stream.isatty():
-            return False
-        if os.name != "nt":
-            return True
-        import ctypes
-        import msvcrt
-
         try:
+            if stream is None or stream.closed or not stream.isatty():
+                return False
+            if os.name != "nt":
+                return True
+            import ctypes
+            import msvcrt
+
             handle = ctypes.c_void_p(msvcrt.get_osfhandle(stream.fileno()))
             mode = ctypes.c_ulong()
             get_mode = ctypes.windll.kernel32.GetConsoleMode
@@ -74,7 +91,7 @@ class Console:
             set_mode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
             set_mode.restype = ctypes.c_int
             return bool(set_mode(handle, desired))
-        except (OSError, ValueError):
+        except (AttributeError, OSError, ValueError):
             return False
 
     @staticmethod

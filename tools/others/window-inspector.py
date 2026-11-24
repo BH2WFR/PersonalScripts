@@ -32,6 +32,7 @@ Usage:
 
 def main() -> int:
     """Capture the foreground window before showing the inspector."""
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("--top", action="store_true")
     if sys.platform == "win32":

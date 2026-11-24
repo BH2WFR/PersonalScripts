@@ -32,8 +32,7 @@ unchanged, and concurrent clipboard changes abort the repair.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 OSASCRIPT = "/usr/bin/osascript"
@@ -284,6 +283,7 @@ def main() -> int:
     clipboard only after confirmation or --force. --help never reads the clipboard.
     Ctrl+C propagates to the module-level handler. No files are written.
     """
+    Console.initialize_ansi_output()
     # ── help and argument validation ────────────────────
     arguments = sys.argv[1:]
     if "--help" in arguments or "-h" in arguments:

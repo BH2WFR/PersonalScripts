@@ -30,8 +30,7 @@ normal emptying leaves behind. Permanently deletes recycled files.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 # ============ platform guard ============
@@ -276,6 +275,7 @@ def _forceful_clear(drive: str) -> tuple[int, int, int, int]:
 
 # ============ main ============
 def main() -> int:
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("--force-run", action="store_true")
     force_run = parser.parse_args().force_run

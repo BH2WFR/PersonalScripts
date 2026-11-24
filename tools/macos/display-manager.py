@@ -30,11 +30,11 @@ Can disable the built-in display only while an external display is active.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 if sys.platform != "darwin":
+    Console.initialize_ansi_output()
     print(f"{FLRed}ERROR: This script only runs on macOS. Current platform: {sys.platform}{CRst}\n")
     sys.exit(1)
 
@@ -44,9 +44,7 @@ if os.uname().machine != "arm64":
     sys.exit(1)
 
 if "--help" in sys.argv or "-h" in sys.argv:
-    script_name = os.path.basename(sys.argv[0])
-    print(HELP)
-    sys.exit(0)
+    Console.print_help_and_exit(HELP)
 
 libc = ctypes.CDLL('/usr/lib/libSystem.dylib')
 libc.dlopen.argtypes = [ctypes.c_char_p, ctypes.c_int]
@@ -1755,6 +1753,7 @@ def _pause():
 
 
 def main():
+    Console.initialize_ansi_output()
     Console.print_banner("DISPLAY MANAGER")
 
     displays = get_all_displays()

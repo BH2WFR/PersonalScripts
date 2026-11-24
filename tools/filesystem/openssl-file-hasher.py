@@ -32,8 +32,7 @@ Follows symbolic links to regular files and identifies them in the results.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 DEFAULT_ALGORITHM = "sha256,sha1,md5"
@@ -327,6 +326,7 @@ def _print_results(
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Collect paths and algorithms, calculate hashes, and print grouped results."""
+    Console.initialize_ansi_output()
     parser = _build_argument_parser()
     parser.parse_args(argv)
 

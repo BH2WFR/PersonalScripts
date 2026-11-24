@@ -45,8 +45,7 @@ libraries. Close the installed viewer before updating it.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 APP_NAME = "MatrixViewer"
 EXECUTABLE = f"{APP_NAME}.exe"
@@ -260,6 +259,7 @@ def main() -> int:
         Prompts for unspecified output/environment choices, runs PyInstaller,
         updates the release and remembers both. KeyboardInterrupt propagates.
     """
+    Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
     parser.add_argument("--output", help="Install directory containing MatrixViewer.exe; otherwise prompt")
     parser.add_argument("--environment", help=f"Existing Conda build environment; otherwise prompt (initial default: {DEFAULT_ENVIRONMENT})")

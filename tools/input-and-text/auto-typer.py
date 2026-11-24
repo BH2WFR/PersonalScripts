@@ -29,6 +29,7 @@ depends on the browser, VNC client and remote application.
 
 def main() -> int:
     """Run the auto typer on a supported desktop."""
+    Console.initialize_ansi_output()
     Console.argument_parser(HELP).parse_args()
     if sys.platform not in ("win32", "darwin"):
         print("Auto Typer requires Windows or macOS.", file=sys.stderr)

@@ -32,8 +32,7 @@ with platform filtering and selectable Conda environments.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 CONFIG_FILE_NAME = "launcher-config.yaml"
@@ -1129,6 +1128,7 @@ def _resolve_additional_directories(
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     try:
         invocation = _parse_launcher_invocation(sys.argv[1:])
         ConfigStore.initialize()

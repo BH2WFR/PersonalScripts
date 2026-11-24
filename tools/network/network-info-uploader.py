@@ -28,14 +28,14 @@ The upload includes network addresses and interface details.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 from datetime import datetime
 
 UPLOAD_ENCRYPTION_KEY = b"PwMoFseUfbszDg3JsbCkGEvKgvFbW9uWKOwmkD-sMZ8="
 
 def main() -> int:
+    Console.initialize_ansi_output()
     if "--help" in sys.argv or "-h" in sys.argv:
 
         print(HELP)

@@ -28,8 +28,7 @@ entries. Deletion changes system network configuration.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 if sys.platform != "win32":
@@ -418,6 +417,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    Console.initialize_ansi_output()
     # ── CLI flags ──────────────────────────────────────────
     parser = _build_parser()
     parser.add_argument(

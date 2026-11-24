@@ -30,8 +30,7 @@ without PDF/A identification; existing files are not overwritten.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 if TYPE_CHECKING:
@@ -153,6 +152,7 @@ def main() -> int:
     Authenticates before processing. Prints progress and writes new unprotected
     PDFs, retaining the input files. EOF / Ctrl+C propagate to the entry point.
     """
+    Console.initialize_ansi_output()
     if "--help" in sys.argv or "-h" in sys.argv:
         _print_help()
         return 0

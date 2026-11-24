@@ -25,8 +25,7 @@ when applicable. Writes a new file without overwriting existing PDFs.
 """
 
 if __name__ == "__main__" and sys.argv[1:] in (["--help"], ["-h"]):
-    print(HELP)
-    raise SystemExit(0)
+    Console.print_help_and_exit(HELP)
 
 
 import pymupdf
@@ -41,6 +40,7 @@ def main() -> int:
     An unrestricted input without PDF/A offers reopen/exit instead of saving.
     Returns 1 on input, metadata, authentication, or save failure.
     """
+    Console.initialize_ansi_output()
     Console.print_banner("PDF DECRYPTOR")
 
     if "--help" in sys.argv or "-h" in sys.argv:
