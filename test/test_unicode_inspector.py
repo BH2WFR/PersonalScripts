@@ -1,10 +1,10 @@
-"""Exercise the standalone Tk inspector with generated text and mocked clipboard I/O."""
+"""Exercise the standalone Qt inspector with generated text and mocked clipboard I/O."""
 import contextlib
 import importlib.util
 import io
 from pathlib import Path
 import sys
-import time
+import os
 import unittest
 from unittest.mock import patch
 
@@ -18,9 +18,9 @@ SPEC.loader.exec_module(entry)
 
 
 class EntryTests(unittest.TestCase):
-    def test_help_does_not_require_tk(self) -> None:
+    def test_help_does_not_require_qt(self) -> None:
         for flag in ("--help", "-h"):
-            with patch.dict(sys.modules, {"tkinter": None}), patch.object(sys, "argv", ["unicode-inspector.py", flag]):
+            with patch.dict(sys.modules, {"PySide6": None}), patch.object(sys, "argv", ["unicode-inspector.py", flag]):
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as result:
                     entry.main()
@@ -35,93 +35,105 @@ class EntryTests(unittest.TestCase):
 
 
 class GuiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from utils.qt_widgets import configure_qt_application
+
+        existing = QApplication.instance()
+        cls.app = existing if isinstance(existing, QApplication) else QApplication([])
+        configure_qt_application(cls.app)
+        sys.path.insert(0, str(entry.SCRIPT_DIR))
+        cls.addClassCleanup(sys.path.remove, str(entry.SCRIPT_DIR))
+
     def setUp(self) -> None:
-        try:
-            import tkinter as tk
-        except ImportError:
-            self.skipTest("Tkinter is unavailable")
-        try:
-            self.root = tk.Tk()
-        except tk.TclError as exc:
-            self.skipTest(f"A graphical Tk display is required: {exc}")
-        self.root.withdraw()
-        self.window = entry.UnicodeInspector(self.root)
+        from unicode_inspector.window import UnicodeInspector
+
+        self.window = UnicodeInspector("", entry.EDITOR_POINTS)
         self.addCleanup(self.window.close)
 
-    def drain(self) -> None:
-        deadline = time.monotonic() + 5
-        while self.window._render_job is not None and time.monotonic() < deadline:
-            self.root.update()
-            time.sleep(0.002)
-        self.assertIsNone(self.window._render_job)
-        self.root.update()
+    def test_layout_fonts_and_columns(self) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QPushButton
+        from utils import UnicodeText
 
-    def test_original_preserves_nul_crlf_spaces_and_non_bmp(self) -> None:
-        text = " \x00\r\n中😀e\u0301\t "
+        fonts = {button.text(): button.font() for button in self.window.findChildren(QPushButton)}
+        self.assertEqual(set(fonts), {"Clear", "Paste", "Analyze", "Copy Original", "Copy Full Report", "Copy Selected Rows"})
+        self.assertEqual({label for label, font in fonts.items() if font.bold()}, {"Paste", "Analyze"})
+        font = self.window.original.font()
+        self.assertEqual(font.pointSize(), entry.EDITOR_POINTS)
+        self.assertEqual(font.families(), self.app.font().families())
+        self.assertEqual(self.window.original.document().defaultFont().families(), font.families())
+        self.assertEqual(self.window.table.font().families(), font.families())
+        model = self.window.model
+        self.assertEqual(tuple(model.headerData(i, Qt.Orientation.Horizontal) for i in range(model.columnCount())),
+                         UnicodeText.COLUMNS)
+
+    def test_source_survives_edit_selection_copy_and_undo(self) -> None:
+        from PySide6.QtCore import QMimeData
+        from unicode_inspector.editor import mime_text
+
+        text = " \x00\r\n中😀e\u0301\t\u00a0\u2028\u2029\r\ufdd0\ufdd1\ud800\ufffd "
         self.window.set_text(text)
-        self.drain()
-        self.assertEqual(self.window.report.text, text)
-        self.assertEqual(self.window.original.get("1.0", "end-1c"), text)
-        self.assertEqual(len(self.window.table.get_children()), len(text))
-        self.assertEqual(self.window.statistics["Characters"].get(), str(len(text)))
+        self.assertEqual(self.window.model.report.text, text)
+        self.assertEqual(self.window.statistics["Characters"].text(), str(len(text)))
+        self.assertEqual(self.window.model.rowCount(), len(text))
+        self.assertEqual(self.window.statistics["UTF-8 bytes"].text(), "Invalid")
+        editor = self.window.original
+        editor.selectAll()
+        self.assertEqual(mime_text(editor.createMimeDataFromSelection()), text)
+        pasted = QMimeData()
+        pasted.setText(" \r\n\u2029字\u00a0")
+        editor.insertFromMimeData(pasted)
+        self.assertEqual(editor.original_text(), pasted.text())
+        self.assertIn("Analyze to update", self.window.status.text())
+        editor.undo()
+        self.assertEqual(editor.original_text(), text)
+        editor.redo()
+        self.assertEqual(editor.original_text(), pasted.text())
 
-    def test_paste_whitespace_and_unavailable_clipboard(self) -> None:
-        import tkinter as tk
-        with patch.object(self.root, "clipboard_get", return_value=" \t\n "):
-            self.window.paste()
-        self.assertEqual(self.window.report.text, " \t\n ")
-        with patch.object(self.root, "clipboard_get", side_effect=tk.TclError("no text")):
-            self.window.paste()
-        self.assertEqual(self.window.report.text, " \t\n ")
-        self.assertIn("no readable text", self.window.status.get())
+    def test_paste_button_and_nontext_clipboard(self) -> None:
+        from PySide6.QtCore import QMimeData
 
-    def test_copy_rows_uses_source_order_and_safe_cells(self) -> None:
+        data = QMimeData()
+        with patch("unicode_inspector.window.QApplication.clipboard") as clipboard:
+            clipboard.return_value.mimeData.return_value = data
+            data.setText(" \t\r\n ")
+            self.window.paste()
+            self.assertEqual(self.window.model.report.text, " \t\r\n ")
+            data.clear()
+            self.window.paste()
+            self.assertIn("no readable text", self.window.status.text())
+            self.assertEqual(self.window.original.original_text(), " \t\r\n ")
+
+    def test_copy_and_reanalysis(self) -> None:
+        from PySide6.QtCore import QItemSelectionModel, Qt
+        from PySide6.QtTest import QTest
+        from unicode_inspector.editor import mime_text
+        from utils import UnicodeText
+
         self.window.set_text("A\n😀")
-        self.window.table.selection_set(("2", "1"))
-        with patch.object(self.window, "_copy") as copy:
-            self.window.copy_rows()
-        value = copy.call_args.args[0]
-        self.assertEqual(len(value.splitlines()), 2)
-        self.assertTrue(value.startswith("1\t[LF]\tU+000A"))
-        self.assertIn("2\t😀\tU+1F600", value)
+        model = self.window.model
+        selection = self.window.table.selectionModel()
+        for row in (2, 1):
+            selection.select(model.index(row, 0), QItemSelectionModel.SelectionFlag.Select |
+                             QItemSelectionModel.SelectionFlag.Rows)
+        with patch("unicode_inspector.window.QApplication.clipboard") as clipboard:
+            def copied() -> str | None:
+                return mime_text(clipboard.return_value.setMimeData.call_args.args[0])
 
-    def test_report_and_original_copy_use_current_editor_text(self) -> None:
-        self.window.set_text("old")
-        self.window.original.delete("1.0", "end")
-        self.window.original.insert("1.0", "\tnew\n ")
-        with patch.object(self.window, "_copy") as copy:
+            QTest.keyClick(self.window.table, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(copied(), "\n".join("\t".join(row.columns()) for row in model.report.characters[1:]))
+            self.window.original.insert_source("中" * 2500)
             self.window.copy_original()
-            copy.assert_called_with("\tnew\n ")
+            self.assertEqual(copied(), "A\n😀" + "中" * 2500)
             self.window.copy_report()
-            self.assertTrue(copy.call_args.args[0].startswith("Original text:\n\tnew\n \n\n"))
-        self.assertEqual(self.window.report.text, "\tnew\n ")
-
-    def test_reanalysis_cancels_stale_batch_and_clear_empties_table(self) -> None:
-        self.window.set_text("x" * 2500)
-        self.assertIsNotNone(self.window._render_job)
-        self.window.set_text("😀\u200b")
-        self.drain()
-        self.assertEqual(self.window.table.get_children(), ("0", "1"))
+            self.assertEqual(copied(), UnicodeText.format_report(model.report))
+            self.assertEqual(model.rowCount(), 2503)
         self.window.set_text("")
-        self.assertEqual(self.window.table.get_children(), ())
-        self.assertTrue(all(value.get() == "0" for value in self.window.statistics.values()))
-
-    def test_copy_uses_tk_and_shortcuts_match_window_system(self) -> None:
-        with patch.object(self.root, "clipboard_clear") as clear, patch.object(self.root, "clipboard_append") as append:
-            self.window.set_text("A\nB")
-            self.window.copy_original()
-        clear.assert_called_once()
-        append.assert_called_once_with("A\nB")
-        modifier = "Command" if self.root.tk.call("tk", "windowingsystem") == "aqua" else "Control"
-        self.assertTrue(self.window.table.bind(f"<{modifier}-c>"))
-        self.assertTrue(self.root.bind(f"<{modifier}-Return>"))
-
-    def test_edit_during_render_keeps_pending_analysis_notice(self) -> None:
-        self.window.set_text("x" * 1200)
-        self.window.original.insert("end-1c", "new")
-        self.drain()
-        self.assertEqual(self.window.report.text, "x" * 1200)
-        self.assertIn("Analyze to update", self.window.status.get())
+        self.assertEqual(model.rowCount(), 0)
+        self.assertTrue(all(value.text() == "0" for value in self.window.statistics.values()))
 
 
 if __name__ == "__main__":

@@ -6,11 +6,11 @@ import sys
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPlainTextEdit,
+    QApplication, QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QPlainTextEdit,
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from utils.qt_widgets import install_no_wheel_controls
+from utils.qt_widgets import configure_qt_application
 from .strokes import Sender, validate_text
 
 
@@ -43,35 +43,50 @@ class TypingPanel(QWidget):
         self.paste = QPushButton("Paste from Clipboard")
         self.edit = QPushButton("Edit")
         self.start = QPushButton("Start Typing")
-        self.start.setStyleSheet("font-weight: bold;")
+        bold_font = self.font()
+        bold_font.setBold(True)
+        self.start.setFont(bold_font)
         self.stop = QPushButton("Stop")
         self.stop.setEnabled(False)
+        self.ascii_only = QCheckBox("ASCII Only")
+        self.ascii_only.toggled.connect(self._ascii_only_toggled)
         self.paste.clicked.connect(self._paste)
         self.edit.clicked.connect(self._edit)
         self.start.clicked.connect(self._start)
         self.stop.clicked.connect(self._stop)
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.paste)
-        buttons.addWidget(self.edit)
-        buttons.addStretch()
-        buttons.addWidget(self.start)
-        buttons.addWidget(self.stop)
-        for control in (self.preview, self.paste, self.edit, self.start, self.stop):
+        buttons = QGridLayout()
+        buttons.addWidget(self.paste, 0, 0)
+        buttons.addWidget(self.edit, 0, 1)
+        buttons.setColumnStretch(2, 1)
+        buttons.addWidget(self.start, 0, 3)
+        buttons.addWidget(self.stop, 0, 4)
+        buttons.addWidget(self.ascii_only, 1, 4)
+        for control in (self.preview, self.paste, self.edit, self.start, self.stop, self.ascii_only):
             control.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.status = QLabel()
         self.status.setWordWrap(True)
+        buttons.addWidget(self.status, 1, 0, 1, 4)
         layout = QVBoxLayout(self)
         layout.addWidget(self.preview)
         layout.addLayout(buttons)
-        layout.addWidget(self.status)
         ime_notice = QLabel("Please make sure that your IDE is in English mode | 请确保输入法为英文模式 ")
-        ime_notice.setStyleSheet("color: red; font-weight: bold;")
+        ime_notice.setFont(bold_font)
+        palette = ime_notice.palette()
+        palette.setColor(ime_notice.foregroundRole(), Qt.GlobalColor.red)
+        ime_notice.setPalette(palette)
         layout.addWidget(ime_notice)
         self.resize(480, 230)
         self._paste()
 
+    def _ascii_only_toggled(self, checked: bool) -> None:
+        if checked and not self.text.isascii():
+            self._set_text(self.text)
+
     def _set_text(self, text: str) -> None:
-        self.text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if self.ascii_only.isChecked():
+            text = text.encode("ascii", errors="ignore").decode("ascii")
+        self.text = text
         self.preview.setPlainText(self.text)
         self.start.setEnabled(bool(self.text))
         self.status.setText(_READY if self.text else "No text to type.")
@@ -118,6 +133,7 @@ class TypingPanel(QWidget):
         self.sent = 0
         self.paste.setEnabled(False)
         self.edit.setEnabled(False)
+        self.ascii_only.setEnabled(False)
         self.start.setEnabled(False)
         self.stop.setEnabled(True)
         self.status.setText(f"Typing 0 / {len(self.text)}")
@@ -147,6 +163,7 @@ class TypingPanel(QWidget):
         self.stop.setEnabled(False)
         self.start.setEnabled(bool(self.text))
         self.edit.setEnabled(True)
+        self.ascii_only.setEnabled(True)
         self.paste.setEnabled(True)
         self.status.setText(message)
 
@@ -162,8 +179,7 @@ def run(sender: Sender, show_native: Callable[[QWidget], object]) -> int:
     app = QApplication.instance() or QApplication(sys.argv[:1])
     if not isinstance(app, QApplication):
         raise RuntimeError("Auto Typer requires a QApplication.")
-    app.setStyle("Fusion")
-    install_no_wheel_controls(app)
+    configure_qt_application(app)
     app.setQuitOnLastWindowClosed(False)
     panel = TypingPanel(sender)
     native_host = show_native(panel)

@@ -1,7 +1,7 @@
 """OCR controls that commit numeric edits on focus loss or completed keyboard entry."""
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
+from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, with_cjk_fallbacks
 from .models import inventory
 from .model import LANGUAGES, LANGUAGE_LABELS, Settings
 
@@ -301,6 +301,7 @@ def overlay_text(pixmap: QtGui.QPixmap, result: object, font: QtGui.QFont,
 
     if not isinstance(result, Result) or not result.tokens:
         return pixmap
+    font = with_cjk_fallbacks(font)
     rendered = pixmap.copy()
     painter = QtGui.QPainter(rendered)
     try:

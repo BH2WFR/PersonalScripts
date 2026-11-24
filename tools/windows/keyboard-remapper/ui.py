@@ -12,7 +12,7 @@ from pathlib import Path
 import datetime
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelComboBox
+from utils.qt_widgets import NoWheelComboBox, with_cjk_fallbacks
 from utils import *
 
 from . import USAGE_NOTICE
@@ -298,7 +298,8 @@ class RemapWindow(QtWidgets.QMainWindow):
         hex_layout.setContentsMargins(0, 0, 0, 0)
         self.hex_text = QtWidgets.QPlainTextEdit()
         self.hex_text.setReadOnly(True)
-        self.hex_text.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont))
+        fixed_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        self.hex_text.setFont(with_cjk_fallbacks(fixed_font))
         self.hex_text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         self.hex_text.setMinimumHeight(100)
         self.hex_text.setMaximumHeight(180)

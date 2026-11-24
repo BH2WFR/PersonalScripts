@@ -138,6 +138,28 @@ class PanelTests(unittest.TestCase):
         self.sender.send.assert_not_called()
         self.assertFalse(self.panel.timer.isActive())
 
+    def test_ascii_only_clipboard_import(self) -> None:
+        self.assertFalse(self.panel.ascii_only.isChecked())
+        self.panel.ascii_only.click()
+        self.assertEqual(self.panel.text, "A\n\t\n")
+        self.assertEqual(self.panel.preview.toPlainText(), self.panel.text)
+        self.panel.paste.click()
+        self.assertEqual(self.panel.preview.toPlainText(), "A\n\t\n")
+        self.panel.start.click()
+        self.assertFalse(self.panel.ascii_only.isEnabled())
+        for _ in self.panel.text:
+            self.panel._type_next()
+        self.assertEqual(self.sender.send.call_args_list, [call(char) for char in "A\n\t\n"])
+        self.clipboard.text.return_value = "é中😀"
+        self.panel.paste.click()
+        self.assertFalse(self.panel.start.isEnabled())
+        self.panel.ascii_only.click()
+        self.panel.paste.click()
+        self.assertEqual(self.panel.text, "é中😀")
+        self.panel.ascii_only.click()
+        self.assertEqual(self.panel.text, "")
+        self.assertFalse(self.panel.start.isEnabled())
+
     def test_sender_error_stops_typing(self) -> None:
         self.panel.start.click()
         self.sender.send.side_effect = OSError("Target unavailable")
@@ -159,8 +181,13 @@ class PanelTests(unittest.TestCase):
             else:
                 dialog.reject()
 
-        for accept in (True, False):
+        for checked, accept, expected in (
+            (False, True, "two\nlines\u00a0"),
+            (True, False, "two\nlines"),
+            (True, True, "two\nlines"),
+        ):
+            self.panel.ascii_only.setChecked(checked)
             QTimer.singleShot(0, lambda accepted=accept: change(accepted))
             self.panel.edit.click()
-            self.assertEqual(self.panel.text, "two\nlines\u00a0")
+            self.assertEqual(self.panel.text, expected)
         self.sender.restore.assert_called_with(42)

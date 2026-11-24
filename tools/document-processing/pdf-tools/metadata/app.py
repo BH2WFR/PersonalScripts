@@ -6,7 +6,7 @@ from typing import cast
 from pymupdf import mupdf
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import *
-from utils.qt_widgets import NoWheelComboBox, install_no_wheel_controls
+from utils.qt_widgets import NoWheelComboBox, configure_qt_application, with_cjk_fallbacks
 from ..common.file_actions import choose_pdf_output
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
@@ -243,7 +243,8 @@ class MetadataWindow(QtWidgets.QWidget):
         self.properties = Properties()
         self.properties.edit_titles.clicked.connect(self._edit_titles)
         self.xml = QtWidgets.QPlainTextEdit()
-        self.xml.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont))
+        fixed_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        self.xml.setFont(with_cjk_fallbacks(fixed_font))
         self.xml.setPlaceholderText("Enter an XMP packet in RDF/XML.")
         self.options = OutputOptions()
         self.tabs.addTab(self.properties, "Document properties")
@@ -447,8 +448,7 @@ def main(entry: Path, source: Path | None) -> int:
     """Start the Fusion GUI and optionally inspect a command-line PDF."""
     application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     assert isinstance(application, QtWidgets.QApplication)
-    application.setStyle("Fusion")
-    install_no_wheel_controls(application)
+    configure_qt_application(application)
     window = MetadataWindow(entry)
     window.show()
     if source is not None:

@@ -12,7 +12,8 @@ from utils import *  # noqa: E402
 HELP = f"""{FLYellow}AUTO TYPER{CRst}
 
 Type clipboard or edited text into the focused window, including web VNC
-sessions that do not support pasting.
+sessions that do not support pasting. ASCII Only removes non-ASCII characters
+from the current text and subsequent clipboard or editor input.
 Use a US keyboard layout and direct English input for ASCII. Unicode input
 depends on the browser, VNC client and remote application.
 

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from utils import ConfigStore, path_text as paths, text_transforms as transforms
 from utils.qt_clipboard import read_clipboard_paths
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, install_no_wheel_controls
+from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, with_cjk_fallbacks
 
 
 type Transform = Callable[[str], str]
@@ -119,8 +119,8 @@ class TextProcessor(QWidget):
         self.result.setAccessibleName("Result")
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         font.setStyleHint(QFont.StyleHint.Monospace)
-        font.setFamilies(["Consolas", font.family(), "Menlo", "DejaVu Sans Mono",
-                          "Sarasa Mono SC", "Noto Sans Mono CJK SC", "Microsoft YaHei", "PingFang SC"])
+        font.setFamilies(["Consolas", font.family(), "Menlo", "DejaVu Sans Mono"])
+        font = with_cjk_fallbacks(font)
         for editor in (self.source, self.result):
             editor.setFont(font)
         wrap = QCheckBox("Word wrap")
@@ -363,8 +363,7 @@ def run() -> int:
     """Open the editor in a Fusion-styled Qt application."""
     existing = QApplication.instance()
     app = existing if isinstance(existing, QApplication) else QApplication(sys.argv)
-    app.setStyle("Fusion")
-    install_no_wheel_controls(app)
+    configure_qt_application(app)
     window = TextProcessor()
     window.show()
     return app.exec()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import sys
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import tkinter as tk
@@ -24,7 +24,7 @@ class TkDpi:
 
     def __init__(self, root: tk.Tk | tk.Toplevel) -> None:
         self.root = root
-        self._fonts: dict[str, tuple[Font, int]] = {}
+        self._fonts: dict[tuple[str, str | None, int | None, str | None], tuple[Font, int]] = {}
         self._handler: Callable[[float], None] | None = None
         self._hook: WindowSubclass | None = None
         self._job: str | None = None
@@ -64,20 +64,37 @@ class TkDpi:
         """Convert a dimension expressed at 96 DPI into current window pixels."""
         return round(logical * self.scale)
 
-    def font(self, name: str = "TkDefaultFont") -> Font:
-        """Return an owned named-font copy; never modify another window's fonts."""
+    def font(
+        self,
+        name: str = "TkDefaultFont",
+        *,
+        family: str | None = None,
+        points: int | None = None,
+        weight: Literal["normal", "bold"] | None = None,
+    ) -> Font:
+        """Return an owned copy with optional family, point size and weight overrides.
+
+        Copies with different options scale independently of the source font.
+        """
         from tkinter import font
 
-        if name not in self._fonts:
+        key = (name, family, points, weight)
+        if key not in self._fonts:
             source = font.nametofont(name, root=self.root)
             result = font.Font(root=self.root, **source.actual())
-            size = int(source.cget("size"))
+            if family is not None:
+                result.configure(family=family)
+            if weight is not None:
+                result.configure(weight=weight)
+            size = int(source.cget("size")) if points is None else max(1, points)
             # Named point sizes are logical; negative sizes are already pixels.
             logical_size = round(size * 96 / 72) if size > 0 else round(-size / self.scale)
-            self._fonts[name] = result, logical_size
             if self._window_system != "aqua":
                 result.configure(size=-max(1, self.pixels(logical_size)))
-        return self._fonts[name][0]
+            elif points is not None:
+                result.configure(size=size)
+            self._fonts[key] = result, logical_size
+        return self._fonts[key][0]
 
     def start(self, on_change: Callable[[float], None]) -> None:
         """Apply the initial layout and start automatic DPI tracking once."""

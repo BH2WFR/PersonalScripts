@@ -5,7 +5,7 @@ from typing import cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import *
-from utils.qt_widgets import NoWheelSpinBox, NoWheelComboBox, install_no_wheel_controls
+from utils.qt_widgets import NoWheelSpinBox, NoWheelComboBox, configure_qt_application
 from ..common.file_actions import choose_pdf_output
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
@@ -493,8 +493,7 @@ def main(entry: Path) -> int:
     System.enable_dpi_awareness()
     application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     assert isinstance(application, QtWidgets.QApplication)
-    application.setStyle("Fusion")
-    install_no_wheel_controls(application)
+    configure_qt_application(application)
     window = OcrWindow(entry)
     window.show()
     return application.exec()

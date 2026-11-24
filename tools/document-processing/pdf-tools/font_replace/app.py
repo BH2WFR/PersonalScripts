@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls
+from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application
 from utils import *
 from ..common.file_actions import choose_pdf_output
 from ..common.preferences import choose_open_file, remember_directory
@@ -622,8 +622,7 @@ def main(entry: Path) -> int:
 
     application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     assert isinstance(application, QtWidgets.QApplication)
-    application.setStyle("Fusion")
-    install_no_wheel_controls(application)
+    configure_qt_application(application)
     window = FontReplaceWindow(entry)
     window.show()
     return application.exec()

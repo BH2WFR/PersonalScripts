@@ -116,7 +116,7 @@ def run(handoff: tuple[Snapshot, Snapshot] | None = None, *, read_only: bool = F
         Reads the saved map and opens a window. User actions alone write/export.
     """
     from PySide6 import QtCore, QtWidgets
-    from utils.qt_widgets import install_no_wheel_controls
+    from utils.qt_widgets import configure_qt_application
     from .registry import WindowsRegistry
     from .ui import RemapWindow
 
@@ -125,8 +125,7 @@ def run(handoff: tuple[Snapshot, Snapshot] | None = None, *, read_only: bool = F
     application = existing if existing is not None else QtWidgets.QApplication([sys.argv[0]])
     if not isinstance(application, QtWidgets.QApplication):
         raise RuntimeError("A non-GUI Qt application already exists.")
-    application.setStyle("Fusion")
-    install_no_wheel_controls(application)
+    configure_qt_application(application)
     window = RemapWindow(WindowsRegistry(), open_elevated_editor, handoff, read_only=read_only)
     # A Qt dynamic property stores a QObject pointer, not a strong Python
     # subclass reference. Retain the wrapper when embedded run() returns early.

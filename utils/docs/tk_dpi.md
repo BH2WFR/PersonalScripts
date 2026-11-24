@@ -25,7 +25,7 @@ withdraw before construction to avoid showing a partially built interface.
 | `TkDpi(root)` | Read the initial window DPI; accept a Tk root or Toplevel |
 | `scale: float` | Current ratio relative to 96-DPI logical dimensions |
 | `pixels(logical) -> int` | Round a logical dimension to current pixels |
-| `font(name="TkDefaultFont") -> Font` | Cache an owned named-font copy, updated in place; never mutate other windows' fonts |
+| `font(name="TkDefaultFont", *, family=None, points=None, weight=None) -> Font` | Cache a font copy per source and optional family, point size and weight overrides. Update each copy in place as DPI changes |
 | `track_spacing()` | Before `start()`, capture existing widget padding, wrap lengths, borders, classic scrollbar widths and grid/pack padding as logical values |
 | `start(on_change)` | Apply initial spacing/callback, then monitor changes; call once |
 | `close()` | Detach native callback/cancel polling; safe to repeat, automatic on root destruction |
@@ -53,9 +53,9 @@ there depends on the desktop/compositor. This is not a native Wayland backend.
 Do not claim platform behavior verified without testing that environment.
 
 `test/test_tk_dpi.py` sends native DPI messages at 100%, 150% and 200%, checks the
-suggested window rectangle, fonts, row height, spacing and retained state, and
-checks independent window fonts and cleanup. Also run the inspector and IME
-tests when changing the shared callback infrastructure. A real mixed-DPI monitor
+suggested window rectangle, fonts, spacing and retained state, and
+checks independent window fonts and cleanup. Also run the Tk input tests
+when changing the shared callback infrastructure. A real mixed-DPI monitor
 move remains a separate hardware check.
 
 References:

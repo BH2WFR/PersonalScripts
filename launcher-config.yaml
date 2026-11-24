@@ -66,6 +66,7 @@ ignore-list:
         - "research/matrix-viewer/"
         - "network/rclone-sync/"
         - "input-and-text/text_processor/"
+        - "input-and-text/unicode_inspector/"
         - "input-and-text/auto_typer/"
         - "input-and-text/screen_keyboard/"
         - "input-and-text/keyboard-hook-viewer/"

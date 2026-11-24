@@ -28,7 +28,7 @@ for inspection, with `<invalid surrogate>` instead of UTF-8 bytes and `None` for
 encoded byte totals. `style` provides semantic table tags, not ANSI escapes.
 
 These helpers use only the standard library and perform no GUI, clipboard,
-process or configuration access. The Tk interface and its native clipboard
+process or configuration access. The PySide6 interface and its clipboard
 operations belong to [unicode-inspector.py](../../tools/input-and-text/unicode-inspector.py).
 Its inspector layout/lookup tables were adapted from the user's `text_actions.py`;
 macOS-specific hooks and launch helpers are not dependencies of this project.

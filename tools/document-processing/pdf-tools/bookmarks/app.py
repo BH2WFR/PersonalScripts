@@ -14,7 +14,9 @@ from typing import Callable, cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils.qt_images import copy_image_to_clipboard
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls
+from utils.qt_widgets import (
+    NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application, with_cjk_fallbacks,
+)
 
 from utils import *
 from ..common.bookmark_editor import BookmarkEditor, OutlineRow
@@ -232,7 +234,7 @@ class BookmarksWindow(LlmWindow):
         if sys.platform == "win32":
             editor_font.setFamilies(["Consolas", editor_font.family()])
         editor_font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
-        self.yaml.setFont(editor_font)
+        self.yaml.setFont(with_cjk_fallbacks(editor_font))
         self.yaml.setPlaceholderText('- {page: 1, level: 1, index: "", title: "Introduction"}')
         self.yaml.textChanged.connect(self._yaml_changed)
         self.result_tabs = QtWidgets.QTabWidget()
@@ -1532,8 +1534,7 @@ def main(entry: Path, initial_tab: int = 0) -> int:
         application = QtWidgets.QApplication([sys.argv[0]])
     if not isinstance(application, QtWidgets.QApplication):
         raise RuntimeError("A GUI QApplication is required.")
-    application.setStyle("Fusion")
-    install_no_wheel_controls(application)
+    configure_qt_application(application)
     window = BookmarksWindow(entry)
     window.tabs.setCurrentIndex(initial_tab)
     window.show()

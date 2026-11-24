@@ -8,7 +8,7 @@ from PIL import Image
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import Console, System, Llm
 from utils.qt_images import copy_image_to_clipboard, qimage_from_pillow, save_png
-from utils.qt_widgets import NoWheelComboBox, install_no_wheel_controls
+from utils.qt_widgets import NoWheelComboBox, configure_qt_application
 from ..common.llm_window import LlmWindow
 from .vision import OUTPUTS, SYSTEM_PROMPT, VisionTask, batch_results, document_source, vision_request
 from .vision_panel import VisionPanel
@@ -739,8 +739,7 @@ def main(entry: Path) -> int:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     if not isinstance(app, QtWidgets.QApplication):
         raise RuntimeError("Image to Text and Formula requires a QApplication.")
-    app.setStyle("Fusion")
-    install_no_wheel_controls(app)
+    configure_qt_application(app)
     window = ImageWindow(entry)
     window.show()
     return app.exec()

@@ -1,4 +1,4 @@
-"""Read copied file paths on the Qt GUI thread without altering the clipboard."""
+"""Read clipboard text and copied file paths on the Qt GUI thread."""
 
 from collections.abc import Sequence
 import ntpath
@@ -7,10 +7,60 @@ import re
 import sys
 from xml.parsers.expat import ExpatError
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtGui import QGuiApplication
 
 from .path_text import forward_path, remove_file_prefix, remove_quotes
+
+
+def _windows_unicode_text() -> str | None:
+    """Read bounded CF_UNICODETEXT before Qt folds native CRLF pairs."""
+    import ctypes as ct
+    from ctypes import wintypes as wt
+
+    user = ct.WinDLL("user32")
+    kernel = ct.WinDLL("kernel32")
+    user.OpenClipboard.argtypes = [wt.HWND]
+    user.CloseClipboard.argtypes = []
+    user.GetClipboardData.argtypes = [wt.UINT]
+    user.GetClipboardData.restype = wt.HANDLE
+    kernel.GlobalLock.argtypes = [wt.HANDLE]
+    kernel.GlobalLock.restype = ct.c_void_p
+    kernel.GlobalUnlock.argtypes = [wt.HANDLE]
+    kernel.GlobalSize.argtypes = [wt.HANDLE]
+    kernel.GlobalSize.restype = ct.c_size_t
+    if not user.OpenClipboard(None):
+        return None
+    try:
+        handle = user.GetClipboardData(13)  # CF_UNICODETEXT
+        if not handle:
+            return None
+        address = kernel.GlobalLock(handle)
+        if not address:
+            return None
+        try:
+            size = kernel.GlobalSize(handle)
+            if size < 2:
+                return None
+            data = ct.string_at(address, size - size % 2)
+            return data.decode("utf-16-le", errors="surrogatepass").partition("\0")[0]
+        finally:
+            kernel.GlobalUnlock(handle)
+    finally:
+        user.CloseClipboard()
+
+
+def original_mime_text(mime: QMimeData) -> str | None:
+    """Read plain text, retaining native Windows clipboard line endings when available."""
+    if not mime.hasText():
+        return None
+    if sys.platform == "win32" and QGuiApplication.platformName() == "windows":
+        clipboard = QGuiApplication.clipboard()
+        if mime is clipboard.mimeData() and not clipboard.ownsClipboard():
+            original = _windows_unicode_text()
+            if original is not None:
+                return original
+    return mime.text()
 
 
 def _absolute_paths(values: Sequence[object]) -> list[str]:

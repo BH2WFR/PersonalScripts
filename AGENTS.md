@@ -178,9 +178,16 @@ can print `HELP` directly. Private implementation modules do not need a CLI.
   Tk tools use [TkDpi](utils/docs/tk_dpi.md); Qt uses logical coordinates without
   double scaling. Verify initial scaling and repeated mixed-DPI transitions.
 - Simple GUI tools may use Tkinter; reserve PySide6 for complex interfaces.
-  PySide6 tools use Fusion and the shared no-wheel form controls; follow
-  [Qt conventions](utils/docs/qt.md) and import Qt-only APIs explicitly from
-  `utils.qt_widgets`.
+  Every PySide6 tool must call `configure_qt_application(application)` from
+  `utils.qt_widgets` before creating widgets, including with a reused application.
+  It configures Fusion, font fallback for simplified/traditional Chinese,
+  Japanese and Korean, system glyph fallback for other scripts, and wheel guards.
+  Use `with_cjk_fallbacks(font)` for custom UI font families and the shared
+  [no-wheel form controls](utils/docs/qt.md) for Qt inputs.
+- In scrollable containers, every combo box and spin box must ignore wheel
+  input by default, even when focused, so scrolling the container preserves
+  the current selection or value. Shared setup calls `install_no_wheel_controls`
+  for this. Keep open combo-box lists scrollable.
 - In PySide6 GUIs, avoid `PIL.ImageQt` because it can load PyQt6 first and cause
   a Qt version conflict at startup. Build a PySide6 `QImage` from Pillow pixel
   bytes with the matching format and stride, then call `.copy()` before releasing

@@ -12,7 +12,7 @@ import sys
 from typing import Callable, cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls
+from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application
 
 from utils import *
 from ..common.jobs import JobRunner
@@ -1039,8 +1039,7 @@ def main(entry: Path) -> int:
         application = QtWidgets.QApplication([sys.argv[0]])
     if not isinstance(application, QtWidgets.QApplication):
         raise RuntimeError("A GUI QApplication is required.")
-    application.setStyle("Fusion")
-    install_no_wheel_controls(application)
+    configure_qt_application(application)
     window = BinarizeWindow(entry)
     window.show()
     if owns_application:
