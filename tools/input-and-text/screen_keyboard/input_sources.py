@@ -35,7 +35,8 @@ for library, name, result, arguments in (
 # These two entry points are private and may be absent on other macOS versions.
 # Protocol reference: https://github.com/laishulu/macism/blob/master/TSMUtils.swift
 _tsm: dict[str, Any] = {}
-objc.loadBundleFunctions(None, _tsm, [
+# PyObjC exports this loader from its native extension.
+objc.loadBundleFunctions(None, _tsm, [  # pyright: ignore[reportAttributeAccessIssue]
     ('CFMessagePortCreatePerProcessRemote', b'^{__CFMessagePort=}^{__CFAllocator=}^{__CFString=}i', '',
      {'retval': {'already_cfretained': True}}),
     ('_CreateFlattenedInputSource', b'B^vo^@', '', {'arguments': {1: {'already_cfretained': True}}}),

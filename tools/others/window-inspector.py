@@ -22,7 +22,8 @@ Requirements:
   control inspection.
 
 Usage:
-  python window-inspector.py [--top] [--startup-window <HWND> <PID>]
+  python window-inspector.py [--top]
+  --pid <PID>  macOS only. Inspect a specific running application.
   --top  Keep the inspector above other windows on startup.
   --startup-window <HWND> <PID>  Windows only. Inspect the window with the
     given handle and owning process ID. Supply both as decimal integers.
@@ -35,6 +36,8 @@ def main() -> int:
     parser.add_argument("--top", action="store_true")
     if sys.platform == "win32":
         parser.add_argument("--startup-window", nargs=2, type=int, metavar=("HWND", "PID"))
+    elif sys.platform == "darwin":
+        parser.add_argument("--pid", type=int)
     args = parser.parse_args()
     if sys.platform not in ("win32", "darwin"):
         print("Window Inspector requires Windows or macOS.", file=sys.stderr)
@@ -60,7 +63,9 @@ def main() -> int:
         else:
             from window_inspector import macos as backend
 
-            foreground = backend.foreground()
+            foreground = backend.application_target(args.pid) if args.pid is not None else backend.foreground()
+            if args.pid is not None and foreground is None:
+                parser.error("No running application has that PID.")
         System.enable_dpi_awareness()
         from window_inspector.view import run
     except ImportError as exc:

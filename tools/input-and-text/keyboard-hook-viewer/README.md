@@ -63,14 +63,30 @@ values are up-positive everywhere. These describe scroll events, not finger
 motion or an application's resulting content movement. Callback values remain
 unchanged on every platform.
 Native macOS pinch gestures appear separately, for example
-`magnify (+0.025) zoom in phase=changed` or
-`magnify (-0.015) zoom out phase=changed`. Direction and phase use `FCyan`.
-The event tap listens for generic gesture packets and checks the converted
-NSEvent's magnify subtype; unrelated rotation/swipe/pressure events are ignored.
+`magnify (+0.025) dir=zoom in phase=changed` or
+`magnify (-0.015) dir=zoom out phase=changed`. The `dir=` and `phase=` prefixes
+use `FGray`, and their values use `FCyan`.
+The event tap decodes the AppKit subtype of generic gesture packets and also
+accepts direct magnify, rotate and pressure events.
 The value is the per-event [magnification change](https://developer.apple.com/documentation/appkit/nsevent/magnification),
 not an application's current zoom level. Zero-delta begin/end/cancelled events
-remain visible so the gesture lifecycle can be inspected. Pinch is display-only
-and does not enter the existing keyboard/mouse callbacks.
+remain visible so the gesture lifecycle can be inspected. Two-finger rotation
+shows the signed change in degrees with ↺ for counterclockwise and ↻ for clockwise.
+Pressure readings come from native pressure events. If a sample arrives before
+a pressure-capable button-down, the down record takes over the adjacent live
+pressure line and displays the latest reading. Later samples show pressure
+within each stage, including stage 1 (ordinary press) and stage 2 (force click).
+On release, the up record shows the highest sampled value for that press,
+including any samples received before button-down. Pressure uses three decimal places.
+The up record replaces an immediately preceding live pressure line, and a late
+pressure-end packet is retained only in redirected output.
+On all supported platforms, consecutive `scroll`, `magnify` or `rotate` records
+update in place only when both the gesture type and the displayed `dir=` value
+match. A direction change or a gesture phase with no movement starts a new line.
+Consecutive pressure samples update in place across pressure stages.
+Redirected output retains every sample.
+Gesture samples are display-only. A force click does not generate an extra
+button callback.
 
 When monitoring a remote session from Windows App on a Windows host, values are
 the wheel deltas received by Windows. Pinch is visible here only if translated

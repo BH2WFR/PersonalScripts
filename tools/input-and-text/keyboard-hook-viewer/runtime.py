@@ -90,10 +90,10 @@ def _emit_key(
         ))
 
 
-def _emit_mouse(x: int, y: int, btn: str, pressed: bool) -> None:
-    """Called by every platform hook for mouse button events."""
+def _emit_mouse(x: int, y: int, btn: str, pressed: bool, *, pressure: float | None = None) -> None:
+    """Display the down reading or the peak on release, then dispatch the button."""
     ui._check_win_change()
-    ui._print_mouse(x, y, btn, pressed)
+    ui._print_mouse(x, y, btn, pressed, pressure=pressure)
     if _on_mouse_cb:
         _on_mouse_cb(MouseEvent(x=x, y=y, button=btn, pressed=pressed))
 
@@ -134,6 +134,20 @@ def _emit_magnify(delta: float, phase: GesturePhase) -> None:
     ui._print_magnify(delta, phase)
 
 
+def _emit_rotate(degrees: float, phase: GesturePhase) -> None:
+    """Display a relative trackpad rotation in degrees."""
+    ui._check_win_change()
+    ui._print_rotate(degrees, phase)
+
+
+def _emit_pressure(pressure: float, stage: int, phase: GesturePhase, *, after_release: bool = False) -> None:
+    """Display the native pressure sample without generating another button press."""
+    if after_release and sys.stdout.isatty():
+        return
+    ui._check_win_change()
+    ui._print_pressure(pressure, stage, phase)
+
+
 # ============ public setup ============
 
 def setup(
@@ -167,7 +181,7 @@ def setup(
     thread.start()
 
     if not hook._ready.wait(timeout=5):
-        print("Waiting for hook permission…")
+        ui._write_record("Waiting for hook permission…")
 
     if blocking:
         try:

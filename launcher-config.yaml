@@ -99,11 +99,11 @@ ignore-list:
     linux-gui-specific:
         # 规范：no-gui, wayland, x11
         no-gui: # 仅列出无 GUI，但是在无桌面环境时可能不适用的工具
-            - "input-and-text/keyboard-hook-viewer.py"
+            - &keyboard_hook_viewer "input-and-text/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
             # 也包含所有 gui-tools-list 中的软件
         wayland:
-            - "input-and-text/keyboard-hook-viewer.py"
+            - *keyboard_hook_viewer
             - "document-processing/document-screenshot.py"
         x11:
             # 暂无

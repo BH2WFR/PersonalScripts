@@ -23,8 +23,6 @@ invisible characters, with text statistics and copyable reports.
   Omit TEXT to enter text in the window; --clip reads the clipboard.
 """
 
-EDITOR_POINTS = 9
-
 
 def main() -> int:
     """Open the inspector after handling help and validating arguments."""
@@ -44,7 +42,7 @@ def main() -> int:
         print(f"Unicode Inspector could not load {exc}. Install PySide6 in this environment.", file=sys.stderr)
         return 1
     System.enable_dpi_awareness()
-    return run(" ".join(args.text), args.clipboard, EDITOR_POINTS)
+    return run(" ".join(args.text), args.clipboard)
 
 
 if __name__ == "__main__":

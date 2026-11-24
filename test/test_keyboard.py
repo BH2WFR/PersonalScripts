@@ -397,7 +397,7 @@ class ViewerEventsTests(unittest.TestCase):
                     runtime.ui._print_magnify.assert_called_once_with(delta, models.GesturePhase(phase))
 
         # Never call magnification on a non-magnify NSEvent or failed conversion.
-        for other_type in (quartz.NSEventTypeRotate, quartz.NSEventTypeSwipe, None):
+        for other_type in (quartz.NSEventTypeSwipe, None):
             gesture = Mock() if other_type is not None else None
             if gesture is not None:
                 gesture.type.return_value = other_type
@@ -411,6 +411,65 @@ class ViewerEventsTests(unittest.TestCase):
         runtime._on_mouse_cb.assert_not_called()
         runtime._on_key_cb.assert_not_called()
         quartz.CGEventTapCreate.assert_not_called()
+
+    def test_macos_rotation_and_pressure_display_native_samples(self) -> None:
+        macos = importlib.import_module(f"{entry.PACKAGE_NAME}.macos")
+        quartz = Mock()
+        quartz.CGEventMaskBit.return_value = 0
+        with patch.dict(sys.modules, {"Quartz": quartz}), patch.object(macos, "_OS", "darwin"):
+            hook = macos.create_hook(runtime)
+        assert hook is not None
+        runtime._on_mouse_cb = Mock()
+        gesture = quartz.NSEvent.eventWithCGEvent_.return_value
+        for subtype, samples in (
+            (quartz.NSEventTypeRotate, (
+                (3.25, 0, 4, "↺", "rotate (+3.25°)", "counterclockwise"),
+                (-2.5, 0, 4, "↻", "rotate (-2.5°)", "clockwise"),
+                (0.0, 0, 8, "=", "rotate (+0°)", f"{FGray}phase={CRst}{FCyan}ended{CRst}"),
+            )),
+            (quartz.NSEventTypePressure, (
+                (0.15, 1, 4, "•", "pressure=0.150 stage=1", f"{FGray}phase={CRst}{FCyan}changed{CRst}"),
+                (0.05, 2, 4, "•", "pressure=0.050 stage=2", "force click"),
+                (0.0, 0, 8, "•", "pressure=0.000 stage=0", f"{FGray}phase={CRst}{FCyan}ended{CRst}"),
+            )),
+        ):
+            quartz.CGEventMaskBit.assert_any_call(subtype)
+            gesture.type.return_value = subtype
+            for value, stage, phase, arrow, detail, label in samples:
+                gesture.phase.return_value = phase
+                gesture.stage.return_value = stage
+                gesture.pressure.return_value = gesture.rotation.return_value = value
+                for packet in (quartz.NSEventTypeGesture, subtype):
+                    with self.subTest(detail=detail, packet=packet), contextlib.redirect_stdout(io.StringIO()) as output:
+                        hook._handle(None, packet, object(), None)
+                        self.assertIn(f"{FLCyan}{arrow}{CRst}", output.getvalue())
+                        self.assertIn(detail, output.getvalue())
+                        self.assertIn(label, output.getvalue())
+        runtime._on_mouse_cb.assert_not_called()
+
+    def test_macos_button_down_never_uses_mouse_event_as_pressure_sample(self) -> None:
+        macos = importlib.import_module(f"{entry.PACKAGE_NAME}.macos")
+        quartz = Mock()
+        quartz.NSEventMaskPressure = 1 << 34
+        quartz.CGEventMaskBit.return_value = 0
+        quartz.CGEventGetIntegerValueField.return_value = 0
+        quartz.CGEventGetLocation.return_value = (12, 30)
+        with patch.dict(sys.modules, {"Quartz": quartz}), patch.object(macos, "_OS", "darwin"):
+            hook = macos.create_hook(runtime)
+        assert hook is not None
+        runtime._on_mouse_cb = Mock()
+        click = quartz.NSEvent.eventWithCGEvent_.return_value
+        for capable, value in ((True, 0.0), (True, 0.24), (True, 1.0), (False, 1.0)):
+            click.associatedEventsMask.return_value = quartz.NSEventMaskPressure if capable else 0
+            click.pressure.return_value = value
+            hook._handle(None, quartz.kCGEventLeftMouseDown, object(), None)
+            runtime.ui._print_mouse.assert_called_with(12, 30, "left", True, pressure=None)
+        click.pressure.assert_not_called()
+        self.assertEqual(runtime._on_mouse_cb.call_count, 4)
+        quartz.NSEvent.eventWithCGEvent_.side_effect = ValueError("unavailable")
+        hook._handle(None, quartz.kCGEventLeftMouseDown, object(), None)
+        runtime.ui._print_mouse.assert_called_with(12, 30, "left", True, pressure=None)
+        self.assertEqual(runtime._on_mouse_cb.call_count, 5)
 
     def test_sided_modifiers_and_auto_repeat_do_not_lose_held_state(self) -> None:
         trigger = Mock()
@@ -471,7 +530,7 @@ class ViewerScrollDisplayTests(unittest.TestCase):
             rendered = output.getvalue()
             self.assertIn(f"scroll ({raw[0]}, {raw[1]})", rendered)
             self.assertNotIn("delta", rendered)
-            self.assertTrue(rendered.endswith(f" {FCyan}{direction}{CRst}\n"))
+            self.assertTrue(rendered.endswith(f" {FGray}dir={CRst}{FCyan}{direction}{CRst}\n"))
 
     def test_macos_precise_values_drive_direction_without_integer_rounding(self) -> None:
         for raw, label, direction in (
@@ -485,7 +544,7 @@ class ViewerScrollDisplayTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 runtime.ui._print_scroll(0, 0, raw_delta=raw)
             self.assertIn(f"scroll ({label})", output.getvalue())
-            self.assertTrue(output.getvalue().endswith(f" {FCyan}{direction}{CRst}\n"))
+            self.assertTrue(output.getvalue().endswith(f" {FGray}dir={CRst}{FCyan}{direction}{CRst}\n"))
 
     def test_zero_native_delta_does_not_print_a_directionless_event(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()) as output:
@@ -498,8 +557,9 @@ class ViewerScrollDisplayTests(unittest.TestCase):
             for dx, dy, direction, arrow in (
                 (0, 1, "up", "↑"), (0, -1, "down", "↓"),
                 (right_sign, 0, "right", "→"), (-right_sign, 0, "left", "←"),
-                (right_sign, 2, "up+right", "↑→"),
-                (-right_sign, -2, "down+left", "↓←"), (0, 0, "none", "-"),
+                (-right_sign, 2, "up+left", "↖"), (right_sign, 2, "up+right", "↗"),
+                (-right_sign, -2, "down+left", "↙"), (right_sign, -2, "down+right", "↘"),
+                (0, 0, "none", "-"),
             ):
                 with self.subTest(platform=platform, dx=dx, dy=dy), \
                         patch.object(runtime.ui.sys, "platform", platform), \
@@ -507,30 +567,195 @@ class ViewerScrollDisplayTests(unittest.TestCase):
                     runtime.ui._print_scroll(dx, dy)
                 rendered = output.getvalue()
                 self.assertIn(f"scroll ({dx}, {dy})", rendered)
-                self.assertIn(arrow, rendered)
-                self.assertTrue(rendered.endswith(f" {FCyan}{direction}{CRst}\n"))
+                self.assertIn(f"{FLCyan}{arrow}{CRst}", rendered)
+                self.assertTrue(rendered.endswith(f" {FGray}dir={CRst}{FCyan}{direction}{CRst}\n"))
+
+
+class ViewerGestureRedrawTests(unittest.TestCase):
+    def test_release_replaces_live_pressure_with_per_press_maximum(self) -> None:
+        macos = importlib.import_module(f"{entry.PACKAGE_NAME}.macos")
+        quartz = Mock()
+        quartz.CGEventMaskBit.return_value = 0
+        quartz.CGEventGetLocation.return_value = (12, 30)
+        quartz.CGEventGetIntegerValueField.return_value = 0
+        quartz.NSEventMaskPressure = 1 << 34
+        native = quartz.NSEvent.eventWithCGEvent_.return_value
+        native.type.return_value = quartz.NSEventTypePressure
+        for tty in (True, False):
+            with (self.subTest(tty=tty), patch.dict(sys.modules, {"Quartz": quartz}),
+                  patch.object(macos, "_OS", "darwin"), patch.object(runtime.ui, "_check_win_change"),
+                  contextlib.redirect_stdout(io.StringIO()) as output,
+                  patch.object(output, "isatty", return_value=tty),
+                  patch.object(Console, "enable_ansi_output", return_value=tty),
+                  patch.object(Console, "get_terminal_width", return_value=120)):
+                hook = macos.create_hook(runtime)
+                assert hook is not None
+                def emit(packet: object) -> None:
+                    hook._handle(None, packet, object(), None)
+
+                native.associatedEventsMask.return_value = quartz.NSEventMaskPressure
+                native.stage.return_value = 1
+                native.phase.return_value = 4
+                native.pressure.return_value = 0.0
+                emit(quartz.NSEventTypePressure)
+                native.pressure.return_value = 1.0  # Binary mouse-down, not a force sample.
+                emit(quartz.kCGEventLeftMouseDown)
+                for value, stage in ((0.8764, 1), (0.15, 2)):
+                    native.pressure.return_value = value
+                    native.stage.return_value = stage
+                    native.phase.return_value = 4
+                    emit(quartz.NSEventTypePressure)
+                emit(quartz.kCGEventLeftMouseUp)
+                native.pressure.return_value = 0.0
+                native.stage.return_value = 0
+                native.phase.return_value = 8
+                emit(quartz.NSEventTypePressure)
+                lines = output.getvalue().splitlines()
+                self.assertIn("pressure=0.000", lines[0])
+                self.assertIn(f"{FLYellow}↓{CRst}", lines[1])
+                self.assertIn("pressure=0.000", lines[1])
+                self.assertEqual(lines[1].startswith(Cursor.prev_line() + CEraseDisplayToEnd), tty)
+                self.assertIn("pressure=0.150 stage=2", lines[3])
+                self.assertIn(f"{FLGreen}↑{CRst}", lines[4])
+                self.assertIn("max pressure=0.876", lines[4])
+                self.assertEqual(lines[4].startswith(Cursor.prev_line() + CEraseDisplayToEnd), tty)
+                self.assertEqual(len(lines), 5 if tty else 6)
+
+                # Preserve a peak before button-down, even when the latest reading is lower.
+                native.stage.return_value = 1
+                native.phase.return_value = 4
+                for value in (0.25, 0.125):
+                    native.pressure.return_value = value
+                    emit(quartz.NSEventTypePressure)
+                native.pressure.return_value = 1.0
+                emit(quartz.kCGEventLeftMouseDown)
+                self.assertIn("pressure=0.125", output.getvalue().splitlines()[-1])
+                native.pressure.return_value = 0.0
+                native.stage.return_value = 0
+                native.phase.return_value = 8
+                emit(quartz.NSEventTypePressure)
+                runtime.ui._print_scroll(0, 1)
+                emit(quartz.kCGEventLeftMouseUp)
+                last = output.getvalue().splitlines()[-1]
+                self.assertIn("max pressure=0.250", last)
+                self.assertNotIn(CEraseDisplayToEnd, last)
+
+                # Down before the first measurement: show the later sample and its peak.
+                native.pressure.return_value = 1.0
+                emit(quartz.kCGEventLeftMouseDown)
+                self.assertNotIn("pressure=", output.getvalue().splitlines()[-1])
+                native.stage.return_value = 1
+                native.phase.return_value = 4
+                native.pressure.return_value = 0.125
+                emit(quartz.NSEventTypePressure)
+                emit(quartz.kCGEventLeftMouseUp)
+                self.assertIn("max pressure=0.125", output.getvalue().splitlines()[-1])
+
+                for only_sample in (0.0, 1.0):
+                    native.pressure.return_value = only_sample
+                    emit(quartz.NSEventTypePressure)
+                    native.pressure.return_value = 1.0
+                    emit(quartz.kCGEventLeftMouseDown)
+                    emit(quartz.kCGEventLeftMouseUp)
+                    self.assertIn(f"max pressure={only_sample:.3f}", output.getvalue().splitlines()[-1])
+
+                native.associatedEventsMask.return_value = 0
+                emit(quartz.kCGEventLeftMouseDown)
+                emit(quartz.kCGEventLeftMouseUp)
+                self.assertNotIn("pressure=", output.getvalue().splitlines()[-1])
+
+    def test_only_adjacent_samples_of_same_kind_and_direction_replace(self) -> None:
+        ui = runtime.ui
+        phase = models.GesturePhase.CHANGED
+        for platform in ("win32", "darwin", "linux"):
+            with (self.subTest(platform=platform), patch.object(sys, "platform", platform),
+                  contextlib.redirect_stdout(io.StringIO()) as terminal,
+                  patch.object(Console, "enable_ansi_output", return_value=True),
+                  patch.object(Console, "get_terminal_width", return_value=120)):
+                ui._print_scroll(0, 1, raw_delta=(0, 120))
+                ui._print_scroll(0, -1, raw_delta=(0, -120))
+                ui._print_scroll(0, -1, raw_delta=(0, -30))
+                ui._print_scroll(1, -1)
+                ui._print_rotate(1, phase)
+                ui._print_rotate(-1, phase)
+                ui._print_rotate(-2, phase)
+                ui._print_magnify(-0.1, phase)
+                ui._print_magnify(0.1, phase)
+                ui._print_magnify(0.2, phase)
+                ui._print_magnify(0, models.GesturePhase.ENDED)
+                ui._print_magnify(0, models.GesturePhase.BEGAN)
+                ui._print_pressure(0.5, 1, phase)
+                ui._print_pressure(0.1, 2, phase)
+                ui._print_scroll(1, 0)
+                lines = terminal.getvalue().splitlines()
+                replaced = [i for i, line in enumerate(lines) if line.startswith(Cursor.prev_line() + CEraseDisplayToEnd)]
+                self.assertEqual(replaced, [2, 6, 9, 13])
+                self.assertIn(f"{FGray}dir={CRst}{FCyan}counterclockwise", lines[4])
+
+    def test_only_adjacent_terminal_pressure_records_are_replaced(self) -> None:
+        ui = runtime.ui
+        terminal = io.StringIO()
+        phase = models.GesturePhase.CHANGED
+        with (patch.object(Console, "enable_ansi_output", return_value=True), contextlib.redirect_stdout(terminal),
+              patch.object(Console, "get_terminal_width", return_value=120),
+              patch.object(ui, "_last_gesture", None), patch.object(ui, "_last_win_key", (-1, "")),
+              patch.object(ui.backend, "get_foreground_window", return_value=models.WindowInfo(pid=12))):
+            ui._print_pressure(0.1, 1, phase)
+            ui._print_scroll(0, 0, raw_delta=(0, 0))
+            ui._print_pressure(0.2, 2, phase)
+            for emit in (lambda: ui._print_mouse(1, 2, "left", True),
+                         lambda: ui._print_key("a", True), lambda: ui._print_scroll(1, 0),
+                         lambda: ui._print_rotate(1, phase), lambda: ui._print_magnify(0.1, phase),
+                         ui._check_win_change):
+                emit()
+                ui._print_pressure(0.3, 1, phase)
+        lines = terminal.getvalue().splitlines()
+        self.assertEqual(len(lines), 14)
+        self.assertTrue(lines[1].startswith(Cursor.prev_line() + CEraseDisplayToEnd))
+        self.assertEqual(terminal.getvalue().count(CEraseDisplayToEnd), 1)
+
+    def test_wrapped_pressure_and_resize(self) -> None:
+        ui = runtime.ui
+        terminal = io.StringIO()
+        with (patch.object(Console, "enable_ansi_output", return_value=True), contextlib.redirect_stdout(terminal),
+              patch.object(Console, "get_terminal_width", side_effect=[8, 8, 12]),
+              patch.object(ui, "_last_gesture", None)):
+            ui._write_record(f"{FGray}0123456789{CRst}", kind="pressure")
+            ui._write_record("short", kind="pressure")
+            ui._write_record("resized", kind="pressure")
+        self.assertEqual(terminal.getvalue().splitlines()[1:], [Cursor.prev_line(2) + CEraseDisplayToEnd + "short", "resized"])
+
+    def test_redirected_pressure_retains_each_sample(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            for value in (0.25, 0.5):
+                runtime.ui._print_pressure(value, 1, models.GesturePhase.CHANGED)
+        self.assertEqual(len(output.getvalue().splitlines()), 2)
+        self.assertNotIn(CEraseDisplayToEnd, output.getvalue())
 
 
 class ViewerMagnifyDisplayTests(unittest.TestCase):
     """Native pinch has a signed delta and cyan direction/phase, not wheel steps."""
 
     def test_signed_magnification_and_phase_use_cyan(self) -> None:
-        for delta, phase, label in (
-            (0.025, models.GesturePhase.CHANGED, "zoom in phase=changed"),
-            (-0.015, models.GesturePhase.CHANGED, "zoom out phase=changed"),
-            (0.0, models.GesturePhase.BEGAN, "phase=began"),
-            (0.0, models.GesturePhase.ENDED, "phase=ended"),
-            (0.0, models.GesturePhase.CANCELLED, "phase=cancelled"),
-            (0.0, models.GesturePhase.NONE, "phase=none"),
-            (0.001, models.GesturePhase(64), "zoom in phase=0x40"),
+        for delta, phase, direction, phase_name in (
+            (0.025, models.GesturePhase.CHANGED, "zoom in", "changed"),
+            (-0.015, models.GesturePhase.CHANGED, "zoom out", "changed"),
+            (0.0, models.GesturePhase.BEGAN, "", "began"),
+            (0.0, models.GesturePhase.ENDED, "", "ended"),
+            (0.0, models.GesturePhase.CANCELLED, "", "cancelled"),
+            (0.0, models.GesturePhase.NONE, "", "none"),
+            (0.001, models.GesturePhase(64), "zoom in", "0x40"),
         ):
             with self.subTest(delta=delta, phase=phase), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 runtime.ui._print_magnify(delta, phase)
             rendered = output.getvalue()
             self.assertIn(f"magnify ({delta:+g})", rendered)
+            symbol = "+" if delta > 0 else "-" if delta < 0 else "="
+            self.assertIn(f"{FLCyan}{symbol}{CRst}", rendered)
             self.assertNotIn("scroll", rendered)
-            self.assertTrue(rendered.endswith(f" {FCyan}{label}{CRst}\n"))
+            prefix = f" {FGray}dir={CRst}{FCyan}{direction}{CRst}" if direction else ""
+            self.assertTrue(rendered.endswith(f"{prefix} {FGray}phase={CRst}{FCyan}{phase_name}{CRst}\n"))
 
 
 class ViewerDiscoveryTests(unittest.TestCase):

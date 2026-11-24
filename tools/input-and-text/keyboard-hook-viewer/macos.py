@@ -4,7 +4,7 @@ Private implementation; launch ../keyboard-hook-viewer.py.
 Platform dependencies are loaded only when the backend is used.
 Scroll display uses NSEvent scrollingDeltaX/Y to retain precise trackpad deltas;
 legacy integer CGEvent line values remain available to callbacks.
-Native pinch gestures display NSEvent magnification deltas and phase flags.
+Native gestures use the NSEvent subtype for pinch, rotation and pressure.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from utils import *
 import threading
 from typing import Callable
 from .models import GesturePhase, InputDevice, WindowInfo, EventSink
+from .ui import _write_record
 _OS = sys.platform
 
 
@@ -42,8 +43,8 @@ class _MacHIDKeyboardMonitor:
         self._property_keys: dict[str, int] = {}
         self._device_cache: dict[int, InputDevice] = {}
         self._recent_physical: dict[tuple[int, bool], float] = {}
-        self._iokit = None
-        self._cf = None
+        self._iokit: ctypes.CDLL | None = None
+        self._cf: ctypes.CDLL | None = None
         self.open_result = 0
 
     def _load(self) -> None:
@@ -114,6 +115,7 @@ class _MacHIDKeyboardMonitor:
         C.CFRunLoopGetCurrent.restype = ctypes.c_void_p
 
     def _make_property_keys(self) -> None:
+        assert self._cf is not None
         for key in (
             "Product", "SerialNumber", "VendorID", "ProductID", "LocationID",
         ):
@@ -127,6 +129,7 @@ class _MacHIDKeyboardMonitor:
         key_ref = self._property_keys.get(key)
         if not key_ref:
             return ""
+        assert self._iokit is not None and self._cf is not None
         value = self._iokit.IOHIDDeviceGetProperty(device, key_ref)
         if not value:
             return ""
@@ -154,6 +157,7 @@ class _MacHIDKeyboardMonitor:
             return cached
 
         registry_id = ctypes.c_uint64()
+        assert self._iokit is not None
         service = self._iokit.IOHIDDeviceGetService(device_ref)
         if service:
             self._iokit.IORegistryEntryGetRegistryEntryID(
@@ -194,19 +198,19 @@ class _MacHIDKeyboardMonitor:
                 if result != 0 or not value:
                     return
                 try:
-                    element = self._iokit.IOHIDValueGetElement(value)
-                    if not element or self._iokit.IOHIDElementGetUsagePage(element) != 0x07:
+                    element = iokit.IOHIDValueGetElement(value)
+                    if not element or iokit.IOHIDElementGetUsagePage(element) != 0x07:
                         return
-                    usage = self._iokit.IOHIDElementGetUsage(element)
+                    usage = iokit.IOHIDElementGetUsage(element)
                     # 0x00-0x03 are HID no-event/error codes.  Values beyond
                     # the Keyboard/Keypad page range are not physical keys.
                     if usage < 0x04 or usage > 0xE7:
                         return
                     name = Keyboard.hid_usage_name(usage)
-                    device_ref = self._iokit.IOHIDElementGetDevice(element)
+                    device_ref = iokit.IOHIDElementGetDevice(element)
                     if not device_ref:
                         return
-                    pressed = bool(self._iokit.IOHIDValueGetIntegerValue(value))
+                    pressed = bool(iokit.IOHIDValueGetIntegerValue(value))
                     device = self._device(device_ref)
                     event_key = (usage, pressed)
                     now = time.monotonic()
@@ -273,7 +277,7 @@ def create_hook(sink: EventSink):
         return None
 
     try:
-        from Quartz import (
+        from ._quartz import (
             CFMachPortCreateRunLoopSource, CFRunLoopAddSource, CFRunLoopGetCurrent,
             CFRunLoopRemoveSource, CFRunLoopRunInMode, CFRunLoopStop,
             CGEventGetFlags, CGEventGetIntegerValueField, CGEventGetLocation,
@@ -289,12 +293,14 @@ def create_hook(sink: EventSink):
             kCGKeyboardEventKeycode, kCGMouseEventButtonNumber,
             kCGScrollWheelEventDeltaAxis1, kCGScrollWheelEventDeltaAxis2,
             kCGSessionEventTap,
-            NSEvent, NSSystemDefined, NSEventTypeGesture, NSEventTypeMagnify,
+            NSEvent, NSSystemDefined, NSEventMaskPressure, NSEventTypeGesture,
+            NSEventTypeMagnify, NSEventTypeRotate, NSEventTypePressure,
         )
     except ImportError:
         return None
 
     kSystemDefinedEventMediaKeysSubtype = 8
+    gesture_types = (NSEventTypeGesture, NSEventTypeMagnify, NSEventTypeRotate, NSEventTypePressure)
 
     _MASK = (
         CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp)
@@ -306,10 +312,9 @@ def create_hook(sink: EventSink):
         | CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventOtherMouseUp)
         | CGEventMaskBit(kCGEventOtherMouseDragged)
         | CGEventMaskBit(kCGEventScrollWheel)
-        # CGEvent taps generally wrap pinch events in the generic gesture type;
-        # NSEvent.type() identifies the magnify subtype after conversion.
-        | CGEventMaskBit(NSEventTypeGesture) | CGEventMaskBit(NSEventTypeMagnify)
     )
+    for gesture_type in gesture_types:
+        _MASK |= CGEventMaskBit(gesture_type)
 
     _MOUSE_PRESS = {
         kCGEventLeftMouseDown, kCGEventRightMouseDown, kCGEventOtherMouseDown,
@@ -325,6 +330,10 @@ def create_hook(sink: EventSink):
             self._loop = None
             self._hid_monitor = _MacHIDKeyboardMonitor(self._handle_hid_key_event)
             self._hid_keyboard_seen = False
+            self._pressure_button: int | None = None
+            self._pending_pressure: float | None = None
+            self._peak_pressure: float | None = None
+            self._pressure_released = False
             self._ready = threading.Event()
             self.running = False
 
@@ -387,18 +396,59 @@ def create_hook(sink: EventSink):
                 )
                 sink._emit_scroll(dx, dy, raw_delta=raw_delta)
             elif event_type in _MOUSE_PRESS:
-                sink._emit_mouse(x, y, _MOUSE_BTN_MAP.get(btn, f"button{btn}"), True)
+                # A mouse-down can report a binary 1.0. The independent pressure
+                # packets carry the measured force and can precede this click.
+                capable = False
+                try:
+                    click = NSEvent.eventWithCGEvent_(event)
+                    capable = click is not None and bool(click.associatedEventsMask() & NSEventMaskPressure)
+                except Exception:
+                    # Optional AppKit metadata must not discard the Quartz button event.
+                    pass
+                pressure = self._pending_pressure if capable else None
+                if capable or self._pressure_button in (None, btn):
+                    self._pressure_button = btn
+                    if pressure is None:
+                        self._peak_pressure = None
+                    self._pending_pressure = None
+                    self._pressure_released = False
+                sink._emit_mouse(x, y, _MOUSE_BTN_MAP.get(btn, f"button{btn}"), True, pressure=pressure)
             elif event_type in _MOUSE_RELEASE:
-                sink._emit_mouse(x, y, _MOUSE_BTN_MAP.get(btn, f"button{btn}"), False)
+                peak = None
+                if btn == self._pressure_button:
+                    peak = self._peak_pressure
+                    self._pressure_button = None
+                    self._peak_pressure = None
+                    self._pressure_released = peak is not None
+                sink._emit_mouse(x, y, _MOUSE_BTN_MAP.get(btn, f"button{btn}"), False, pressure=peak)
 
         def _handle_gesture_event(self, event: object) -> None:
-            """Display only native magnify events, retaining zero-valued phase edges."""
+            """Decode the AppKit subtype even when Quartz delivers a generic gesture."""
             gesture = NSEvent.eventWithCGEvent_(event)
-            if gesture is None or gesture.type() != NSEventTypeMagnify:
+            if gesture is None:
                 return
-            sink._emit_magnify(
-                float(gesture.magnification()), GesturePhase(int(gesture.phase())),
-            )
+            subtype = gesture.type()
+            if subtype == NSEventTypeMagnify:
+                sink._emit_magnify(float(gesture.magnification()), GesturePhase(int(gesture.phase())))
+            elif subtype == NSEventTypeRotate:
+                sink._emit_rotate(float(gesture.rotation()), GesturePhase(int(gesture.phase())))
+            elif subtype == NSEventTypePressure:
+                pressure = float(gesture.pressure())
+                stage = int(gesture.stage())
+                phase = GesturePhase(int(gesture.phase()))
+                ending = stage == 0 or bool(phase & (GesturePhase.ENDED | GesturePhase.CANCELLED))
+                if self._pressure_button is None and ending:
+                    self._pending_pressure = self._peak_pressure = None
+                else:
+                    if self._pressure_button is None:
+                        self._pending_pressure = pressure
+                        self._pressure_released = False
+                        if phase & GesturePhase.BEGAN:
+                            self._peak_pressure = None
+                    if self._peak_pressure is None or pressure > self._peak_pressure:
+                        self._peak_pressure = pressure
+                # AppKit may deliver the final pressure packet after the button-up.
+                sink._emit_pressure(pressure, stage, phase, after_release=self._pressure_released and ending)
 
         def _handle(self, _proxy, event_type, event, _refcon):
             try:
@@ -410,7 +460,7 @@ def create_hook(sink: EventSink):
                     self._handle_flags_changed(event)
                 elif event_type == NSSystemDefined:
                     self._handle_system_defined(event)
-                elif event_type in (NSEventTypeGesture, NSEventTypeMagnify):
+                elif event_type in gesture_types:
                     self._handle_gesture_event(event)
                 elif event_type in (
                     kCGEventLeftMouseDown, kCGEventLeftMouseUp,
@@ -441,12 +491,12 @@ def create_hook(sink: EventSink):
             CFRunLoopAddSource(self._loop, self._loop_source, kCFRunLoopDefaultMode)
             if self._hid_monitor.start():
                 if self._hid_monitor.open_result:
-                    print(
+                    _write_record(
                         f"{FLYellow}  HID source tracking is partial: one or more "
                         f"devices are held exclusively (for example by Karabiner).{CRst}"
                     )
             else:
-                print(
+                _write_record(
                     f"{FLYellow}  HID source tracking unavailable; keyboard events "
                     f"will fall back to CGEvent without device identity.{CRst}"
                 )
@@ -481,7 +531,7 @@ class _MacController:
     @classmethod
     def _quartz(cls):
         if cls._Q is None:
-            from Quartz import (
+            from ._quartz import (
                 CGEventCreateKeyboardEvent, CGEventCreateMouseEvent,
                 CGEventCreateScrollWheelEvent,
                 CGEventKeyboardSetUnicodeString, CGEventPost, CGEventSetFlags,
@@ -540,8 +590,7 @@ class _MacController:
 
     def _mouse_pos(self):
         """Get current mouse position as (x, y) tuple."""
-        from AppKit import NSEvent
-        from Quartz import CGDisplayPixelsHigh
+        from ._quartz import CGDisplayPixelsHigh, NSEvent
         pos = NSEvent.mouseLocation()
         return (pos.x, CGDisplayPixelsHigh(0) - pos.y)
 
@@ -606,7 +655,7 @@ def _get_foreground_window_darwin() -> WindowInfo:
     CGWindowListCopyWindowInfo returns windows in front-to-back order,
     so the first layer-0 window is the frontmost.
     """
-    from Quartz import (
+    from ._quartz import (
         CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly,
         kCGNullWindowID,
     )

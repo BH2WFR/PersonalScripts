@@ -34,7 +34,7 @@ def mime_text(mime: QMimeData | None) -> str | None:
     if mime is not None:
         if mime.hasFormat(_EXACT_MIME):
             try:
-                return bytes(mime.data(_EXACT_MIME)).decode("utf-8", errors="surrogatepass")
+                return bytes(mime.data(_EXACT_MIME).data()).decode("utf-8", errors="surrogatepass")
             except UnicodeDecodeError:
                 pass
         return original_mime_text(mime)

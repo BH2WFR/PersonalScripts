@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import psutil
 
@@ -47,9 +47,12 @@ class Window:
     pid: int
     title: str = field(compare=False)
     kind: str = field(compare=False)
+    ax_window: Any = field(default=None, compare=False, repr=False)
 
     @property
     def label(self) -> str:
+        if sys.platform == "darwin":
+            return f"PID:{self.pid}, {self.kind}" + (f" — {self.title}" if self.title else "")
         return f"ID:0x{self.id:08X}, {self.title or self.kind}"
 
 
@@ -60,6 +63,7 @@ class Snapshot:
     opacity: int = 100
     topmost: bool = False
     through: bool = False
+    paths: dict[str, str] = field(default_factory=dict)
 
 
 class Backend(Protocol):
@@ -87,6 +91,9 @@ def find_window(entries: Iterable[Window], query: str) -> Window | None:
         prefix, raw = number.groups()
         value = int(raw, 16 if raw.startswith("0x") else 10)
         by_pid = "pid" in (prefix or "")
+        if sys.platform == "darwin" and prefix is None and raw.isdecimal():
+            items = list(entries)
+            return next((w for w in items if w.pid == value), None) or next((w for w in items if w.id == value), None)
         return next((w for w in entries if (w.pid if by_pid else w.id) == value), None)
     names: dict[int, str] = {}
     for w in entries:
@@ -113,12 +120,15 @@ class ProcessInfo:
     command: str
     priority: int | None
     rows: Properties
+    arguments: list[str] = field(default_factory=list)
 
 
 def process_info(process: psutil.Process) -> ProcessInfo:
     """Keep available fields even when the OS denies access to individual details."""
-    data = process.as_dict(attrs=["name", "exe", "cmdline", "ppid", "username", "create_time",
-                                  "memory_info", "nice", "num_threads"], ad_value=None)
+    attrs = ["name", "exe", "cmdline", "ppid", "username", "create_time", "memory_info", "nice", "num_threads"]
+    if sys.platform == "darwin":
+        attrs.extend(("cpu_times", "cwd"))
+    data = process.as_dict(attrs=attrs, ad_value=None)
     args = data["cmdline"] or []
     command = subprocess.list2cmdline(args) if sys.platform == "win32" else shlex.join(args)
 
@@ -135,6 +145,12 @@ def process_info(process: psutil.Process) -> ProcessInfo:
         rows.extend([(PropertyGroup.RESOURCES, "Resident memory", f"{memory.rss / 2**20:.2f} MiB"),
                      (PropertyGroup.RESOURCES, "Virtual memory", f"{memory.vms / 2**20:.2f} MiB")])
     path = data["exe"] or ""
+    if sys.platform == "darwin":
+        rows.append((PropertyGroup.PROCESS, "Working directory", data["cwd"] or "Unavailable"))
+        if times := data["cpu_times"]:
+            rows.append((PropertyGroup.RESOURCES, "CPU time", f"{times.user + times.system:.2f} s"))
+        if data["cmdline"] is None:
+            rows.append((PropertyGroup.PROCESS, "Argument access", "Permission denied"))
     if sys.platform == "win32":
         from .windows import process_rows
         rows.extend(process_rows(process.pid, path))
@@ -146,17 +162,25 @@ def process_info(process: psutil.Process) -> ProcessInfo:
                 rows.append((PropertyGroup.FILE, "File created", timestamp(stat.st_birthtime)))
         except OSError:
             pass
-    return ProcessInfo(data["name"] or "", path, command, data["nice"], rows)
+    return ProcessInfo(data["name"] or "", path, command, data["nice"], rows, args)
 
 
-def end_process(process: psutil.Process, restart: bool) -> None:
-    """End the captured process, preserving executable, arguments and cwd on restart."""
+@dataclass(frozen=True)
+class RestartPlan:
+    executable: str
+    arguments: tuple[str, ...]
+    cwd: str
+    environment: dict[str, str] = field(repr=False)
+
+
+def _check_process(process: psutil.Process) -> None:
     if process.pid <= 1 or process.pid == os.getpid() or not process.is_running():
         raise RuntimeError("The process has exited or cannot be managed.")
-    if not restart:
-        process.kill()
-        process.wait(timeout=5)
-        return
+
+
+def prepare_restart(process: psutil.Process) -> RestartPlan:
+    """Capture everything needed for relaunch before asking for confirmation."""
+    _check_process(process)
     current = psutil.Process()
     if process.username() != current.username():
         raise RuntimeError("Restart requires the same user account as the selected process.")
@@ -168,10 +192,24 @@ def end_process(process: psutil.Process, restart: bool) -> None:
     executable, args, cwd, env = process.exe(), process.cmdline(), process.cwd(), process.environ()
     if not args or not os.access(executable, os.X_OK) or not os.path.isdir(cwd):
         raise RuntimeError("Could not reconstruct the original launch command.")
+    return RestartPlan(executable, tuple(args), cwd, env)
+
+
+def end_process(process: psutil.Process, restart: bool, plan: RestartPlan | None = None) -> None:
+    """Act only on the captured process, and verify any previously reviewed launch plan."""
+    _check_process(process)
+    if not restart:
+        process.kill()
+        process.wait(timeout=5)
+        return
+    current = prepare_restart(process)
+    if plan is not None and plan != current:
+        raise RuntimeError("The launch details changed. Review the process and confirm again.")
     process.terminate()
     process.wait(timeout=5)
     try:
-        subprocess.Popen(args, executable=executable, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=os.name == "posix")
+        subprocess.Popen(current.arguments, executable=current.executable, cwd=current.cwd,
+                         env=current.environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=os.name == "posix")
     except OSError as exc:
         raise RuntimeError(f"The original process exited, but the restart failed: {exc}") from exc

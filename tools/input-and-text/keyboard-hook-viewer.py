@@ -27,7 +27,8 @@ from utils import *  # noqa: E402
 HELP = f"""{FLYellow}KEYBOARD AND MOUSE MONITOR{CRst}
 
 Inspect global keyboard/mouse events, key codes and scroll input without blocking
-input; macOS also reports native pinch gestures. For authorized input testing only.
+input. On macOS, inspect trackpad pinch, rotation and pressure, including
+Force Touch clicks on supported hardware. For authorized input testing only.
 
 {FLYellow}Requirements:{CRst}
   Windows: built-in APIs. macOS: pyobjc-framework-Quartz and input permissions.

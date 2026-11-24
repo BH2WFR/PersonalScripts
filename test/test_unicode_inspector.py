@@ -50,7 +50,7 @@ class GuiTests(unittest.TestCase):
     def setUp(self) -> None:
         from unicode_inspector.window import UnicodeInspector
 
-        self.window = UnicodeInspector("", entry.EDITOR_POINTS)
+        self.window = UnicodeInspector("")
         self.addCleanup(self.window.close)
 
     def test_layout_fonts_and_columns(self) -> None:
@@ -62,7 +62,8 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(set(fonts), {"Clear", "Paste", "Analyze", "Copy Original", "Copy Full Report", "Copy Selected Rows"})
         self.assertEqual({label for label, font in fonts.items() if font.bold()}, {"Paste", "Analyze"})
         font = self.window.original.font()
-        self.assertEqual(font.pointSize(), entry.EDITOR_POINTS)
+        self.assertEqual(font.pointSizeF(), self.app.font().pointSizeF())
+        self.assertEqual(self.window.original.document().defaultFont().pointSizeF(), font.pointSizeF())
         self.assertEqual(font.families(), self.app.font().families())
         self.assertEqual(self.window.original.document().defaultFont().families(), font.families())
         self.assertEqual(self.window.table.font().families(), font.families())

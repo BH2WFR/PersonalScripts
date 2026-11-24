@@ -42,7 +42,17 @@ class Console:
         console handle as well. Redirected, closed, or missing stdin is false.
         This performs no reads and does not change terminal state.
         """
-        if sys.stdin is None or sys.stdin.closed or not sys.stdin.isatty():
+        return Console._terminal_mode(sys.stdin)
+
+    @staticmethod
+    def enable_ansi_output(stream: typing.TextIO) -> bool:
+        """Return whether the terminal can redraw lines, enabling VT output on Windows."""
+        # Win32 requires both ENABLE_PROCESSED_OUTPUT and ENABLE_VIRTUAL_TERMINAL_PROCESSING.
+        return Console._terminal_mode(stream, enable_flags=0x0001 | 0x0004)
+
+    @staticmethod
+    def _terminal_mode(stream: typing.TextIO | None, *, enable_flags: int = 0) -> bool:
+        if stream is None or stream.closed or not stream.isatty():
             return False
         if os.name != "nt":
             return True
@@ -50,12 +60,20 @@ class Console:
         import msvcrt
 
         try:
-            handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+            handle = ctypes.c_void_p(msvcrt.get_osfhandle(stream.fileno()))
             mode = ctypes.c_ulong()
             get_mode = ctypes.windll.kernel32.GetConsoleMode
             get_mode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
             get_mode.restype = ctypes.c_int
-            return bool(get_mode(ctypes.c_void_p(handle), ctypes.byref(mode)))
+            if not get_mode(handle, ctypes.byref(mode)):
+                return False
+            desired = mode.value | enable_flags
+            if desired == mode.value:
+                return True
+            set_mode = ctypes.windll.kernel32.SetConsoleMode
+            set_mode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            set_mode.restype = ctypes.c_int
+            return bool(set_mode(handle, desired))
         except (OSError, ValueError):
             return False
 

@@ -1,6 +1,7 @@
 """PySide6 counterpart of the Caps+W inspector."""
 
 import os
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable
@@ -10,22 +11,23 @@ from typing import Any
 
 import psutil
 from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QStandardItemModel
+from PySide6.QtGui import QAction, QCloseEvent, QCursor, QKeyEvent, QKeySequence, QShortcut, QStandardItemModel
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMessageBox, QPushButton, QSizePolicy, QSplitter, QToolBar, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QTabWidget, QToolTip, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application
 
 from .model import (
     Backend, CONTROLS_HINT, INITIAL_HINT, LOADED_HINT, MIN_OPACITY_PERCENT, ProcessInfo, Properties, PropertyGroup, Rows, Window,
-    end_process, find_window, process_info,
+    end_process, find_window, prepare_restart, process_info,
 )
 from .picker import Finder, Outline
 
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 PREVIEW_MS = 3000
 PRIORITIES = {"Low": 0x40, "BelowNormal": 0x4000, "Normal": 0x20,
               "AboveNormal": 0x8000, "High": 0x80, "Realtime": 0x100}
@@ -42,7 +44,13 @@ class _Table(QTreeWidget):
         self.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
 
-class _PropertyTree(_Table):
+class _ValueTable(_Table):
+    """Fill the available width while allowing a long value to scroll horizontally."""
+
+    def __init__(self, headers: list[str]) -> None:
+        super().__init__(headers)
+        self.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+
     def sizeHintForColumn(self, column: int) -> int:
         content_width = super().sizeHintForColumn(column)
         if column == 1:
@@ -64,6 +72,7 @@ class Inspector(QWidget):
         self.target: Window | None = None
         self.process: psutil.Process | None = None
         self.loaded = False
+        self.window_controls: list[QWidget | QAction] = []
         self.target_controls: list[QWidget | QAction] = []
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.job: Future[Any] | None = None
@@ -140,7 +149,7 @@ class Inspector(QWidget):
         self._button(header, "Find", "Inspect the first window matching your search.", self.search, needs_target=False)
 
         options = self._row()
-        finder_hint = QLabel("↑ Drag the finder onto a window")
+        finder_hint = QLabel("⬆️ Drag the finder onto a window")
         finder_hint.setIndent(max(0, (self.finder.width() - finder_hint.fontMetrics().horizontalAdvance("↑")) // 2))
         options.addWidget(finder_hint)
         self.hidden_windows = QCheckBox("Include hidden windows")
@@ -154,7 +163,7 @@ class Inspector(QWidget):
         options.addWidget(self.pin)
         options.addStretch()
         self._button(options, "Refresh Info", "Read the selected window and process details again.", self.refresh)
-        self._button(options, "Read Controls", "List the controls exposed by the selected window.", self.read_controls)
+        self.window_controls.append(self._button(options, "Read Controls", "List the controls exposed by the selected window.", self.read_controls))
 
         actions_group = QGroupBox("Actions")
         self.body.addWidget(actions_group)
@@ -180,8 +189,8 @@ class Inspector(QWidget):
         window_row.setSpacing(6)
         bars.addLayout(window_row, 1, 1)
         window_row.addWidget(window_bar)
-        self._action(process_bar, "Properties", "Show the executable's file properties.", partial(self._file, True))
-        self._action(process_bar, "Show File", "Reveal the executable in its containing folder.", partial(self._file, False))
+        self._action(process_bar, "Properties", "Show properties for the selected path.", partial(self._file, True))
+        self._action(process_bar, "Show File", "Reveal the selected path in its containing folder.", partial(self._file, False))
         process_bar.addSeparator()
         self._action(process_bar, "Restart", "End the process and relaunch it with its original arguments.", partial(self._end, True))
         self._action(process_bar, "Terminate", "Force the process to quit, including all of its windows.", partial(self._end, False))
@@ -229,6 +238,7 @@ class Inspector(QWidget):
                          self._show_controls)
             self._action(window_bar, "Enable Menus", "Enable disabled menu items in the selected window.",
                          self._enable_menus)
+        self.window_controls.extend(a for a in window_bar.actions() if not a.isSeparator())
         window_row.addStretch()
 
         details_group = QGroupBox("Window details")
@@ -246,12 +256,16 @@ class Inspector(QWidget):
             field.setStyleSheet("max-height: 1.2em;")
             self.fields[label] = field
             fields.addWidget(field, i, 1)
+        if IS_MACOS:
+            self.paths = NoWheelComboBox()
+            self.paths.setToolTip("Choose the executable, application bundle or window document.")
+            self.paths.currentIndexChanged.connect(lambda: self.fields["Path"].setText(self.paths.currentData() or ""))
+            fields.addWidget(self.paths, 2, 2)
         fields.setColumnStretch(1, 1)
-        self.info, self.controls = _PropertyTree(["Property", "Value"]), _Table(CONTROL_COLUMNS)
+        self.info, self.controls = _ValueTable(["Property", "Value"]), _Table(CONTROL_COLUMNS)
         self.info.setRootIsDecorated(True)
         self.info.setIndentation(round(self.info.indentation() * 0.8))
         self.info.setColumnWidth(0, self.info.fontMetrics().horizontalAdvance("Layered click-through") + 2 * self.info.indentation() + 12)
-        self.info.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         widths = (45, 100, 100, 190, 100, 170) if IS_WINDOWS else (45, 140, 150, 200)
         for i, width in enumerate(widths):
             self.controls.setColumnWidth(i, width)
@@ -259,14 +273,33 @@ class Inspector(QWidget):
         self.controls.itemDoubleClicked.connect(self._copy_control)
         split = QSplitter()
         split.addWidget(self.info)
-        split.addWidget(self.controls)
+        self.arguments = _ValueTable(["#", "Argument"])
+        self.arguments.header().setResizeContentsPrecision(-1)
+        self.arguments.setColumnWidth(0, 45)
+        self.arguments.itemDoubleClicked.connect(lambda item, col: self._copy(item.text(col)))
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.controls, "Controls")
+        self.tabs.addTab(self.arguments, "Arguments")
+        split.addWidget(self.tabs)
+        copy_tables = (self.info, self.controls, self.arguments) if IS_MACOS else (self.arguments,)
+        for table in copy_tables:
+            table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            shortcut = QShortcut(QKeySequence.StandardKey.Copy, table)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(partial(self._copy_rows, table))
+        if IS_MACOS:
+            QShortcut(QKeySequence.StandardKey.Close, self).activated.connect(self.close)
         split.setSizes([330, 498])
         details_layout.addWidget(split, 1)
         self.status = QLabel()
         self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         footer = self._row()
         footer.addWidget(self.status, 1)
-        footer.addWidget(QLabel("Double-click a row to copy its contents."))
+        if IS_MACOS:
+            footer.addWidget(QLabel("Double-click a cell to copy it."))
+            self._button(footer, "Copy All", "Copy the displayed details, controls and arguments.", self._copy_all)
+        else:
+            footer.addWidget(QLabel("Double-click a row to copy its contents."))
         self.finder.message.connect(self.status.setText)
 
     def guard(self, action: Callable[[], None]) -> None:
@@ -274,7 +307,7 @@ class Inspector(QWidget):
         try:
             action()
         except (OSError, RuntimeError, ValueError, psutil.Error, subprocess.SubprocessError) as exc:
-            self.status.setText(str(exc))
+            self._feedback(str(exc))
 
     def _pin(self, checked: bool) -> None:
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
@@ -282,6 +315,9 @@ class Inspector(QWidget):
 
     def _restore_focus(self) -> None:
         self._pin(self.pin.isChecked())
+        if IS_MACOS:
+            from .macos import activate_inspector
+            activate_inspector()
         self.raise_()
         self.activateWindow()
 
@@ -290,6 +326,18 @@ class Inspector(QWidget):
             self.return_focus.stop()
             self._restore_focus()
         self.outline.hide()
+
+    def _preview(self, target: Window) -> None:
+        if not self.return_focus.isActive() or self.target != target:
+            return
+        if IS_MACOS:
+            from .macos import check_active
+            try:
+                check_active(target)
+            except RuntimeError:
+                self._cancel_preview()
+                raise
+        self.outline.show(target, max(1, self.return_focus.remainingTime()))
 
     def _set_list(self, entries: list[Window], loaded: bool) -> None:
         self.loaded = loaded
@@ -337,13 +385,23 @@ class Inspector(QWidget):
         if self.target is not None and query == self.target.label:
             self.refresh()
             return
+        if IS_MACOS and not query:
+            self._feedback("Enter a window title, application name, window ID or PID.")
+            return
+
         def select(entries: list[Window]) -> None:
+            if IS_MACOS and not self.loaded:
+                self._set_list(entries, True)
+                self.editor.setText(query)
             target = find_window(entries, query)
             if target is None:
                 self._clear(keep_text=True)
                 raise ValueError("No matching window found.")
             self.load(target)
-        self._list_for(select)
+        if IS_MACOS and self.loaded:
+            select([self.selector.itemData(i) for i in range(1, self.selector.count())])
+        else:
+            self._list_for(select)
 
     def _clear(self, keep_text: bool = False) -> None:
         self.target = self.process = None
@@ -355,6 +413,9 @@ class Inspector(QWidget):
             field.clear()
         self.info.clear()
         self.controls.clear()
+        self.arguments.clear()
+        if IS_MACOS:
+            self.paths.clear()
         if isinstance(self.priority, QComboBox):
             self.priority.setCurrentIndex(-1)
         else:
@@ -371,7 +432,7 @@ class Inspector(QWidget):
         if self.target == target:
             for index in range(self.info.topLevelItemCount()):
                 group = self.info.topLevelItem(index)
-                if not group.isExpanded():
+                if group is not None and not group.isExpanded():
                     collapsed.add(group.text(0))
         if self.target != target:
             self._clear()
@@ -404,6 +465,17 @@ class Inspector(QWidget):
         for field, text in zip(self.fields.values(), (target.title, details.name or target.kind, details.path, details.command)):
             field.setText(text)
             field.setCursorPosition(0)
+        if IS_MACOS:
+            previous_path = self.paths.currentText()
+            self.paths.clear()
+            paths = dict(data.paths)
+            if details.path:
+                paths = {"Executable": details.path, **paths}
+            for label, path in paths.items():
+                self.paths.addItem(label, path)
+            self.paths.setCurrentIndex(max(0, self.paths.findText(previous_path)) if paths else -1)
+        self.arguments.clear()
+        self.arguments.addTopLevelItems([QTreeWidgetItem([str(i), arg]) for i, arg in enumerate(details.arguments)])
         rows = data.rows + details.rows
         if details.priority is not None:
             name = next((k for k, v in PRIORITIES.items() if IS_WINDOWS and v == details.priority), str(details.priority))
@@ -427,11 +499,15 @@ class Inspector(QWidget):
         hint.setFlags(Qt.ItemFlag.NoItemFlags)
         for widget in self.target_controls:
             widget.setEnabled(True)
+        if target.id == 0:
+            for control in self.window_controls:
+                control.setEnabled(False)
         self.priority.setEnabled(details.priority is not None and self.process is not None)
         if IS_WINDOWS:
             self.toggles["Always on Top"].setChecked(data.topmost)
             self.toggles["Click-through"].setChecked(data.through)
-        self.status.setText(f"Inspecting window 0x{target.id:08X} (PID {target.pid}).")
+        description = target.label if IS_MACOS else f"window 0x{target.id:08X} (PID {target.pid})"
+        self.status.setText(f"Inspecting {description}.")
 
     def _checked(self) -> Window:
         if self.target is None:
@@ -462,15 +538,42 @@ class Inspector(QWidget):
 
     def _copy_property(self, item: QTreeWidgetItem, column: int) -> None:
         if item.parent() is not None:
-            self._copy(item.text(1))
+            self._copy(item.text(column if IS_MACOS else 1))
+
+    def _copy_rows(self, table: QTreeWidget) -> None:
+        rows = [item for item in table.selectedItems() if item.flags() & Qt.ItemFlag.ItemIsSelectable]
+        if rows:
+            self._copy("\n".join("\t".join(item.text(i) for i in range(table.columnCount())) for item in rows))
+
+    def _copy_all(self) -> None:
+        sections = ["\n".join(f"{label}\t{field.text()}" for label, field in self.fields.items())]
+        for label, table in (("Properties", self.info), ("Controls", self.controls), ("Arguments", self.arguments)):
+            rows = []
+            for i in range(table.topLevelItemCount()):
+                item = table.topLevelItem(i)
+                if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
+                    continue
+                rows.append("\t".join(item.text(j) for j in range(table.columnCount())).rstrip("\t"))
+                for k in range(item.childCount()):
+                    child = item.child(k)
+                    if child is not None:
+                        rows.append(f"{child.text(0)}\t{child.text(1)}")
+            sections.append("\n".join([label, *rows]))
+        self._copy("\n\n".join(sections))
+
+    def _feedback(self, message: str) -> None:
+        self.status.setText(message)
+        if IS_MACOS:
+            QToolTip.showText(QCursor.pos(), message, self, msecShowTime=1500)
 
     def _copy(self, text: str) -> None:
         QApplication.clipboard().setText(text)
-        self.status.setText("Copied to clipboard.")
+        self._feedback("Copied to clipboard.")
 
     def _copy_control(self, item: QTreeWidgetItem, column: int) -> None:
         if item.flags() & Qt.ItemFlag.ItemIsEnabled:
-            self._copy("\t".join(item.text(i) for i in range(self.controls.columnCount())))
+            text = item.text(column) if IS_MACOS else "\t".join(item.text(i) for i in range(self.controls.columnCount()))
+            self._copy(text)
 
     def _start_job(self, work: Callable[[], Any], completed: Callable[[Any], None]) -> None:
         if self.job is not None:
@@ -494,7 +597,9 @@ class Inspector(QWidget):
                 return
             self.controls.clear()
             self.controls.addTopLevelItems([QTreeWidgetItem(row) for row in rows])
-            self.status.setText(f"Controls found: {len(rows)}.")
+            self.tabs.setCurrentWidget(self.controls)
+            limit = " (showing up to 500 direct children)" if IS_MACOS and len(rows) == 500 else ""
+            self._feedback(f"Controls found: {len(rows)}{limit}.")
         self.status.setText("Reading controls…")
         self._start_job(partial(self.backend.controls, target), render)
 
@@ -519,10 +624,13 @@ class Inspector(QWidget):
     def _file(self, properties: bool) -> None:
         self._checked()
         path = self.fields["Path"].text()
-        if not path or not os.path.isfile(path):
-            raise RuntimeError("The executable path is unavailable.")
-        self.pin.setChecked(False)
+        if not path or not os.path.exists(path):
+            raise RuntimeError("The selected path is unavailable.")
+        if IS_WINDOWS:
+            self.pin.setChecked(False)
         self.backend.file_action(path, properties)
+        if IS_MACOS:
+            self.pin.setChecked(False)
 
     def _set_priority(self) -> None:
         self._checked()
@@ -571,17 +679,28 @@ class Inspector(QWidget):
         spin.setFocus()
         spin.selectAll()
 
-    def _confirm(self, action: str, message: str) -> bool:
+    def _confirm(self, action: str, message: str, details: str = "") -> bool:
         buttons = QMessageBox.StandardButton
-        return QMessageBox.question(self, action, message, buttons.Yes | buttons.No, buttons.No) == buttons.Yes
+        box = QMessageBox(QMessageBox.Icon.Warning, action, message, buttons.Yes | buttons.No, self)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setDefaultButton(buttons.No)
+        if details:
+            box.setDetailedText(details)
+        return box.exec() == buttons.Yes
 
     def _end(self, restart: bool) -> None:
         target, process = self._checked(), self.process
         if process is None:
             raise RuntimeError("Cannot access the selected process.")
         verb = "Restart" if restart else "Terminate"
+        plan = prepare_restart(process) if restart and IS_MACOS else None
+        path = process.exe() if IS_MACOS else self.fields["Path"].text()
+        details = ""
+        if plan:
+            arguments = "\n".join(f"[{index}] {arg!r}" for index, arg in enumerate(plan.arguments))
+            details = f"Working directory: {plan.cwd}\nCommand: {shlex.join(plan.arguments)}\n\nArguments:\n{arguments}"
         if not self._confirm(f"{verb} process", f"{verb} {self.fields['Process'].text()} (PID {target.pid})?\n"
-                             f"Unsaved work in its windows may be lost.\n{self.fields['Path'].text()}"):
+                             f"Unsaved work in its windows may be lost.\n{path}", details):
             return
         if self._checked() != target or self.process is not process:
             return
@@ -589,7 +708,7 @@ class Inspector(QWidget):
             self._clear()
             self.status.setText("Process restarted." if restart else "Process terminated.")
         self.status.setText("Restarting process…" if restart else "Terminating process…")
-        self._start_job(partial(end_process, process, restart), completed)
+        self._start_job(partial(end_process, process, restart, plan), completed)
 
     def _window_action(self, action: str, value: int = 0) -> None:
         target = self._checked()
@@ -599,7 +718,11 @@ class Inspector(QWidget):
         if action == "Close Window":
             if self._confirm(action, f"Close this window?\n{target.title}") and self._checked() == target:
                 self.backend.act(target, action)
-                self._clear()
+                if IS_MACOS:
+                    # An application may ask the user to save and keep the window open.
+                    QTimer.singleShot(300, self, lambda: self.guard(self.refresh) if self.target == target else None)
+                else:
+                    self._clear()
                 self.status.setText("Close request sent.")
             return
         if action == "Activate":
@@ -607,10 +730,8 @@ class Inspector(QWidget):
             try:
                 self.backend.act(target, action)
                 self.return_focus.start(PREVIEW_MS)
-                def highlight() -> None:
-                    if self.return_focus.isActive() and self.target == target:
-                        self.guard(lambda: self.outline.show(target, max(1, self.return_focus.remainingTime())))
-                QTimer.singleShot(100, self, highlight)
+                QTimer.singleShot(300 if IS_MACOS else 100, self,
+                                  lambda: self.guard(partial(self._preview, target)))
                 self.status.setText("Window activated. Returning to the inspector in 3 seconds.")
             except Exception:
                 self._restore_focus()
@@ -626,6 +747,8 @@ class Inspector(QWidget):
         if action == "Opacity":
             self.refresh()
             return
+        if IS_MACOS:
+            self._feedback(f"{action} request sent.")
         # Other processes apply show/position changes on their own event loop.
         QTimer.singleShot(150, self, lambda: self.guard(self.refresh) if self.target == target and self.job is None else None)
 
@@ -641,6 +764,10 @@ class Inspector(QWidget):
             super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if IS_MACOS and self.job is not None:
+            event.ignore()
+            self._feedback("Please wait for the current operation to finish.")
+            return
         self.finder.cancel()
         self.return_focus.stop()
         self.poll.stop()
@@ -657,4 +784,6 @@ def run(backend: Backend, foreground: Window | None, *, top: bool = False) -> in
     if foreground is not None:
         inspector.guard(partial(inspector.load, foreground))
     inspector.show()
+    if IS_MACOS:
+        QTimer.singleShot(100, inspector, inspector._restore_focus)
     return app.exec()

@@ -16,6 +16,7 @@ Implementation: [console.py](../console.py), [input.py](../input.py), [menu.py](
 | Standard exit message | `Console.print_exit_message_and_exit()` or `Console.print_error_and_exit()` |
 | Terminal width / CJK display width | `Console.get_terminal_width()`, `Console.display_width(s)` |
 | Detect interactive stdin (including Windows NUL) | `Console.has_interactive_input() -> bool` |
+| Prepare a terminal for ANSI redraws | `Console.enable_ansi_output(stream) -> bool` checks the output stream and enables VT processing on a Windows console while preserving existing mode flags. Redirected output returns false. |
 | Human-readable byte size | `Console.format_size(size_bytes, precision=1)` |
 | Current time string | `Console.get_time_str()` |
 | Print argv for debugging | `Console.print_argv_list()` |

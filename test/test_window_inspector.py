@@ -115,6 +115,62 @@ class InspectorTests(unittest.TestCase):
         self.ui._selected(1)
         self.assertEqual(self.ui.target, self.first)
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS inspector details")
+    def test_arguments_paths_and_copy_preserve_selected_data(self) -> None:
+        from window_inspector.model import ProcessInfo
+        from PySide6.QtWidgets import QTreeWidgetItem
+
+        snapshot = Snapshot(self.first, [], paths={"Application bundle": "/Fixture.app", "Document": "/fixture file"})
+        self.backend.snapshot.side_effect = None
+        self.backend.snapshot.return_value = snapshot
+        details = ProcessInfo("Fixture", "/fixture", "fixture 'two words'", None, [], ["fixture", "two words"])
+        with patch("window_inspector.view.process_info", return_value=details):
+            self.ui.load(self.first)
+            self.ui.paths.setCurrentText("Document")
+            self.ui.refresh()
+        self.assertEqual(self.ui.fields["Path"].text(), "/fixture file")
+        self.assertEqual(self.ui.arguments.topLevelItem(1).text(1), "two words")
+        control = QTreeWidgetItem(["1", "AXButton", "", "Example"])
+        self.ui.controls.addTopLevelItem(control)
+        with patch.object(self.ui, "_copy") as copy:
+            self.ui.controls.itemDoubleClicked.emit(control, 1)
+            copy.assert_called_once_with("AXButton")
+            self.ui._copy_all()
+            output = copy.call_args.args[0]
+            self.assertIn("1\ttwo words", output)
+            self.assertIn("1\tAXButton\t\tExample", output)
+            self.assertNotIn(CONTROLS_HINT, output)
+
+    def test_windows_arguments_fill_panel_and_grow_for_long_values(self) -> None:
+        from window_inspector.model import ProcessInfo
+        from window_inspector.view import Inspector
+
+        details = ProcessInfo("Fixture", "", "", None, [], ["fixture.exe", "two words", ""])
+        with (patch("window_inspector.view.IS_MACOS", False),
+              patch("window_inspector.view.IS_WINDOWS", True),
+              patch("window_inspector.view.process_info", return_value=details)):
+            ui = Inspector(self.backend)
+            self.addCleanup(ui.close)
+            ui.load(self.first)
+            ui.tabs.setCurrentWidget(ui.arguments)
+            ui.show()
+            self.app.processEvents()
+            table = ui.arguments
+            self.assertEqual(ui.tabs.tabText(ui.tabs.currentIndex()), "Arguments")
+            self.assertEqual([table.topLevelItem(i).text(1) for i in range(table.topLevelItemCount())], details.arguments)
+            self.assertEqual(table.header().length(), table.viewport().width())
+            long_arg = "long path with spaces " * 45
+            details.arguments.append(long_arg)
+            ui.refresh()
+            self.app.processEvents()
+            self.assertGreaterEqual(table.columnWidth(1), table.fontMetrics().horizontalAdvance(long_arg))
+            self.assertGreater(table.horizontalScrollBar().maximum(), 0)
+            details.arguments.clear()
+            ui.load(self.second)
+            self.app.processEvents()
+            self.assertEqual(table.topLevelItemCount(), 0)
+            self.assertEqual(table.header().length(), table.viewport().width())
+
     def test_edit_invalidates_target_and_selectors_match_exactly(self) -> None:
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
@@ -354,6 +410,37 @@ class InspectorTests(unittest.TestCase):
 
 
 class MacDiscoveryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
+    def test_picker_keeps_exact_ax_window_without_windowserver_record(self) -> None:
+        from types import SimpleNamespace
+        from window_inspector import macos as mac
+
+        element, window = object(), object()
+        app = Mock()
+        app.localizedName.return_value = "Fixture"
+        app.processIdentifier.return_value = 432
+        attrs = {"AXWindow": window, "AXRole": "AXButton", "AXTitle": "Same title"}
+        with (patch.object(mac.CG, "CGEventGetLocation", return_value=SimpleNamespace(x=-45, y=120)),
+              patch.object(mac.AX, "AXIsProcessTrusted", return_value=True),
+              patch.object(mac.AX, "AXUIElementCopyElementAtPosition", return_value=(0, element)) as hit,
+              patch.object(mac.AX, "AXUIElementGetPid", return_value=(0, 432)),
+              patch.object(mac.A, "NSRunningApplication") as apps,
+              patch.object(mac, "_attribute", side_effect=lambda obj, key, default=None: attrs.get(key, default)),
+              patch.object(mac, "_window_id", return_value=0),
+              patch.object(mac, "_records", side_effect=AssertionError("AX hit must precede Dock overlay"))):
+            apps.runningApplicationWithProcessIdentifier_.return_value = app
+            picked = mac.at_pointer()
+            assert picked is not None
+            self.assertEqual(hit.call_args.args[1:], (-45, 120, None))
+            self.assertIs(picked.ax_window, window)
+            self.assertEqual((picked.title, picked.pid), ("Same title", 432))
+            self.assertNotEqual(picked.id, 0)
+            attrs["AXRole"] = "AXWindow"
+            self.assertIs(mac.checked(picked), picked)
+            attrs["AXRole"] = None
+            with self.assertRaisesRegex(RuntimeError, "closed"):
+                mac.checked(picked)
+
     def test_frontmost_popup_without_accessibility_and_covered_inspector(self) -> None:
         from types import SimpleNamespace
 
@@ -390,6 +477,8 @@ class MacDiscoveryTests(unittest.TestCase):
         self.assertIn((PropertyGroup.BUNDLE, "Bundle ID", "com.example.fixture"), rows)
         quartz.CGWindowListCopyWindowInfo.return_value = [dict(main, OwnerPID=os.getpid()), popup]
         self.assertIsNone(module.at_pointer())
+        quartz.CGWindowListCopyWindowInfo.return_value = [dict(main, OwnerName="Dock", Layer=20), popup]
+        self.assertEqual(module.at_pointer(), expected)
 
 
 if __name__ == "__main__":

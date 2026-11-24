@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from utils import System, UnicodeReport, UnicodeText
-from utils.qt_widgets import configure_qt_application, with_cjk_fallbacks
+from utils.qt_widgets import configure_qt_application
 from .editor import OriginalEditor, mime_text, text_mime
 
 
@@ -84,7 +84,7 @@ class CharacterTable(QTableView):
 class UnicodeInspector(QWidget):
     """Edit source text, inspect its code points and copy reports."""
 
-    def __init__(self, text: str, editor_points: int) -> None:
+    def __init__(self, text: str) -> None:
         super().__init__()
         self.setWindowTitle("Unicode Inspector")
         self.resize(1100, 720)
@@ -107,9 +107,6 @@ class UnicodeInspector(QWidget):
 
         self.original = OriginalEditor()
         self.original.setAccessibleName("Text to inspect")
-        font = self.original.font()
-        font.setPointSize(editor_points)
-        self.original.setFont(with_cjk_fallbacks(font))
         self.original.setFixedHeight(self.original.fontMetrics().lineSpacing() * 6
                                      + 2 * (self.original.frameWidth() + int(self.original.document().documentMargin())))
         self.original.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
@@ -169,7 +166,7 @@ class UnicodeInspector(QWidget):
 
         for key, action in (("Ctrl+Return", self.analyze), ("Ctrl+Enter", self.analyze),
                             ("Ctrl+W", self.close), ("Escape", self.close)):
-            QShortcut(QKeySequence(key), self, activated=action)
+            QShortcut(QKeySequence(key), self, action)
         self.original.textChanged.connect(self._edited)
         self.set_text(text)
         self.original.document().clearUndoRedoStacks()
@@ -223,7 +220,7 @@ class UnicodeInspector(QWidget):
         self._copy(UnicodeText.format_report(self.model.report))
 
 
-def run(text: str, clipboard: bool, editor_points: int) -> int:
+def run(text: str, clipboard: bool) -> int:
     """Configure Qt before constructing the window and reading the clipboard."""
     existing = QApplication.instance()
     if existing is None and System.is_headless() and not os.environ.get("QT_QPA_PLATFORM"):
@@ -231,7 +228,7 @@ def run(text: str, clipboard: bool, editor_points: int) -> int:
         return 1
     app = existing if isinstance(existing, QApplication) else QApplication([sys.argv[0]])
     configure_qt_application(app)
-    window = UnicodeInspector(text, editor_points)
+    window = UnicodeInspector(text)
     if clipboard:
         window.paste()
     window.show()

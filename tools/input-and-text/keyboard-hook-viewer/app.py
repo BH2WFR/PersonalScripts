@@ -79,10 +79,10 @@ def main() -> int:
         print()
 
     print(f"{FLYellow}Starting hooks...{CRst}")
-    print(f"  {FLGreen}↓{CRst} press/down    {FLYellow}↑{CRst} release/up")
+    print(f"  {ui.PRESS_COLOR}↓{CRst} press/down    {ui.RELEASE_COLOR}↑{CRst} release/up")
     print(f"  {FLRed}Ctrl+C{CRst} to stop")
     print()
-    print(f"{FLCyan}{'─' * 60}{CRst}")
+    ui._write_record(f"{FLCyan}{'─' * 60}{CRst}")
 
     # --- create hook ----------------------------------------------------------
     try:
@@ -98,7 +98,7 @@ def main() -> int:
     hook_thread.start()
 
     if not hook._ready.wait(timeout=5):
-        print(f"{FLCyan}  Waiting for hook permission...{CRst}")
+        ui._write_record(f"{FLCyan}  Waiting for hook permission...{CRst}")
 
     # Print initial foreground window
     ui._check_win_change()
@@ -108,5 +108,5 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     hook.stop()
-    print(f"{FLGreen}Bye.{CRst}")
+    ui._write_record(f"{FLGreen}Bye.{CRst}")
     return 0
