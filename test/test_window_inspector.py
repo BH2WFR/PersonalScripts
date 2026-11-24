@@ -6,7 +6,7 @@ import runpy
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -259,13 +259,52 @@ class InspectorTests(unittest.TestCase):
                     self.assertTrue(action.toolTip())
         center = next(action for action in bars["Window"].actions() if action.text() == "Center")
         center.trigger()
-        self.backend.act.assert_called_once_with(self.first, "Center", 0)
+        self.assertEqual(self.backend.act.call_args_list, [call(self.first, "Activate"), call(self.first, "Center")])
         hint = next(label for label in self.ui.findChildren(QLabel) if label.text().startswith("Double-click"))
         self.ui.controls.itemDoubleClicked.emit(self.ui.controls.topLevelItem(0), 0)
         self.ui._clear()
         self.assertFalse(center.isEnabled())
         self.assertTrue(hint.isVisible())
         self.assertIn("Release", self.ui.finder.toolTip())
+
+    def test_geometry_actions_preview_then_restore_focus(self) -> None:
+        from PySide6.QtTest import QTest
+        from window_inspector.view import PREVIEW_MS
+
+        self.ui.load(self.first)
+        events = Mock()
+        events.attach_mock(self.backend.act, "act")
+        with (patch("window_inspector.view.IS_MACOS", False),
+              patch("window_inspector.view.show_cursor_tooltip") as tooltip,
+              patch.object(self.ui.outline, "show", events.show),
+              patch.object(self.ui.outline, "hide", events.hide),
+              patch.object(self.ui, "_restore_focus", events.restore)):
+            for action in ("Activate", "Center", "Reset Size"):
+                with self.subTest(action=action):
+                    events.reset_mock()
+                    tooltip.reset_mock()
+                    self.ui._window_action(action)
+                    self.assertEqual(self.ui.return_focus.interval(), PREVIEW_MS)
+                    QTest.qWait(200)
+                    actions = [call.act(self.first, "Activate")]
+                    if action != "Activate":
+                        actions.append(call.act(self.first, action))
+                    self.assertEqual(events.mock_calls, [*actions, call.show(self.first)])
+                    tooltip.assert_called_once()
+                    self.assertEqual(tooltip.call_args.args, ("Focus returns to Window Inspector in 3 seconds.",))
+                    self.assertTrue(0 < tooltip.call_args.kwargs["duration_ms"] <= PREVIEW_MS)
+                    if action == "Activate":
+                        QTest.qWait(2000)
+                        self.assertEqual([c.args[0] for c in tooltip.call_args_list], [
+                            "Focus returns to Window Inspector in 3 seconds.",
+                            "Focus returns to Window Inspector in 2 seconds.",
+                            "Focus returns to Window Inspector in 1 second."])
+                    self.ui.return_focus.start(1)
+                    QTest.qWait(50)
+                    self.assertEqual(events.mock_calls[-2:], [call.hide(), call.restore()])
+            tooltip.reset_mock()
+            self.ui._window_action("Highlight")
+            tooltip.assert_not_called()
 
     @unittest.skipUnless(sys.platform == "win32", "Windows window opacity")
     def test_opacity_dialog_edits_the_selected_window(self) -> None:
@@ -357,6 +396,35 @@ class InspectorTests(unittest.TestCase):
                 nice.assert_not_called()
                 QTest.keyClick(ui.priority, Qt.Key.Key_Return)
                 nice.assert_called_once_with(12)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows layered windows")
+    def test_disabling_click_through_returns_focus_after_success(self) -> None:
+        self.ui.load(self.first)
+        toggle = self.ui.toggles["Click-through"]
+        with patch.object(self.ui, "_restore_focus") as restore:
+            toggle.trigger()
+            self.backend.act.assert_called_with(self.first, "Click-through", 1)
+            restore.assert_not_called()
+            toggle.trigger()
+            self.backend.act.assert_called_with(self.first, "Click-through", 0)
+            restore.assert_called_once_with()
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows window frames")
+    def test_maximized_outline_stays_inside_the_window_and_work_area(self) -> None:
+        from ctypes.wintypes import RECT
+        from window_inspector import windows
+
+        frame = (-1932, -12, 1936, 1084)
+        with (patch.object(windows, "checked", return_value=self.first),
+              patch.object(windows, "U") as native, patch.object(windows, "DWM"),
+              patch.object(windows, "_rect", return_value=frame),
+              patch.object(windows, "_scale", return_value=1.5),
+              patch.object(windows, "_work_area", return_value=RECT(-1920, 0, 0, 1080))):
+            native.IsHungAppWindow.return_value = native.IsIconic.return_value = False
+            native.IsZoomed.return_value = True
+            self.assertEqual(windows.frame(self.first), ((-1920, 0, 1920, 1072), 6))
+            native.IsZoomed.return_value = False
+            self.assertEqual(windows.frame(self.first), (frame, 6))
 
     @unittest.skipUnless(sys.platform == "win32", "Windows layered windows")
     def test_native_opacity_floor(self) -> None:

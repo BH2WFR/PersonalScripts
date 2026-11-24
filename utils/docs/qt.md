@@ -8,6 +8,8 @@ Implementations: [qt_widgets.py](../qt_widgets.py) and [qt_images.py](../qt_imag
 
 | Need | Use |
 | --- | --- |
+| Show a no-focus tool window | `show_nonactivating_tool(widget)` shows a configured tool window and applies the native Windows nonactivation style before display. Screen Mask and Auto Typer use it to preserve the typing target. |
+| Show feedback near the mouse | `show_cursor_tooltip(text, duration_ms=..., parent=None)` displays a timed Qt tooltip at the current global cursor position and preserves keyboard focus. Import it from `utils.qt_widgets` and call it on the GUI thread. |
 | Set up a PySide6 tool | `configure_qt_application(application, style="Fusion")` applies the style, CJK fallback families and wheel guards. Pass a Fusion-based proxy style when the tool supplies one. |
 | Customize an editor or label font | `with_cjk_fallbacks(font) -> QFont` returns a copy with installed Chinese, Japanese and Korean fallbacks appended to the requested families. Size, weight and style hint are preserved. |
 | Qt inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
@@ -17,7 +19,7 @@ Implementations: [qt_widgets.py](../qt_widgets.py) and [qt_images.py](../qt_imag
 Import `read_clipboard_paths()` from [qt_clipboard.py](../qt_clipboard.py) and
 call it on the Qt GUI thread to get the original text and extracted paths together.
 When only file objects are available, the source text contains the native Finder
-filename list or encoded file URLs, one per line. `clipboard_file_paths()` returns
+filename list or fully encoded file URL strings from Qt, one per line. `clipboard_file_paths()` returns
 only the paths. Both helpers read copied files and folders in clipboard
 order. Windows Explorer file selections use Qt's local file URLs and produce
 native backslashes, including UNC prefixes. On macOS, PyObjC enables direct
@@ -26,6 +28,13 @@ URLs also work without PyObjC. Absolute paths copied as text and textual
 `file://` URLs use the shared path decoders. Pass `preserve_text_separators=True`
 to `read_clipboard_paths()` to retain the slash spelling of path text after removing
 paired quotes and decoding file URLs. An empty list means no usable paths.
+
+Linux file managers can supply a standard `text/uri-list`, a GNOME
+`x-special/gnome-copied-files` payload, or older Nautilus text starting with
+`x-special/nautilus-clipboard`. The standard list wins when both are present.
+KDE file managers can also supply `application/x-kde4-urilist` as a fallback.
+KDE cut flags and the GNOME `copy` or `cut` line are metadata. Only local file URLs contribute
+paths. Reading the list leaves the clipboard and files untouched.
 
 For verbatim text inspection, `original_mime_text(mime)` returns plain text or
 `None` for non-text content. On the Windows Qt platform it reads external

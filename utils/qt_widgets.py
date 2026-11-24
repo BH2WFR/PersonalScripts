@@ -7,6 +7,34 @@ import sys
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
+def show_nonactivating_tool(widget: QtWidgets.QWidget) -> None:
+    """Show a no-focus tool window, applying the native Windows style before mapping.
+
+    Callers configure the window flags, including WindowDoesNotAcceptFocus.
+    Raises OSError if Windows cannot apply the extended style.
+    """
+    if sys.platform == "win32" and QtGui.QGuiApplication.platformName() == "windows":
+        import ctypes
+        from ctypes import wintypes
+
+        hwnd = wintypes.HWND(int(widget.winId()))
+        api = ctypes.WinDLL("user32", use_last_error=True)
+        api.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        api.GetWindowLongW.restype = wintypes.LONG
+        api.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+        api.SetWindowLongW.restype = wintypes.LONG
+        style = api.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+        ctypes.set_last_error(0)
+        if not api.SetWindowLongW(hwnd, -20, style | 0x08000000) and ctypes.get_last_error():  # WS_EX_NOACTIVATE
+            raise ctypes.WinError(ctypes.get_last_error())
+    widget.show()
+
+
+def show_cursor_tooltip(text: str, *, duration_ms: int, parent: QtWidgets.QWidget | None = None) -> None:
+    """Show a Qt tooltip at the current pointer position without taking focus."""
+    QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text, parent, msecShowTime=duration_ms)
+
+
 _WINDOWS_FAMILIES = {
     "SC": ("Microsoft YaHei UI", "Microsoft YaHei"),
     "TC": ("Microsoft JhengHei UI", "Microsoft JhengHei"),

@@ -11,13 +11,13 @@ from typing import Any
 
 import psutil
 from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QCursor, QKeyEvent, QKeySequence, QShortcut, QStandardItemModel
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence, QShortcut, QStandardItemModel
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMessageBox, QPushButton, QSizePolicy, QSplitter, QToolBar, QTreeWidget,
     QAbstractItemView, QTabWidget, QToolTip, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application
+from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, show_cursor_tooltip
 
 from .model import (
     Backend, CONTROLS_HINT, INITIAL_HINT, LOADED_HINT, MIN_OPACITY_PERCENT, ProcessInfo, Properties, PropertyGroup, Rows, Window,
@@ -80,7 +80,11 @@ class Inspector(QWidget):
         self.poll = QTimer(self, interval=50)
         self.poll.timeout.connect(self._finish_job)
         self.return_focus = QTimer(self, singleShot=True)
-        self.return_focus.timeout.connect(self._restore_focus)
+        self.return_focus.setTimerType(Qt.TimerType.PreciseTimer)
+        self.return_focus.timeout.connect(self._finish_preview)
+        self.preview_tick = QTimer(self, singleShot=True)
+        self.preview_tick.setTimerType(Qt.TimerType.PreciseTimer)
+        self.preview_tick.timeout.connect(self._update_countdown)
         self.setWindowTitle("Window Inspector")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, top)
         initial_size = QSize(1080, 720)
@@ -218,8 +222,8 @@ class Inspector(QWidget):
         process_row.addStretch()
 
         for label, tip in (("Activate", "Bring the window to the front for three seconds."),
-                           ("Center", "Center the window on its display."),
-                           ("Reset Size", "Restore the default window size and center it."),
+                           ("Center", "Bring the window forward, center it, and highlight it for three seconds."),
+                           ("Reset Size", "Bring the window forward, restore its default size, center it, and highlight it for three seconds."),
                            ("Highlight", "Outline the window on screen for three seconds.")):
             self._action(window_bar, label, tip, partial(self._window_action, label))
         self.toggles: dict[str, QAction] = {}
@@ -321,23 +325,46 @@ class Inspector(QWidget):
         self.raise_()
         self.activateWindow()
 
+    def _finish_preview(self) -> None:
+        self.preview_tick.stop()
+        self.return_focus.stop()
+        QToolTip.hideText()
+        self.outline.hide()
+        self._restore_focus()
+        self.status.setText("Returned to Window Inspector.")
+
+    def _update_countdown(self) -> None:
+        remaining = self.return_focus.remainingTime()
+        if remaining <= 0:
+            return
+        seconds = (remaining + 999) // 1000
+        unit = "second" if seconds == 1 else "seconds"
+        message = f"Focus returns to Window Inspector in {seconds} {unit}."
+        self.status.setText(message)
+        show_cursor_tooltip(message, duration_ms=remaining)
+        if seconds > 1:
+            self.preview_tick.start(remaining - (seconds - 1) * 1000)
+
     def _cancel_preview(self) -> None:
         if self.return_focus.isActive():
-            self.return_focus.stop()
-            self._restore_focus()
-        self.outline.hide()
+            self._finish_preview()
+        else:
+            self.outline.hide()
 
-    def _preview(self, target: Window) -> None:
+    def _preview(self, target: Window, *, refresh_geometry: bool) -> None:
         if not self.return_focus.isActive() or self.target != target:
             return
-        if IS_MACOS:
-            from .macos import check_active
-            try:
+        try:
+            if IS_MACOS:
+                from .macos import check_active
                 check_active(target)
-            except RuntimeError:
-                self._cancel_preview()
-                raise
-        self.outline.show(target, max(1, self.return_focus.remainingTime()))
+            self.outline.show(target)
+            if refresh_geometry:
+                self.refresh()
+            self._update_countdown()
+        except (RuntimeError, OSError, psutil.Error):
+            self._cancel_preview()
+            raise
 
     def _set_list(self, entries: list[Window], loaded: bool) -> None:
         self.loaded = loaded
@@ -564,7 +591,7 @@ class Inspector(QWidget):
     def _feedback(self, message: str) -> None:
         self.status.setText(message)
         if IS_MACOS:
-            QToolTip.showText(QCursor.pos(), message, self, msecShowTime=1500)
+            show_cursor_tooltip(message, parent=self, duration_ms=1500)
 
     def _copy(self, text: str) -> None:
         QApplication.clipboard().setText(text)
@@ -725,16 +752,20 @@ class Inspector(QWidget):
                     self._clear()
                 self.status.setText("Close request sent.")
             return
-        if action == "Activate":
+        if action in ("Activate", "Center", "Reset Size"):
             self._pin(False)
             try:
-                self.backend.act(target, action)
+                self.backend.act(target, "Activate")
+                change_geometry = action != "Activate"
+                if change_geometry:
+                    self.backend.act(target, action)
+                self.preview_tick.stop()
                 self.return_focus.start(PREVIEW_MS)
+                # Allow the target's event loop to apply its new position before drawing.
                 QTimer.singleShot(300 if IS_MACOS else 100, self,
-                                  lambda: self.guard(partial(self._preview, target)))
-                self.status.setText("Window activated. Returning to the inspector in 3 seconds.")
+                                  lambda: self.guard(partial(self._preview, target, refresh_geometry=change_geometry)))
             except Exception:
-                self._restore_focus()
+                self._finish_preview()
                 raise
             return
         if action in self.toggles:
@@ -747,6 +778,8 @@ class Inspector(QWidget):
         if action == "Opacity":
             self.refresh()
             return
+        if action == "Click-through" and not value:
+            self._restore_focus()
         if IS_MACOS:
             self._feedback(f"{action} request sent.")
         # Other processes apply show/position changes on their own event loop.
@@ -769,6 +802,9 @@ class Inspector(QWidget):
             self._feedback("Please wait for the current operation to finish.")
             return
         self.finder.cancel()
+        if self.return_focus.isActive():
+            QToolTip.hideText()
+        self.preview_tick.stop()
         self.return_focus.stop()
         self.poll.stop()
         self.executor.shutdown(wait=False, cancel_futures=True)

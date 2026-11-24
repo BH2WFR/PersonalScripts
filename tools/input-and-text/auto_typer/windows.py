@@ -23,18 +23,10 @@ _VK_CAPITAL = 0x14
 
 
 def show_panel(widget: QWidget) -> None:
-    """Apply WS_EX_NOACTIVATE before the first show, including on older Qt 6."""
-    hwnd = W.HWND(int(widget.winId()))
-    api = C.WinDLL("user32", use_last_error=True)
-    api.GetWindowLongW.argtypes = [W.HWND, C.c_int]
-    api.GetWindowLongW.restype = W.LONG
-    api.SetWindowLongW.argtypes = [W.HWND, C.c_int, W.LONG]
-    api.SetWindowLongW.restype = W.LONG
-    style = api.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
-    C.set_last_error(0)
-    if not api.SetWindowLongW(hwnd, -20, style | 0x08000000) and C.get_last_error():
-        raise C.WinError(C.get_last_error())
-    widget.show()
+    """Show the panel while keeping the typing recipient focused."""
+    from utils.qt_widgets import show_nonactivating_tool
+
+    show_nonactivating_tool(widget)
 
 
 @cache

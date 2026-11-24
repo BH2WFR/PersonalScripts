@@ -117,6 +117,24 @@ def _local_path(url: QUrl, windows: bool) -> str:
     return path.replace("/", "\\") if windows else path
 
 
+def _linux_file_urls(mime: QMimeData, plain: str | None) -> list[QUrl]:
+    """Read desktop-specific URI lists when the standard list is unavailable."""
+    kde_kind = "application/x-kde4-urilist"
+    if mime.hasFormat(kde_kind):
+        entries = bytes(mime.data(kde_kind).data()).splitlines()
+        return [QUrl.fromEncoded(line) for line in entries if line]
+    kind = "x-special/gnome-copied-files"
+    if mime.hasFormat(kind):
+        lines = bytes(mime.data(kind).data()).rstrip(b"\0").splitlines()
+    elif plain and plain.startswith(("x-special/nautilus-clipboard\n", "x-special/nautilus-clipboard\r\n")):
+        lines = plain.encode("utf-8").splitlines()[1:]
+    else:
+        return []
+    if not lines or lines[0] not in (b"copy", b"cut"):
+        return []
+    return [QUrl.fromEncoded(line) for line in lines[1:] if line]
+
+
 def read_clipboard_paths(*, preserve_text_separators: bool = False) -> tuple[str, list[str]]:
     """Return the clipboard's displayable source and its extracted file paths.
 
@@ -133,9 +151,13 @@ def read_clipboard_paths(*, preserve_text_separators: bool = False) -> tuple[str
     if mime is None:
         return "", []
     windows = sys.platform == "win32"
-    if mime.hasUrls():
-        urls = mime.urls()
-        source = plain if plain is not None else "\n".join(bytes(url.toEncoded()).decode("ascii") for url in urls)
+    urls = mime.urls()
+    if not urls and sys.platform == "linux":
+        urls = _linux_file_urls(mime, plain)
+    if urls:
+        source = plain if plain is not None else "\n".join(
+            url.toString(QUrl.ComponentFormattingOption.FullyEncoded) for url in urls
+        )
         return source, [path for url in urls if url.isLocalFile() and (path := _local_path(url, windows))]
 
     found = []

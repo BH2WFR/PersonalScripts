@@ -266,6 +266,35 @@ class WindowTests(unittest.TestCase):
             self.assertFalse(self.window.clipboard_notice.isHidden())
             self.assertEqual(self.window.source.toPlainText(), source)
 
+    @patch("utils.qt_clipboard.sys", platform="linux")
+    def test_linux_file_manager_clipboard_formats(self, _platform: Mock) -> None:
+        clipboard = QApplication.clipboard()
+        self.addCleanup(clipboard.clear)
+        kind = "x-special/gnome-copied-files"
+        urls = ["file:///home/me/Notes%20%E4%B8%AD", "file:///tmp/100%2520",
+                "sftp://host/remote", "file:///tmp/a%5Cb"]
+        expected = "/home/me/Notes 中\n/tmp/100%20\n/tmp/a\\b"
+        for form in ("uri-list", "copy", "cut", "legacy", "kde"):
+            with self.subTest(form=form):
+                mime = QMimeData()
+                if form == "uri-list":
+                    mime.setUrls([QUrl(url) for url in urls])
+                    mime.setData(kind, b"copy\nfile:///tmp/duplicate")
+                    mime.setData("application/x-kde4-urilist", b"file:///tmp/other")
+                elif form == "kde":
+                    mime.setData("application/x-kde4-urilist", ("\r\n".join(urls) + "\r\n").encode())
+                    mime.setData("application/x-kde-cutselection", b"1")
+                elif form == "legacy":
+                    mime.setText("\r\n".join(["x-special/nautilus-clipboard", "copy", *urls]))
+                else:
+                    mime.setData(kind, "\n".join([form, *urls]).encode("utf-8"))
+                    mime.setText("display names")
+                clipboard.setMimeData(mime)
+                self.click("Get paths from clipboard")
+                self.assertEqual(self.window.source.toPlainText(), expected)
+                self.assertEqual(self.window.result.toPlainText(), expected.replace("\\", "/"))
+                self.assertIs(clipboard.mimeData(), mime)
+
     @patch("utils.qt_clipboard.sys", platform="darwin")
     def test_finder_prefers_native_list_then_item_plists_then_file_urls(self, _platform: Mock) -> None:
         native = Mock()

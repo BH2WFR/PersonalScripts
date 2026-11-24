@@ -171,15 +171,30 @@ def _scale(hwnd: int) -> float:
     return factor.value / 100 if SHCORE.GetScaleFactorForMonitor(monitor, C.byref(factor)) == 0 else 1.0
 
 
+def _work_area(hwnd: int) -> W.RECT:
+    monitor = MonitorInfo()
+    monitor.size = C.sizeof(monitor)
+    _require(U.GetMonitorInfoW(U.MonitorFromWindow(hwnd, 2), C.byref(monitor)))
+    return monitor.work
+
+
 def frame(target: Window) -> tuple[Rect, int]:
-    hwnd = checked(target).id
+    original = checked(target).id
+    hwnd = original
     if hasattr(U, "GhostWindowFromHungWindow") and U.IsHungAppWindow(hwnd):
         hwnd = U.GhostWindowFromHungWindow(hwnd) or hwnd
     cloaked = W.DWORD()
     DWM.DwmGetWindowAttribute(hwnd, 14, C.byref(cloaked), C.sizeof(cloaked))
     if U.IsIconic(hwnd) or not U.IsWindowVisible(hwnd) or cloaked.value:
         raise RuntimeError("The window is not visible. Activate it first.")
-    return _rect(hwnd, True), max(1, round(4 * _scale(hwnd)))
+    bounds = _rect(hwnd, True)
+    if U.IsZoomed(original):
+        # A maximized frame can include resize borders outside the work area.
+        area = _work_area(hwnd)
+        x, y, width, height = bounds
+        left, top = max(x, area.left), max(y, area.top)
+        bounds = (left, top, min(x + width, area.right) - left, min(y + height, area.bottom) - top)
+    return bounds, max(1, round(4 * _scale(hwnd)))
 
 
 def position_edge(hwnd: int, rect: Rect) -> None:
@@ -415,10 +430,7 @@ def act(target: Window, action: str, value: int = 0) -> None:
         if not U.SetForegroundWindow(hwnd):
             raise RuntimeError("Windows did not allow the target window to take focus.")
     elif action in ("Center", "Reset Size"):
-        monitor = MonitorInfo()
-        monitor.size = C.sizeof(monitor)
-        _require(U.GetMonitorInfoW(U.MonitorFromWindow(hwnd, 2), C.byref(monitor)))
-        area = monitor.work
+        area = _work_area(hwnd)
         _, _, width, height = _rect(hwnd)
         if action == "Reset Size":
             scale = _scale(hwnd)
