@@ -55,6 +55,8 @@ real user configuration, decrypted credentials or tokens.
 
 ## Runtime transport and native variables
 
+- On macOS, launch a PySide6 tool with `QT_LOGGING_RULES='qt.text.font.db.info=true'`
+  to see Qt's font database diagnostics during fallback selection.
 - LLM inference uses native system certificate trust through `truststore`;
   Windows/macOS system stores replace HTTPX's environment CA-file override;
   Linux retains OpenSSL's `SSL_CERT_FILE` / `SSL_CERT_DIR` behavior.

@@ -76,6 +76,11 @@ to discard redundant character maps. The result is cached for the installed
 family list. Display requires a font containing the glyph. PDF document font
 selection and embedded web content have their own rendering paths.
 
+On the Cocoa backend, application setup disables informational messages from
+`qt.text.font.db` for the process. Qt emits these when it tries a candidate
+font that lacks OpenType support for the requested script. Font matching and
+warning-level diagnostics continue normally.
+
 Use `NoWheelSpinBox`, `NoWheelDoubleSpinBox` and `NoWheelComboBox` for form
 controls. Application setup calls `install_no_wheel_controls(application)`,
 which also covers Qt-generated dialog editors. In a scrollable container,
