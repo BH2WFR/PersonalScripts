@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tools/others"))
+sys.path.insert(0, str(ROOT / "tools/input-and-text"))
 
 from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import (

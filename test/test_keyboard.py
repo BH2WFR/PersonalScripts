@@ -36,7 +36,7 @@ def load_module(name: str, relative: str) -> ModuleType:
     return module
 
 
-entry = load_module("keyboard_test_entry", "tools/others/keyboard-hook-viewer.py")
+entry = load_module("keyboard_test_entry", "tools/input-and-text/keyboard-hook-viewer.py")
 app = entry.load_app()
 models = importlib.import_module(f"{entry.PACKAGE_NAME}.models")
 runtime = importlib.import_module(f"{entry.PACKAGE_NAME}.runtime")
@@ -549,14 +549,14 @@ class ViewerDiscoveryTests(unittest.TestCase):
             listing = launcher.find_scripts(str(ROOT / "tools"), config)
         for paths in (listing, compiler.find_py_scripts(str(ROOT / "tools"))):
             normalized = [path.replace("\\", "/") for path in paths]
-            self.assertIn("others/keyboard-hook-viewer.py", normalized)
-            self.assertFalse(any(path.startswith("others/keyboard-hook-viewer/") for path in normalized))
+            self.assertIn("input-and-text/keyboard-hook-viewer.py", normalized)
+            self.assertFalse(any(path.startswith("input-and-text/keyboard-hook-viewer/") for path in normalized))
 
     def test_linux_filter_paths_after_move(self) -> None:
         for gui in (LinuxGui.NO_GUI, LinuxGui.WAYLAND, LinuxGui.X11):
             with patch.object(launcher, "_platform_key", return_value="linux"), patch.object(System, "get_linux_gui", return_value=gui):
                 config = launcher._load_launcher_config(str(self.scratch))
-            self.assertEqual(launcher._is_ignored(config.ignore_spec, "others/keyboard-hook-viewer.py"), gui != LinuxGui.X11)
+            self.assertEqual(launcher._is_ignored(config.ignore_spec, "input-and-text/keyboard-hook-viewer.py"), gui != LinuxGui.X11)
             self.assertEqual(launcher._is_ignored(config.ignore_spec, "others/script-to-app.py"), gui == LinuxGui.NO_GUI)
 
     def test_compiler_stages_all_private_modules_for_both_builders(self) -> None:

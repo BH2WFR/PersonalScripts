@@ -7,13 +7,15 @@ import tempfile
 import unittest
 from unittest.mock import Mock, call, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.others.screen_keyboard.layout import (
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools/input-and-text"))
+from screen_keyboard.layout import (
     DEFAULT_SIZE, EXTENDED_KEYS, MAC_EXTENDED, MAC_ROWS, NUMPAD_KEYS, NUMPAD_NAVIGATION,
     ROWS, frames, mac_frame_near_pointer, panel_width,
 )
-from tools.others.screen_keyboard.state import KeyboardState, KeyRepeat, LeftKeyMode, WindowLayout
-from tools.others.screen_keyboard.windows import WindowsOutput
+from screen_keyboard.state import KeyboardState, KeyRepeat, LeftKeyMode, WindowLayout
+from screen_keyboard.windows import WindowsOutput
 from utils import ConfigStore
 
 
@@ -188,7 +190,7 @@ class KeyboardTests(unittest.TestCase):
             self.assertEqual(self.state.colors(keys[0]), baseline)
             self.assertEqual(self.state.label(keys[0], label), label)
 
-    @patch("tools.others.screen_keyboard.state.monotonic")
+    @patch("screen_keyboard.state.monotonic")
     def test_repeat_lock_and_target_switch(self, clock: Mock) -> None:
         clock.return_value = 10.0
         self.output.mac = True
@@ -234,7 +236,7 @@ class KeyboardTests(unittest.TestCase):
                                       call.key_up(), call.hold("LShift", False)])
 
     def test_windows_holds_scan_code_until_release_or_reset(self) -> None:
-        from tools.others.screen_keyboard.windows import key_fields
+        from screen_keyboard.windows import key_fields
         from utils.windows_input import KEYUP
 
         # Use the real Windows backend and packet builder, recording only the user32 calls.
@@ -270,7 +272,7 @@ class KeyboardTests(unittest.TestCase):
                                  [(key_fields(k)[0], key_fields(k)[1] | KEYUP) for k in (name, "LShift")])
 
     def test_windows_system_repeat_timing(self) -> None:
-        from tools.others.screen_keyboard.windows import (
+        from screen_keyboard.windows import (
             FKF_FILTERKEYSON, SPI_GETFILTERKEYS, SPI_GETKEYBOARDDELAY, SPI_GETKEYBOARDSPEED,
         )
 
@@ -356,7 +358,7 @@ class KeyboardTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "Windows input packets")
     def test_windows_layer_events_and_owned_key_cleanup(self) -> None:
-        from tools.others.screen_keyboard.windows import key_fields
+        from screen_keyboard.windows import key_fields
         from utils.windows_input import KEYUP
 
         output = WindowsOutput()
@@ -407,7 +409,7 @@ class KeyboardTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "Windows input packets")
     def test_native_key_positions(self) -> None:
-        from tools.others.screen_keyboard.windows import key_fields
+        from screen_keyboard.windows import key_fields
         for name in [*(n for row in ROWS for n, _, _ in row), *(n for n, _ in EXTENDED_KEYS),
                      *(row[0] for row in NUMPAD_KEYS), *(nav for nav, _ in NUMPAD_NAVIGATION.values())]:
             if name not in {"Layer", "language"}:
@@ -418,7 +420,7 @@ class KeyboardTests(unittest.TestCase):
 
     def test_mac_event_routing_and_visible_positions(self) -> None:
         # Exercise the real lookup and modifier logic with recording Cocoa/Quartz endpoints.
-        package = "tools.others.screen_keyboard"
+        package = "screen_keyboard"
         quartz = Mock(kCGHIDEventTap=0, kCGSessionEventTap=1, kCGEventFlagMaskAlphaShift=1 << 16,
                       kCGEventFlagMaskNumericPad=1 << 21)
         quartz.CGEventSourceFlagsState.return_value = 0
@@ -426,7 +428,7 @@ class KeyboardTests(unittest.TestCase):
         appkit.NSEvent.keyRepeatDelay.return_value = .5
         appkit.NSEvent.keyRepeatInterval.return_value = .025
         imports = {"Quartz": quartz, "AppKit": appkit, f"{package}.input_sources": Mock()}
-        path = Path(__file__).resolve().parents[1] / "tools/others/screen_keyboard/macos.py"
+        path = ROOT / "tools/input-and-text/screen_keyboard/macos.py"
         spec = importlib.util.spec_from_file_location(f"{package}.mac_backend_test", path)
         assert spec and spec.loader
         backend = importlib.util.module_from_spec(spec)
@@ -478,7 +480,7 @@ class KeyboardTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "macOS text input services")
     def test_input_source_switch_goes_to_the_target_on_every_toggle(self) -> None:
         import plistlib
-        from tools.others.screen_keyboard import input_sources as sources
+        from screen_keyboard import input_sources as sources
 
         bridge = Mock()
         bridge.kCFMessagePortSuccess = 0

@@ -10,12 +10,14 @@ import unittest
 from unittest.mock import call, patch
 import uuid
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools/input-and-text"))
 
 
 def _relaunch_keyboard(event_name: str) -> None:
-    from tools.others.screen_keyboard import window, windows_ui
-    from tools.others.screen_keyboard.state import LeftKeyMode
+    from screen_keyboard import window, windows_ui
+    from screen_keyboard.state import LeftKeyMode
 
     with (patch.object(window, "REOPEN_EVENT", event_name),
           patch.object(windows_ui, "ScreenKeyboard", side_effect=AssertionError("Created a duplicate keyboard"))):
@@ -25,8 +27,8 @@ def _relaunch_keyboard(event_name: str) -> None:
 @unittest.skipUnless(sys.platform == "win32", "Win32 window messages")
 class WindowTests(unittest.TestCase):
     def test_duplicate_process_moves_existing_window(self) -> None:
-        from tools.others.screen_keyboard import window
-        from tools.others.screen_keyboard.windows_ui import ScreenKeyboard
+        from screen_keyboard import window
+        from screen_keyboard.windows_ui import ScreenKeyboard
         from utils import ConfigStore
 
         event_name = rf"Local\PersonalScripts.ScreenKeyboard.Test.{uuid.uuid4().hex}"
@@ -76,7 +78,7 @@ class WindowTests(unittest.TestCase):
                 self.assertTrue(keyboard.numpad)
                 self.assertEqual(keyboard.state.output.mode.value, "F24")
                 self.assertNotIn(keyboard.state.setting, keyboard.state.store.load())
-                from tools.others.screen_keyboard import windows_ui
+                from screen_keyboard import windows_ui
 
                 with patch.object(windows_ui.messagebox, "showwarning") as dialog:
                     self.assertEqual(windows_ui.run(warning="Unsupported argument"), 0)
@@ -91,12 +93,12 @@ class WindowTests(unittest.TestCase):
             self.assertIsNotNone(requested)
 
     def test_second_layer_click_restores_both_alt_widgets(self) -> None:
-        from tools.others.screen_keyboard.windows_ui import ScreenKeyboard
+        from screen_keyboard.windows_ui import ScreenKeyboard
         from utils import ConfigStore
 
         with (tempfile.TemporaryDirectory() as scratch,
               patch.object(ConfigStore, "directory", return_value=Path(scratch)),
-              patch("tools.others.screen_keyboard.windows_ui.WindowsOutput") as backend):
+              patch("screen_keyboard.windows_ui.WindowsOutput") as backend):
             output = backend.return_value
             output.mac = False
             output.target.return_value = 1
@@ -126,10 +128,10 @@ class WindowTests(unittest.TestCase):
                 keyboard.close()
 
     def test_toolbar_mode_and_size_survive_reopening(self) -> None:
-        from tools.others.screen_keyboard.layout import TOOLBAR, TOOLBAR_TIPS
-        from tools.others.screen_keyboard.state import WindowLayout
-        from tools.others.screen_keyboard.window import GWL_EXSTYLE, ToolInfo, U, WS_EX_NOACTIVATE
-        from tools.others.screen_keyboard.windows_ui import ScreenKeyboard
+        from screen_keyboard.layout import TOOLBAR, TOOLBAR_TIPS
+        from screen_keyboard.state import WindowLayout
+        from screen_keyboard.window import GWL_EXSTYLE, ToolInfo, U, WS_EX_NOACTIVATE
+        from screen_keyboard.windows_ui import ScreenKeyboard
         from utils import ConfigStore
 
         with tempfile.TemporaryDirectory() as scratch, patch.object(ConfigStore, "directory", return_value=Path(scratch)):
@@ -207,9 +209,9 @@ class WindowTests(unittest.TestCase):
                 keyboard.close()
 
     def test_layout_and_dpi(self) -> None:
-        from tools.others.screen_keyboard.layout import DEFAULT_SIZE
-        from tools.others.screen_keyboard.windows_ui import ScreenKeyboard
-        from tools.others.screen_keyboard.window import U
+        from screen_keyboard.layout import DEFAULT_SIZE
+        from screen_keyboard.windows_ui import ScreenKeyboard
+        from screen_keyboard.window import U
         from utils import ConfigStore
 
         with tempfile.TemporaryDirectory() as scratch, patch.object(ConfigStore, "directory", return_value=Path(scratch)):
@@ -283,9 +285,9 @@ class WindowTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin", "Cocoa panel")
 class CocoaWindowTests(unittest.TestCase):
     def test_globe_tap_delivers_delayed_f18_to_the_same_app(self) -> None:
-        from tools.others.screen_keyboard import macos
-        from tools.others.screen_keyboard.mac_ui import A, F, PanelController, create_panel
-        from tools.others.screen_keyboard.state import LeftKeyMode
+        from screen_keyboard import macos
+        from screen_keyboard.mac_ui import A, F, PanelController, create_panel
+        from screen_keyboard.state import LeftKeyMode
         from utils import ConfigStore
 
         with (patch.object(ConfigStore, "load", return_value={}),
@@ -314,7 +316,7 @@ class CocoaWindowTests(unittest.TestCase):
             post.assert_not_called()
 
     def test_panel_blocks_zoom_and_edge_fill(self) -> None:
-        from tools.others.screen_keyboard.mac_ui import A, F, PanelController, create_panel
+        from screen_keyboard.mac_ui import A, F, PanelController, create_panel
 
         A.NSApplication.sharedApplication()
         panel = create_panel()
@@ -340,8 +342,8 @@ class CocoaWindowTests(unittest.TestCase):
             self.assertEqual(resize(panel, F.NSMakeSize(550, available.height)), (550, before.size.height))
 
     def test_globe_and_live_resize(self) -> None:
-        from tools.others.screen_keyboard.layout import TOOLBAR_TIPS
-        from tools.others.screen_keyboard.mac_ui import A, PanelController, create_panel
+        from screen_keyboard.layout import TOOLBAR_TIPS
+        from screen_keyboard.mac_ui import A, PanelController, create_panel
         from utils import ConfigStore
 
         with tempfile.TemporaryDirectory() as scratch, patch.object(ConfigStore, "directory", return_value=Path(scratch)):

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import System
 
-TOOLS = ROOT / "tools" / "others"
+TOOLS = ROOT / "tools" / "input-and-text"
 
 
 class InputToolStartupTests(unittest.TestCase):

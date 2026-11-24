@@ -52,5 +52,5 @@ Never strip the high bit of Korean F1/F2 language scan bytes; see the module's
 source references and release-only caveats. Run `test/test_keyboard*.py`.
 
 Application internals live in the
-[hook viewer README](../../tools/others/keyboard-hook-viewer/README.md) and
+[hook viewer README](../../tools/input-and-text/keyboard-hook-viewer/README.md) and
 [remapper README](../../tools/windows/keyboard-remapper/README.md).

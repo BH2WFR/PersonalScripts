@@ -14,7 +14,7 @@ from unittest.mock import Mock, call, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tools/others"))
+sys.path.insert(0, str(ROOT / "tools/input-and-text"))
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QPlainTextEdit
@@ -74,7 +74,7 @@ class MacPanelTests(unittest.TestCase):
         script = dedent("""
             import sys
             from unittest.mock import patch
-            sys.path.insert(0, "tools/others")
+            sys.path.insert(0, "tools/input-and-text")
             from auto_typer import macos
             from PySide6.QtCore import QTimer
             from PySide6.QtWidgets import QApplication

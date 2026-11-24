@@ -226,7 +226,7 @@
 
   - 多路径输入提示支持通配符（`*`/`?`/`[abc]`）批量匹配文件；
     未匹配到文件的模式按原样字面路径处理
-    
+  
 - **程序配置管理：**
   
   本项目中部分脚本需要保存/读取配置，配置路径在 `~/.config/PersonalScripts/` 中，格式均为 `*.yaml`。
@@ -311,16 +311,18 @@
 | 脚本                                | 描述                                                         | 依赖                                    |
 | ----------------------------------- | ------------------------------------------------------------ | --------------------------------------- |
 | [`tools/windows/file-association-manager.py`](tools/windows/file-association-manager.py) | **仅 Windows**，**为指定扩展名的文件在系统中注册指定 EXE 作为打开方式的工具**：<br />可用于给一些便携软件注册对指定扩展名的打开方式 | **仅 Windows**<br />**需要提权** |
-| [`tools/others/script-to-app.py`](tools/others/script-to-app.py) |**以「应用」的方式创建 Python 脚本的启动器**的工具：（不是打包！）<br />不会打包脚本，支持绑定 conda 环境。Windows 下输出 .cmd，macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式。|**Windows / macOS / Linux 桌面**<br />Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选）<br />**需要提权**|
+| [`tools/others/script-to-app.py`](tools/others/script-to-app.py) |**以「应用」的方式创建 Python 脚本的启动器**的工具：（不是打包！）<br />不会打包脚本，支持绑定 conda 环境。Windows 下输出 .cmd，macOS 应用可移动或重命名，Linux 可指定 MIME 类型或尝试通用文件模式。|**需要桌面环境**<br />Linux 需 Bash 和桌面终端（`desktop-file-utils` 可选）<br />**需要提权**|
 
-### 文本处理
+### 键盘与文本
 
 | 脚本                            | 描述                                                         | 依赖                                 |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------ |
-| [`tools/others/auto-typer.py`](tools/others/auto-typer.py) | **(GUI) 自动打字工具**：将剪贴板或手动编辑的文本通过模拟打字的方式逐字输入到当前窗口中<br />可向不支持粘贴的网页版 VNC 会话中，通过模拟按键事件的方式快速实现类似粘贴文本的效果。ASCII 字符通过模拟键盘按键事件发送，其他字符尝试通过系统 Unicode 事件发送。 | Windows 10+ 或 macOS，`PySide6`。macOS 还需 `pyobjc-framework-Cocoa`、`pyobjc-framework-Quartz` 和辅助功能权限。 <br />**仅 Windows 下需要提权** |
-| [`tools/others/screen-keyboard.py`](tools/others/screen-keyboard.py) | **(GUI) 屏幕键盘**<br />支持一次性修饰键、长按锁定和数字小键盘。<br />其中 Layer 模式会把 `CapsLock` 键改为针对 [custom-karabiner-config](https://github.com/BH2WFR/custom-karabiner-config) 和 [custom-autohotkey-config](https://github.com/BH2WFR/custom-autohotkey-config) 项目的特殊层功能键 | Windows 10+ 和 Tkinter，或 macOS、PyObjC Cocoa/Quartz 和辅助功能权限。<br />Layer 模式下，macOS 还需启用 CGEventTap fallback。<br />**仅 Windows 下需要提权** |
-| [`tools/others/text-processor.py`](tools/others/text-processor.py) | **(GUI) 文本与路径处理工具**：<br />**1.** 可从复制的文件和文件夹中（Explorer/Finder）提取完整路径，按行转换，支持处理路径中的环境变量，windows下支持处理路径中的斜杠，支持转换为 MSYS 路径，支持加入/删除 `file://` 前缀。<br />**2.** 支持对从 PDF 复制的文本进行换行转空格、拆解连字等处理。<br />**3.** 支持对数字和字母转换为 Unicode 花体字，对文本调整空格和缩进，或进行全角/半角转换。 | **Python 库**：`PySide6`。macOS 可选 `pyobjc-framework-Cocoa` 以读取 Finder 原生文件名列表。 |
-| [`tools/others/unicode-inspector.py`](tools/others/unicode-inspector.py) | **(GUI) Unicode 文本查看器**：显示码点、UTF-8 字节、名称与分类，标注不可见字符，并提供文本统计与可复制报告。 | **Python 库**：`Tkinter` |
+| [`tools/input-and-text/auto-typer.py`](tools/input-and-text/auto-typer.py) | **(GUI) 自动打字工具**：将剪贴板或手动编辑的文本，通过模拟打字的方式逐字输入到前台窗口中<br />可向不支持粘贴的网页版 VNC 会话中，通过模拟按键事件的方式，快速实现类似粘贴文本的效果。<br />ASCII 字符通过模拟键盘按键事件发送，其他字符尝试通过系统 Unicode 事件发送。 | **仅 Windows/macOS**；<br />**Python 库**：`PySide6`。<br />macOS 中还需要 `pyobjc-framework-Cocoa`、`pyobjc-framework-Quartz` 和辅助功能权限。 <br />**仅 Windows 下需要提权** |
+| [`tools/input-and-text/screen-keyboard.py`](tools/input-and-text/screen-keyboard.py) | **(GUI) 屏幕键盘**<br />支持一次性修饰键、长按锁定和数字小键盘。<br />其中 Layer 模式会把 `CapsLock` 键改为针对 [custom-karabiner-config](https://github.com/BH2WFR/custom-karabiner-config) 和 [custom-autohotkey-config](https://github.com/BH2WFR/custom-autohotkey-config) 项目的特殊层功能键 | **仅 Windows/macOS**，<br />**Python 库**：`Tkinter`<br />macOS 中还需要 PyObjC Cocoa/Quartz 和辅助功能权限。Layer 模式下，Karabiner 还需启用 CGEventTap fallback。<br />**仅 Windows 下需要提权** |
+| [`tools/input-and-text/keyboard-hook-viewer.py`](tools/input-and-text/keyboard-hook-viewer.py) | **全局键盘鼠标钩子监控器**：<br />全平台显示滚动方向，Windows 显示扫描码及原始滚动 delta，并区分左右修饰键、小键盘 Enter；macOS 显示精细滚动与捏合缩放增量及可用的事件来源设备信息，Linux 使用 X11 XRecord。<br />仅限键盘测试、特殊热键、自动化操作等正当用途，否则本项目不负任何任何因异常用途产生的后果。 | 仅 **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
+| [`tools/input-and-text/text-processor.py`](tools/input-and-text/text-processor.py) | **(GUI) 文本与路径处理工具**：<br />**1.** 可从复制的文件和文件夹中（Explorer/Finder）提取完整路径，按行转换，支持处理路径中的环境变量，windows 中支持处理路径中的斜杠，支持转换为 MSYS 路径，支持加入/删除 `file://` 前缀。<br />**2.** 支持对从 PDF 复制的文本进行换行转空格、拆解连字等处理。<br />**3.** 支持对数字和字母转换为 Unicode 花体字，对文本调整空格和缩进，或进行全角/半角转换。 | **Python 库**：`PySide6`。<br />macOS 中可选 `pyobjc-framework-Cocoa` 以读取 Finder 原生文件名列表。 |
+| [`tools/input-and-text/unicode-inspector.py`](tools/input-and-text/unicode-inspector.py) | **(GUI) Unicode 文本查看器**：显示码点、UTF-8 字节、名称与分类，标注不可见字符，并提供文本统计与可复制报告。 | **Python 库**：`Tkinter` |
+| [`tools/windows/keyboard-remapper.py`](tools/windows/keyboard-remapper.py) | **仅 Windows，基于注册表设置的键盘映射编辑工具**：<br />支持按键重映射或禁用，并支持可选备份及恢复映射。 | 仅 **Windows**<br />**Python 库**：`PySide6`<br />**需要提权**；保存后需重启 Windows 生效 |
 
 ### 输入法工具
 
@@ -351,7 +353,6 @@
 
 | 脚本                               | 描述                                                         | 依赖                                             |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| [`tools/windows/keyboard-remapper.py`](tools/windows/keyboard-remapper.py) | **仅 Windows，基于注册表设置的键盘映射编辑工具**：<br />支持按键重映射或禁用，并支持可选备份及恢复映射。 | 仅 **Windows 10+**<br />`PySide6`<br />**需要提权**；保存后需重启 Windows 生效 |
 | [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **仅 Windows，设备（主要是 USB 设备）弹出失败日志查看器**：<br />显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，**用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题**。 | **仅 Windows 10+**；<br />**需要提权** |
 | [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **仅 Windows**，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权** |
 | [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py)           | **充电器与电池信息查看器**：<br />**macOS 中，还能查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全） |
@@ -382,5 +383,4 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| [`tools/others/keyboard-hook-viewer.py`](tools/others/keyboard-hook-viewer.py) | **全局键盘鼠标钩子监控器**：<br />全平台显示滚动方向，Windows 显示扫描码及原始滚动 delta，并区分左右修饰键、小键盘 Enter；macOS 显示精细滚动与捏合缩放增量及可用的事件来源设备信息，Linux 使用 X11 XRecord。<br />仅限键盘测试、特殊热键、自动化操作等正当用途，否则本项目不负任何任何因异常用途产生的后果。 | **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`<br />Windows：无（标准库 ctypes） |
 | [`test/print-argv.py`](test/print-argv.py)<br>[`test/print-argv.sh`](test/print-argv.sh)<br>[`test/print-argv.ps1`](test/print-argv.ps1) | **命令行参数打印工具**：<br />可打印出所有传入脚本的 argv 参数，用于判断脚本传入参数是否正确 |  |

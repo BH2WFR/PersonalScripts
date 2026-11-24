@@ -121,7 +121,7 @@ class PathTests(ScratchCase):
         for platform_key in ("windows", "macos"):
             with self.subTest(platform=platform_key), patch.object(launcher, "_platform_key", return_value=platform_key):
                 config = launcher._load_launcher_config(str(self.root))
-                for entry in ("others/auto-typer.py", "others/screen-keyboard.py"):
+                for entry in ("input-and-text/auto-typer.py", "input-and-text/screen-keyboard.py"):
                     label = launcher._format_script_path(entry, config)
                     self.assertIn("[GUI]", label)
                     self.assertEqual("[SUDO]" in label, platform_key == "windows")

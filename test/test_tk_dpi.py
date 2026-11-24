@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import System, TkDpi
 
-SPEC = importlib.util.spec_from_file_location("unicode_dpi_test_entry", ROOT / "tools/others/unicode-inspector.py")
+SPEC = importlib.util.spec_from_file_location("unicode_dpi_test_entry", ROOT / "tools/input-and-text/unicode-inspector.py")
 assert SPEC is not None and SPEC.loader is not None
 entry = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(entry)
