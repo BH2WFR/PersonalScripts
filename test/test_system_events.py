@@ -1119,7 +1119,8 @@ class EntryIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as folder:
             scratch = Path(folder)
             shutil.copy2(ROOT / "launcher-config.yaml", scratch / "launcher-config.yaml")
-            config = launcher._load_launcher_config(str(scratch))
+            with patch.object(launcher.ConfigStore, "directory", return_value=scratch / "user-config"):
+                config = launcher._load_launcher_config(str(scratch))
             with patch.object(Environment, "find_bash", return_value=None), patch.object(Environment, "find_pwsh", return_value=None):
                 listing = launcher.find_scripts(str(ROOT / "tools"), config)
             normalized = [Path(path).as_posix() for path in listing]

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Implementation notes.
 
-Read launcher-config.yaml and its optional patch; user script roots come from
-ConfigStore's launcher.yaml. Python tools share the launcher's interpreter.
+Read launcher-config.yaml from the project and its optional patch from the user
+configuration directory. User script roots come from ConfigStore's launcher.yaml.
+Python tools share the launcher's interpreter.
 Discovery preserves context-aware ignore rules, recursive matching and argument forwarding.
 """
 
@@ -265,17 +266,9 @@ def _load_launcher_config(project_dir: str) -> _LauncherConfig:
         raise ValueError(f"invalid YAML in {CONFIG_FILE_NAME}: {exc}") from exc
 
     root = _read_mapping(document, "root")
-
-    patch_path = os.path.join(project_dir, PATCH_CONFIG_FILE_NAME)
-    if os.path.isfile(patch_path):
-        try:
-            with open(patch_path, "r", encoding="utf-8") as stream:
-                patch_document = yaml.safe_load(stream)
-        except yaml.YAMLError as exc:
-            raise ValueError(f"invalid YAML in {PATCH_CONFIG_FILE_NAME}: {exc}") from exc
-        if patch_document is not None:
-            patch_root = _read_mapping(patch_document, "patch root")
-            root = _deep_merge_mappings(root, patch_root)
+    patch_store = ConfigStore(PATCH_CONFIG_FILE_NAME)
+    if patch_store.path.is_file():
+        root = _deep_merge_mappings(root, patch_store.load())
 
     launcher = _read_mapping(root.get("launcher"), "launcher")
     display = _read_mapping(root.get("display"), "display")
@@ -1033,7 +1026,7 @@ def main() -> int:
     project_dir = _get_project_dir()
     try:
         config = _load_launcher_config(project_dir)
-    except (FileNotFoundError, ImportError, ValueError) as exc:
+    except (OSError, ImportError, ValueError) as exc:
         print(f"{FLRed}Cannot load {CONFIG_FILE_NAME}:{CRst} {exc}", file=sys.stderr)
         return 1
 

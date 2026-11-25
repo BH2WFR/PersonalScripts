@@ -763,6 +763,7 @@ class ViewerDiscoveryTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.scratch = Path(scratch.name)
         shutil.copy2(ROOT / "launcher-config.yaml", self.scratch / "launcher-config.yaml")
+        self.enterContext(patch.object(launcher.ConfigStore, "directory", return_value=self.scratch / "user-config"))
 
     def test_only_entry_is_listed_and_others_is_gray(self) -> None:
         config = launcher._load_launcher_config(str(self.scratch))

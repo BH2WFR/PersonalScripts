@@ -313,7 +313,8 @@ class ObjectPipelineTests(unittest.TestCase):
 
     def test_entry_discovery(self) -> None:
         shutil.copy2(ROOT / "launcher-config.yaml", self.folder / "launcher-config.yaml")
-        config = launcher._load_launcher_config(str(self.folder))
+        with patch.object(launcher.ConfigStore, "directory", return_value=self.folder / "user-config"):
+            config = launcher._load_launcher_config(str(self.folder))
         with patch.object(utility.Environment, "find_bash", return_value=None), patch.object(
                 utility.Environment, "find_pwsh", return_value=None):
             discovered = launcher.find_scripts(str(ROOT / "tools"), config)

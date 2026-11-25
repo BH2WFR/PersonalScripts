@@ -587,7 +587,8 @@ class IntegrationTests(unittest.TestCase):
 
     def test_private_modules_are_hidden_from_launcher(self) -> None:
         launcher = load_repo_module("remap_test_launcher", "run-script.py")
-        config = launcher._load_launcher_config(str(ROOT))
+        with patch.object(launcher.ConfigStore, "load", return_value={}):
+            config = launcher._load_launcher_config(str(ROOT))
         self.assertTrue(launcher._is_ignored(config.ignore_spec, "windows/keyboard-remapper/ui.py"))
 
     def test_elevation_bootstrap_uses_draft_only_arguments(self) -> None:

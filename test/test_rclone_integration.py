@@ -95,7 +95,8 @@ class PackageIntegrationTests(unittest.TestCase):
     def test_discovery_lists_only_the_public_entry(self) -> None:
         # Use the checked-in config alone, excluding machine-local patch files.
         shutil.copy2(ROOT / "launcher-config.yaml", self.scratch / "launcher-config.yaml")
-        config = launcher._load_launcher_config(str(self.scratch))
+        with patch.object(launcher.ConfigStore, "directory", return_value=self.scratch / "user-config"):
+            config = launcher._load_launcher_config(str(self.scratch))
         with (
             patch.object(utility.Environment, "find_bash", return_value=None),
             patch.object(utility.Environment, "find_pwsh", return_value=None),

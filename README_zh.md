@@ -212,7 +212,7 @@
 - 所有脚本均支持省略扩展名，如 `macos/ntfs-3g-mount-manager.py` 可直接输入 `ntfs-3g-mount-manager` 或 `macos/ntfs-3g-mount-manager`。
   如遇到同名但扩展名不同的脚本，启动器会提示用户通过序号选择目标。
 - **列出脚本时，可对指定平台/环境/架构隐藏部分脚本**：支持通过 `launcher-config.yaml` 设置系统平台（`windows`/`linux`/`macos`）、Linux 图形环境（`no-gui`/`x11`/`wayland`）和处理器架构（`x86`/`x86_64`/`armv7`/`arm64`），从而隐藏当前环境不支持的脚本。
-  - 如需修改 `launcher-config.yaml`，请在项目根目录新建 `launcher-config.patch.yaml`，并在 patch 文件中仅写需要覆盖的设置项，启动器启动时会自动读取。
+  - 如需自定义 `launcher-config.yaml`，请将需要覆盖的设置写入 `~/.config/PersonalScripts/launcher-config.patch.yaml`，启动器会在启动时自动读取。
   - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - **Test 分组默认关闭**。将 `launcher.test.enabled` 设置为 `true` 后，启动器会把配置的测试目录显示为独立的 `Test` 分组，并让其中的脚本参与裸名称查找；可使用 `test/<名称>` 或 `@test:<名称>` 精确指定测试脚本。
 - **`~/.config/PersonalScripts/launcher.yaml` 中的 `additional-paths`** 用于指定附加脚本目录。

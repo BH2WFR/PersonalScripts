@@ -212,7 +212,7 @@ Core utility package: `utils/` — shared console, environment, system, path, in
 - File extensions may also be omitted. For example, `macos/ntfs-3g-mount-manager.py` can be entered as `ntfs-3g-mount-manager` or `macos/ntfs-3g-mount-manager`.
   If scripts share the same name but use different extensions, the launcher asks you to select the target by number.
 - **Scripts can be hidden from the list for selected platforms, environments, or architectures.** In `launcher-config.yaml`, filtering supports operating systems (`windows`/`linux`/`macos`), Linux graphical environments (`no-gui`/`x11`/`wayland`), and processor architectures (`x86`/`x86_64`/`armv7`/`arm64`).
-  - To customize `launcher-config.yaml`, create `launcher-config.patch.yaml` in the project root and include only the settings that need to be overridden. The launcher loads it automatically at startup.
+  - To customize `launcher-config.yaml`, put the settings you want to override in `~/.config/PersonalScripts/launcher-config.patch.yaml`. The launcher loads it automatically at startup.
   - Interpreter-aware filtering hides `.sh` scripts when `bash` is unavailable and `.ps1` scripts when `pwsh` is unavailable.
 - The **Test group is disabled by default**. Set `launcher.test.enabled` to `true` to show configured test directories as a separate `Test` group and include their scripts in bare-name searches. Use `test/<name>` or `@test:<name>` to target a test script explicitly.
 - **`additional-paths` in `~/.config/PersonalScripts/launcher.yaml`** lists additional script directories.

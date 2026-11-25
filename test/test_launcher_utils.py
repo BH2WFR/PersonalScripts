@@ -133,7 +133,11 @@ class PathTests(ScratchCase):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         document["gui-tools-list"] = ["others/old.py"]
         path.write_text(yaml.safe_dump(document), encoding="utf-8")
-        patch_path = self.root / "launcher-config.patch.yaml"
+        (self.root / "launcher-config.patch.yaml").write_text("invalid: [", encoding="utf-8")
+        config = launcher._load_launcher_config(str(self.root))
+        self.assertIn("[GUI]", launcher._format_script_path("others/old.py", config))
+        patch_path = self.root / "user-config" / "launcher-config.patch.yaml"
+        patch_path.parent.mkdir(exist_ok=True)
         patch_path.write_text(yaml.safe_dump({"gui-tools-list": ["others/new.py"]}), encoding="utf-8")
         config = launcher._load_launcher_config(str(self.root))
         self.assertIn("[GUI]", launcher._format_script_path("others/new.py", config))

@@ -29,7 +29,7 @@ After context compaction, reread this file before project work.
   packages the working tree and a shared portable runtime.
   Run `package-project.py` only when the user explicitly requests packaging. Use Conda for routine development and verification.
 - Root `launcher-config.yaml` defines launcher discovery rules;
-  `launcher-config.patch.yaml` is an optional gitignored override. User
+  `~/.config/PersonalScripts/launcher-config.patch.yaml` holds optional overrides. User
   `launcher.yaml` stores extra script roots. When using Conda, the shell wrappers
   read the environment name from `conda-env.txt` in the shared user configuration directory.
 - Whenever adding a feature, renaming a tool, or converting a tool to a GUI,

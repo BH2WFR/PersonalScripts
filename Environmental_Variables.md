@@ -21,6 +21,7 @@ YAML files and lock files belong to that user. A direct root session without
 | `llm.yaml` | `active_source` selects the last URL; `sources` maps canonical endpoints to model/parameters and encrypted `api_key` / `balance_key`. `reasoning_effort` defaults to `auto` (enabled); `default` omits controls, `none` disables, or select a supported `minimal`/`low`/`medium`/`high`/`xhigh`/`max` level. Owned by utils.Llm. Startup/Load reads; Save/window close writes. |
 | `conda-env.txt` | One UTF-8 environment name for the shell wrappers when using Conda. Missing or blank selects `base`. Bundled and directly invoked Python bypass this file. |
 | `launcher.yaml` | `additional-paths` lists extra script directories (default empty). Relative paths use the repository root. |
+| `launcher-config.patch.yaml` | Optional overrides for the project's `launcher-config.yaml`. Mappings merge recursively, lists and scalar values replace the defaults, and relative paths use the project root. |
 | `rclone-sync.yaml` | Actual task schema, or a redirect-only mapping to an external schema. |
 | `run-commands.yaml` | `command-runner` task schema, or a redirect-only mapping to an external schema. |
 
