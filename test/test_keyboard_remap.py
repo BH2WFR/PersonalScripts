@@ -550,7 +550,7 @@ class GuiTests(unittest.TestCase):
 
 
 class IntegrationTests(unittest.TestCase):
-    """Launcher discovery, help and compiler alias staging do not invoke live I/O."""
+    """Launcher discovery and help do not invoke live I/O."""
 
     def test_help_never_loads_gui_or_registry(self) -> None:
         with patch.object(entry, "load_app") as loader, \
@@ -585,26 +585,10 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result.exception.code, 1)
         run.assert_not_called()
 
-    def test_only_entry_is_discovered_and_compiler_stages_package(self) -> None:
+    def test_private_modules_are_hidden_from_launcher(self) -> None:
         launcher = load_repo_module("remap_test_launcher", "run-script.py")
-        compiler = load_repo_module("remap_test_compiler", "compile-script.py")
         config = launcher._load_launcher_config(str(ROOT))
         self.assertTrue(launcher._is_ignored(config.ignore_spec, "windows/keyboard-remapper/ui.py"))
-        with patch.object(compiler.sys, "platform", "win32"):
-            found = [path.replace("\\", "/") for path in compiler.find_py_scripts(str(ROOT / "tools"))]
-        self.assertIn("windows/keyboard-remapper.py", found)
-        self.assertFalse(any(path.startswith("windows/keyboard-remapper/") for path in found))
-        with tempfile.TemporaryDirectory(prefix="keyboard-remap-build-", dir=ROOT / "tmp") as directory:
-            for builder in ("nuitka", "pyinstaller"):
-                def inspect(command: list[str], *, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
-                    stage = Path(env["PYTHONPATH"].split(os.pathsep)[0]) / entry.PACKAGE_NAME
-                    for name in ("app", "models", "registry", "capture", "catalog", "ui"):
-                        self.assertTrue((stage / f"{name}.py").is_file())
-                    self.assertTrue(any(entry.PACKAGE_NAME in option for option in command))
-                    return subprocess.CompletedProcess(command, 0)
-
-                with patch.object(compiler.subprocess, "run", side_effect=inspect):
-                    compiler._run_compiler(["compiler", entry.__file__], entry.__file__, directory, builder)
 
     def test_elevation_bootstrap_uses_draft_only_arguments(self) -> None:
         before, after = models.Snapshot(None), models.Snapshot(models.encode_map((models.Mapping(1, 2),)))

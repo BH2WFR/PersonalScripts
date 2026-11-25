@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Implementation notes.
 
-Load keyboard-hook-viewer as personal_keyboard_hook_viewer; preserve compiler
-staging and the valid package alias. Runtime/backend ownership and code-space
+Load keyboard-hook-viewer as personal_keyboard_hook_viewer. Runtime/backend ownership and code-space
 distinctions: keyboard-hook-viewer/README.md.
 """
 
@@ -53,7 +52,6 @@ def load_app() -> ModuleType:
 
     Side effects:
         Registers the source package under its import alias in sys.modules.
-        Compiled applications use the package staged by compile-script.py.
     """
     if PACKAGE_NAME not in sys.modules and not IS_FROZEN:
         directory = SCRIPT_DIR / "keyboard-hook-viewer"

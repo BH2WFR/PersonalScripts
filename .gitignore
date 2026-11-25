@@ -26,8 +26,7 @@ BUILD/
 /output_*/
 /generated_patterns/
 
-/3rd/
-/3rdTools/
+/deps/
 
 /tmp/
 
@@ -35,3 +34,6 @@ BUILD/
 
 *.patch.yaml
 *.patch.json
+
+./run-script
+./run-script.exe

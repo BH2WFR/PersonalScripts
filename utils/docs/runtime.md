@@ -19,6 +19,7 @@ Implementation: [environment.py](../environment.py), [system.py](../system.py), 
 | Open a file in the default app | `System.open_with_default_app(path)` |
 | Open a URL safely (headless-safe) | `System.open_browser_safe(url)` |
 | Resolve `$VAR` / `{{placeholders}}` in paths | `Paths.resolve_vars(path, schema_dir=..., script_dir=...)` |
+| Locate downloaded resource packs | `Paths.dependencies_directory() -> Path` returns `deps/` under the source project root or beside a standalone executable. Callers select the resource subdirectory and create it when writing. |
 | Suggest an unused filename | `Paths.available_path(path, start=1, limit=10000) -> Path`; retains a free path or tries `stem_1.ext`, `stem_2.ext`, etc.; does not reserve it, so writers must still check collisions |
 | Resolve a path against an explicit base directory | `Paths.resolve_path(path, base_dir, expand_environment=True, resolve_symlinks=False) -> str`; native variable expansion preserves undefined references, False avoids re-expanding literal/template results |
 | Resolve and deduplicate existing directories | `Paths.resolve_directories(paths, base_dir, on_missing=None) -> tuple[str, ...]`; first occurrence wins, optional callback reports each distinct missing directory once |

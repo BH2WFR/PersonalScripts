@@ -2,10 +2,8 @@
 import contextlib
 from dataclasses import replace
 import io
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import tempfile
 import threading
 import unittest
@@ -16,7 +14,7 @@ from PIL import Image, ImageDraw
 import pymupdf
 
 from test_pdf_binarize import ROOT, engine_settings, objects, raster, workflow
-from test_rclone_integration import compiler, launcher, utility
+from test_rclone_integration import launcher, utility
 
 
 def image_bytes(alpha: bool = False) -> bytes:
@@ -313,45 +311,20 @@ class ObjectPipelineTests(unittest.TestCase):
             self.assertLessEqual(np.abs(np.frombuffer(before, dtype=np.uint8).astype(int) -
                                        np.frombuffer(after, dtype=np.uint8).astype(int)).max(), 1)
 
-    def test_entry_discovery_and_compiler_package_staging(self) -> None:
+    def test_entry_discovery(self) -> None:
         shutil.copy2(ROOT / "launcher-config.yaml", self.folder / "launcher-config.yaml")
         config = launcher._load_launcher_config(str(self.folder))
         with patch.object(utility.Environment, "find_bash", return_value=None), patch.object(
                 utility.Environment, "find_pwsh", return_value=None):
             discovered = launcher.find_scripts(str(ROOT / "tools"), config)
-        for listing in (discovered, compiler.find_py_scripts(str(ROOT / "tools"))):
-            paths = [path.replace("\\", "/") for path in listing]
-            self.assertIn("document-processing/pdf-binarizer.py", paths)
-            self.assertNotIn("document-processing/pdf-binarize-old.py", paths)
-            self.assertIn("document-processing/pdf-bookmark-editor.py", paths)
-            self.assertIn("document-processing/pdf-font-replacer.py", paths)
-            self.assertIn("document-processing/pdf-page-splitter.py", paths)
-            self.assertNotIn("document-processing/pdf-page-tag.py", paths)
-            self.assertFalse(any(path.startswith("document-processing/pdf-tools/") for path in paths))
-        stages: list[Path] = []
-
-        def staged(command: list[str], *, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
-            stage = Path(env["PYTHONPATH"].split(os.pathsep)[0])
-            stages.append(stage)
-            self.assertTrue((stage / "personal_pdf_tools/binarize/objects.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/binarize/regions.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/common/navigation.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/bookmarks/app.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/bookmarks/worker.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/font_replace/app.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/font_replace/engine.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/split_pages/app.py").is_file())
-            self.assertTrue((stage / "personal_pdf_tools/split_pages/engine.py").is_file())
-            self.assertTrue(any("personal_pdf_tools" in part for part in command))
-            return subprocess.CompletedProcess(command, 0)
-
-        for filename in ("pdf-binarizer.py", "pdf-bookmark-editor.py", "pdf-font-replacer.py", "pdf-page-splitter.py"):
-            entry = str(ROOT / "tools/document-processing" / filename)
-            for tool in ("nuitka", "pyinstaller"):
-                with patch.object(compiler.subprocess, "run", side_effect=staged):
-                    result = compiler._run_compiler(["compiler", entry], entry, str(self.folder), tool)
-                    self.assertEqual(result.returncode, 0)
-        self.assertTrue(all(not path.exists() for path in stages))
+        paths = [path.replace("\\", "/") for path in discovered]
+        self.assertIn("document-processing/pdf-binarizer.py", paths)
+        self.assertNotIn("document-processing/pdf-binarize-old.py", paths)
+        self.assertIn("document-processing/pdf-bookmark-editor.py", paths)
+        self.assertIn("document-processing/pdf-font-replacer.py", paths)
+        self.assertIn("document-processing/pdf-page-splitter.py", paths)
+        self.assertNotIn("document-processing/pdf-page-tag.py", paths)
+        self.assertFalse(any(path.startswith("document-processing/pdf-tools/") for path in paths))
 
 
 if __name__ == "__main__":

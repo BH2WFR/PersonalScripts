@@ -357,7 +357,11 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
     def test_offline_formula_controls(self) -> None:
         from personal_pdf_tools.ocr import local_formula
         from personal_pdf_tools.ocr.worker import Worker
-        with tempfile.TemporaryDirectory() as folder, patch("utils.config.ConfigStore.directory", return_value=Path(folder)):
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch("utils.config.ConfigStore.directory", return_value=Path(folder) / "config"),
+            patch.object(local_formula.models, "cache_directory", return_value=Path(folder) / "ocr-models"),
+        ):
             window = ImageWindow(ROOT / "tools/document-processing/image-to-text-and-formula.py")
             self.addCleanup(window.close)
             image = QtGui.QImage(10, 10, QtGui.QImage.Format.Format_RGB32)

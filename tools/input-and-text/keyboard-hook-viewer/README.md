@@ -7,9 +7,7 @@ Users are responsible for their use and its consequences.
 
 Run `../keyboard-hook-viewer.py` directly or select it in `run-script.py`.
 The entry owns `HELP` and handles help before loading the package.
-The entry loads this package as `personal_keyboard_hook_viewer`; the launcher
-and compiler list only that entry. Nuitka/PyInstaller stage the package using
-the same alias. No new dependencies are introduced by the split.
+The entry loads this package as `personal_keyboard_hook_viewer`; the launcher lists only that entry.
 
 | Module | Responsibility |
 | --- | --- |
@@ -106,5 +104,4 @@ macOS needs Input Monitoring/Accessibility permission; Wayland is unsupported.
 Import and `--help` do not start hooks or send input.
 
 Run `conda run -n base python -m unittest discover -s test -p "test_keyboard*.py"`.
-Tests exercise synthetic events, mapping distinctions, discovery and compiler
-staging without capturing real keystrokes or generating input.
+Tests exercise synthetic events, mapping distinctions, and discovery without capturing real keystrokes or generating input.

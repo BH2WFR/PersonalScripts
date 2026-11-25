@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import yaml
-from utils import ConfigStore
+from utils import Paths
 from ..common.task_control import TaskControl
 
 # Stable settings IDs map to RapidOCR's versioned recognition routes.
@@ -51,8 +51,8 @@ class Model:
 
 
 def cache_directory() -> Path:
-    """Return the shared user model cache, independent of the Python installation."""
-    return ConfigStore.directory() / "models" / "pdf-ocr"
+    """Return the project directory shared by downloadable OCR models."""
+    return Paths.dependencies_directory() / "ocr-models"
 
 
 def package_directory() -> Path:

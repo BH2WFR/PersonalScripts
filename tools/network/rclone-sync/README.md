@@ -86,11 +86,4 @@ conda run -n base python -m unittest discover -s test -p "test_rclone*.py"
 
 Tests are grouped by schema, paths, commands, workflow, and integration. Sync and
 network operations use mocks. Integration checks exercise the source entry,
-launcher filtering, and compiler staging without building or transferring data.
-
-`launcher-config.yaml` excludes `network/rclone-sync/`, and `compile-script.py`
-excludes this private directory from script selection. When compiling the entry,
-the compiler stages Python modules in a temporary directory below `BUILD`, under
-`personal_rclone_sync`, and explicitly includes that package. No new Python
-dependency is introduced by the split. Source and executable entry points share
-the same CLI; there is no compatibility facade for old internal imports.
+launcher filtering, and private package loading. The release keeps the package beside its entry.

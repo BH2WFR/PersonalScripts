@@ -15,6 +15,7 @@
 		]
 	},
 	"settings": {
+		"python.defaultInterpreterPath": "${workspaceFolder}/deps/python/python.exe",
 		"search.exclude": {
 			"__pycache__/**": true,
 		},

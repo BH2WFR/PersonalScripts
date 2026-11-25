@@ -1,7 +1,7 @@
 # PDF binarizer internals
 
 The engine is used by the `../../pdf-binarizer.py` GUI. It is imported as
-`personal_pdf_tools.binarize`; the launcher/compiler only list the entry.
+`personal_pdf_tools.binarize`; the launcher only lists the entry.
 Preview rendering uses the shared `utils.Pdf.render_page` RGB/pixel-budget helper;
 image segmentation and binary encoding remain binarizer-specific.
 Dependencies: PyMuPDF >= 1.28, pypdf >= 6, Pillow with libtiff, numpy,

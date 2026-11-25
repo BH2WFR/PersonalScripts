@@ -47,7 +47,6 @@ def load_app() -> ModuleType:
 
     Side effects:
         Registers the source package under its import alias in sys.modules.
-        Compiled applications use the package staged by compile-script.py.
     """
     if PACKAGE_NAME not in sys.modules and not IS_FROZEN:
         directory = SCRIPT_DIR / "system-event-viewer"

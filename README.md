@@ -91,25 +91,23 @@ Most scripts support both interactive mode and command-line arguments. Run `pyth
 
       `PyYAML`, `pathspec`
 
-    - Notable libraries used by some scripts (see [Script List](#script-list) for actual requirements; the following are examples only):
+    - See the [Script List](#script-list) for each tool's dependencies.
 
-      `mss` (screenshots), `Pillow`/`matplotlib`/`numpy`/`opencv-python` (image processing), `PySide6` (GUI), `pyqtgraph`/`pyvista` (data visualization), `PyMuPDF` (PDF processing), `boto3` (S3 access and uploads), and `pynput` (keyboard input monitoring)
+  - **Install Python dependencies for the launcher and all tools, including research scripts.**
 
-  - **Install Python dependencies:**
+    ```sh
+    conda run -n base python -m pip install -r requirements.txt
+    ```
 
-    - Install most dependencies with:
+    `requirements-internal.txt` is for internal project use only.
 
-      ```sh
-      conda run -n base python -m pip install -r requirements.txt
-      ```
+- **Optional portable Python environment.** The Conda setup above is sufficient for local use. To bundle Python and the tools' dependencies, run this command from the project root on a build machine with Git, uv, distlib and filelock installed:
 
-    - To run scripts under `tools/research/`, install their dedicated dependencies with:
+  ```sh
+  conda run -n base python package-project.py
+  ```
 
-      ```sh
-      conda run -n base python -m pip install -r requirements-research.txt
-      ```
-
-    - Do not install `requirements-internal.txt`; it is for internal project use only.
+  The first build installs CPython 3.13 and the packages from `requirements.txt` into `deps/python/` and writes a release archive for the current OS and CPU architecture to `BUILD/`. Later builds reuse the runtime when the requirements are unchanged. Use `--refresh` to rebuild it or `--with-resources` to include local OCR models and external tools.
 
 - **Windows:**
 
@@ -196,8 +194,13 @@ Core utility package: `utils/` — shared console, environment, system, path, in
 
 **Launcher features:**
 
-- Run `run-script.ps1` on Windows and `run-script.sh` on Linux/macOS. These wrapper scripts locate an available Python interpreter and then start the actual launcher, `run-script.py`.
-- When started **without arguments**, the launcher detects the operating system, platform, architecture, and the availability of Conda/Python/PowerShell/Bash; on Linux, it also shows the current graphical environment (`no-gui`/`x11`/`wayland`). It then **lists every script supported by the current environment** and lets you select and launch one interactively, with argument pass-through:
+- **Launcher entry points.** Run `./run-script.ps1` on **Windows** or `./run-script.sh` on **Linux/macOS**. Both wrappers locate Python and start `./run-script.py`.
+- At startup, the launcher detects the platform and architecture and checks for Conda, Python, PowerShell and Bash. On Linux it also shows the graphical environment (`no-gui`, `x11` or `wayland`).
+  - The wrappers look for Python in `./deps/python` first.
+  - If there is no bundled interpreter, they look for Conda and read one environment name from `~/.config/PersonalScripts/conda-env.txt` (UTF-8). A missing or blank file selects `base`.
+  - If Conda is unavailable, they use Python on `PATH`.
+  - Running `python run-script.py` directly uses that same interpreter for all Python tools.
+- When started **without arguments**, the launcher **lists the scripts supported on the current platform and architecture**. **Select a script with the keyboard** to run it and pass along any arguments.
   - Select a script by **number** or **name**, such as `15`, `macos/ntfs-3g-mount-manager.py`, or `ntfs-3g-mount-manager`.
   - The launcher marks tools listed in `gui-tools-list` in `launcher-config.yaml` with `[GUI]` and hides them on Linux without a desktop. It marks tools in `elevation-needed-list` with `[SUDO]`.
   - Arguments after the number or name are passed to the target script, such as `15 --help`, `macos/display-manager --list`, or `display-manager --list`.
@@ -212,14 +215,10 @@ Core utility package: `utils/` — shared console, environment, system, path, in
   - To customize `launcher-config.yaml`, create `launcher-config.patch.yaml` in the project root and include only the settings that need to be overridden. The launcher loads it automatically at startup.
   - Interpreter-aware filtering hides `.sh` scripts when `bash` is unavailable and `.ps1` scripts when `pwsh` is unavailable.
 - The **Test group is disabled by default**. Set `launcher.test.enabled` to `true` to show configured test directories as a separate `Test` group and include their scripts in bare-name searches. Use `test/<name>` or `@test:<name>` to target a test script explicitly.
-- Python detection first checks `./deps/python` for a bundled interpreter, then attempts to derive the base-environment Python from the Conda command path, tries known installation paths and `conda info --base`, and finally falls back to `python3`.
-  - Set **`conda-environment` in `~/.config/PersonalScripts/launcher.yaml`** to choose the Conda environment used to run scripts. The default is `base`.
-- **`additional-paths` in the same user `launcher.yaml`** lists additional script directories.
+- **`additional-paths` in `~/.config/PersonalScripts/launcher.yaml`** lists additional script directories.
   Use a YAML list of directories. Relative paths are resolved from the project root. Each directory appears as `─── Additional [N] ───`, where N starts at 1, and uses the same configurable ignore rules.
   Use an **`@N:` prefix** to select the script source explicitly: `@0:` is the main directory, `@1:` is the first additional directory (`Additional [1]`), and so on. Bare-name searches cover all groups; `@N:` limits the same matching rules to one group. Multiple valid matches are displayed as numbered `@N:` paths. This syntax also works on the command line, for example `python run-script.py @1:test.py`.
-- Script and dependency packaging has been reserved for future use by placing dependency executables under `./deps`, but it has **not been fully implemented or verified** and is not currently a priority.
-  - Do not run `compile-script.py`.
-  - At startup, the launcher reads the `extra-env-paths` key from `launcher-config.yaml`. It lists platform-specific paths to add to `PATH` when launching scripts, such as `./deps/python` and `./deps/bin`, with the aim of eventually removing the Conda and package-manager requirement. This feature has not yet been verified; use Conda and package managers for now.
+- Extract the archive from `BUILD/` and run `run-script.ps1` or `./run-script.sh`. The bundle contains the tracked tools and utilities with their current working-tree contents. Individual tools may also require platform software or downloadable resources.
 
 ### Other Features
 
@@ -360,7 +359,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **Windows only. Failed device ejection log viewer, primarily for USB devices**<br />Look up the process ID, executable path and device ID in Windows event logs to **identify the process preventing safe ejection of a USB drive**. | **Windows only**;<br />**Elevation required** |
+| [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **Failed device ejection log viewer**<br />Diagnose a blocked USB eject using the process, device or file system identified in Windows event logs. | **Windows only**;<br />**Elevation required** |
 | [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **Windows only. Force-restart system services**<br />Choose whether to wait for the restart. The `Windows Audio` preset **can temporarily restore sound redirection from the remote computer in an RDP session**. | **Windows only**<br />**Elevation required** |
 | [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py) | **Charger and battery information viewer**<br />**On macOS, see how much power the computer is drawing to charge.** Readings come from `ioreg` on macOS, PowerShell CIM/WMI on Windows and `/sys/class/power_supply` on Linux. Available fields depend on firmware and drivers. **macOS provides the most complete readings.** | **Best on macOS**; other systems are also supported, with some fields unavailable because of firmware or driver limitations |
 | [`tools/others/window-inspector.py`](tools/others/window-inspector.py) | **(GUI) Window Inspector**<br />Drag the finder onto an ad popup or inspect the foreground window to see **window and process details**, highlight the window, inspect its controls, or terminate an unresponsive process.<br />On Windows, you can keep the target window **always on top**, adjust its **opacity**, enable **click-through** for tracing, or re-enable disabled buttons in native Win32 interfaces. | **Windows 10+ (administrator) / macOS (current user)**; `PySide6`, `psutil`. macOS requires PyObjC Cocoa, Quartz and ApplicationServices; window actions and control inspection require Accessibility permission. |

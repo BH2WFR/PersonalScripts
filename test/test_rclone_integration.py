@@ -1,13 +1,12 @@
-"""Check package loading, launcher discovery, and mocked compiler staging.
+"""Check package loading, launcher discovery and private module discovery.
 
-No synchronization or compiler is started. Temporary fixtures stay below tmp/.
+No synchronization is started. Temporary fixtures stay below tmp/.
 """
 
 import contextlib
 import importlib.util
 import inspect
 import io
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,7 +15,7 @@ import tempfile
 from types import ModuleType
 import typing
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from _rclone_test_support import (
     ROOT, runner, app, backend, endpoint_ops, execution, models, schema_ops,
@@ -34,7 +33,6 @@ def _load_entry(name: str, filename: str) -> ModuleType:
     return module
 
 
-compiler = _load_entry("rclone_compiler_test_target", "compile-script.py")
 launcher = _load_entry("rclone_launcher_test_target", "run-script.py")
 
 
@@ -106,62 +104,6 @@ class PackageIntegrationTests(unittest.TestCase):
         normalized = [path.replace("\\", "/") for path in discovered]
         self.assertIn("network/rclone-sync.py", normalized)
         self.assertFalse(any(path.startswith("network/rclone-sync/") for path in normalized))
-        compiled = [path.replace("\\", "/") for path in compiler.find_py_scripts(str(ROOT / "tools"))]
-        self.assertIn("network/rclone-sync.py", compiled)
-        self.assertFalse(any(path.startswith("network/rclone-sync/") for path in compiled))
-
-    def test_compiler_stages_importable_package_and_cleans_up(self) -> None:
-        entry = str(ROOT / "tools/network/rclone-sync.py")
-        for tool in ("nuitka", "pyinstaller"):
-            for fail in (False, True):
-                with self.subTest(tool=tool, fail=fail):
-                    stages: list[Path] = []
-
-                    def compile_stub(
-                        command: list[str], *, check: bool, env: dict[str, str],
-                    ) -> subprocess.CompletedProcess[bytes]:
-                        stage = Path(env["PYTHONPATH"].split(os.pathsep)[0])
-                        stages.append(stage)
-                        self.assertEqual(stage.parent, self.scratch)
-                        package = stage / "personal_rclone_sync"
-                        self.assertTrue((package / "__init__.py").is_file())
-                        self.assertTrue((package / "app.py").is_file())
-                        self.assertFalse((package / "README.md").exists())
-                        self.assertEqual(command[-1], entry)
-                        self.assertFalse(check)
-                        self.assertTrue(env["PYTHONPATH"].endswith(f"{os.pathsep}original-import-path"))
-                        if tool == "nuitka":
-                            self.assertIn("--include-package=personal_rclone_sync", command)
-                        else:
-                            self.assertEqual(command[-5:-1], ["--paths", str(stage), "--collect-submodules", "personal_rclone_sync"])
-                        if fail:
-                            raise OSError("Compiler could not start")
-                        return subprocess.CompletedProcess(command, 0)
-
-                    command = [sys.executable, "-m", tool, entry]
-                    original = list(command)
-                    with (
-                        patch.dict(os.environ, {"PYTHONPATH": "original-import-path"}),
-                        patch.object(compiler.subprocess, "run", side_effect=compile_stub),
-                    ):
-                        if fail:
-                            with self.assertRaises(OSError):
-                                compiler._run_compiler(command, entry, str(self.scratch), tool)
-                        else:
-                            result = compiler._run_compiler(command, entry, str(self.scratch), tool)
-                            self.assertEqual(result.returncode, 0)
-                        self.assertEqual(os.environ["PYTHONPATH"], "original-import-path")
-                    self.assertEqual(command, original)
-                    self.assertEqual(len(stages), 1)
-                    self.assertFalse(stages[0].exists())
-
-    def test_other_scripts_keep_the_original_compiler_invocation(self) -> None:
-        entry = str(self.scratch / "other.py")
-        command = [sys.executable, "-m", "nuitka", entry]
-        with patch.object(compiler.subprocess, "run", return_value=Mock(returncode=0)) as run:
-            result = compiler._run_compiler(command, entry, str(self.scratch), "nuitka")
-        self.assertEqual(result.returncode, 0)
-        run.assert_called_once_with(command, check=False)
 
 
 if __name__ == "__main__":

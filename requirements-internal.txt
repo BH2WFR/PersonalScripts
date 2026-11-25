@@ -2,8 +2,12 @@
 
 #* FOR INTERNAL USE ONLY, DO NOT INSTALL THESE PACKAGES UNLESS YOU KNOW WHAT YOU ARE DOING
 
-# Standalone executable builders used by compile-script.py
-Nuitka
+# Portable project release builder
+uv>=0.9.16
+filelock
+distlib
+
+# Standalone MatrixViewer builder
 PyInstaller
 # MatrixViewer's PyInstaller spec resolves installed runtime requirements.
 packaging

@@ -52,7 +52,7 @@ class EventKind(StrEnum):
     APP_HANG = "Application unresponsive"
     SYSTEM_CRASH = "System crash report"
     DIAGNOSTIC = "Diagnostic report"
-    DEVICE_EJECT_BLOCKED = "Device ejection blocked"
+    DEVICE_EJECTION = "Device ejection"
     BATTERY = "Battery / power source"
     TIME_CHANGE = "Time changes"
     AUTHENTICATION = "Authentication"
@@ -90,7 +90,7 @@ EVENT_FILTER_ORDER: tuple[EventKind, ...] = (
     EventKind.LOGON, EventKind.LOCK, EventKind.RDP_CONNECT, EventKind.SSH_CONNECT,
     EventKind.AUTHENTICATION, EventKind.NETWORK_AUTH, EventKind.SMB,
     # Network/devices and system maintenance.
-    EventKind.NETWORK, EventKind.DEVICE_CHANGE, EventKind.DEVICE_EJECT_BLOCKED,
+    EventKind.NETWORK, EventKind.DEVICE_CHANGE, EventKind.DEVICE_EJECTION,
     EventKind.FILESYSTEM, EventKind.SERVICE, EventKind.UPDATE, EventKind.TIME_CHANGE,
     # Failures and diagnostic reports.
     EventKind.UNEXPECTED_RESTART, EventKind.SYSTEM_CRASH, EventKind.APP_CRASH,

@@ -98,8 +98,7 @@ their use and its consequences.
 | `ui.py` | Draft editing, dropdowns, previews and explicit user actions |
 | `app.py` | Fusion startup and draft-only administrator handoff |
 
-The entry loads this folder as `personal_keyboard_remap`. Launcher/compiler
-discovery ignores the folder; compiler staging uses the same import alias.
+The entry loads this folder as `personal_keyboard_remap`. Launcher discovery skips the private modules.
 PySide6 is already a hard runtime dependency in the root requirements file;
 everything else uses the standard library. `gsudo` is an optional elevation
 helper through `System.restart_elevated()`; running from an administrator

@@ -2,7 +2,7 @@
 """Implementation notes.
 
 Load pdf-tools as personal_pdf_tools; keep private modules out of launcher
-and compiler discovery. Stage the package recursively for bundled builds.
+discovery and preserve the package layout in releases.
 Processing ownership and invariants: pdf-tools/binarize/README.md and the
 shared pdf-tools/README.md.
 """

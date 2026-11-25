@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Implementation notes.
 
-Load keyboard-remapper as personal_keyboard_remap and preserve compiler staging.
+Load keyboard-remapper as personal_keyboard_remap.
 The internal --admin-draft handoff only stages a validated draft, never applies
 it. Registry conflict checks, backup/readback and capture boundaries are
 documented in keyboard-remapper/README.md.

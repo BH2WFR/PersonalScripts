@@ -17,18 +17,21 @@ After context compaction, reread this file before project work.
 
 - `tools/`: runnable scripts grouped by category; use `tools/others/` when none
   fits. Some scripts are thin entries with implementations in separate private
-  packages. Keep internal modules out of launcher/compiler lists and preserve
-  package loading and build staging.
+  packages. Keep internal modules out of launcher lists and preserve
+  their source layout in release archives.
 - `utils/`: shared helpers; [utils/README.md](utils/README.md) indexes their APIs.
+- Store extra resource packs downloaded by tools under the project root in `deps/`
+  (e.g. `deps/ocr-models/` for OCR models). Resolve it with `Paths.dependencies_directory()`.
 - `test/`: tests and verification helpers.
-- `output/`: generated results; `tmp/`: scratch work; `BUILD/`: compiled
-  applications. All three are gitignored.
-- Root `run-script.py` discovers and launches scripts; `compile-script.py`
-  builds standalone applications.
+- `output/`: generated results; `tmp/`: scratch work; `BUILD/`: release
+  artifacts. All three are gitignored.
+- Root `run-script.py` discovers and launches scripts; `package-project.py`
+  packages the working tree and a shared portable runtime.
+  Run `package-project.py` only when the user explicitly requests packaging. Use Conda for routine development and verification.
 - Root `launcher-config.yaml` defines launcher discovery rules;
   `launcher-config.patch.yaml` is an optional gitignored override. User
-  `launcher.yaml` in the shared user configuration directory stores environment
-  choices and extra script roots.
+  `launcher.yaml` stores extra script roots. When using Conda, the shell wrappers
+  read the environment name from `conda-env.txt` in the shared user configuration directory.
 - Whenever adding a feature, renaming a tool, or converting a tool to a GUI,
   update `launcher-config.yaml` in the same change, including affected discovery,
   platform exclusions, `gui-tools-list` and `elevation-needed-list`. Never add
@@ -58,7 +61,7 @@ conda run -n base python run-script.py <name> [args...]
   same change, covering the affected API, behavior and important internal reuse
   boundaries. Keep [utils/README.md](utils/README.md) aligned with module
   ownership and public exports; API details belong in those docs, not here.
-- Use `ConfigStore` for user settings and its directory resolver for paths.
+- Use `ConfigStore` for user settings and its directory resolver for per-user configuration paths.
   Do not introduce custom environment variables or script-local configuration
   I/O. Encrypted-value keys belong to the consuming module. Document settings
   and supported native variables in
@@ -74,7 +77,7 @@ conda run -n base python run-script.py <name> [args...]
   `viewer`, `editor`, `trimmer` and `cleaner`; concise action names are allowed
   when clearer. Include distinctive backend names, such as `ffmpeg`, `yt-dlp`
   or `ntfs-3g`, when they identify the tool. Platform names belong in directories.
-- When renaming entries, update launcher/compiler rules, internal entry paths,
+- When renaming entries, update launcher/packaging rules, internal entry paths,
   tests, HELP and both READMEs together. Preserve private import aliases,
   persisted config keys/filenames and document formats unless explicitly migrated.
 - Put platform-exclusive tools in `tools/windows/`, `tools/macos/` or
@@ -254,16 +257,11 @@ can print `HELP` directly. Private implementation modules do not need a CLI.
 
 ## Python dependency declarations
 
-- When new code imports a third-party Python library, first decide whether the
-  library is a hard runtime dependency, an optional integration, or only a
-  development/build dependency. Standard-library modules are not dependencies.
-- Add hard dependencies used by the launcher or ordinary tools to
-  `requirements.txt`. Do not add a library merely because it might be useful.
-- Put dependencies used only by scripts under `tools/research/` in
-  `requirements-research.txt`. Do not duplicate them in `requirements.txt`
-  unless non-research code also requires them.
-- Put optional platform integrations, test-only libraries, and standalone
-  executable builders in `requirements-optional.txt`.
+- Declare third-party Python runtime dependencies for the launcher and all tools
+  in `requirements.txt`, including research scripts and optional features. Use
+  environment markers for platform-specific packages.
+- Put dependencies used only for internal development, testing, or building
+  executables in `requirements-internal.txt`.
 - Prefer unpinned requirements or a justified compatible version range. Do not
   use exact `==` pins by default. Keep the relevant README, module docstring,
   and `--help` dependency descriptions consistent with these files.

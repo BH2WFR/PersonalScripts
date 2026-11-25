@@ -1,8 +1,9 @@
 """Model downloads, checksum failures, cancellation, isolation and Unicode anchors."""
 
-from contextlib import contextmanager
+from contextlib import chdir, contextmanager
 import hashlib
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,8 +11,19 @@ from unittest.mock import patch
 import httpx
 import pymupdf
 from test_pdf_ocr import ROOT, Settings, Result, Token, TextLayer, Worker
-from personal_pdf_tools.ocr import models
+from personal_pdf_tools.ocr import local_formula, models
 from personal_pdf_tools.common.task_control import Cancelled, TaskControl
+
+
+class ModelLocationTests(unittest.TestCase):
+    def test_source_and_standalone_locations_ignore_working_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as folder, chdir(folder):
+            root = ROOT / "deps" / "ocr-models"
+            self.assertEqual(models.cache_directory(), root)
+            self.assertEqual(local_formula.directory(), root / local_formula.NAME)
+            executable = Path(folder) / "portable" / "pdf-ocr.exe"
+            with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
+                self.assertEqual(models.cache_directory(), executable.parent / "deps" / "ocr-models")
 
 
 class ModelTests(unittest.TestCase):

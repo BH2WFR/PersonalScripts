@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Implementation notes.
 
-Load rclone-sync as personal_rclone_sync and keep its modules out of launcher/
-compiler discovery. Preserve the entry directory as the script_dir placeholder.
+Load rclone-sync as personal_rclone_sync and keep its modules out of launcher
+discovery. Preserve the entry directory as the script_dir placeholder.
 Architecture: rclone-sync/README.md; schema: rclone-sync-schema-sample.yaml.
 """
 

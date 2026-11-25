@@ -24,8 +24,23 @@ PySide6
 pyobjc-framework-Cocoa; sys_platform == "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
 pyobjc-framework-ApplicationServices; sys_platform == "darwin"
-# Required by Image to Text and Formula: python -m pip install markdown-it-py
 markdown-it-py
-# For offline formula preview, see the MathJax installation command in requirements-optional.txt.
 tqdm
+# win10toast imports pkg_resources, removed in setuptools 82.
+setuptools<82; sys_platform == "win32"
 win10toast; sys_platform == "win32"
+matplotlib
+scipy
+h5py
+openpyxl
+# Legacy Excel .xls input
+xlrd
+pyqtgraph
+pyvista
+pyvistaqt
+vtk
+# Offline formula recognition in Image to Text and Formula (CPU).
+paddlepaddle>=3.3,<4
+tokenizers>=0.19
+# Offline formula preview uses JavaScript assets. Install them in the active Conda environment:
+#   conda install "conda-forge::mathjax=2.7.7"

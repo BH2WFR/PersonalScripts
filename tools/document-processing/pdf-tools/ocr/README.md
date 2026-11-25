@@ -59,7 +59,7 @@ releases its stored bodies. Closing the window clears the session files.
 **Local formula — PaddleOCR** accepts one tightly cropped equation per image.
 Install the optional PaddlePaddle CPU runtime and tokenizers in the
 environment running Image to Text and Formula. Select **Install model** in formula mode to download
-the official `LaTeX_OCR_rec` files (98.9 MiB). Downloads resume at verified
+the official files (98.9 MiB) into `deps/ocr-models/LaTeX_OCR_rec/`. Downloads resume at verified
 file boundaries. **Uninstall model** removes the downloaded files. Recognition is enabled once the runtime and model are available. The worker loads the PaddleOCR graph directly with Paddle Inference once per batch. This model
 recognizes mathematical structure from grayscale input. For a whole screenshot
 containing prose and equations, use the Vision API formula mode.
@@ -109,7 +109,10 @@ opening a PDF. It lists bundled and extension models, versions, installed sizes
 and the total local footprint, with Download / Repair, Verify, Delete and Open
 folder actions. The local inventory is offline; only Download contacts the model
 host. Downloaded PP-OCRv5 mobile recognizers live in
-`ConfigStore.directory()/models/pdf-ocr`. Korean is about 12.9 MiB; Thai is about
+`deps/ocr-models/` under the project root. To reuse existing downloads, copy the
+`.onnx` files from `~/.config/PersonalScripts/models/pdf-ocr/` into this directory
+and the `LaTeX_OCR_rec/` folder from `~/.config/PersonalScripts/models/image-ocr/`
+alongside them. Korean is about 12.9 MiB; Thai is about
 7.55 MiB. These are model-file sizes, excluding shared runtime packages.
 
 The catalog reads URLs and SHA-256 hashes from the installed RapidOCR registry.

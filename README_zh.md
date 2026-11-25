@@ -91,24 +91,23 @@
 
       `PyYAML`、`pathspec`
 
-    - 部分脚本依赖的特色库（**参考后面的[「脚本列表」](#脚本列表)章节**中所写的依赖库，下一行仅为举例，不代表实际依赖）：
+    - 各工具的依赖库见[脚本列表](#脚本列表)。
 
-      `mss`（截图）、`Pillow`/`matplotlib`/`numpy`/`opencv-python`（图像处理）、`PySide6`（GUI）、`pyqtgraph`/`pyvista`（数据可视化）、`PyMuPDF`（PDF 处理）、`boto3`（S3 存储访问与上传）、`pynput`（键盘监听）
+  - **统一安装启动器和所有工具（含研究脚本）的 Python 依赖。**
 
-  - **一键安装 Python 库依赖：**
+    ```sh
+    conda run -n base python -m pip install -r requirements.txt
+    ```
 
-    - 大部分依赖库用以下命令即可：
-      ```sh
-      conda run -n base python -m pip install -r requirements.txt
-      ```
+    `requirements-internal.txt` 仅供项目内部使用。
 
-    - 需要运行 `tools/research/` 下的脚本时，用以下命令安装专有依赖库：
+- **可选：打包便携 Python 环境。** 本机日常使用只需完成上面的 Conda 安装。需要把 Python 和工具依赖一起打包时，在已安装 Git、uv、distlib 和 filelock 的构建机上，从项目根目录运行：
 
-      ```sh
-      conda run -n base python -m pip install -r requirements-research.txt
-      ```
+  ```sh
+  conda run -n base python package-project.py
+  ```
 
-    - 请勿安装 `requirements-internal.txt`；该文件仅供项目内部使用。
+  首次构建会将 CPython 3.13 和 `requirements.txt` 中的依赖装入 `deps/python/`，同时在 `BUILD/` 下生成适用于当前操作系统和 CPU 架构的发布包。依赖清单没有变化时，再次构建会复用已有环境。可用 `--refresh` 重建环境，或用 `--with-resources` 附带本地 OCR 模型和外部工具。
 
 - **Windows：**
 
@@ -195,8 +194,13 @@
 
 **启动器特性：**
 
-- Windows 中执行 `run-script.ps1`，Linux/macOS 中执行 `run-script.sh`；包装脚本会查找可用的 Python 解释器，再启动真正的启动器 `run-script.py`。
-- **无参数启动启动器**时，会先检测系统/平台/架构，并检测 Conda/Python/PowerShell/Bash 环境可用性；Linux 下还会显示当前图形环境（`no-gui`/`x11`/`wayland`）。检测完毕后，会**列出当前系统/平台/架构中支持的所有脚本**；列出所有脚本后通过键盘交互选择脚本并启动，支持参数透传：
+- **启动入口**：**Windows** 中执行 `./run-script.ps1`，**Linux/macOS** 中执行 `./run-script.sh`；这两个包装脚本会查找可用的 Python 解释器，再启动真正的启动器 `./run-script.py`。
+- 启动器启动时，会先检测系统/平台/架构，并检测 Conda/Python/PowerShell/Bash 环境可用性；Linux 下还会显示当前图形环境（`no-gui`/`x11`/`wayland`）。
+    - 启动脚本优先在 `./deps/python` 中查找 Python 解释器。
+    - 如上述位置没有 Python 解析器，则会查找 Conda，且从 `~/.config/PersonalScripts/conda-env.txt` 读取一行环境名（UTF-8，文件缺失或为空时使用 `base`）；
+    - 找不到 Conda 时使用 `PATH` 中的 Python。
+    - 直接运行 `python run-script.py` 时，所有 Python 工具复用启动它的解释器。
+- **无参数启动启动器**时，会**列出当前系统/平台/架构中支持的所有脚本**；列出所有脚本后通过**键盘交互选择脚本**并启动，支持参数透传：
   - 交互式选择支持**数字**或**脚本名称**（如 `15`、`macos/ntfs-3g-mount-manager.py`、`ntfs-3g-mount-manager`）
   - `launcher-config.yaml` 中，`gui-tools-list` 列出的工具会在启动器列出时，附上 `[GUI]` 标记；Linux 无桌面环境下会在启动器中隐藏这些工具。`elevation-needed-list` 中的工具会附上 `[SUDO]` 标记。
   - 将数字/名称后的参数**透传**给目标脚本（如 `15 --help`、`macos/display-manager --list`、`display-manager --list`）
@@ -211,14 +215,10 @@
   - 如需修改 `launcher-config.yaml`，请在项目根目录新建 `launcher-config.patch.yaml`，并在 patch 文件中仅写需要覆盖的设置项，启动器启动时会自动读取。
   - 解释器感知：无 `bash` 时隐藏 `.sh` 脚本；无 `pwsh` 时隐藏 `.ps1` 脚本
 - **Test 分组默认关闭**。将 `launcher.test.enabled` 设置为 `true` 后，启动器会把配置的测试目录显示为独立的 `Test` 分组，并让其中的脚本参与裸名称查找；可使用 `test/<名称>` 或 `@test:<名称>` 精确指定测试脚本。
-- 自动检测 Python：优先在 `./deps/python` 中查找打包的 Python，然后尽可能从 Conda 命令路径推导 base 环境中的 Python，再尝试已知路径和 `conda info --base`，最后回退到 `python3`
-  - 可通过 **`~/.config/PersonalScripts/launcher.yaml` 中的 `conda-environment`** 指定启动器执行脚本时使用的 **Conda 虚拟环境名称**，默认为 `base`。
-- **同一用户 `launcher.yaml` 中的 `additional-paths`** 用于指定附加脚本目录。
+- **`~/.config/PersonalScripts/launcher.yaml` 中的 `additional-paths`** 用于指定附加脚本目录。
   多个目录使用 YAML 列表填写；相对路径以项目根目录为基准。每个目录显示为 `─── Additional [N] ───`（N 从 1 开始），并应用相同的配置化忽略规则。
   配合 **`@N:` 前缀** 可精确指定脚本来源：`@0:` = 主目录，`@1:` = 第一个附加目录（对应 `Additional [1]`），依此类推。裸名递归搜索所有分组；`@N:` 将相同匹配规则限制到指定分组。多个有效匹配会以带编号的 `@N:` 路径列出。CLI 同样可用（如 `python run-script.py @1:test.py`）
-- 已预留脚本打包、依赖打包功能（在 `./deps` 目录中放置依赖的二进制可执行文件），但还**没有完整实现并验证**，也不打算优先解决此问题。
-  - 请勿启动 `compile-script.py`。
-  - 启动器启动时，会从 `launcher-config.yaml` 读取 `extra-env-paths` 键，其中包含各平台启动脚本时要纳入 `PATH` 环境变量的路径，如 `./deps/python`、`./deps/bin` 等（方便日后摆脱 Conda 和包管理器）。该功能还没有经过验证，目前使用 Conda 和包管理器即可。
+- 解压 `BUILD/` 下的发布包后，运行 `run-script.ps1` 或 `./run-script.sh`。包内工具和共享模块取自 Git 跟踪文件的当前工作区内容。部分工具另需平台软件或下载资源。
 
 ### 其他特性
 
@@ -358,7 +358,7 @@
 
 | 脚本                                                         | 描述                                                         | 依赖                                                         |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **仅 Windows，设备（主要是 USB 设备）弹出失败日志查看器**：<br />显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，**用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题**。 | **仅 Windows**；<br />**需要提权**                           |
+| [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **设备弹出失败日志查看器**<br />查看 Windows 记录的进程、设备或文件系统，排查 U 盘无法安全弹出的原因。 | **仅 Windows**；<br />**需要提权**                           |
 | [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **仅 Windows**，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权**                             |
 | [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py) | **充电器与电池信息查看器**：<br />**macOS 中，还能查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全）             |
 | [`tools/others/window-inspector.py`](tools/others/window-inspector.py) | **(GUI) 窗口信息查看器**：拖动圆饼或查看前台窗口即可找出弹窗广告所属的进程。<br />**可查看窗口和所在进程相关信息**。可在屏幕上标出窗口位置、查看控件，或强制结束无响应窗口的进程。<br />**Windows** 中，支持对目标窗口进行**置顶**、改变**透明度**、设置为**穿透模式**（描图使用）、或解除灰色按钮（仅限 Win32 原生界面） | **Windows/macOS**；<br />**Python 库**：`PySide6`、`psutil`。macOS 另需 PyObjC Cocoa、Quartz、ApplicationServices；操作窗口和读取控件需辅助功能权限。<br />**仅 Windows 下需要提权** |

@@ -232,16 +232,6 @@ class CondaTests(ScratchCase):
 class LauncherTests(ScratchCase):
     """Protect pass-through arguments, shell policy, stdin support, and exit codes."""
 
-    def test_environment_option_precedence_and_argument_passthrough(self) -> None:
-        with patch.object(launcher.ConfigStore, "load", return_value={"conda-environment": "from-config"}):
-            invocation = launcher._parse_launcher_invocation(["--env=chosen", "--env-info", "tool", "--env=target-argument", "a b"])
-            self.assertEqual(launcher._default_conda_env_name(invocation.conda_env_name), "chosen")
-            self.assertEqual(invocation.arguments, ("tool", "--env=target-argument", "a b"))
-            self.assertTrue(invocation.probe_environment_versions)
-            self.assertEqual(launcher._default_conda_env_name(None), "from-config")
-        with patch.object(launcher.ConfigStore, "load", return_value={}):
-            self.assertEqual(launcher._default_conda_env_name(None), "base")
-
     def test_shell_selection_flags_and_exit_codes_are_unchanged(self) -> None:
         response = subprocess.CompletedProcess([], 23)
         with patch.object(launcher.Environment, "find_bash", return_value="selected-bash"), \
@@ -256,24 +246,32 @@ class LauncherTests(ScratchCase):
         (self.root / "tools/example.py").write_text("import sys\ndef main() -> int:\n    print(repr(sys.argv[1:]))\n    return 19\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch.object(launcher, "_get_project_dir", return_value=str(self.root)), \
-                patch.object(launcher.Environment, "resolve_conda_python", return_value=sys.executable) as resolve, \
+                patch.object(launcher.Environment, "resolve_conda_python") as resolve, \
                 patch.object(launcher.Environment, "print_env_info") as info, \
                 patch.object(sys, "argv", ["run-script.py"]), \
                 patch.object(sys, "stdin", io.StringIO("example --env=target-argument value\n")), \
-                patch.object(sys, "path", list(sys.path)), patch.object(launcher.ConfigStore, "load", return_value={}), \
+                patch.object(sys, "path", list(sys.path)), patch.object(launcher.ConfigStore, "load", return_value={"conda-environment": "legacy"}), \
                 patch.object(subprocess, "run") as run, contextlib.redirect_stdout(stdout):
             self.assertEqual(launcher.main(), 19)
-            resolve.assert_called_once_with("base")
+            resolve.assert_not_called()
             info.assert_called_once_with(probe_versions=False, show_elevation=True)
             run.assert_not_called()
         self.assertIn("['--env=target-argument', 'value']", stdout.getvalue())
 
-    def test_other_python_environment_remains_a_child_process(self) -> None:
-        script = str(self.root / "tools/example.py")
-        executable = str(self.root / "another-python.exe")
-        with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 29)) as run:
-            self.assertEqual(launcher.run_py_script(script, ["a b", 'a"b', ""], executable), 29)
-            run.assert_called_once_with([executable, os.path.abspath(script), "a b", 'a"b', ""], check=False)
+    def test_direct_tool_gets_current_interpreter_and_arguments(self) -> None:
+        script = self.root / "tools/example.py"
+        (script.parent / "launcher_test_sibling.py").write_text("STATUS = 29\n", encoding="utf-8")
+        self.addCleanup(sys.modules.pop, "launcher_test_sibling", None)
+        script.write_text("import sys\nfrom launcher_test_sibling import STATUS\n"
+                          "def main():\n    print(sys.executable, repr(sys.argv))\n    return STATUS\n", encoding="utf-8")
+        args = ["a b", 'a"b', "", "--env=tool-option"]
+        stdout = io.StringIO()
+        with patch.object(sys, "argv", ["run-script.py", "--env-info", "example", *args]), patch.object(sys, "path", sys.path.copy()), \
+                patch.object(launcher, "_get_project_dir", return_value=str(self.root)), \
+                patch.object(launcher.Environment, "print_env_info") as info, contextlib.redirect_stdout(stdout):
+            self.assertEqual(launcher.main(), 29)
+        self.assertIn(f"{sys.executable} {[str(script), *args]!r}", stdout.getvalue())
+        info.assert_called_once_with(probe_versions=True, show_elevation=True)
 
     def test_default_list_has_no_subprocess_version_probes(self) -> None:
         (self.root / "tools/example.py").touch()

@@ -18,13 +18,13 @@ ownership and public exports.
 | Topic | Public interface | Canonical modules |
 | --- | --- | --- |
 | [Configuration](docs/config.md) | ConfigStore (per-user settings, including under sudo), ConfigBusyError, EncryptedValue | [config.py](config.py) |
-| [Environment, system and paths](docs/runtime.md) | Environment, PythonEnvironment, RuntimeKind, System, LinuxGui, DiskInfo, DiskScan, Paths | [environment.py](environment.py), [system.py](system.py), [paths.py](paths.py) |
+| [Environment, system and paths](docs/runtime.md) | Environment, PythonEnvironment, RuntimeKind, System, LinuxGui, DiskInfo, DiskScan, Paths (including project dependency locations) | [environment.py](environment.py), [system.py](system.py), [paths.py](paths.py) |
 | [Console and interaction](docs/terminal.md) | Console, Input, RangeParity, Menu, MenuOption, Cursor, CmdCheck, ANSI constants | [console.py](console.py), [input.py](input.py), [menu.py](menu.py), [menu_option.py](menu_option.py), [cursor.py](cursor.py), [cmd_check.py](cmd_check.py), [ansi.py](ansi.py) |
 | [PDF](docs/pdf.md) | Pdf, PdfBookmark, PdfPasswordRequired, PdfProtection | [pdf.py](pdf.py) |
 | [LLM](docs/llm.md) | Llm, LlmSettings, LlmReasoning, LlmResponse, LlmProfile, LlmProfiles | [llm.py](llm.py); private [_llm_qt.py](_llm_qt.py) |
 | [Fonts](docs/font.md) | Font, FontFace, FontStyle | [font.py](font.py) |
 | [Keyboard](docs/keyboard.md) | Keyboard, WindowsScanCode, ScanCodePrefix | [keyboard.py](keyboard.py), native output via explicit [Windows](windows_input.py) and [macOS](macos_input.py) imports |
-| [Windows event decoding](docs/windows_events.md) | DeviceEjectionEvent, parse_device_ejection_event (explicit import) | [windows_events.py](windows_events.py) |
+| [Windows event decoding](docs/windows_events.md) | DeviceEjectionEvent, DeviceRemovalVetoEvent, parse_device_ejection_event, parse_device_removal_veto_event (explicit import) | [windows_events.py](windows_events.py) |
 | [Path and text transformations](docs/text_transforms.md) | Lexical path conversion, Unicode styles, character widths and line cleanup | [path_text.py](path_text.py), [text_transforms.py](text_transforms.py) |
 | [Unicode text](docs/unicode_text.md) | UnicodeText, UnicodeCharacter, UnicodeReport, TextStatistics | [unicode_text.py](unicode_text.py) |
 | [Rime text dictionaries](docs/rime.md) | Rime, RimeEntry, RimeFormat, RimeReadResult (explicit import) | [rime.py](rime.py) |

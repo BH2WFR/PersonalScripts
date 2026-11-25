@@ -1,112 +1,97 @@
 #!/usr/bin/env bash
-# Thin wrapper: find Python, then delegate to run-script.py with all arguments.
-
+# Locate Python once, then pass the original arguments to the launcher.
 set -eo pipefail
 
-esc=$'\033'
-FLRed="${esc}[31m"
-FGray="${esc}[90m"
-CRst="${esc}[0m"
-
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-# ----- platform flag for conda path resolution -----
-_os_name="$(uname -s)"
-case "$_os_name" in
-    MINGW*|MSYS*|CYGWIN*) _is_windows=true  ;;
-    *)                     _is_windows=false ;;
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) windows=true ;;
+    *) windows=false ;;
 esac
 
-# ----- find python: prefer bundled runtime, then cheap conda path derivation -----
-python_cmd=""
+config_home() {
+    if [[ $windows == true ]]; then
+        cygpath -u "${USERPROFILE:-$HOME}"
+    elif [[ $EUID == 0 && -n ${SUDO_UID:-} && $SUDO_UID != 0 ]]; then
+        if [[ $(uname -s) == Darwin ]]; then
+            dscacheutil -q user -a uid "$SUDO_UID" | sed -n 's/^dir: //p'
+        else
+            getent passwd "$SUDO_UID" | cut -d: -f6
+        fi
+    else
+        printf '%s\n' "$HOME"
+    fi
+}
 
-# 1. Bundled Python
-bundled_candidates=(
-    "$script_dir/deps/python/bin/python"
-    "$script_dir/deps/python/python"
-    "$script_dir/deps/python/python.exe"
-)
-for candidate in "${bundled_candidates[@]}"; do
-    if [[ -x "$candidate" ]]; then
-        python_cmd="$candidate"
-        break
+python_cmd=""
+for relative in deps/python/bin/python deps/python/bin/python3 deps/python/python deps/python/python.exe; do
+    if [[ -f "$script_dir/$relative" && -x "$script_dir/$relative" ]]; then
+        python_cmd="$script_dir/$relative"
+        unset PYTHONHOME
+        export PYTHONNOUSERSITE=1 PYTHONPATH="$script_dir"
+        export PATH="$(dirname -- "$python_cmd"):$PATH"
+        if [[ $windows == true ]]; then
+            export PATH="$script_dir/deps/python/Scripts:$PATH"
+        fi
+        exec "$python_cmd" "$script_dir/run-script.py" "$@"
     fi
 done
 
-# 2. Derive the base environment from CONDA_EXE / command -v conda.
-# Typical layouts place conda under <base>/Scripts, <base>/condabin, or
-# <base>/bin, so no subprocess is needed for the common case.
-if [[ -z "$python_cmd" ]] && command -v conda >/dev/null 2>&1; then
-    conda_locations=("${CONDA_EXE:-}" "$(command -v conda)")
-    for conda_location in "${conda_locations[@]}"; do
-        [[ -f "$conda_location" ]] || continue
-        conda_parent="$(cd -- "$(dirname -- "$conda_location")" && pwd)"
-        case "$(basename -- "$conda_parent")" in
-            Scripts|condabin|bin) conda_base="$(dirname -- "$conda_parent")" ;;
-            *) continue ;;
-        esac
-        [[ -d "$conda_base/conda-meta" ]] || continue
-        for candidate in "$conda_base/bin/python" "$conda_base/python.exe"; do
-            if [[ -x "$candidate" ]]; then
-                python_cmd="$candidate"
-                break 2
-            fi
-        done
-    done
+conda_cmd="${CONDA_EXE:-}"
+if [[ ! -f $conda_cmd || ! -x $conda_cmd ]]; then
+    conda_cmd=conda
 fi
-
-# 3. Check common base-environment locations without starting conda.
-if [[ -z "$python_cmd" ]]; then
-    python_candidates=(
-        "$HOME/miniconda3/bin/python"
-        "$HOME/anaconda3/bin/python"
-        "/opt/miniconda3/bin/python"
-        "/opt/anaconda3/bin/python"
-    )
-    if [[ "$_is_windows" == "true" ]]; then
-        python_candidates+=(
-            "${USERPROFILE:-$HOME}/miniconda3/python.exe"
-            "${USERPROFILE:-$HOME}/anaconda3/python.exe"
-            "${PROGRAMDATA:-}/miniconda3/python.exe"
-            "${PROGRAMDATA:-}/anaconda3/python.exe"
-        )
+if command -v "$conda_cmd" >/dev/null 2>&1; then
+    user_home="$(config_home)"
+    if [[ -z $user_home ]]; then
+        echo 'Cannot resolve the invoking user home directory.' >&2
+        exit 1
     fi
-    for candidate in "${python_candidates[@]}"; do
-        if [[ -x "$candidate" ]]; then
-            python_cmd="$candidate"
-            break
-        fi
-    done
-fi
-
-# 4. Slow but authoritative fallback for non-standard Conda layouts.
-if [[ -z "$python_cmd" ]] && command -v conda >/dev/null 2>&1; then
-    conda_base="$(conda info --base 2>/dev/null || true)"
-    if [[ -n "$conda_base" ]]; then
-        for candidate in "$conda_base/bin/python" "$conda_base/python.exe"; do
-            if [[ -x "$candidate" ]]; then
-                python_cmd="$candidate"
-                break
-            fi
-        done
+    config_file="$user_home/.config/PersonalScripts/conda-env.txt"
+    name=base
+    if [[ -e $config_file ]]; then
+        value="$(cat -- "$config_file")"
+        value="${value#$'\xef\xbb\xbf'}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        name="${value:-base}"
     fi
+    case "$name" in
+        -*|*/*|*\\*|*$'\r'*|*$'\n'*) echo "Expected one Conda environment name in $config_file." >&2; exit 1 ;;
+    esac
+    if [[ $name == base ]]; then
+        conda_path="$(command -v "$conda_cmd")"
+        if [[ $windows == true && -f $conda_path ]]; then
+            conda_path="$(cygpath -u "$conda_path")"
+        fi
+        if [[ -f $conda_path && -d "$(dirname -- "$conda_path")/../conda-meta" ]]; then
+            prefix="$(cd -- "$(dirname -- "$conda_path")/.." && pwd)"
+        else
+            prefix="$("$conda_cmd" info --base)"
+        fi
+    else
+        prefix="$("$conda_cmd" run --no-capture-output -n "$name" python -c "import os; print(os.environ['CONDA_PREFIX'])")"
+    fi
+    prefix="${prefix%$'\r'}"
+    if [[ -z $prefix ]]; then
+        echo "Cannot locate Conda environment '$name' ($config_file)." >&2
+        exit 1
+    fi
+    if [[ $windows == true ]]; then
+        python_cmd="$(cygpath -u "$prefix")/python.exe"
+    else
+        python_cmd="$prefix/bin/python"
+    fi
+    if [[ ! -f $python_cmd || ! -x $python_cmd ]]; then
+        echo "No Python in Conda environment '$name' at $python_cmd." >&2
+        exit 1
+    fi
+else
+    python_cmd="$(command -v python3 || command -v python || true)"
 fi
 
-# 5. Last-resort system candidates.
-if [[ -z "$python_cmd" ]]; then
-    for candidate in python3 python; do
-        if command -v "$candidate" >/dev/null 2>&1; then
-            python_cmd="$candidate"
-            break
-        fi
-    done
-fi
-if [[ -z "$python_cmd" ]]; then
-    printf '%bCannot find python (miniconda/anaconda/python3).%b\n' "$FLRed" "$CRst" >&2
-    printf 'Install miniconda: %bhttps://docs.conda.io/en/latest/miniconda.html%b\n' "$FGray" "$CRst" >&2
+if [[ -z $python_cmd ]]; then
+    echo 'Cannot find bundled Python, Conda, or Python on PATH.' >&2
     exit 1
 fi
-
-# ----- delegate to run-script.py -----
 export PYTHONPATH="$script_dir${PYTHONPATH:+:${PYTHONPATH}}"
 exec "$python_cmd" "$script_dir/run-script.py" "$@"

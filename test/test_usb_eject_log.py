@@ -1,4 +1,4 @@
-"""Verify event-225 decoding, historical filtering and elevation guards.
+"""Verify removal-veto decoding, cross-channel filtering and elevation guards.
 
 Run: conda run -n base python -m unittest discover -s test -p test_usb_eject_log.py
 Tests do not elevate, read real logs, or modify devices/logs.
@@ -36,6 +36,17 @@ def event_xml(pid: int = 123, affected: str = "") -> str:
 </EventData></Event>'''
 
 
+def veto_xml() -> str:
+    """Represent a filesystem veto whose publisher PID must never be displayed."""
+    return r'''<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System><Provider Name="Microsoft-Windows-Kernel-PnP"/><EventID>1000</EventID>
+<Channel>Microsoft-Windows-Kernel-PnP/Device Management</Channel>
+<TimeCreated SystemTime="2026-10-23T02:00:00Z"/><EventRecordID>42</EventRecordID>
+<Execution ProcessID="4"/></System><EventData>
+<Data Name="DeviceInstanceId">USB\example</Data><Data Name="VetoType">6</Data>
+<Data Name="VetoName">STORAGE\Volume\SanDisk\FileSystem\exfat</Data></EventData></Event>'''
+
+
 class UsbEjectLogTests(unittest.TestCase):
     """Test historical identity, named fields, filtered limits and failures."""
 
@@ -58,7 +69,8 @@ class UsbEjectLogTests(unittest.TestCase):
     def test_filters_precede_limit_and_generator_is_closed(self) -> None:
         closed: list[bool] = []
 
-        def records(minutes: int) -> Generator[str, None, None]:
+        def records(minutes: int, channel: str, event_id: int) -> Generator[str, None, None]:
+            self.assertEqual((channel, event_id), ("System", 225))
             try:
                 yield event_xml(999)
                 yield event_xml(123, "STORAGE\\target")
@@ -76,7 +88,7 @@ class UsbEjectLogTests(unittest.TestCase):
 
     def test_empty_success_differs_from_failed_or_partial_query(self) -> None:
         for records, expected in (([], 0), (["<bad>", event_xml()], 1)):
-            with patch.object(runner, "_event_xml", side_effect=lambda minutes: (xml for xml in records)):
+            with patch.object(runner, "_event_xml", side_effect=lambda m, ch, eid: (xml for xml in records if eid == 225)):
                 with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
                     self.assertEqual(runner._show_events(60, 50, None, None, None), expected)
             if expected:
@@ -89,6 +101,43 @@ class UsbEjectLogTests(unittest.TestCase):
                 self.assertEqual(runner._show_events(60, 50, None, None, None), 1)
         self.assertIn("Access denied", error.getvalue())
         self.assertNotIn("No matching events", output.getvalue())
+
+    def test_merge_limit_and_veto_source_filter(self) -> None:
+        def records(minutes: int, channel: str, event_id: int) -> Generator[str]:
+            if channel == "System":
+                self.assertEqual(event_id, 225)
+                yield event_xml().replace("01:02:03", "03:02:03")
+                yield event_xml()
+            else:
+                self.assertEqual((channel, event_id), (runner.DEVICE_REMOVAL_VETO_CHANNEL, 1000))
+                yield veto_xml()
+
+        with patch.object(runner, "_event_xml", side_effect=records):
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(runner._show_events(60, 2, None, None, None), 0)
+            report = output.getvalue()
+            self.assertLess(report.index("System / 225"), report.index("Management / 1000"))
+            self.assertIn("Displayed records: 2", report)
+            self.assertIn("More matches exist", report)
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(runner._show_events(60, 50, None, None, "sAnDiSk"), 0)
+            self.assertIn("Displayed records: 1", output.getvalue())
+            self.assertIn("6 (Device)", output.getvalue())
+            self.assertIn(r"FileSystem\exfat", output.getvalue())
+            self.assertNotIn("PID:", output.getvalue())
+
+    def test_channel_failure_still_shows_other_channel(self) -> None:
+        def records(minutes: int, channel: str, event_id: int) -> Generator[str]:
+            if channel == "System":
+                raise OSError("Access denied")
+            yield veto_xml()
+
+        with patch.object(runner, "_event_xml", side_effect=records):
+            with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(runner._show_events(60, 50, None, None, None), 1)
+        self.assertIn("Displayed records: 1", output.getvalue())
+        self.assertIn("incomplete", output.getvalue())
+        self.assertIn("System", error.getvalue())
 
     def test_help_invalid_args_and_other_platform_never_elevate(self) -> None:
         with patch.object(runner.System, "restart_elevated") as elevate:

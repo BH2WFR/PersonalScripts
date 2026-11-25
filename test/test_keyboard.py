@@ -11,10 +11,8 @@ import ctypes
 import importlib
 import importlib.util
 import io
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 from types import ModuleType
@@ -43,7 +41,6 @@ runtime = importlib.import_module(f"{entry.PACKAGE_NAME}.runtime")
 windows = importlib.import_module(f"{entry.PACKAGE_NAME}.windows")
 api = importlib.import_module(f"{entry.PACKAGE_NAME}.api")
 launcher = load_module("keyboard_test_launcher", "run-script.py")
-compiler = load_module("keyboard_test_compiler", "compile-script.py")
 
 
 class KeyboardNamesTests(unittest.TestCase):
@@ -759,7 +756,7 @@ class ViewerMagnifyDisplayTests(unittest.TestCase):
 
 
 class ViewerDiscoveryTests(unittest.TestCase):
-    """Use the actual repository configuration and compiler staging workflow."""
+    """Use the actual repository discovery configuration."""
 
     def setUp(self) -> None:
         scratch = tempfile.TemporaryDirectory(prefix="keyboard-tests-", dir=ROOT / "tmp")
@@ -772,10 +769,9 @@ class ViewerDiscoveryTests(unittest.TestCase):
         self.assertEqual(launcher._highlight_subdirectory("others", config), f"{FGray}others/{CRst}")
         with patch.object(Environment, "find_bash", return_value=None), patch.object(Environment, "find_pwsh", return_value=None):
             listing = launcher.find_scripts(str(ROOT / "tools"), config)
-        for paths in (listing, compiler.find_py_scripts(str(ROOT / "tools"))):
-            normalized = [path.replace("\\", "/") for path in paths]
-            self.assertIn("input-and-text/keyboard-hook-viewer.py", normalized)
-            self.assertFalse(any(path.startswith("input-and-text/keyboard-hook-viewer/") for path in normalized))
+        normalized = [path.replace("\\", "/") for path in listing]
+        self.assertIn("input-and-text/keyboard-hook-viewer.py", normalized)
+        self.assertFalse(any(path.startswith("input-and-text/keyboard-hook-viewer/") for path in normalized))
 
     def test_linux_filter_paths_after_move(self) -> None:
         for gui in (LinuxGui.NO_GUI, LinuxGui.WAYLAND, LinuxGui.X11):
@@ -783,24 +779,6 @@ class ViewerDiscoveryTests(unittest.TestCase):
                 config = launcher._load_launcher_config(str(self.scratch))
             self.assertEqual(launcher._is_ignored(config.ignore_spec, "input-and-text/keyboard-hook-viewer.py"), gui != LinuxGui.X11)
             self.assertEqual(launcher._is_ignored(config.ignore_spec, "others/script-to-app.py"), gui == LinuxGui.NO_GUI)
-
-    def test_compiler_stages_all_private_modules_for_both_builders(self) -> None:
-        stages: list[Path] = []
-
-        def inspect(command: list[str], *, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
-            stage = Path(env["PYTHONPATH"].split(os.pathsep)[0])
-            stages.append(stage)
-            package = stage / entry.PACKAGE_NAME
-            for name in ("__init__", "app", "api", "models", "runtime", "ui", "devices", "backend", "windows", "macos", "x11"):
-                self.assertTrue((package / f"{name}.py").is_file(), name)
-            self.assertTrue(any(entry.PACKAGE_NAME in option for option in command))
-            return subprocess.CompletedProcess(command, 0)
-
-        for tool in ("nuitka", "pyinstaller"):
-            with patch.object(compiler.subprocess, "run", side_effect=inspect):
-                result = compiler._run_compiler(["compiler", str(entry.__file__)], str(entry.__file__), str(self.scratch), tool)
-            self.assertEqual(result.returncode, 0)
-        self.assertTrue(all(not stage.exists() for stage in stages))
 
 
 if __name__ == "__main__":

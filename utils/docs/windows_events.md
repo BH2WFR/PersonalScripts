@@ -17,6 +17,15 @@ invalid required fields raise `ValueError`; malformed XML raises `ET.ParseError`
 process reliably. Records include non-USB devices; no matching event does not
 prove that removal was safe.
 
-Both `device-ejection-history.py` and the Windows collector in
-`system-event-viewer/` use this decoder. Native querying and presentation remain
-in the consuming tools; the CLI retains its existing private parser/type aliases.
+`parse_device_removal_veto_event(xml: str) -> DeviceRemovalVetoEvent` decodes
+Kernel-PnP event 1000 in the Device Management channel. It returns the timestamp,
+channel-local record ID, target `DeviceInstanceId`, numeric `VetoType` and
+`VetoName` (empty when absent). The veto name can identify a volume, device,
+driver or other source depending on the [Windows veto type](https://learn.microsoft.com/en-us/windows/win32/api/cfg/ne-cfg-pnp_veto_type).
+The publisher PID does not identify a blocking process. Invalid records raise
+the same exceptions as the event 225 decoder.
+
+Both `device-ejection-history.py` and the Windows collector in `system-event-viewer/`
+use these decoders. `DeviceRemovalVetoEvent.veto_type_description` formats the code
+with its Windows type name and retains unfamiliar codes. Each tool queries its
+own sources and renders the recorded fields.

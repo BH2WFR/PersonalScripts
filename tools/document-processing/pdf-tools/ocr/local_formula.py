@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from dataclasses import dataclass
 
-from utils import ConfigStore
 from . import models
 from ..common.task_control import TaskControl
 
@@ -31,7 +30,7 @@ def runtime_hint() -> str:
 
 def directory() -> Path:
     """Return the directory reserved for the pinned formula model."""
-    return ConfigStore.directory() / "models" / "image-ocr" / NAME
+    return models.cache_directory() / NAME
 
 
 class Asset(models.Model):

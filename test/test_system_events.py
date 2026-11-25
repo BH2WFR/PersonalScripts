@@ -1045,7 +1045,7 @@ class DeviceEjectionTests(unittest.TestCase):
                 xml = self.xml(device)
                 parsed = parse_device_ejection_event(xml)
                 event = windows._parse_windows_xml(xml, "Localized veto description")[0]
-                self.assertEqual(event.kind, app.EventKind.DEVICE_EJECT_BLOCKED)
+                self.assertEqual(event.kind, app.EventKind.DEVICE_EJECTION)
                 self.assertEqual(parsed.pid, 4321)
                 self.assertEqual(parsed.time, event.timestamp)
                 self.assertEqual(event.session, "PID 4321")
@@ -1057,8 +1057,28 @@ class DeviceEjectionTests(unittest.TestCase):
                     result = app.QueryResult(STAMP, STAMP + dt.timedelta(hours=1), [event])
                     history.export_events(output, [event], result)
                     exported = json.loads(output.read_text(encoding="utf-8"))["events"][0]
+                    self.assertEqual(exported["event"], "Device ejection")
                     self.assertEqual(exported["summary"], event.summary)
                     self.assertIn(xml, exported["raw"])
+
+    def test_device_management_veto_in_selected_ejection_history(self) -> None:
+        channel = "Microsoft-Windows-Kernel-PnP/Device Management"
+        data = (r'<Data Name="DeviceInstanceId">USB\target</Data><Data Name="VetoType">6</Data>'
+                r'<Data Name="VetoName">STORAGE\Volume\FileSystem\exfat</Data>')
+        xml = _windows_xml("Microsoft-Windows-Kernel-PnP", 1000, data).replace(
+            "</System>", f'<Channel>{channel}</Channel><Execution ProcessID="4"/></System>')
+        selected = frozenset({app.EventKind.DEVICE_EJECTION})
+        selectors = windows._windows_source_filters(selected)
+        self.assertEqual(selectors.count("@{LogName="), 2)
+        self.assertIn("@{LogName='System'; ProviderName='Microsoft-Windows-Kernel-PnP'; Id=@(225)}", selectors)
+        self.assertIn(f"@{{LogName='{channel}'; ProviderName='Microsoft-Windows-Kernel-PnP'; Id=@(1000)}}", selectors)
+        self.assertNotIn(channel, windows._windows_source_filters(frozenset({app.EventKind.APP_CRASH})))
+        event, = windows._parse_windows_xml(xml)
+        self.assertEqual(event.kind, app.EventKind.DEVICE_EJECTION)
+        self.assertEqual(event.session, "")
+        self.assertEqual(event.xml, xml)
+        for value in (r"USB\target", "6 (Device)", r"STORAGE\Volume\FileSystem\exfat"):
+            self.assertIn(value, event.summary)
 
     def test_decoder_rejects_wrong_sources_and_missing_identity(self) -> None:
         xml = self.xml()
@@ -1082,51 +1102,30 @@ class DeviceEjectionTests(unittest.TestCase):
             windows._collect_windows(result, threading.Event(), lambda _text: None)
         script = base64.b64decode(command.call_args.args[0][-1]).decode("utf-16-le")
         self.assertIn("@{LogName='System'; ProviderName='Microsoft-Windows-Kernel-PnP'; Id=@(225)}", script)
-        self.assertEqual([event.kind for event in result.events], [app.EventKind.DEVICE_EJECT_BLOCKED, app.EventKind.APP_CRASH])
+        self.assertEqual([event.kind for event in result.events], [app.EventKind.DEVICE_EJECTION, app.EventKind.APP_CRASH])
         self.assertTrue(any(status.state == app.SourceState.LIMITED and "invalid" in status.message for status in result.statuses))
         self.assertTrue(any(status.source == "System / Kernel-PnP" for status in result.statuses))
 
 
 class EntryIntegrationTests(unittest.TestCase):
-    """Check real discovery rules and compiler staging without building executables."""
+    """Check discovery against the project launcher configuration."""
 
-    def test_entry_discovery_and_compiler_staging(self) -> None:
-        modules = []
-        for filename in ("run-script.py", "compile-script.py"):
-            spec = importlib.util.spec_from_file_location("system_event_" + filename[:-3], ROOT / filename)
-            assert spec is not None and spec.loader is not None
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            spec.loader.exec_module(module)
-            modules.append(module)
-        launcher, compiler = modules
+    def test_entry_discovery(self) -> None:
+        spec = importlib.util.spec_from_file_location("system_event_launcher", ROOT / "run-script.py")
+        assert spec is not None and spec.loader is not None
+        launcher = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = launcher
+        spec.loader.exec_module(launcher)
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as folder:
             scratch = Path(folder)
             shutil.copy2(ROOT / "launcher-config.yaml", scratch / "launcher-config.yaml")
             config = launcher._load_launcher_config(str(scratch))
             with patch.object(Environment, "find_bash", return_value=None), patch.object(Environment, "find_pwsh", return_value=None):
                 listing = launcher.find_scripts(str(ROOT / "tools"), config)
-            for paths in (listing, compiler.find_py_scripts(str(ROOT / "tools"))):
-                normalized = [path.replace("\\", "/") for path in paths]
-                self.assertIn("others/system-event-viewer.py", normalized)
-                self.assertNotIn("others/power-event-viewer.py", normalized)
-                self.assertFalse(any(path.startswith("others/system-event-viewer/") for path in normalized))
-            stages: list[Path] = []
-
-            def inspect(command: list[str], *, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
-                stage = Path(env["PYTHONPATH"].split(os.pathsep)[0])
-                stages.append(stage)
-                package = stage / entry.PACKAGE_NAME
-                source = ROOT / "tools/others/system-event-viewer"
-                self.assertEqual({path.name for path in source.glob("*.py")}, {path.name for path in package.glob("*.py")})
-                self.assertFalse((package / "README.md").exists())
-                self.assertTrue(any(entry.PACKAGE_NAME in option for option in command))
-                return subprocess.CompletedProcess(command, 0)
-
-            for builder in ("nuitka", "pyinstaller"):
-                with patch.object(compiler.subprocess, "run", side_effect=inspect):
-                    compiler._run_compiler(["compiler", entry.__file__], entry.__file__, folder, builder)
-            self.assertTrue(all(not stage.exists() for stage in stages))
+            normalized = [Path(path).as_posix() for path in listing]
+            self.assertIn("others/system-event-viewer.py", normalized)
+            self.assertNotIn("others/power-event-viewer.py", normalized)
+            self.assertFalse(any(path.startswith("others/system-event-viewer/") for path in normalized))
 
 
 class GuiTests(unittest.TestCase):
@@ -1452,7 +1451,8 @@ class GuiTests(unittest.TestCase):
                     self.assertTrue(app.LOGIN_EVENT_KINDS.issubset(window._selected_types()))
                     for kind in app.DIAGNOSTIC_EVENT_KINDS:
                         self.assertTrue(window.checkboxes[kind].isChecked())
-                    self.assertTrue(window.checkboxes[app.EventKind.DEVICE_EJECT_BLOCKED].isChecked())
+                    self.assertTrue(window.checkboxes[app.EventKind.DEVICE_EJECTION].isChecked())
+                    self.assertEqual(window.checkboxes[app.EventKind.DEVICE_EJECTION].text(), "Device ejection")
                     window.checkboxes[app.EventKind.POWER_SESSION].setChecked(False)
                     self.assertEqual(window.proxy.rowCount(), 2)
                     self.assertEqual(query.call_count, 1)

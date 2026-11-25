@@ -277,8 +277,7 @@ be overwritten. These shared save-dialog rules live in `common/file_actions.py`.
 | `binarize/raster.py`, `binarize/regions.py`, `binarize/chromatic.py` | Image algorithms, gray/color segmentation and encoding |
 
 The entry loads this directory as `personal_pdf_tools`. Launcher discovery hides
-internals; the compiler recursively stages both subpackages under that valid import
-name for either entry. `--pdf-tools-worker` is private process plumbing, not a
+internals. The release includes all private modules in their source directories. `--pdf-tools-worker` is private process plumbing, not a
 user-facing conversion interface. Future tools can reuse common components while
 providing their own settings model, panel and worker dispatcher.
 

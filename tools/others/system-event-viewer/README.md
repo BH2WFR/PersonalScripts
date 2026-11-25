@@ -1,8 +1,7 @@
 # System Event Viewer implementation
 
 Run `../system-event-viewer.py`; this directory is a private package loaded as
-`personal_system_event_viewer`. The launcher and compiler exclude its individual
-modules. `compile-script.py` stages this alias for Nuitka and PyInstaller.
+`personal_system_event_viewer`. The launcher lists the entry and the release includes its private modules.
 
 ## Module ownership
 
@@ -96,11 +95,11 @@ complete original evidence, including unsupported or malformed structures.
   Application Error/Hang, WER, bugchecks, WHEA and Diagnostics-Performance.
   Modern Standby 506/507 and power-session transition 566 remain separate from
   traditional sleep/wake. Sleep/DRIPS metrics and native reasons are retained.
-- Windows blocked device ejections: System / Microsoft-Windows-Kernel-PnP / 225.
-  The shared `utils.windows_events` decoder also serves `device-ejection-history`.
-  Details preserve the blocking process path, historical PID, device instance and
-  optional vetoing devices. This includes USB and other PnP devices; no matches
-  do not prove safe removal. Devices and running processes are never altered.
+- **Device ejection** shows blocked removals of USB and other Windows PnP devices.
+  Kernel-PnP event 225 in System records the blocking process path and PID.
+  Event 1000 in Kernel-PnP/Device Management records the target device, veto type
+  and veto source, which can identify a file system or driver. Both decoders are
+  shared with `device-ejection-history`.
 - macOS: `pmset`, explicit `loginwindow` lock notifications, `last` boot/shutdown,
   current `kern.boottime`, incoming sshd unified logs, user/system
   `Library/Logs/DiagnosticReports` and their `Retired` directories. Text/IPS

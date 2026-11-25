@@ -2,11 +2,19 @@
 
 import os
 import re
+import sys
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 
 class Paths:
+    @staticmethod
+    def dependencies_directory() -> Path:
+        """Return the project deps directory, beside the executable in standalone builds."""
+        if getattr(sys, "frozen", False) or "__compiled__" in globals():
+            return Path(sys.executable).resolve().parent / "deps"
+        return Path(__file__).resolve().parents[1] / "deps"
+
     @staticmethod
     def available_path(path: str | os.PathLike[str], *, start: int = 1, limit: int = 10_000) -> Path:
         """Suggest an unused filename, adding numbered suffixes on collision.

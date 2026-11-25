@@ -9,7 +9,7 @@ launcher:
         - "run-script.py"
         - "run-script.sh"
         - "run-script.ps1"
-        - "compile-script.py"
+        - "package-project.py"
     script-types:
         python:
             extension: ".py"
@@ -161,8 +161,8 @@ extra-env-paths:
     # 规范：all-platforms, windows, linux, macos
     all-platforms:
         - "./deps/python"
-        - "./deps/bin"
-        - "./deps/ffmpeg"
-        - "./deps/ghostscript/bin"
+        - "./deps/tools"
+        - "./deps/tools/ffmpeg"
+        - "./deps/tools/ghostscript/bin"
     windows:
-        - "./deps/gsudo"
+        - "./deps/tools/gsudo"

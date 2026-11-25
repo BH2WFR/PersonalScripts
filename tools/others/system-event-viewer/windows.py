@@ -28,7 +28,8 @@ from . import common
 from .windows_activity import activity_filters, parse_activity
 from .windows_smb import parse_smb_event
 from utils.windows_events import (
-    DEVICE_EJECTION_PROVIDER, DEVICE_EJECTION_EVENT_ID, parse_device_ejection_event,
+    DEVICE_EJECTION_PROVIDER, DEVICE_EJECTION_EVENT_ID, DEVICE_REMOVAL_VETO_CHANNEL,
+    DEVICE_REMOVAL_VETO_EVENT_ID, parse_device_ejection_event, parse_device_removal_veto_event,
 )
 
 
@@ -167,7 +168,13 @@ def _parse_windows_xml(xml: str, message: str = "") -> list[PowerEvent]:
         summary = f"{ejection.executable} (PID {ejection.pid}) blocked removal of {ejection.device}"
         if ejection.affected_devices:
             summary += f"; Vetoing devices: {ejection.affected_devices}"
-        session_event = (EventKind.DEVICE_EJECT_BLOCKED, summary, f"PID {ejection.pid}")
+        session_event = (EventKind.DEVICE_EJECTION, summary, f"PID {ejection.pid}")
+    elif source == DEVICE_EJECTION_PROVIDER and event_id == DEVICE_REMOVAL_VETO_EVENT_ID:
+        veto = parse_device_removal_veto_event(xml)
+        summary = f"Removal of {veto.device} was vetoed. Veto type: {veto.veto_type_description}"
+        if veto.veto_name:
+            summary += f". Vetoed by: {veto.veto_name}"
+        session_event = (EventKind.DEVICE_EJECTION, summary, "")
     if session_event is None:
         session_event = _windows_diagnostic_event(source, event_id, data, message)
     if session_event is None:
@@ -251,8 +258,10 @@ def _windows_source_filters(selected_kinds: frozenset[EventKind] | None) -> str:
          "@{LogName='System'; ProviderName='Microsoft-Windows-Power-Troubleshooter'; Id=@(1)}"),
         (frozenset({EventKind.POWER_REQUEST}),
          "@{LogName='System'; ProviderName='User32'; Id=@(1074)}"),
-        (frozenset({EventKind.DEVICE_EJECT_BLOCKED}),
-         "@{LogName='System'; ProviderName='Microsoft-Windows-Kernel-PnP'; Id=@(225)}"),
+        (frozenset({EventKind.DEVICE_EJECTION}),
+         f"@{{LogName='System'; ProviderName='{DEVICE_EJECTION_PROVIDER}'; Id=@({DEVICE_EJECTION_EVENT_ID})}}"),
+        (frozenset({EventKind.DEVICE_EJECTION}),
+         f"@{{LogName='{DEVICE_REMOVAL_VETO_CHANNEL}'; ProviderName='{DEVICE_EJECTION_PROVIDER}'; Id=@({DEVICE_REMOVAL_VETO_EVENT_ID})}}"),
         (frozenset({EventKind.LOCK, EventKind.UNLOCK, EventKind.RDP_RECONNECT, EventKind.RDP_DISCONNECT}),
          "@{LogName='Security'; ProviderName='Microsoft-Windows-Security-Auditing'; Id=@(4800,4801,4778,4779)}"),
         (frozenset({EventKind.LOGON, EventKind.LOGOFF}),
@@ -393,8 +402,8 @@ foreach ($filter in $sources) {
         "Application Error/Hang records are separate from WER summaries; WHEA and performance diagnostics "
         "do not by themselves prove a crash. Performance diagnostics include critical/error/warning levels. "
         "Memory dumps and WER archive files are not read. "
-        "Kernel-PnP 225 identifies blocked ejections of USB and other PnP devices. "
-        "Process paths and PIDs are historical; no current PID lookup is performed. "
+        "Device ejection shows Kernel-PnP 225 with the recorded blocking process and PID, "
+        "and Device Management 1000 with the veto type and source. "
         "Missing ejection records do not prove safe removal. "
         "Optional activity categories include battery/power-source reports, clock changes/synchronization, "
         "failed logons/account lockouts, Windows Update, resource exhaustion, Service Control Manager, "
