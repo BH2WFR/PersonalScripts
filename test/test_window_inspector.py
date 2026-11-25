@@ -310,6 +310,8 @@ class InspectorTests(unittest.TestCase):
         groups = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
         self.assertTrue(all(group.childCount() and group.isExpanded() for group in groups))
         self.assertEqual([group.text(0) for group in groups[:2]], ["Window", "Process"])
+        if sys.platform in ("darwin", "win32"):
+            self.assertEqual(groups[-1].text(0), "Regional settings")
         self.assertNotIn("Application bundle", [group.text(0) for group in groups])
         process = groups[1]
         names = [process.child(i).text(0) for i in range(process.childCount())]
@@ -587,6 +589,24 @@ class InspectorTests(unittest.TestCase):
 
 
 class MacDiscoveryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "macOS process properties")
+    def test_terminal_and_locale_visibility_are_independent(self) -> None:
+        import psutil
+        from window_inspector.model import process_info
+
+        process = psutil.Process()
+        with (patch.object(process, "terminal", return_value=None) as terminal,
+              patch.object(process, "environ", return_value={}) as environment):
+            rows = process_info(process).rows
+            self.assertIn((PropertyGroup.PROCESS, "Controlling terminal", "None"), rows)
+            self.assertIn((PropertyGroup.REGIONAL, "Process locale environment", "Unavailable"), rows)
+            terminal.side_effect = psutil.AccessDenied(process.pid)
+            environment.return_value = {"LANG": "C", "tz": "ignore", "OTHER": "ignore"}
+            rows = process_info(process).rows
+            self.assertIn((PropertyGroup.PROCESS, "Controlling terminal", "Unavailable"), rows)
+            self.assertEqual([r for r in rows if r[0] == PropertyGroup.REGIONAL],
+                             [(PropertyGroup.REGIONAL, "Process environment: LANG", "C")])
+
     @unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
     def test_picker_keeps_exact_ax_window_without_windowserver_record(self) -> None:
         from types import SimpleNamespace
@@ -649,9 +669,14 @@ class MacDiscoveryTests(unittest.TestCase):
         app = appkit.NSRunningApplication.runningApplicationWithProcessIdentifier_.return_value
         app.bundleIdentifier.return_value = "com.example.fixture"
         app.bundleURL.return_value.path.return_value = "/Applications/Fixture.app"
+        bundle = appkit.NSBundle.bundleWithPath_.return_value
+        bundle.localizations.return_value = ["en", "zh-Hans"]
+        bundle.developmentLocalization.return_value = "en"
         rows = module.snapshot(expected).rows
         self.assertIn((PropertyGroup.GEOMETRY, "Position (points)", "-100, 20"), rows)
         self.assertIn((PropertyGroup.BUNDLE, "Bundle ID", "com.example.fixture"), rows)
+        self.assertIn((PropertyGroup.BUNDLE, "Available localizations", "en, zh-Hans"), rows)
+        self.assertIn((PropertyGroup.BUNDLE, "Development language", "en"), rows)
         quartz.CGWindowListCopyWindowInfo.return_value = [dict(main, OwnerPID=os.getpid()), popup]
         self.assertIsNone(module.at_pointer())
         quartz.CGWindowListCopyWindowInfo.return_value = [dict(main, OwnerName="Dock", Layer=20), popup]

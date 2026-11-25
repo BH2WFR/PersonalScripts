@@ -124,6 +124,25 @@ class ProcessInfo:
     arguments: list[str] = field(default_factory=list)
 
 
+def locale_environment_rows(process: psutil.Process) -> Properties:
+    """Display only locale-related entries from the selected process's environment."""
+    group = PropertyGroup.REGIONAL
+    try:
+        env = process.environ()
+    except (psutil.AccessDenied, OSError, NotImplementedError):
+        return [(group, "Process locale environment", "Unavailable")]
+    if sys.platform == "win32":
+        env = {key.upper(): value for key, value in env.items()}
+    elif not env:
+        # macOS can return an empty snapshot even when the process has an environment.
+        return [(group, "Process locale environment", "Unavailable")]
+    rows: Properties = [(group, f"Process environment: {key}", env[key])
+                        for key in ("LANG", "LC_ALL", "LC_CTYPE", "LC_TIME", "TZ") if env.get(key)]
+    if not rows and sys.platform == "darwin":
+        rows.append((group, "Process locale environment", "No locale variables reported"))
+    return rows
+
+
 def process_info(process: psutil.Process) -> ProcessInfo:
     """Keep available fields even when the OS denies access to individual details."""
     attrs = ["name", "exe", "cmdline", "ppid", "username", "create_time", "memory_info", "nice", "num_threads"]
@@ -148,6 +167,12 @@ def process_info(process: psutil.Process) -> ProcessInfo:
     path = data["exe"] or ""
     if sys.platform == "darwin":
         rows.append((PropertyGroup.PROCESS, "Working directory", data["cwd"] or "Unavailable"))
+        try:
+            terminal = process.terminal() or "None"
+        except (psutil.AccessDenied, OSError):
+            terminal = "Unavailable"
+        rows.append((PropertyGroup.PROCESS, "Controlling terminal", terminal))
+        rows.extend(locale_environment_rows(process))
         if times := data["cpu_times"]:
             rows.append((PropertyGroup.RESOURCES, "CPU time", f"{times.user + times.system:.2f} s"))
         if data["cmdline"] is None:

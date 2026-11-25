@@ -12,7 +12,7 @@ from xml.etree import ElementTree
 import psutil
 
 from .console_pages import console_info
-from .model import MIN_OPACITY_PERCENT, Properties, PropertyGroup, Rect, Rows, Snapshot, Window
+from .model import MIN_OPACITY_PERCENT, Properties, PropertyGroup, Rect, Rows, Snapshot, Window, locale_environment_rows
 
 
 U = C.WinDLL("user32", use_last_error=True)
@@ -479,14 +479,7 @@ def _regional_rows(process: psutil.Process, path: str, sid: str | None) -> Prope
         (group, "System OEM code page", _registry_text(winreg.HKEY_LOCAL_MACHINE, nls, "OEMCP")),
         (group, "System time zone", _registry_text(winreg.HKEY_LOCAL_MACHINE, zone, "TimeZoneKeyName")),
     ]
-    try:
-        env = {key.upper(): value for key, value in process.environ().items()}
-    except (psutil.AccessDenied, OSError, NotImplementedError):
-        rows.append((group, "Process locale environment", "Unavailable"))
-    else:
-        for key in ("LANG", "LC_ALL", "LC_CTYPE", "LC_TIME", "TZ"):
-            if value := env.get(key):
-                rows.append((group, f"Process environment: {key}", value))
+    rows.extend(locale_environment_rows(process))
     return rows
 
 

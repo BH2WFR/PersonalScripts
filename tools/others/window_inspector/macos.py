@@ -241,6 +241,9 @@ def _application_details(w: Window) -> tuple[Properties, dict[str, str]]:
                                    ("Bundle version", "CFBundleVersion"), ("Package type", "CFBundlePackageType"),
                                    ("Minimum system", "LSMinimumSystemVersion")):
                     rows.append((PropertyGroup.BUNDLE, label, str(bundle.objectForInfoDictionaryKey_(key) or "")))
+                languages = bundle.localizations() or []
+                rows.append((PropertyGroup.BUNDLE, "Available localizations", ", ".join(languages) or "None listed"))
+                rows.append((PropertyGroup.BUNDLE, "Development language", str(bundle.developmentLocalization() or "Not specified")))
     return rows, paths
 
 
