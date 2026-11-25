@@ -27,6 +27,7 @@ BUILD/
 /generated_patterns/
 
 /deps/
+/dist/
 
 /tmp/
 
