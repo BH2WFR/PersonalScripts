@@ -104,10 +104,10 @@
 - **可选：打包便携 Python 环境。** 本机日常使用只需完成上面的 Conda 安装。需要把 Python 和工具依赖一起打包时，在已安装 Git、uv、distlib 和 filelock 的构建机上，从项目根目录运行：
 
   ```sh
-  conda run -n base python package-project.py
+  conda run --no-capture-output -n base python package-project.py
   ```
 
-  首次构建会将 CPython 3.13 和 `requirements.txt` 中的依赖装入 `deps/python/`，同时在 `BUILD/` 下生成适用于当前操作系统和 CPU 架构的发布包。依赖清单没有变化时，再次构建会复用已有环境。可用 `--refresh` 重建环境，或用 `--with-resources` 附带本地 OCR 模型和外部工具。
+  自动化程序可运行 `python package-project.py build-runtime` 重建 `deps/python/`，或运行 `python package-project.py package` 在 `BUILD/` 中生成当前平台的发布包。两条命令均无需交互。打包时会复用已验证的运行时，必要时根据 `requirements.txt` 构建。可加 `--with-resources` 附带本地工具和 OCR 模型，或加 `--refresh` 在打包前强制重建运行时，两者可同时使用。
 
 - **Windows：**
 

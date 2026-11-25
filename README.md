@@ -104,10 +104,10 @@ Most scripts support both interactive mode and command-line arguments. Run `pyth
 - **Optional portable Python environment.** The Conda setup above is sufficient for local use. To bundle Python and the tools' dependencies, run this command from the project root on a build machine with Git, uv, distlib and filelock installed:
 
   ```sh
-  conda run -n base python package-project.py
+  conda run --no-capture-output -n base python package-project.py
   ```
 
-  The first build installs CPython 3.13 and the packages from `requirements.txt` into `deps/python/` and writes a release archive for the current OS and CPU architecture to `BUILD/`. Later builds reuse the runtime when the requirements are unchanged. Use `--refresh` to rebuild it or `--with-resources` to include local OCR models and external tools.
+  For automation, run `python package-project.py build-runtime` to rebuild `deps/python/` or `python package-project.py package` to create the current platform's archive in `BUILD/`. Both commands run without prompts. Packaging reuses a verified runtime or builds one from `requirements.txt` as needed. Add `--with-resources` to include local tools and OCR models, or `--refresh` to force a runtime rebuild before packaging. The flags can be combined.
 
 - **Windows:**
 

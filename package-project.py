@@ -20,18 +20,25 @@ from utils import *
 
 HELP = """PROJECT RELEASE PACKAGER
 
-Build a portable archive for this platform under BUILD. The launcher and tools
-share deps/python, prepared from requirements.txt. Tracked tools and utilities
-are included as source, with their directory structure intact.
+Build the portable Python runtime in deps/python or create a release archive in
+BUILD for the current platform. Packaging reuses a verified runtime or builds
+one from requirements.txt, and can include local tools and OCR models.
 
 Requirements:
-  Python 3.13+, Git, uv, distlib and filelock on the build machine.
+  Python 3.13+, uv, distlib and filelock. Packaging also requires Git.
   Internet access on the first build, or populated uv caches.
 
 Usage:
-  python package-project.py [--with-resources] [--refresh]
-  --with-resources  Include local deps/tools and deps/ocr-models if available.
-  --refresh         Rebuild the managed Python runtime and resolve dependencies again.
+  python package-project.py
+  python package-project.py build-runtime
+  python package-project.py package [--with-resources] [--refresh]
+
+  No arguments open the menu. Both commands run without prompts.
+  build-runtime     Rebuild deps/python and exit.
+  package           Create the archive, reusing the runtime when possible.
+  --with-resources  Include deps/tools and deps/ocr-models when present.
+  --refresh         Rebuild the runtime before packaging.
+  Passing packaging flags alone also selects package.
 """
 
 ROOT = Path(__file__).resolve().parent
@@ -192,25 +199,53 @@ def write_archive(with_resources: bool) -> Path:
 
 
 def main() -> int:
+    """Select a release task and serialize changes to the runtime and archives."""
     Console.initialize_ansi_output()
     parser = Console.argument_parser(HELP)
+    parser.add_argument("command", nargs="?", choices=("build-runtime", "package"))
     parser.add_argument("--with-resources", action="store_true")
     parser.add_argument("--refresh", action="store_true")
     args = parser.parse_args()
-    if not Environment.check_commands(CmdCheck("git"), CmdCheck("uv", hints={"any": "Install uv on the build machine."})):
+    packaging_flags = args.with_resources or args.refresh
+    if args.command == "build-runtime" and packaging_flags:
+        parser.error("--with-resources and --refresh are packaging options; use them with package")
+    Console.print_banner("PROJECT RELEASE PACKAGER")
+    interactive = args.command is None and not packaging_flags
+    task = args.command or "package"
+    if interactive:
+        task = Menu.select([
+            MenuOption(["1"], "Build the portable Python runtime", "build-runtime"),
+            MenuOption(["2"], "Create a project release archive", "package"),
+        ], prompt="Select a task (Enter to exit)")
+        if task is None:
+            return 0
+
+    package = task == "package"
+    commands = [CmdCheck("uv", hints={"any": "Install uv on the build machine."})]
+    if package:
+        commands.append(CmdCheck("git"))
+    if not Environment.check_commands(*commands):
         return 1
     try:
         from filelock import FileLock, Timeout
     except ImportError as exc:
         print(f"Missing build dependency {exc.name}: python -m pip install filelock", file=sys.stderr)
         return 1
-    Console.print_banner("PROJECT RELEASE PACKAGER")
+    with_resources = args.with_resources
+    if interactive and package:
+        with_resources = Menu.select([
+            MenuOption(["Y"], "Include local tools and OCR models", True),
+            MenuOption(["N"], "Skip optional tools and models", False),
+        ], prompt="Include deps/tools and deps/ocr-models?", default_key="N") is True
     try:
         BUILD.mkdir(exist_ok=True)
         with FileLock(BUILD / "package-project.lock", timeout=0):
-            prepare_runtime(args.refresh)
+            prepare_runtime(refresh=args.refresh or not package)
+            if not package:
+                print(f"{FLGreen}Runtime ready:{CRst} {FGray}{RUNTIME}{CRst}")
+                return 0
             print(f"Writing archive for {TARGET}...", flush=True)
-            destination = write_archive(args.with_resources)
+            destination = write_archive(with_resources)
     except Timeout:
         print("Another release build is running.", file=sys.stderr)
         return 1
