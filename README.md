@@ -25,6 +25,7 @@ Most tools run on the command line. Some have a graphical interface.
 >   - Wrap any Python script in a CMD launcher suitable for use as a file association
 >   - Remap keyboard keys through the Windows registry
 >   - Identify the process blocking USB drive ejection from the Windows event log
+>   - **Launch programs with a specific code page (encoding), language and time zone**
 > - **macOS**
 >   - **NTFS read-write mounting tool** based on ntfs-3g-mac
 >   - Display utilities for **disabling a MacBook's built-in screen while an external display is connected**, rotating displays, and adjusting external-display brightness
@@ -66,6 +67,9 @@ Most tools run on the command line. Some have a graphical interface.
 >   - **System log viewer** for startup, shutdown, sleep, USB ejection, errors, updates and network authentication on Windows, Linux and macOS
 >   - Run preset commands from a profile
 >   - Network repair tools
+>   - **Window Inspector** shows details about a window and its process. Select a window by dragging the circular finder onto it. Adjust its **opacity**, keep it **always on top**, enable **click-through**, or re-enable disabled buttons.
+> - **Productivity tools**
+>   - **Solid or hollow overlays** cover subtitles or frame a passage to make it easier to read.
 
 Most scripts support both interactive mode and command-line arguments. Run `python <script-name>.py --help` for usage details.
 
@@ -304,7 +308,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 |------|------|------|
 | [`tools/network/tailscale-refresh-routes.py`](tools/network/tailscale-refresh-routes.py) | **Tailscale subnet-route restart tool:**<br />Restores subnet routing on macOS when it stops working after a device returns home and then leaves again. | `tailscale` |
 | [`tools/network/rclone-sync.py`](tools/network/rclone-sync.py) | **Manual rclone task runner with personal YAML configurations**<br />Use reusable profiles and machine-specific subtasks to sync, copy, move or compare file and directory pairs across cloud storage and USB drives. Locate removable drives by volume label. | `rclone`<br />**Python pkg:** `PyYAML`<br />Volume discovery: Windows `pwsh` 7; Linux `lsblk`; macOS `diskutil` |
-| [`tools/network/network-info-uploader.py`](tools/network/network-info-uploader.py) | **Local network-interface information collector and uploader:**<br />Collects network-interface information, especially IP addresses, and uploads it to an S3 bucket for remote access. | **Python pkg:** `boto3` |
+| [`tools/network/network-info-uploader.py`](tools/network/network-info-uploader.py) | **Local network-interface information collector and uploader:**<br />Collects local IP addresses and other interface details from `ipconfig` or `ip addr` and uploads them to S3 for remote access using the connection settings and encrypted credentials in the `upload-ipaddress` section of the user's `config.yaml`.<br />A future revision is planned to update dynamic DNS (DDNS) records directly. | **Python pkg:** `boto3` |
 | [`tools/windows/firewall-app-blocker.py`](tools/windows/firewall-app-blocker.py) | **Windows only. Firewall rules for blocking network access by `.exe` and `.com` files**<br />**Recursively find executables under a selected path**, then add blocking rules or remove them to restore access. | **Windows only**<br />**Elevation required** |
 | [`tools/network/http-server.py`](tools/network/http-server.py) | **Local HTTP server:** Serves files from a local directory or hosts a website containing `index.html`. | |
 
@@ -319,12 +323,13 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 | ------ | ----------- | ------------ |
-| [`tools/input-and-text/auto-typer.py`](tools/input-and-text/auto-typer.py) | **(GUI) Auto Typer** simulates typing to enter clipboard or manually edited text into the foreground window one character at a time.<br />It uses simulated keystrokes to mimic pasting in web VNC sessions without paste support.<br />It sends ASCII characters as simulated keystrokes and attempts to send other characters as system Unicode events. | **Windows/macOS only**<br />**Python package:** `PySide6`.<br />macOS also requires `pyobjc-framework-Cocoa`, `pyobjc-framework-Quartz` and Accessibility permission.<br />**Elevation required on Windows only** |
+| [`tools/input-and-text/auto-typer.py`](tools/input-and-text/auto-typer.py) | **(GUI) Auto Typer** simulates typing to enter clipboard or manually edited text into the foreground window one character at a time.<br />It uses simulated keystrokes to mimic pasting in **web VNC sessions without paste support**.<br />It sends ASCII characters as simulated keystrokes and attempts to send other characters as system Unicode events. | **Windows/macOS only**<br />**Python package:** `PySide6`.<br />macOS also requires `pyobjc-framework-Cocoa`, `pyobjc-framework-Quartz` and Accessibility permission.<br />**Elevation required on Windows only** |
 | [`tools/input-and-text/screen-keyboard.py`](tools/input-and-text/screen-keyboard.py) | **(GUI) Screen Keyboard** supports one-shot modifiers, long-press locking and a numeric keypad.<br />Layer mode turns `CapsLock` into the layer key used by [custom-karabiner-config](https://github.com/BH2WFR/custom-karabiner-config) and [custom-autohotkey-config](https://github.com/BH2WFR/custom-autohotkey-config). | **Windows/macOS only**<br />**Python package:** `Tkinter`<br />macOS also requires PyObjC Cocoa/Quartz and Accessibility permission. In layer mode, Karabiner requires CGEventTap fallback.<br />**Elevation required on Windows only** |
 | [`tools/input-and-text/keyboard-hook-viewer.py`](tools/input-and-text/keyboard-hook-viewer.py) | **Global keyboard and mouse hook monitor**<br />Displays mouse scroll deltas. On macOS, it also shows trackpad pressure, pinch-to-zoom and rotation events. On Linux, it uses X11 XRecord.<br />For legitimate keyboard testing, custom hotkeys and authorized automation only. The project accepts no responsibility for misuse. | **Windows/macOS/Linux X11** only. Wayland is unsupported.<br />macOS: `pip install pyobjc-framework-Quartz`<br />Linux: `pip install python-xlib` |
 | [`tools/input-and-text/text-path-processor.py`](tools/input-and-text/text-path-processor.py) | **(GUI) Text and Path Processor**<br />**1.** Extract full paths from files and folders copied or dragged from Explorer, Finder or a Linux file manager, then convert them line by line. Handle environment variables, change Windows path separators, convert to MSYS paths, or add and remove the `file://` prefix.<br />**2.** Replace line breaks with spaces and expand ligatures in text copied from PDFs.<br />**3.** Convert letters and digits to styled Unicode characters, adjust spacing and indentation, or switch between full-width and half-width characters. | **Python package:** `PySide6`.<br />On macOS, `pyobjc-framework-Cocoa` is optional for reading native Finder filename lists. |
 | [`tools/input-and-text/unicode-inspector.py`](tools/input-and-text/unicode-inspector.py) | **(GUI) Unicode text inspector** displays code points, UTF-8 bytes, names and categories, highlights invisible characters, and provides text statistics and copyable reports. | **Python pkg:** `PySide6` |
-| [`tools/windows/keyboard-remapper.py`](tools/windows/keyboard-remapper.py) | **Windows only. Registry-based keyboard mapping editor**<br />Remap or disable keys, with optional backup and restore of the mappings. | **Windows** only<br />**Python package:** `PySide6`<br />**Elevation required**. Changes take effect after a Windows restart. |
+| [`tools/windows/keyboard-remapper.py`](tools/windows/keyboard-remapper.py) | **Registry-based keyboard mapping editor for Windows**<br />Remap or disable keys, with optional backup and restore of the mappings. | **Windows** only<br />**Python package:** `PySide6`<br />**Elevation required**. Changes take effect after a Windows restart. |
+| [`tools/windows/locale-launcher.py`](tools/windows/locale-launcher.py) | Launch a program with a specific **region and code page (encoding)**, UI language, time zone, working directory and command-line arguments. Use it to run older foreign-language games that rely on a local code page to display text. | **Windows 10+ only**<br />**Python package:** `PySide6`<br />Native x86/x64 targets for locale overrides. Optional UAC elevation at launch. |
 
 ### Input Method Tools
 
@@ -358,11 +363,16 @@ editing restrictions, or PDF/A identification. Source files are retained.
 | [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **Windows only. Failed device ejection log viewer, primarily for USB devices**<br />Look up the process ID, executable path and device ID in Windows event logs to **identify the process preventing safe ejection of a USB drive**. | **Windows only**;<br />**Elevation required** |
 | [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **Windows only. Force-restart system services**<br />Choose whether to wait for the restart. The `Windows Audio` preset **can temporarily restore sound redirection from the remote computer in an RDP session**. | **Windows only**<br />**Elevation required** |
 | [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py) | **Charger and battery information viewer**<br />**On macOS, see how much power the computer is drawing to charge.** Readings come from `ioreg` on macOS, PowerShell CIM/WMI on Windows and `/sys/class/power_supply` on Linux. Available fields depend on firmware and drivers. **macOS provides the most complete readings.** | **Best on macOS**; other systems are also supported, with some fields unavailable because of firmware or driver limitations |
-| [`tools/others/screen-mask.py`](tools/others/screen-mask.py) | **(GUI) Screen Mask** covers subtitles with always-on-top color blocks or frames the passage you are reading with a hollow border. | **Windows / macOS / Linux graphical desktop** with `PySide6`. macOS also requires `pyobjc-framework-Cocoa`. |
-| [`tools/others/window-inspector.py`](tools/others/window-inspector.py) | **(GUI) Window Inspector** identifies the process behind a popup by dragging a finder onto it or inspecting the foreground window. Locate the window on screen, inspect its controls, or terminate an unresponsive process. | **Windows 10+ (administrator) / macOS (current user)**; `PySide6`, `psutil`. macOS requires PyObjC Cocoa, Quartz and ApplicationServices; window actions and control inspection require Accessibility permission. |
+| [`tools/others/window-inspector.py`](tools/others/window-inspector.py) | **(GUI) Window Inspector**<br />Drag the finder onto an ad popup or inspect the foreground window to see **window and process details**, highlight the window, inspect its controls, or terminate an unresponsive process.<br />On Windows, you can keep the target window **always on top**, adjust its **opacity**, enable **click-through** for tracing, or re-enable disabled buttons in native Win32 interfaces. | **Windows 10+ (administrator) / macOS (current user)**; `PySide6`, `psutil`. macOS requires PyObjC Cocoa, Quartz and ApplicationServices; window actions and control inspection require Accessibility permission. |
 | [`tools/others/system-event-viewer.py`](tools/others/system-event-viewer.py) | **(GUI) Cross-platform system log and event viewer**<br />Review power events, logins, faults, device and network changes, updates, and resource or service issues. Includes SSH and Windows RDP/SMB connection and authentication records, plus logs showing why a device could not be ejected. | **macOS / Windows 10+ / Linux with systemd**; coverage depends on retained logs/reports and OS services; Windows Security/share events require prior auditing; Linux lock and hang detection is limited<br />**Python pkg:** `PySide6` |
 | [`tools/others/disk-smart-info-viewer.py`](tools/others/disk-smart-info-viewer.py) | **Disk health information viewer based on smartmontools:**<br />Lists SMART-capable disks and displays detailed attributes such as total writes, power-on time, and remaining life. | `smartmontools`<br />**Elevation required** |
 | [`tools/macos/rdp-clipboard-image-repair.py`](tools/macos/rdp-clipboard-image-repair.py) | **macOS only. RDP clipboard image repair**<br />When an image copied from Windows through Windows App (RDP) will not paste on macOS, convert TIFF clipboard data mislabeled as PNG into a valid PNG. Use `--force` to repair without confirmation. | **macOS only**<br />Built-in `osascript` and AppKit |
+
+### Productivity Tools
+
+| Script | Description | Requirements |
+| ------ | ----------- | ------------ |
+| [`tools/others/screen-mask.py`](tools/others/screen-mask.py) | **(GUI) Screen Mask** covers subtitles with always-on-top color blocks or frames the passage you are reading with a hollow border. | **Windows / macOS / Linux graphical desktop**<br />**Python package:** `PySide6`. macOS also requires `pyobjc-framework-Cocoa`. |
 
 ### Software Launching
 
@@ -374,7 +384,7 @@ editing restrictions, or PDF/A identification. Source files are retained.
 
 | Script | Description | Requirements |
 |------|------|------|
-| [`tools/others/command-runner.py`](tools/others/command-runner.py) | **Preset command runner**<br />Choose a configuration file, then select a saved command or script from its menu. See the [configuration sample](tools/others/run-commands-schema-sample.yaml) for details. | **Python pkg:** `PyYAML`; programs or runtimes required by the selected preset |
+| [`tools/others/command-runner.py`](tools/others/command-runner.py) | **Preset command runner**<br />Choose a configuration file, then select a saved command or script from its menu. See the [configuration sample](tools/others/run-commands-schema-sample.yaml) for details. | **Python pkg:** `PyYAML`<br />Programs or runtimes required by the selected preset |
 
 ### Research Tools
 

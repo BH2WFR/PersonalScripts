@@ -74,6 +74,7 @@ ignore-list:
         - "others/screen_mask/"
         - "others/window_inspector/"
         - "windows/keyboard-remapper/"
+        - "windows/locale_launcher/"
         - "document-processing/pdf-tools/"
     platform-specific:
         # 规范：windows, linux, macos
@@ -112,6 +113,7 @@ ignore-list:
 gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no-gui 下也会被隐藏
     # 禁止有多余的注释
     - "windows/keyboard-remapper.py"
+    - "windows/locale-launcher.py"
     - "input-and-text/auto-typer.py"
     - "input-and-text/screen-keyboard.py"
     - "others/screen-mask.py"

@@ -2,9 +2,16 @@
 
 import ctypes as C
 import os
+import winreg
+from collections.abc import Iterator
+from contextlib import contextmanager
 from ctypes import wintypes as W
 from typing import Any
+from xml.etree import ElementTree
 
+import psutil
+
+from .console_pages import console_info
 from .model import MIN_OPACITY_PERCENT, Properties, PropertyGroup, Rect, Rows, Snapshot, Window
 
 
@@ -60,6 +67,7 @@ for _name in ("GetWindowTextW", "GetClassNameW"):
 _bind(U, "EnumWindows", W.BOOL, ENUM, W.LPARAM)
 _bind(U, "EnumChildWindows", W.BOOL, W.HWND, ENUM, W.LPARAM)
 _bind(U, "GetWindowThreadProcessId", W.DWORD, W.HWND, C.POINTER(W.DWORD))
+_bind(U, "GetKeyboardLayout", W.HANDLE, W.DWORD)
 _bind(U, "GetForegroundWindow", W.HWND)
 _bind(U, "GetPhysicalCursorPos", W.BOOL, C.POINTER(W.POINT))
 _bind(U, "WindowFromPhysicalPoint", W.HWND, W.POINT)
@@ -86,8 +94,18 @@ _bind(OLE, "CoTaskMemFree", None, PTR)
 _bind(KERNEL, "OpenProcess", W.HANDLE, W.DWORD, W.BOOL, W.DWORD)
 _bind(KERNEL, "CloseHandle", W.BOOL, W.HANDLE)
 _bind(KERNEL, "GetBinaryTypeW", W.BOOL, W.LPCWSTR, C.POINTER(W.DWORD))
+_bind(KERNEL, "LCIDToLocaleName", C.c_int, W.DWORD, W.LPWSTR, C.c_int, W.DWORD)
+_bind(KERNEL, "GetSystemDefaultLocaleName", C.c_int, W.LPWSTR, C.c_int)
+_bind(KERNEL, "LoadLibraryExW", W.HMODULE, W.LPCWSTR, W.HANDLE, W.DWORD)
+_bind(KERNEL, "FindResourceW", W.HANDLE, W.HMODULE, PTR, PTR)
+_bind(KERNEL, "SizeofResource", W.DWORD, W.HMODULE, W.HANDLE)
+_bind(KERNEL, "LoadResource", W.HANDLE, W.HMODULE, W.HANDLE)
+_bind(KERNEL, "LockResource", PTR, W.HANDLE)
+_bind(KERNEL, "FreeLibrary", W.BOOL, W.HMODULE)
+_bind(KERNEL, "LocalFree", PTR, PTR)
 _bind(ADV, "OpenProcessToken", W.BOOL, W.HANDLE, W.DWORD, C.POINTER(W.HANDLE))
 _bind(ADV, "GetTokenInformation", W.BOOL, W.HANDLE, C.c_int, PTR, W.DWORD, C.POINTER(W.DWORD))
+_bind(ADV, "ConvertSidToStringSidW", W.BOOL, PTR, C.POINTER(W.LPWSTR))
 _bind(VERSION, "GetFileVersionInfoSizeW", W.DWORD, W.LPCWSTR, PTR)
 _bind(VERSION, "GetFileVersionInfoW", W.BOOL, W.LPCWSTR, W.DWORD, W.DWORD, PTR)
 _bind(VERSION, "VerQueryValueW", W.BOOL, PTR, W.LPCWSTR, PTR, C.POINTER(W.UINT))
@@ -226,6 +244,7 @@ def snapshot(target: Window) -> Snapshot:
         state = "Maximized"
     parent = U.GetParent(hwnd) or 0
     yes = {True: "Yes", False: "No"}
+    thread_id = U.GetWindowThreadProcessId(hwnd, None)
     pid = W.DWORD()
     count = sum(1 for handle in _handles() if U.GetWindowThreadProcessId(handle, C.byref(pid)) and pid.value == w.pid)
     rows: Properties = [
@@ -234,7 +253,7 @@ def snapshot(target: Window) -> Snapshot:
         (PropertyGroup.WINDOW, "Window state", state),
         (PropertyGroup.WINDOW, "Unresponsive", yes[bool(U.IsHungAppWindow(hwnd))]),
         (PropertyGroup.PROCESS, "Process ID", str(w.pid)),
-        (PropertyGroup.PROCESS, "Thread ID", str(U.GetWindowThreadProcessId(hwnd, None))),
+        (PropertyGroup.PROCESS, "Thread ID", str(thread_id)),
         (PropertyGroup.PROCESS, "Windows in process", str(count)),
         (PropertyGroup.GEOMETRY, "Position (pixels)", f"{x}, {y}"),
         (PropertyGroup.GEOMETRY, "Size (pixels)", f"{width} × {height}"),
@@ -251,6 +270,11 @@ def snapshot(target: Window) -> Snapshot:
         (PropertyGroup.PARENT, "Parent title", _text(parent) if parent else ""),
         (PropertyGroup.PARENT, "Parent class", _text(parent, kind=True) if parent else ""),
     ]
+    if thread_id and (layout := U.GetKeyboardLayout(thread_id)):
+        language_id = layout & 0xffff
+        name = C.create_unicode_buffer(85)  # LOCALE_NAME_MAX_LENGTH
+        KERNEL.LCIDToLocaleName(language_id, name, len(name), 0)
+        rows.append((PropertyGroup.REGIONAL, "Window thread input language", name.value or f"0x{language_id:04X}"))
     return Snapshot(w, rows, opacity, top, through)
 
 
@@ -353,29 +377,127 @@ def enable_menu(target: Window) -> tuple[int, int]:
     return total, enabled
 
 
-def elevated(pid: int) -> bool | None:
-    """Return the process token's elevation, or None when it cannot be inspected."""
+@contextmanager
+def _query_token(pid: int) -> Iterator[W.HANDLE | None]:
     handle = KERNEL.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-    if handle:
-        token = W.HANDLE()
-        try:
-            if ADV.OpenProcessToken(handle, 0x0008, C.byref(token)):  # TOKEN_QUERY
-                value, length = W.DWORD(), W.DWORD()
-                try:
-                    if ADV.GetTokenInformation(token, 20, C.byref(value), C.sizeof(value), C.byref(length)):
-                        return bool(value.value)
-                finally:
-                    KERNEL.CloseHandle(token)
-        finally:
+    token = W.HANDLE()
+    try:
+        if handle:
+            ADV.OpenProcessToken(handle, 0x0008, C.byref(token))  # TOKEN_QUERY
+        yield token if token else None
+    finally:
+        if token:
+            KERNEL.CloseHandle(token)
+        if handle:
             KERNEL.CloseHandle(handle)
+
+
+def _token_elevated(token: W.HANDLE | None) -> bool | None:
+    value, length = W.DWORD(), W.DWORD()
+    if token and ADV.GetTokenInformation(token, 20, C.byref(value), C.sizeof(value), C.byref(length)):
+        return bool(value.value)
     return None
 
 
-def process_rows(pid: int, path: str) -> Properties:
-    """Read elevation and executable metadata when the selected process permits access."""
+def elevated(pid: int) -> bool | None:
+    """Return the process token's elevation, or None when it cannot be inspected."""
+    with _query_token(pid) as token:
+        return _token_elevated(token)
+
+
+def _user_sid(token: W.HANDLE | None) -> str | None:
+    if not token:
+        return None
+    length = W.DWORD()
+    ADV.GetTokenInformation(token, 1, None, 0, C.byref(length))  # TokenUser
+    if not length.value:
+        return None
+    user = C.create_string_buffer(length.value)
+    if not ADV.GetTokenInformation(token, 1, user, len(user), C.byref(length)):
+        return None
+    sid = W.LPWSTR()
+    if not ADV.ConvertSidToStringSidW(PTR.from_buffer(user), C.byref(sid)):
+        return None
+    try:
+        return sid.value
+    finally:
+        KERNEL.LocalFree(sid)
+
+
+def _manifest_code_page(path: str) -> str:
+    """Read activeCodePage from the executable's embedded application manifest."""
+    module = KERNEL.LoadLibraryExW(path, None, 0x22) if path else None  # Data file and image resource
+    if not module:
+        return "Unavailable"
+    try:
+        resource = KERNEL.FindResourceW(module, 1, 24)  # Application manifest, RT_MANIFEST
+        if not resource:
+            return "No embedded application manifest"
+        size = KERNEL.SizeofResource(module, resource)
+        if not 0 < size <= 1024 * 1024:
+            return "Unavailable"
+        address = KERNEL.LockResource(KERNEL.LoadResource(module, resource))
+        if not address:
+            return "Unavailable"
+        root = ElementTree.fromstring(C.string_at(address, size))
+        setting = root.findtext(
+            "{urn:schemas-microsoft-com:asm.v3}application/{urn:schemas-microsoft-com:asm.v3}windowsSettings/"
+            "{http://schemas.microsoft.com/SMI/2019/WindowsSettings}activeCodePage")
+        return (setting or "").strip() or "Not declared"
+    except (ElementTree.ParseError, ValueError, LookupError):
+        return "Unavailable"
+    finally:
+        KERNEL.FreeLibrary(module)
+
+
+def _registry_text(root: int, key: str, name: str) -> str:
+    try:
+        with winreg.OpenKey(root, key) as opened:
+            value, _ = winreg.QueryValueEx(opened, name)
+        return str(value).rstrip("\0") or "Unavailable"
+    except OSError:
+        return "Unavailable"
+
+
+def _regional_rows(process: psutil.Process, path: str, sid: str | None) -> Properties:
+    group = PropertyGroup.REGIONAL
+    intl = rf"{sid}\Control Panel\International"
+    nls = r"SYSTEM\CurrentControlSet\Control\Nls\CodePage"
+    zone = r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation"
+    system_locale = C.create_unicode_buffer(85)
+    KERNEL.GetSystemDefaultLocaleName(system_locale, len(system_locale))
+    console = console_info(process.pid)
+    rows: Properties = [
+        (PropertyGroup.WINDOW, "Has console", {True: "Yes", False: "No", None: "Unavailable"}[console.attached]),
+        (group, "User profile region", _registry_text(winreg.HKEY_USERS, intl + r"\Geo", "Name") if sid else "Unavailable"),
+        (group, "User profile locale", _registry_text(winreg.HKEY_USERS, intl, "LocaleName") if sid else "Unavailable"),
+        (group, "Console input code page", console.input_page),
+        (group, "Console output code page", console.output_page),
+        (group, "Embedded manifest code page", _manifest_code_page(path)),
+        (group, "System locale", system_locale.value or "Unavailable"),
+        (group, "System ANSI code page", _registry_text(winreg.HKEY_LOCAL_MACHINE, nls, "ACP")),
+        (group, "System OEM code page", _registry_text(winreg.HKEY_LOCAL_MACHINE, nls, "OEMCP")),
+        (group, "System time zone", _registry_text(winreg.HKEY_LOCAL_MACHINE, zone, "TimeZoneKeyName")),
+    ]
+    try:
+        env = {key.upper(): value for key, value in process.environ().items()}
+    except (psutil.AccessDenied, OSError, NotImplementedError):
+        rows.append((group, "Process locale environment", "Unavailable"))
+    else:
+        for key in ("LANG", "LC_ALL", "LC_CTYPE", "LC_TIME", "TZ"):
+            if value := env.get(key):
+                rows.append((group, f"Process environment: {key}", value))
+    return rows
+
+
+def process_rows(process: psutil.Process, path: str) -> Properties:
+    """Read regional settings, elevation and available executable metadata."""
     rows: Properties = []
-    if (admin := elevated(pid)) is not None:
-        rows.append((PropertyGroup.PROCESS, "Elevated", "Yes" if admin else "No"))
+    with _query_token(process.pid) as token:
+        if (admin := _token_elevated(token)) is not None:
+            rows.append((PropertyGroup.PROCESS, "Elevated", "Yes" if admin else "No"))
+        sid = _user_sid(token)
+    rows.extend(_regional_rows(process, path, sid))
     kind = W.DWORD()
     if path and KERNEL.GetBinaryTypeW(path, C.byref(kind)) and kind.value in (0, 6):
         rows.append((PropertyGroup.PROCESS, "Process architecture", "64-bit" if kind.value == 6 else "32-bit"))

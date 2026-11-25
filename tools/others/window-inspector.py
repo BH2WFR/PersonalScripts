@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Desktop entry for the native window inspector."""
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -37,6 +38,7 @@ def main() -> int:
     parser.add_argument("--top", action="store_true")
     if sys.platform == "win32":
         parser.add_argument("--startup-window", nargs=2, type=int, metavar=("HWND", "PID"))
+        parser.add_argument("--_console-pages", type=int, help=argparse.SUPPRESS)
     elif sys.platform == "darwin":
         parser.add_argument("--pid", type=int)
     args = parser.parse_args()
@@ -45,6 +47,9 @@ def main() -> int:
         return 1
     if str(SCRIPT_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPT_DIR))
+    if sys.platform == "win32" and args._console_pages is not None:
+        from window_inspector.console_pages import probe
+        return probe(args._console_pages)
     try:
         if sys.platform == "win32":
             from window_inspector import windows as backend

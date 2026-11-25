@@ -50,7 +50,7 @@ def _detect_platform() -> tuple[bool, bool, bool]:
 def _get_excluded_dirs() -> set[str]:
     is_win, is_mac, is_linux = _detect_platform()
     exclude_dirs = {"utils", "BUILD", "__pycache__", ".git", ".venv", "node_modules", ".idea", "dist", "INSTALL", "rclone-sync", "pdf-tools", "auto_typer", "keyboard-hook-viewer", "keyboard-remapper", "system-event-viewer"}
-    exclude_dirs.update({"text_processor", "screen_keyboard", "screen_mask", "unicode_inspector", "window_inspector"})
+    exclude_dirs.update({"text_processor", "screen_keyboard", "screen_mask", "unicode_inspector", "window_inspector", "locale_launcher"})
     if not is_win:
         exclude_dirs.add("windows")
     if not is_mac:
@@ -270,7 +270,7 @@ def _build_nuitka(script_dir: str, script_rel: str, out_dir: str) -> int:
         "--include-package=utils",
         script_path,
     ]
-    if script_basename in ("unicode-inspector", "screen-mask"):
+    if script_basename in ("unicode-inspector", "screen-mask", "locale-launcher"):
         cmd.insert(-1, "--enable-plugin=pyside6")
 
     print(f"\n{FLYellow}Compiling with Nuitka (standalone)...{CRst}")
@@ -372,10 +372,15 @@ def build_script(script_dir: str, script_rel: str, tool: str) -> int:
     # Ensure parent exists
     os.makedirs(os.path.dirname(out_dir), exist_ok=True)
 
-    if tool == "nuitka":
-        return _build_nuitka(script_dir, script_rel, out_dir)
-    else:
-        return _build_pyinstaller(script_dir, script_rel, out_dir)
+    builder = _build_nuitka if tool == "nuitka" else _build_pyinstaller
+    result = builder(script_dir, script_rel, out_dir)
+    if result == 0 and script_basename == "locale-launcher":
+        # Both architectures are required even when the GUI itself is 64-bit.
+        entry_dir = os.path.join(script_dir, os.path.dirname(script_rel))
+        source = os.path.join(entry_dir, "locale_launcher", "bin")
+        shutil.copytree(source, os.path.join(out_dir, "locale-runtime"), dirs_exist_ok=True)
+        shutil.copy2(os.path.join(entry_dir, "_locale-info.com"), out_dir)
+    return result
 
 
 # ============ Main ============

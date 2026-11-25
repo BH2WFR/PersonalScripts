@@ -32,16 +32,40 @@ def is_gui_executable(path: str) -> bool:
     return (image & 0xFFFF) == 0x4550 and (image >> 16) != 0
 
 
+def _shell_execute(info: _ShellExecuteInfo) -> None:
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+    shell.ShellExecuteExW.restype = w.BOOL
+    if not shell.ShellExecuteExW(ctypes.byref(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def start_elevated_executable(program: str, arguments: str, directory: str) -> None:
+    """Request UAC for a native Windows executable and return once it starts.
+
+    Pass the Windows command-line tail as supplied. The explicit executable
+    class also supplies the runas verb for PE files with a .com extension.
+    Raises OSError if Windows refuses the launch or the user cancels UAC.
+    """
+    info = _ShellExecuteInfo()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = 0x1 | 0x100 | 0x400  # CLASSNAME | NOASYNC | FLAG_NO_UI
+    info.lpClass = "exefile"
+    info.lpVerb = "runas"
+    info.lpFile = program
+    info.lpParameters = arguments
+    info.lpDirectory = directory
+    info.nShow = 1
+    _shell_execute(info)
+
+
 def run_as_admin(command: list[str], *, hidden: bool) -> int:
     """Show the native fallback warning, request UAC and wait for the process.
 
     Raises OSError on cancellation or a Win32 failure. The caller stays alive
     while the helper attaches to its console.
     """
-    shell = ctypes.WinDLL("shell32", use_last_error=True)
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    shell.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
-    shell.ShellExecuteExW.restype = w.BOOL
     kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
     kernel.WaitForSingleObject.restype = w.DWORD
     kernel.GetExitCodeProcess.argtypes = [w.HANDLE, ctypes.POINTER(w.DWORD)]
@@ -64,8 +88,7 @@ def run_as_admin(command: list[str], *, hidden: bool) -> int:
     message_box.argtypes = [w.HWND, w.LPCWSTR, w.LPCWSTR, w.UINT]
     if not message_box(None, warning, "Elevation fallback", 0x30):  # MB_OK | MB_ICONWARNING
         print(warning, file=sys.stderr, flush=True)
-    if not shell.ShellExecuteExW(ctypes.byref(info)):
-        raise ctypes.WinError(ctypes.get_last_error())
+    _shell_execute(info)
     try:
         if kernel.WaitForSingleObject(info.hProcess, 0xFFFFFFFF) != 0:  # INFINITE / WAIT_OBJECT_0
             raise ctypes.WinError(ctypes.get_last_error())

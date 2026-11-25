@@ -49,6 +49,95 @@ class StartupTests(unittest.TestCase):
                 elevate.assert_not_called()
 
 
+@unittest.skipUnless(sys.platform == "win32", "Windows regional settings")
+class RegionalSettingsTests(unittest.TestCase):
+    def test_console_pages_follow_runtime_changes(self) -> None:
+        import subprocess
+        import psutil
+        from window_inspector.model import process_info
+
+        program = """
+import ctypes
+import sys
+kernel = ctypes.windll.kernel32
+for line in sys.stdin:
+    input_page, output_page = map(int, line.split())
+    assert kernel.SetConsoleCP(input_page) and kernel.SetConsoleOutputCP(output_page)
+    print("ready", flush=True)
+"""
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = subprocess.SW_HIDE
+        with subprocess.Popen([sys.executable, "-c", program], creationflags=subprocess.CREATE_NEW_CONSOLE,
+                              startupinfo=startup, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as child:
+            assert child.stdin and child.stdout
+            try:
+                for settings, expected in [("437 65001", ("437", "65001 (UTF-8)")),
+                                           ("65001 65001", ("65001 (UTF-8)", "65001 (UTF-8)"))]:
+                    child.stdin.write(settings + "\n")
+                    child.stdin.flush()
+                    self.assertEqual(child.stdout.readline().strip(), "ready")
+                    rows = process_info(psutil.Process(child.pid)).rows
+                    self.assertIn((PropertyGroup.WINDOW, "Has console", "Yes"), rows)
+                    self.assertIn((PropertyGroup.REGIONAL, "Console input code page", expected[0]), rows)
+                    self.assertIn((PropertyGroup.REGIONAL, "Console output code page", expected[1]), rows)
+            finally:
+                child.stdin.close()
+
+        with subprocess.Popen([sys.executable, "-c", "input()"], creationflags=subprocess.DETACHED_PROCESS,
+                              stdin=subprocess.PIPE) as detached:
+            try:
+                rows = process_info(psutil.Process(detached.pid)).rows
+                self.assertIn((PropertyGroup.WINDOW, "Has console", "No"), rows)
+                self.assertIn((PropertyGroup.REGIONAL, "Console input code page", "No console"), rows)
+            finally:
+                detached.communicate(b"\n", timeout=10)
+
+    def test_reads_only_selected_locale_variables_from_target(self) -> None:
+        import subprocess
+        import psutil
+        from window_inspector.model import process_info
+
+        env = dict(os.environ, TZ="JST-9", LC_CTYPE="ja_JP.UTF-8", UNRELATED_TEST_VALUE="do not display")
+        with subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                              stdin=subprocess.PIPE, env=env) as child:
+            try:
+                rows = process_info(psutil.Process(child.pid)).rows
+            finally:
+                child.communicate(input=b"", timeout=10)
+        regional = {name: value for group, name, value in rows if group == PropertyGroup.REGIONAL}
+        self.assertEqual(regional["Process environment: TZ"], "JST-9")
+        self.assertEqual(regional["Process environment: LC_CTYPE"], "ja_JP.UTF-8")
+        self.assertNotIn("do not display", regional.values())
+        self.assertIn("User profile region", regional)
+        self.assertIn("System ANSI code page", regional)
+        self.assertIn("System time zone", regional)
+
+    def test_embedded_manifest_and_unavailable_environment(self) -> None:
+        import ctypes
+        import psutil
+        from window_inspector import windows
+        from window_inspector.console_pages import ConsoleInfo
+
+        manifest = b'''<assembly xmlns="urn:schemas-microsoft-com:asm.v1">
+          <application xmlns="urn:schemas-microsoft-com:asm.v3"><windowsSettings>
+          <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+          </windowsSettings></application></assembly>'''
+        buffer = ctypes.create_string_buffer(manifest)
+        target = Mock()
+        target.environ.side_effect = psutil.AccessDenied(42)
+        with (patch.object(windows, "KERNEL") as kernel,
+              patch.object(windows, "console_info", return_value=ConsoleInfo(None, "Unavailable", "Unavailable"))):
+            kernel.SizeofResource.return_value = len(manifest)
+            kernel.LockResource.return_value = ctypes.addressof(buffer)
+            rows = windows._regional_rows(target, "example.exe", None)
+            kernel.FreeLibrary.assert_called_once()
+        self.assertIn((PropertyGroup.WINDOW, "Has console", "Unavailable"), rows)
+        self.assertIn((PropertyGroup.REGIONAL, "Embedded manifest code page", "UTF-8"), rows)
+        self.assertIn((PropertyGroup.REGIONAL, "User profile locale", "Unavailable"), rows)
+        self.assertIn((PropertyGroup.REGIONAL, "Process locale environment", "Unavailable"), rows)
+
+
 class InspectorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

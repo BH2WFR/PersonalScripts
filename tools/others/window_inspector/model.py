@@ -34,6 +34,7 @@ class PropertyGroup(StrEnum):
     RESOURCES = "Resource usage"
     BUNDLE = "Application bundle"
     FILE = "Executable file"
+    REGIONAL = "Regional settings"
 
 
 type Properties = list[tuple[PropertyGroup, str, str]]
@@ -153,7 +154,7 @@ def process_info(process: psutil.Process) -> ProcessInfo:
             rows.append((PropertyGroup.PROCESS, "Argument access", "Permission denied"))
     if sys.platform == "win32":
         from .windows import process_rows
-        rows.extend(process_rows(process.pid, path))
+        rows.extend(process_rows(process, path))
     if path:
         try:
             stat = Path(path).stat()

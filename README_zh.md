@@ -25,6 +25,7 @@
 >   - 将任意 Python 脚本包装为可用于文件打开方式的 CMD 启动器
 >   - 键盘按键重映射工具（基于注册表中的设置）
 >   - U 盘无法弹出时，通过系统日志查看占用 U 盘的进程的工具
+>   - **按指定代码页（编码）、语言、时区启动程序的工具**
 > - **macOS 相关**
 >   - 基于 ntfs-3g-mac 的 **NTFS 可写挂载工具**
 >   - 显示器工具：**MacBook 连接外接显示器时可关闭自带屏幕**，也可旋转屏幕方向、调整外接显示器亮度
@@ -66,6 +67,9 @@
 >     - **系统日志查看工具**（含开关机、睡眠、USB弹出、错误、升级、网络认证等，支持 Windows/Linux/macOS）
 >     - 带 profile 的快捷命令执行工具
 >     - 网络修复工具
+>     - **窗口信息查看器**（含所在进程信息，支持通过圆饼拖拽匹配目标窗口，含**窗口透明度设置**、**窗口置顶**、**窗口穿透**、灰色按钮解除等功能）
+> - **效率工具**
+>     - **创建可遮挡窗口的实心或空心方块的工具**（可遮挡字幕、或使用中空方块提高阅读效率）
 
 大部分脚本支持交互模式和命令行参数。使用 `python <脚本名>.py --help` 查看用法详情。
 
@@ -302,7 +306,7 @@
 |------|------|------|
 | [`tools/network/tailscale-refresh-routes.py`](tools/network/tailscale-refresh-routes.py) | **Tailscale Subnet Route 功能快捷重启工具**：<br />通过切换 `--accept-routes` 开关重启 Tailscale 子网路由；<br />用于解决 macOS 中 Tailscale 开启 Subnet Route 后，设备回家再离家时该功能被自动关闭的问题 | `tailscale` |
 | [`tools/network/rclone-sync.py`](tools/network/rclone-sync.py) | **使用个人 YAML 配置的 rclone 任务手动运行器**：<br />通过可复用 profile 和按机器匹配的子任务，同步、复制、移动或比较多对目录/文件到云盘、U盘中。支持按卷标定位移动硬盘。 | `rclone`<br />**Python 库**：`PyYAML`<br />卷定位：Windows `pwsh` 7；Linux `lsblk`；macOS `diskutil` |
-| [`tools/network/network-info-uploader.py`](tools/network/network-info-uploader.py) | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />连接设置和加密凭据来自用户 `config.yaml` 的 `upload-ipaddress` 节 | **Python 库：**`boto3` |
+| [`tools/network/network-info-uploader.py`](tools/network/network-info-uploader.py) | **本机网卡信息收集上传工具：**<br />收集本机网卡信息，尤其是本机 IP 地址（基于 `ipconfig`/`ip addr`），并上传至 S3 存储桶，方便远程访问。<br />连接设置和加密凭据来自用户 `config.yaml` 的 `upload-ipaddress` 节<br />（后续拟直接改造为 DDNS 动态域名设置工具） | **Python 库：**`boto3` |
 | [`tools/windows/firewall-app-blocker.py`](tools/windows/firewall-app-blocker.py) | **仅 Windows**，**为 `.exe`/`.com` 文件配置系统防火墙断网规则的工具：**<br />支持**递归查找某路径下所有 `.exe`/`.com` 文件**，支持增加断网规则、删除断网规则（恢复原状）。 | **仅 Windows**<br />**需要提权** |
 | [`tools/network/http-server.py`](tools/network/http-server.py) | **将本地文件夹（或含 `index.html` 的网页目录）映射为本地 HTTP 服务的工具**：<br />使用基于 Python 内置 `http.server` 的多线程服务，支持交互模式（目录/绑定地址/端口）或 CLI（`--dir`、`--bind`、`--port`） |                                       |
 
@@ -317,12 +321,13 @@
 
 | 脚本                            | 描述                                                         | 依赖                                 |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------ |
-| [`tools/input-and-text/auto-typer.py`](tools/input-and-text/auto-typer.py) | **(GUI) 自动打字工具**：将剪贴板或手动编辑的文本，通过模拟打字的方式逐字输入到前台窗口中<br />可向不支持粘贴的网页版 VNC 会话中，通过模拟按键事件的方式，快速实现类似粘贴文本的效果。<br />ASCII 字符通过模拟键盘按键事件发送，其他字符尝试通过系统 Unicode 事件发送。 | **仅 Windows/macOS**；<br />**Python 库**：`PySide6`。<br />macOS 中还需要 `pyobjc-framework-Cocoa`、`pyobjc-framework-Quartz` 和辅助功能权限。 <br />**仅 Windows 下需要提权** |
+| [`tools/input-and-text/auto-typer.py`](tools/input-and-text/auto-typer.py) | **(GUI) 自动打字工具**：将剪贴板或手动编辑的文本，通过模拟打字的方式逐字输入到前台窗口中<br />可向**不支持粘贴的网页版 VNC 会话**中，通过模拟按键事件的方式，快速实现类似粘贴文本的效果。<br />ASCII 字符通过模拟键盘按键事件发送，其他字符尝试通过系统 Unicode 事件发送。 | **仅 Windows/macOS**；<br />**Python 库**：`PySide6`。<br />macOS 中还需要 `pyobjc-framework-Cocoa`、`pyobjc-framework-Quartz` 和辅助功能权限。 <br />**仅 Windows 下需要提权** |
 | [`tools/input-and-text/screen-keyboard.py`](tools/input-and-text/screen-keyboard.py) | **(GUI) 屏幕键盘**<br />支持一次性修饰键、长按锁定和数字小键盘。<br />其中 Layer 模式会把 `CapsLock` 键改为针对 [custom-karabiner-config](https://github.com/BH2WFR/custom-karabiner-config) 和 [custom-autohotkey-config](https://github.com/BH2WFR/custom-autohotkey-config) 项目的特殊层功能键 | **仅 Windows/macOS**，<br />**Python 库**：`Tkinter`<br />macOS 中还需要 PyObjC Cocoa/Quartz 和辅助功能权限。Layer 模式下，Karabiner 还需启用 CGEventTap fallback。<br />**仅 Windows 下需要提权** |
 | [`tools/input-and-text/keyboard-hook-viewer.py`](tools/input-and-text/keyboard-hook-viewer.py) | **全局键盘鼠标钩子监控器**：<br />鼠标滚动事件可显示 delta 值；macOS 下可还显示触控板的按压力度、捏合缩放和旋转事件；Linux 下使用 X11 XRecord。<br />仅限键盘测试、特殊热键、自动化操作等正当用途，否则本项目不负任何任何因异常用途产生的后果。 | 仅 **Windows/macOS/Linux X11**；不支持 Wayland<br />macOS：`pip install pyobjc-framework-Quartz`<br />Linux：`pip install python-xlib`|
 | [`tools/input-and-text/text-path-processor.py`](tools/input-and-text/text-path-processor.py) | **(GUI) 文本与路径处理工具**：<br />**1.** 可从 Explorer、Finder 或 Linux 文件管理器复制或拖入文件和文件夹，提取完整路径并按行转换，支持处理路径中的环境变量，windows 中支持处理路径中的斜杠，支持转换为 MSYS 路径，支持加入/删除 `file://` 前缀。<br />**2.** 支持对从 PDF 复制的文本进行换行转空格、拆解连字等处理。<br />**3.** 支持对数字和字母转换为 Unicode 花体字，对文本调整空格和缩进，或进行全角/半角转换。 | **Python 库**：`PySide6`。<br />macOS 中可选 `pyobjc-framework-Cocoa` 以读取 Finder 原生文件名列表。 |
 | [`tools/input-and-text/unicode-inspector.py`](tools/input-and-text/unicode-inspector.py) | **(GUI) Unicode 文本查看器**：显示码点、UTF-8 字节、名称与分类，标注不可见字符，并提供文本统计与可复制报告。 | **Python 库**：`PySide6` |
-| [`tools/windows/keyboard-remapper.py`](tools/windows/keyboard-remapper.py) | **仅 Windows，基于注册表设置的键盘映射编辑工具**：<br />支持按键重映射或禁用，并支持可选备份及恢复映射。 | 仅 **Windows**<br />**Python 库**：`PySide6`<br />**需要提权**；保存后需重启 Windows 生效 |
+| [`tools/windows/keyboard-remapper.py`](tools/windows/keyboard-remapper.py) | **Windows 中，基于注册表设置的键盘映射编辑工具**：<br />支持按键重映射或禁用，并支持可选备份及恢复映射。 | 仅 **Windows**<br />**Python 库**：`PySide6`<br />**需要提权**；保存后需重启 Windows 生效 |
+| [`tools/windows/locale-launcher.py`](tools/windows/locale-launcher.py) | Windows 中，**为单个程序按指定地区、代码页（编码）**、界面语言、时区、启动路径和参数启动。<br />用于启动老旧的按本地编码显示文本的外国游戏 | 仅 **Windows**<br />**Python 库**：`PySide6`<br />启动程序时可选 UAC 提权 |
 
 ### 输入法工具
 
@@ -353,14 +358,19 @@
 
 | 脚本                                                         | 描述                                                         | 依赖                                                         |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **仅 Windows，设备（主要是 USB 设备）弹出失败日志查看器**：<br />显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，**用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题**。 | **仅 Windows**；<br />**需要提权**                       |
+| [`tools/windows/device-ejection-history.py`](tools/windows/device-ejection-history.py) | **仅 Windows，设备（主要是 USB 设备）弹出失败日志查看器**：<br />显示 Windows 历史记录中阻止设备移除的进程 PID、程序路径和设备 ID，**用于排查 U 盘无法安全弹出时，是哪个进程在占用 U 盘的问题**。 | **仅 Windows**；<br />**需要提权**                           |
 | [`tools/windows/service-restarter.py`](tools/windows/service-restarter.py) | **仅 Windows**，**系统服务强制重启工具**：<br />支持等待/不等待两种模式；内置 `Windows Audio` 预设，**可用于临时修复 RDP 远程桌面会话中，无法重定向被控方电脑声音的问题** | **仅 Windows**<br />**需要提权**                             |
 | [`tools/others/power-status-viewer.py`](tools/others/power-status-viewer.py) | **充电器与电池信息查看器**：<br />**macOS 中，还能查看当前电脑的充电功率**。<br />macOS 使用 `ioreg`，Windows 使用 PowerShell CIM/WMI，Linux 使用 `/sys/class/power_supply`。部分字段可能因固件/驱动限制不可用。（**本脚本仅在 macOS 中有最佳体验**） | **macOS 中体验最佳**，也支持其他系统（数据不全）             |
-| [`tools/others/screen-mask.py`](tools/others/screen-mask.py) | **(GUI) 屏幕遮挡块**可用置顶色块遮挡字幕，也可用中空边框框住正在阅读的段落。 | **Windows / macOS / Linux图形**，需要 `PySide6`。macOS 另需 `pyobjc-framework-Cocoa`。 |
-| [`tools/others/window-inspector.py`](tools/others/window-inspector.py) | **(GUI) 窗口信息查看器**：拖动圆饼或查看前台窗口即可找出弹窗广告所属的进程。可在屏幕上标出窗口位置、查看控件，或强制结束无响应窗口的进程。<br /> | **Windows/macOS**；<br />**Python 库**：`PySide6`、`psutil`。macOS 另需 PyObjC Cocoa、Quartz、ApplicationServices；操作窗口和读取控件需辅助功能权限。<br />**仅 Windows 下需要提权** |
+| [`tools/others/window-inspector.py`](tools/others/window-inspector.py) | **(GUI) 窗口信息查看器**：拖动圆饼或查看前台窗口即可找出弹窗广告所属的进程。<br />**可查看窗口和所在进程相关信息**。可在屏幕上标出窗口位置、查看控件，或强制结束无响应窗口的进程。<br />**Windows** 中，支持对目标窗口进行**置顶**、改变**透明度**、设置为**穿透模式**（描图使用）、或解除灰色按钮（仅限 Win32 原生界面） | **Windows/macOS**；<br />**Python 库**：`PySide6`、`psutil`。macOS 另需 PyObjC Cocoa、Quartz、ApplicationServices；操作窗口和读取控件需辅助功能权限。<br />**仅 Windows 下需要提权** |
 | [`tools/others/system-event-viewer.py`](tools/others/system-event-viewer.py) | **(GUI) 系统日志/事件查看器**：<br />（支持全平台）集中查看电源、登录、故障、系统活动，包括设备/网络变化、更新和资源/服务问题，含 SSH 和 Windows RDP/SMB 的连接和验证记录，和外设设备弹出受阻的相关记录。 | **macOS / Windows / 使用 systemd 的 Linux**；<br />**Python 库**：`PySide6` |
 | [`tools/others/disk-smart-info-viewer.py`](tools/others/disk-smart-info-viewer.py) | 基于 smartmontools 的**磁盘健康信息查看器**：<br />列出 SMART 磁盘并显示详细属性（写入量、通电时间、剩余寿命等） | `smartmontools`；<br />**需要提权**                          |
 | [`tools/macos/rdp-clipboard-image-repair.py`](tools/macos/rdp-clipboard-image-repair.py) | **仅 macOS**，**剪贴板图像修复工具**：<br />修复在 macOS 中通过 Windows App (RDP) 远程控制 Windows 设备时，从 Windows 复制到剪贴板后，无法在 macOS 中正常粘贴的图片。可将剪贴板中伪装成 png 的 tiff 图片恢复成有效的 PNG 剪贴板数据。<br /> 加 `--force` 参数时无需确认，直接恢复。 | **仅 macOS**；<br />系统内置 `osascript` 和 AppKit           |
+
+### 效率工具
+
+| 脚本                                                         | 描述                                                         | 依赖；                                                       |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| [`tools/others/screen-mask.py`](tools/others/screen-mask.py) | **(GUI) 屏幕遮挡块**可用置顶色块遮挡字幕，也可用中空边框框住正在阅读的段落。 | **Windows / macOS / Linux图形** <br />**Python 库**：`PySide6`，macOS 中另需 `pyobjc-framework-Cocoa`。 |
 
 ### 软件启动
 
@@ -372,7 +382,7 @@
 
 | 脚本 | 描述 | 依赖 |
 |------|------|------|
-| [`tools/others/command-runner.py`](tools/others/command-runner.py) | **预设命令快捷执行工具**：<br />选择自己的配置文件，再通过菜单选择并执行保存的命令或脚本；[配置样例](tools/others/run-commands-schema-sample.yaml) 提供详细说明。 | **Python 库**：`PyYAML`；预设命令所需的程序或解释器 |
+| [`tools/others/command-runner.py`](tools/others/command-runner.py) | **预设命令快捷执行工具**：<br />选择自己的配置文件，再通过菜单选择并执行保存的命令或脚本；[配置样例](tools/others/run-commands-schema-sample.yaml) 提供详细说明。 | **Python 库**：`PyYAML`；<br />预设命令所需的程序或解释器 |
 
 ### 科研工具
 

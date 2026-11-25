@@ -63,6 +63,11 @@ the tool. Windows may show its usual consent dialog. A console-less GUI can
 relaunch directly. A console tool needs an attached console for this fallback.
 The caller waits and returns the elevated tool's exit status.
 
+Locale Launcher uses the Windows-specific `start_elevated_executable(program, arguments, directory)`
+in `utils._windows_elevation` for a separate target. It selects the executable's
+`runas` verb for both EXE and native COM files, takes a Windows command-line
+string, and returns after launch. UAC cancellation raises `OSError`.
+
 The PowerShell helper receives the executable and Windows argument string as
 Base64-encoded UTF-8 JSON. Empty arguments, Unicode, quotes, repeated spaces,
 forward slashes, trailing backslashes, and UNC paths reach the child unchanged.
