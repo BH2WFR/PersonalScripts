@@ -6,7 +6,7 @@ from typing import cast
 from pymupdf import mupdf
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import *
-from utils.qt_widgets import NoWheelComboBox, configure_qt_application, with_cjk_fallbacks
+from utils.qt_widgets import NoWheelComboBox, configure_qt_application, monospace_ui_font
 from ..common.file_actions import choose_pdf_output
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
@@ -243,8 +243,7 @@ class MetadataWindow(QtWidgets.QWidget):
         self.properties = Properties()
         self.properties.edit_titles.clicked.connect(self._edit_titles)
         self.xml = QtWidgets.QPlainTextEdit()
-        fixed_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
-        self.xml.setFont(with_cjk_fallbacks(fixed_font))
+        self.xml.setFont(monospace_ui_font())
         self.xml.setPlaceholderText("Enter an XMP packet in RDF/XML.")
         self.options = OutputOptions()
         self.tabs.addTab(self.properties, "Document properties")

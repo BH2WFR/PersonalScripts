@@ -366,6 +366,14 @@ def _launch_endpoint(name: str, hollow: bool) -> str:
 
 def run(*, hollow: bool = False) -> int:
     """Elect a primary process or ask the existing one to open another block."""
+    if sys.platform == "darwin" and QApplication.instance() is None:
+        from utils.macos_windows import nonactivating_qt_session
+        with nonactivating_qt_session():
+            return _run_session(hollow)
+    return _run_session(hollow)
+
+
+def _run_session(hollow: bool) -> int:
     existing = QApplication.instance()
     app = existing if isinstance(existing, QApplication) else QApplication(sys.argv[:1])
     if sys.platform == "linux":

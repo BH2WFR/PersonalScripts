@@ -6,6 +6,7 @@ After context compaction, reread this file before project work.
 
 ## Project baseline
 
+- If a project instruction conflicts with a practical requirement or the current project, is outdated, or has a better alternative, raise it with the user, explain why, and discuss how to revise it.
 - Target Python 3.13+; the project development environment is Conda `base`.
 - Project text files use UTF-8 without BOM. Preserve existing line endings;
   new cross-platform files use LF, while Windows-only scripts may use CRLF.
@@ -28,6 +29,7 @@ After context compaction, reread this file before project work.
 - Root `run-script.py` discovers and launches scripts; `package-project.py`
   packages the working tree and a shared portable runtime.
   Run `package-project.py` only when the user explicitly requests packaging. Use Conda for routine development and verification.
+- Some tools can also be launched by hotkeys handled by Karabiner-Elements on macOS or AutoHotkey on Windows.
 - Root `launcher-config.yaml` defines launcher discovery rules;
   `~/.config/PersonalScripts/launcher-config.patch.yaml` holds optional overrides. User
   `launcher.yaml` stores extra script roots. When using Conda, the shell wrappers
@@ -191,10 +193,13 @@ can print `HELP` directly. Private implementation modules do not need a CLI.
 - Simple GUI tools may use Tkinter; reserve PySide6 for complex interfaces.
   Every PySide6 tool must call `configure_qt_application(application)` from
   `utils.qt_widgets` before creating widgets, including with a reused application.
-  It configures Fusion, font fallback for simplified/traditional Chinese,
-  Japanese and Korean, system glyph fallback for other scripts, and wheel guards.
-  Use `with_cjk_fallbacks(font)` for custom UI font families and the shared
-  [no-wheel form controls](utils/docs/qt.md) for Qt inputs.
+  It configures Fusion Style, the default UI font, glyph fallbacks and wheel guards.
+  Use the shared [no-wheel form controls](utils/docs/qt.md) for Qt inputs.
+- Centralize default and monospaced GUI fonts and regional CJK fallback order.
+  Qt controls inherit the configured application font or use `monospace_ui_font()`
+  from `utils.qt_widgets`; it uses the UI size on macOS and the system fixed-font
+  size elsewhere. Keep font families and fallback lists out of individual tools.
+  Tk uses `TkDpi.font()` and AppKit uses native system fonts and glyph fallback.
 - In scrollable containers, every combo box and spin box must ignore wheel
   input by default, even when focused, so scrolling the container preserves
   the current selection or value. Shared setup calls `install_no_wheel_controls`

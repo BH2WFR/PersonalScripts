@@ -8,10 +8,14 @@ Implementations: [qt_widgets.py](../qt_widgets.py) and [qt_images.py](../qt_imag
 
 | Need | Use |
 | --- | --- |
-| Show a no-focus tool window | `show_nonactivating_tool(widget)` shows a configured tool window and applies the native Windows nonactivation style before display. Screen Mask and Auto Typer use it to preserve the typing target. |
+| Show an interactive tool window | `show_foreground_tool(widget)` shows or restores the window and requests keyboard focus. On macOS it makes a one-time activation request 100 ms after showing the window. Capture any source window or selection before calling it. |
+| Show a no-focus tool window | `show_nonactivating_tool(widget)` shows a configured tool window and preserves the typing target. It applies the native Windows nonactivation style before display and raises the panel on macOS. |
+| Raise a native Cocoa window | `utils.macos_windows.order_window_front(window, activate=...)` restores a minimized NSWindow and raises it. Use `True` for interactive windows and `False` for nonactivating panels. Both Qt helpers reuse it on Cocoa with PyObjC installed. |
+| Start a standalone macOS Qt overlay | Enter `utils.macos_windows.nonactivating_qt_session()` before creating QApplication and keep the context through the event loop so Qt startup also preserves the source application's focus. |
 | Show feedback near the mouse | `show_cursor_tooltip(text, duration_ms=..., parent=None)` displays a timed Qt tooltip at the current global cursor position and preserves keyboard focus. Import it from `utils.qt_widgets` and call it on the GUI thread. |
 | Set up a PySide6 tool | `configure_qt_application(application, style="Fusion")` applies the style, CJK fallback families and wheel guards. Pass a Fusion-based proxy style when the tool supplies one. |
 | Customize an editor or label font | `with_cjk_fallbacks(font) -> QFont` returns a copy with installed Chinese, Japanese and Korean fallbacks appended to the requested families. Size, weight and style hint are preserved. |
+| Use a monospaced UI font | `monospace_ui_font() -> QFont` uses the configured application size on macOS and the system fixed-font size on Windows and Linux. It prefers Consolas, then the platform fixed family, Menlo and DejaVu Sans Mono, with the shared regional glyph fallbacks. |
 | Qt inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
 
 ## Clipboard file paths
@@ -68,7 +72,8 @@ The following conventions apply only to PySide6 tools.
 Call `configure_qt_application(application)` before creating any widgets, including
 when reusing an application. Controls and dialogs inherit the application font.
 For bold labels, derive a QFont from the widget and use `setBold(True)` to retain
-the family list. Apply `with_cjk_fallbacks` when selecting a different UI font.
+the family list. Use `monospace_ui_font()` for fixed-width controls. Both
+font roles use `with_cjk_fallbacks` to select the regional fallback order.
 
 Traditional Chinese, Japanese and Korean Qt locales prioritize their regional
 fallback families. Other locales prioritize simplified Chinese. Shared ideographs

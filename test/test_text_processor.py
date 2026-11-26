@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools/input-and-text"))
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFrame, QPushButton, QPlainTextEdit, QSpinBox, QTabWidget,
 )
@@ -135,6 +135,16 @@ class WindowTests(unittest.TestCase):
         self.enterContext(patch.object(ConfigStore, "directory", return_value=directory))
         self.window = TextProcessor()
         self.addCleanup(self.window.close)
+
+    def test_editor_font_sizes(self) -> None:
+        fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        fixed_font.setPointSizeF(self.window.font().pointSizeF() - 2)
+        with patch.object(QFontDatabase, "systemFont", return_value=fixed_font):
+            window = TextProcessor()
+        self.addCleanup(window.close)
+        expected = window.font() if sys.platform == "darwin" else fixed_font
+        for editor in (window.source, window.result):
+            self.assertEqual(editor.document().defaultFont().pointSizeF(), expected.pointSizeF())
 
     def test_settings_persist_across_windows_and_merge_independent_changes(self) -> None:
         store = ConfigStore("text-processor.yaml")

@@ -15,7 +15,7 @@ from typing import Callable, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils.qt_images import copy_image_to_clipboard
 from utils.qt_widgets import (
-    NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application, with_cjk_fallbacks,
+    NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application, monospace_ui_font,
 )
 
 from utils import *
@@ -230,11 +230,7 @@ class BookmarksWindow(LlmWindow):
         left.addWidget(self.yaml_label)
         self.yaml = QtWidgets.QPlainTextEdit()
         self.yaml.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
-        editor_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
-        if sys.platform == "win32":
-            editor_font.setFamilies(["Consolas", editor_font.family()])
-        editor_font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
-        self.yaml.setFont(with_cjk_fallbacks(editor_font))
+        self.yaml.setFont(monospace_ui_font())
         self.yaml.setPlaceholderText('- {page: 1, level: 1, index: "", title: "Introduction"}')
         self.yaml.textChanged.connect(self._yaml_changed)
         self.result_tabs = QtWidgets.QTabWidget()

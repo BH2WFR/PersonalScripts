@@ -7,6 +7,36 @@ import sys
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
+def _order_cocoa_window(widget: QtWidgets.QWidget, *, activate: bool) -> None:
+    try:
+        import objc
+        from .macos_windows import order_window_front
+    except ImportError:
+        # Standalone Qt editors also support installations without PyObjC.
+        widget.raise_()
+        if activate:
+            widget.activateWindow()
+        return
+    view = objc.objc_object(c_void_p=int(widget.winId()))  # pyright: ignore[reportAttributeAccessIssue]
+    order_window_front(view.window(), activate=activate)
+
+
+def show_foreground_tool(widget: QtWidgets.QWidget) -> None:
+    """Show or restore an interactive window and give it keyboard focus."""
+    if widget.isMinimized():
+        widget.setWindowState(widget.windowState() & ~QtCore.Qt.WindowState.WindowMinimized)
+    widget.show()
+    if QtGui.QGuiApplication.platformName() == "cocoa":
+        def activate() -> None:
+            if widget.isVisible() and not widget.isMinimized():
+                _order_cocoa_window(widget, activate=True)
+
+        QtCore.QTimer.singleShot(100, widget, activate)
+    else:
+        widget.raise_()
+        widget.activateWindow()
+
+
 def show_nonactivating_tool(widget: QtWidgets.QWidget) -> None:
     """Show a no-focus tool window, applying the native Windows style before mapping.
 
@@ -28,6 +58,8 @@ def show_nonactivating_tool(widget: QtWidgets.QWidget) -> None:
         if not api.SetWindowLongW(hwnd, -20, style | 0x08000000) and ctypes.get_last_error():  # WS_EX_NOACTIVATE
             raise ctypes.WinError(ctypes.get_last_error())
     widget.show()
+    if QtGui.QGuiApplication.platformName() == "cocoa":
+        _order_cocoa_window(widget, activate=False)
 
 
 def show_cursor_tooltip(text: str, *, duration_ms: int, parent: QtWidgets.QWidget | None = None) -> None:
@@ -151,6 +183,16 @@ def with_cjk_fallbacks(font: QtGui.QFont) -> QtGui.QFont:
     if fallbacks:
         result.setFamilies([*families, *fallbacks])
     return result
+
+
+def monospace_ui_font() -> QtGui.QFont:
+    """Return the shared fixed-width UI font with regional glyph fallbacks."""
+    fixed = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+    # Cocoa's fixed-font preset is smaller than the surrounding controls.
+    font = QtWidgets.QApplication.font() if sys.platform == "darwin" else fixed
+    font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+    font.setFamilies(list(dict.fromkeys(("Consolas", fixed.family(), "Menlo", "DejaVu Sans Mono"))))
+    return with_cjk_fallbacks(font)
 
 
 def configure_qt_application(application: QtWidgets.QApplication, style: str | QtWidgets.QStyle = "Fusion") -> None:

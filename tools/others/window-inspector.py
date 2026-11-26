@@ -26,8 +26,8 @@ Usage:
   python window-inspector.py [--top]
   --pid <PID>  macOS only. Inspect a specific running application.
   --top  Keep the inspector above other windows on startup.
-  --startup-window <HWND> <PID>  Windows only. Inspect the window with the
-    given handle and owning process ID. Supply both as decimal integers.
+  --startup-window <ID> <PID>  Inspect the captured window by its Windows
+    HWND or macOS WindowServer ID and process ID. Use 0 0 to open blank.
 """
 
 
@@ -40,7 +40,9 @@ def main() -> int:
         parser.add_argument("--startup-window", nargs=2, type=int, metavar=("HWND", "PID"))
         parser.add_argument("--_console-pages", type=int, help=argparse.SUPPRESS)
     elif sys.platform == "darwin":
-        parser.add_argument("--pid", type=int)
+        target = parser.add_mutually_exclusive_group()
+        target.add_argument("--pid", type=int)
+        target.add_argument("--startup-window", nargs=2, type=int, metavar=("ID", "PID"))
     args = parser.parse_args()
     if sys.platform not in ("win32", "darwin"):
         print("Window Inspector requires Windows or macOS.", file=sys.stderr)
@@ -69,14 +71,26 @@ def main() -> int:
         else:
             from window_inspector import macos as backend
 
-            foreground = backend.application_target(args.pid) if args.pid is not None else backend.foreground()
-            if args.pid is not None and foreground is None:
-                parser.error("No running application has that PID.")
+            if args.startup_window is not None:
+                from window_inspector.model import Window
+
+                number, pid = args.startup_window
+                if (number, pid) != (0, 0) and not (0 < number < 2**32 and pid > 0):
+                    parser.error("--startup-window requires a positive window ID and PID, or 0 0.")
+                foreground = Window(number, pid, "", "") if number else None
+            elif args.pid is not None:
+                foreground = backend.application_target(args.pid)
+                if foreground is None:
+                    parser.error("No running application has that PID.")
+            else:
+                foreground = backend.foreground()
         System.enable_dpi_awareness()
         from window_inspector.view import run
     except ImportError as exc:
         print(f"Window Inspector could not load {exc}. Install the packages in requirements.txt.", file=sys.stderr)
         return 1
+    if sys.platform == "darwin" and args.startup_window is not None:
+        return run(backend, foreground, top=args.top, launched_in_foreground=True)
     return run(backend, foreground, top=args.top)
 
 

@@ -1,7 +1,6 @@
 """CoreGraphics typing and a native nonactivating panel for the shared Qt controls."""
 
 from functools import cache
-import os
 from typing import Any, cast
 
 import AppKit  # pyright: ignore[reportMissingImports]
@@ -12,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from utils import Keyboard, System
 from utils.macos_input import frontmost_target, post_key as _post
+from utils.macos_windows import nonactivating_qt_session, order_window_front
 from .panel import run
 from .strokes import ascii_key
 
@@ -116,20 +116,11 @@ def show_panel(widget: QWidget) -> tuple[object, QWindow]:
     view.setAutoresizingMask_(A.NSViewWidthSizable | A.NSViewHeightSizable)
     widget.show()
     panel.center()
-    panel.orderFrontRegardless()
+    order_window_front(panel, activate=False)
     return panel, host
 
 
 def run_macos() -> int:
     """Keep Cocoa's Qt launch delegate from activating the process at startup."""
-    variable = "QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"
-    previous = os.environ.get(variable)
-    os.environ[variable] = "1"
-    try:
-        A.NSApplication.sharedApplication().setActivationPolicy_(A.NSApplicationActivationPolicyAccessory)
+    with nonactivating_qt_session():
         return run(MacSender(), show_panel)
-    finally:
-        if previous is None:
-            del os.environ[variable]
-        else:
-            os.environ[variable] = previous

@@ -195,7 +195,7 @@ class ScreenKeyboard:
             x, y, w, h = bounds[name]
             points = key_size if name in main else 8
             if isinstance(widget, tk.Label):
-                widget.configure(font=("Segoe UI", -self.dpi.pixels(points * 96 / 72)))
+                widget.configure(font=self.dpi.font(points=points))
             widget.place(x=x, y=y, width=w, height=h)
 
     def rescaled(self) -> None:

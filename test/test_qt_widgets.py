@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 from utils.qt_widgets import (
     NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls,
-    configure_qt_application, with_cjk_fallbacks,
+    configure_qt_application, monospace_ui_font, with_cjk_fallbacks,
 )
 
 
@@ -53,6 +53,21 @@ class QtWidgetTests(unittest.TestCase):
                 self.assertEqual(font.styleHint(), original.styleHint())
                 self.assertEqual(font.pointSize(), original.pointSize())
                 self.assertEqual(with_cjk_fallbacks(font), font)
+
+    def test_monospace_ui_uses_platform_size_and_regional_fallback(self) -> None:
+        self.addCleanup(self.application.setFont, self.application.font())
+        self.application.setFont(QtGui.QFont("UI", 14))
+        fixed = QtGui.QFont("System Mono", 9)
+        self.enterContext(patch.object(QtGui.QGuiApplication, "platformName", return_value="offscreen"))
+        self.enterContext(patch.object(QtGui.QFontDatabase, "families", return_value=["Sarasa Mono SC"]))
+        self.enterContext(patch.object(QtGui.QFontDatabase, "systemFont", side_effect=lambda role: QtGui.QFont(fixed)))
+        for platform, points in (("darwin", 14), ("win32", 9), ("linux", 9)):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform):
+                font = monospace_ui_font()
+                self.assertEqual(font.pointSizeF(), points)
+                self.assertEqual(font.styleHint(), QtGui.QFont.StyleHint.Monospace)
+                self.assertEqual(font.families()[:2], ["Consolas", "System Mono"])
+                self.assertIn("Sarasa Mono SC", font.families())
 
     def test_application_fallback_reaches_new_dialog_and_editor(self) -> None:
         self.addCleanup(self.application.setFont, self.application.font())

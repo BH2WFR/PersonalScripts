@@ -6,7 +6,7 @@ import re
 import sys
 
 from PySide6.QtCore import QEvent, QMimeData, QObject, Qt, Signal
-from PySide6.QtGui import QDropEvent, QFontDatabase, QFont, QTextCursor
+from PySide6.QtGui import QDropEvent, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QStyle, QTabWidget, QVBoxLayout, QWidget,
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from utils import ConfigStore, path_text as paths, text_transforms as transforms
 from utils.qt_clipboard import local_file_paths, read_clipboard_paths
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, with_cjk_fallbacks
+from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, monospace_ui_font
 
 
 type Transform = Callable[[str], str]
@@ -132,10 +132,7 @@ class TextProcessor(QWidget):
             target.installEventFilter(self)
         self.source.setAccessibleName("Input")
         self.result.setAccessibleName("Result")
-        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        font.setFamilies(["Consolas", font.family(), "Menlo", "DejaVu Sans Mono"])
-        font = with_cjk_fallbacks(font)
+        font = monospace_ui_font()
         for editor in (self.source, self.result):
             editor.setFont(font)
         wrap = QCheckBox("Word wrap")
@@ -203,7 +200,7 @@ class TextProcessor(QWidget):
             else:
                 self.source.setPlainText("\n".join(native_paths) if native_paths else text)
                 self._sync_result_from_input()
-            self.source.setFocus()
+        self.source.setFocus()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Route file drops on the window and its editors to the end of Input."""

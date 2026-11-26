@@ -47,6 +47,13 @@ class StartupTests(unittest.TestCase):
                 self.assertEqual(main(), 0)
                 view.run.assert_called_with(backend, original, top=False)
                 elevate.assert_not_called()
+                backend.reset_mock()
+                for number, pid, expected in [(42, 123, original), (0, 0, None)]:
+                    with patch.object(sys, "argv", [entry, "--startup-window", str(number), str(pid), "--top"]):
+                        self.assertEqual(main(), 0)
+                    view.run.assert_called_with(backend, expected, top=True, launched_in_foreground=True)
+                backend.foreground.assert_not_called()
+                backend.application_target.assert_not_called()
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows regional settings")
@@ -194,8 +201,7 @@ class InspectorTests(unittest.TestCase):
         self.ui._pin(False)
         self.assertFalse(handle.flags() & flag)
         self.assertTrue(self.ui.pin.isChecked())
-        with patch("window_inspector.macos.activate_inspector"):
-            self.ui._finish_preview()
+        self.ui._finish_preview()
         self.assertTrue(handle.flags() & flag)
         self.assertTrue(handle.isVisible())
         self.assertEqual(visibility.count(), 0)

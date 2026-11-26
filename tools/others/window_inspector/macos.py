@@ -324,12 +324,6 @@ def check_active(target: Window) -> None:
         raise RuntimeError("The application activated a different window.")
 
 
-def activate_inspector() -> None:
-    """Bring a Launch Services background launch forward after capturing its target."""
-    A.NSRunningApplication.currentApplication().activateWithOptions_(
-        A.NSApplicationActivateIgnoringOtherApps | A.NSApplicationActivateAllWindows)
-
-
 def configure_edge(view_id: int) -> None:
     """Keep the outline visible over floating panels and fullscreen windows in this Space."""
     panel = ObjC.objc_object(c_void_p=view_id).window()

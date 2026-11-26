@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QMessageBox, QPushButton, QSizePolicy, QSplitter, QToolBar, QTreeWidget,
     QAbstractItemView, QTabWidget, QToolTip, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, show_cursor_tooltip
+from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, show_cursor_tooltip, show_foreground_tool
 
 from .model import (
     Backend, CONTROLS_HINT, INITIAL_HINT, LOADED_HINT, MIN_OPACITY_PERCENT, ProcessInfo, Properties, PropertyGroup, Rows, Window,
@@ -332,11 +332,7 @@ class Inspector(QWidget):
 
     def _restore_focus(self) -> None:
         self._pin(self.pin.isChecked())
-        if IS_MACOS:
-            from .macos import activate_inspector
-            activate_inspector()
-        self.raise_()
-        self.activateWindow()
+        show_foreground_tool(self)
 
     def _finish_preview(self) -> None:
         self.preview_tick.stop()
@@ -824,15 +820,16 @@ class Inspector(QWidget):
         super().closeEvent(event)
 
 
-def run(backend: Backend, foreground: Window | None, *, top: bool = False) -> int:
+def run(backend: Backend, foreground: Window | None, *, top: bool = False, launched_in_foreground: bool = False) -> int:
     """Open the inspector using the window captured before Qt takes focus."""
     app = QApplication.instance() or QApplication(sys.argv[:1])
     assert isinstance(app, QApplication)
     configure_qt_application(app)
     inspector = Inspector(backend, top=top)
+    if launched_in_foreground:
+        inspector.show()
     if foreground is not None:
         inspector.guard(partial(inspector.load, foreground))
-    inspector.show()
-    if IS_MACOS:
-        QTimer.singleShot(100, inspector, inspector._restore_focus)
+    if not launched_in_foreground:
+        show_foreground_tool(inspector)
     return app.exec()

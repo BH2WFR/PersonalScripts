@@ -11,6 +11,7 @@ from Foundation import NSRect, NSSize  # pyright: ignore[reportMissingImports, r
 import objc  # pyright: ignore[reportMissingImports]
 
 from utils import System
+from utils.macos_windows import order_window_front
 from .layout import (DEFAULT_SIZE, EXTRA_HEIGHT, MAC_EXTENDED, MAC_LABELS, MAC_ROWS, MINIMUM_SIZE, NUMPAD_KEYS,
                      TOOLBAR, TOOLBAR_DIVIDERS, TOOLBAR_TIPS, WINDOW_TITLE, frames, mac_frame_near_pointer, panel_width)
 from .macos import MacOutput
@@ -379,13 +380,11 @@ class PanelController(F.NSObject):
     @objc.python_method
     def show_near_pointer(self) -> None:
         panel = self.panel
-        if panel.isMiniaturized():
-            panel.deminiaturize_(None)
         mouse = A.NSEvent.mouseLocation()
         screen = next((s for s in A.NSScreen.screens() if A.NSPointInRect(mouse, s.frame())), A.NSScreen.mainScreen())
         frame = mac_frame_near_pointer(mouse, screen.visibleFrame(), panel.frame().size)
         panel.setFrame_display_(frame, True)
-        panel.orderFrontRegardless()
+        order_window_front(panel, activate=False)
 
     def windowWillClose_(self, note) -> None:
         self.perform(self.save_window)
