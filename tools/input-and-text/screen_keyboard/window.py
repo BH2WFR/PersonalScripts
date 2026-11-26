@@ -47,7 +47,6 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
-SWP_FRAMECHANGED = 0x0020
 SWP_SHOWWINDOW = 0x0040
 HWND_TOPMOST = -1
 MONITOR_DEFAULTTONEAREST = 2
@@ -133,13 +132,6 @@ class NonactivatingWindow:
         self.on_resize_end = on_resize_end
         self.is_resizing = False
         self.commands: SimpleQueue[Callable[[], None] | None] = SimpleQueue()
-        # Tk 首次映射会主动 SetActiveWindow；先在禁用状态完成映射。
-        root.attributes("-disabled", True)
-        root.attributes("-topmost", True)
-        root.deiconify()
-        root.update_idletasks()
-        root.withdraw()
-        root.attributes("-disabled", False)
         self.hwnd = U.GetAncestor(root.winfo_id(), GA_ROOT)
         style = U.GetWindowLongW(self.hwnd, GWL_STYLE)
         U.SetWindowLongW(self.hwnd, GWL_STYLE, style & ~WS_MINIMIZEBOX)
@@ -234,22 +226,35 @@ class NonactivatingWindow:
                                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE):
                 raise C.WinError(C.get_last_error())
 
-    def show(self) -> None:
-        self.root.update_idletasks()
-        self.place_near_cursor()
-        U.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
-        # 显示和定位后再提升 Z 序，盖过已存在的置顶窗口，保留输入目标焦点。
-        if not U.SetWindowPos(self.hwnd, W.HWND(HWND_TOPMOST), 0, 0, 0, 0,
-                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED):
-            raise C.WinError(C.get_last_error())
+    @staticmethod
+    def cursor_position() -> W.POINT:
+        """Read the pointer in the same physical coordinates used for placement."""
+        previous = U.SetThreadDpiAwarenessContext(W.HANDLE(PER_MONITOR_AWARE_V2))
+        try:
+            point = W.POINT()
+            if not U.GetCursorPos(C.byref(point)):
+                raise C.WinError(C.get_last_error())
+            return point
+        finally:
+            U.SetThreadDpiAwarenessContext(previous)
 
-    def place_near_cursor(self, *, reopen: bool = False) -> None:
+    def show(self, point: W.POINT) -> None:
+        # Map the disabled, transparent root without deiconify() taking focus.
+        # Deliver Tk's pending map/configure events before exposing the controls.
+        self.root.state("normal")
+        self.root.update()
+        self.place_near_cursor(point)
+        self.root.update_idletasks()
+        self.redraw()
+        self.root.attributes("-disabled", False, "-alpha", 1.0)
+
+    def place_near_cursor(self, point: W.POINT, *, reopen: bool = False) -> None:
         # 在同一 DPI 上下文中读取鼠标、外框及工作区，兼容副屏负坐标和混合缩放。
         previous = U.SetThreadDpiAwarenessContext(W.HANDLE(PER_MONITOR_AWARE_V2))
         try:
-            point, rect = W.POINT(), W.RECT()
-            U.GetCursorPos(C.byref(point))
-            U.GetWindowRect(self.hwnd, C.byref(rect))
+            rect = W.RECT()
+            if not U.GetWindowRect(self.hwnd, C.byref(rect)):
+                raise C.WinError(C.get_last_error())
             monitor = U.MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST)
             info = MonitorInfo(size=C.sizeof(MonitorInfo))
             if not U.GetMonitorInfoW(monitor, C.byref(info)):

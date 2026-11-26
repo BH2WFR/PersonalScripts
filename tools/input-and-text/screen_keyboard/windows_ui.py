@@ -17,8 +17,10 @@ class ScreenKeyboard:
                  force_layer: LeftKeyMode | None = None) -> None:
         self.reopen_requested = reopen_requested
         System.enable_dpi_awareness()
+        pointer = NonactivatingWindow.cursor_position()
         self.window = root = tk.Tk()
         root.withdraw()
+        root.attributes("-disabled", True, "-alpha", 0.0, "-topmost", True)
         root.title(WINDOW_TITLE)
         root.configure(background="#f1f3f5")
         self.dpi = TkDpi(root)
@@ -84,9 +86,9 @@ class ScreenKeyboard:
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
         # Resolve the cursor monitor's DPI before converting the stored logical size.
-        self.native.place_near_cursor()
+        self.native.place_near_cursor(pointer)
         self.resize(saved.width, saved.height, logical=True)
-        self.native.show()
+        self.native.show(pointer)
         self.poll_locks()
 
     def popup(self, event: tk.Event | None = None) -> None:
@@ -166,7 +168,7 @@ class ScreenKeyboard:
     def poll_locks(self) -> None:
         if self.reopen_requested and (mode := self.reopen_requested()) is not None:
             self.perform(lambda: self.state.apply_launch_mode(None if mode is LeftKeyMode.NATIVE else mode))
-            self.perform(lambda: self.native.place_near_cursor(reopen=True))
+            self.perform(lambda: self.native.place_near_cursor(self.native.cursor_position(), reopen=True))
         if self.state.pressed is not None or self.state.held:
             self.perform(self.state.check_target)
         current = self.state.output.locks()

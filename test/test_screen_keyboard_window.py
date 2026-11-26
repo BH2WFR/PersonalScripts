@@ -26,6 +26,43 @@ def _relaunch_keyboard(event_name: str) -> None:
 
 @unittest.skipUnless(sys.platform == "win32", "Win32 window messages")
 class WindowTests(unittest.TestCase):
+    def test_first_visible_frame_is_ready_at_the_pointer(self) -> None:
+        import tkinter as tk
+        from screen_keyboard import window, windows_ui
+        from utils import ConfigStore, System
+
+        System.enable_dpi_awareness()
+        target = tk.Tk()
+        self.addCleanup(target.destroy)
+        target.update()
+        foreground = window.U.GetForegroundWindow()
+        monitor = window.U.MonitorFromPoint(wintypes.POINT(0, 0), window.MONITOR_DEFAULTTONEAREST)
+        info = window.MonitorInfo(size=ctypes.sizeof(window.MonitorInfo))
+        self.assertTrue(window.U.GetMonitorInfoW(monitor, ctypes.byref(info)))
+        work = info.work
+        pointer = wintypes.POINT(work.right - 1, work.bottom - 1)
+        root = tk.Tk()
+        root.withdraw()
+        map_opacities: list[float] = []
+        root.bind("<Map>", lambda event: map_opacities.append(float(root.attributes("-alpha")))
+                  if event.widget is root else None, add=True)
+        with (patch.object(ConfigStore, "load", return_value={}), patch.object(windows_ui.tk, "Tk", return_value=root),
+              patch.object(window.NonactivatingWindow, "cursor_position", return_value=pointer) as cursor):
+            keyboard = windows_ui.ScreenKeyboard()
+            self.addCleanup(keyboard.close)
+            cursor.assert_called_once_with()
+            self.assertTrue(map_opacities)
+            self.assertEqual(set(map_opacities), {0.0})
+            self.assertEqual(float(root.attributes("-alpha")), 1.0)
+            self.assertTrue(keyboard.buttons["Layer"].winfo_viewable())
+            self.assertGreater(keyboard.buttons["Layer"].winfo_width(), 1)
+            rect = wintypes.RECT()
+            self.assertTrue(window.U.GetWindowRect(keyboard.native.hwnd, ctypes.byref(rect)))
+            self.assertEqual((rect.right, rect.bottom), (pointer.x - window.CURSOR_GAP, pointer.y - window.CURSOR_GAP))
+            root.update()
+            self.assertEqual(keyboard.native.position(), (rect.left, rect.top))
+            self.assertEqual(window.U.GetForegroundWindow(), foreground)
+
     def test_duplicate_process_moves_existing_window(self) -> None:
         from screen_keyboard import window
         from screen_keyboard.windows_ui import ScreenKeyboard
@@ -248,7 +285,8 @@ class WindowTests(unittest.TestCase):
                         U.SendMessageW(hwnd, 0x02E0, dpi | dpi << 16, ctypes.addressof(rect))
                         root.update_idletasks()
                         self.assertEqual(keyboard.dpi.scale, dpi / 96)
-                        self.assertEqual(int(root.tk.splitlist(keyboard.status.cget("font"))[1]), -round(8 * dpi / 72))
+                        size = root.tk.call("font", "configure", keyboard.status.cget("font"), "-size")
+                        self.assertEqual(int(size), -keyboard.dpi.pixels(round(8 * 96 / 72)))
                     keyboard.reset_size()
                     root.update()
                     self.assertEqual((root.winfo_width(), root.winfo_height()), tuple(keyboard.dpi.pixels(n) for n in DEFAULT_SIZE))
