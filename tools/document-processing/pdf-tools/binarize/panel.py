@@ -1,81 +1,43 @@
 """Extensible settings tabs; numeric edits commit on focus loss or mouse release."""
 
-from dataclasses import dataclass
 from typing import cast
-from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
+from PySide6 import QtCore, QtWidgets
+from utils.qt_styles import set_text_style
 
 from ..common.protocol import Json
 from . import regions
 from .project import Config
+from .ui_settings import Ui_SettingsPanel
 
 
-@dataclass(frozen=True)
-class Field:
-    """Presentation metadata; validation remains in the canonical engine settings."""
+CHOICES = {
+    "dpi_policy": (("cap", "Use native image DPI"), ("target", "Render at target DPI")),
+    "mode": (("fixed", "Fixed threshold"), ("sauvola", "Sauvola")),
+    "regions.profile": (("text-first", "Text first"), ("balanced", "Balanced"), ("image-first", "Image first")),
+    "regions.mode": (("keep", "Keep original colors / grayscale"), ("gray8", "Gray8 - remove color"), ("gray2", "Gray2 - 4 levels"), ("gray4", "Gray4 - 16 levels"), ("color2", "Color2 - 4 colors"), ("color4", "Color4 - 16 colors"), ("color8", "Color8 - 256 colors")),
+    "regions.codec": (("jpeg", "JPEG"), ("flate", "Lossless Flate")),
+    "regions.dither": (("none", "None"), ("ordered", "Ordered"), ("diffusion", "Error diffusion")),
+    "regions.color_text_mode": (("follow", "Follow illustration settings"), ("color4", "Color4 - 16 colors"), ("color8", "Color8 - 256 colors")),
+}
 
-    key: str
-    label: str
-    tab: str
-    minimum: float = 0
-    maximum: float = 1
-    step: float = 1
-    choices: tuple[tuple[str, str], ...] = ()
-    slider: bool = False
-
-
-FIELDS: tuple[Field, ...] = (
-    Field("dpi", "Sampling target (DPI)", "Text", 36, 1200),
-    Field("dpi_policy", "Below-target image sampling", "Text", choices=(
-        ("cap", "Use native image DPI"), ("target", "Render at target DPI"))),
-    Field("upscale", "Lanczos text enlargement", "Text", 1, 4),
-    Field("mode", "Method", "Text", choices=(("fixed", "Fixed threshold"), ("sauvola", "Sauvola"))),
-    Field("threshold", "Threshold", "Text", 1, 255, slider=True),
-    Field("window", "Sauvola window (odd)", "Text", 3, 501, 2),
-    Field("k", "Sauvola k", "Text", .01, 1, .01),
-    Field("levels", "Adjust black/white points", "Text"),
-    Field("black_point", "Black point", "Text", 0, 254),
-    Field("white_point", "White point", "Text", 1, 255),
-    Field("sharpen", "Unsharp mask", "Text"),
-    Field("sharpen_radius", "Sharpen radius", "Text", .1, 10, .1),
-    Field("sharpen_percent", "Sharpen amount (%)", "Text", 1, 500),
-    Field("regions.enabled", "Protect illustrations automatically", "Images"),
-    Field("regions.profile", "Detection preset", "Images", choices=(
-        ("text-first", "Text first"), ("balanced", "Balanced"), ("image-first", "Image first"))),
-    Field("regions.threshold", "Detection threshold", "Images", .1, 2, .05),
-    Field("regions.mode", "Protected image mode", "Images", choices=(
-        ("keep", "Keep original colors / grayscale"), ("gray8", "Gray8 - remove color"),
-        ("gray2", "Gray2 - 4 levels"), ("gray4", "Gray4 - 16 levels"),
-        ("color2", "Color2 - 4 colors"), ("color4", "Color4 - 16 colors"),
-        ("color8", "Color8 - 256 colors"))),
-    Field("regions.codec", "Crop compression", "Images", choices=(("jpeg", "JPEG"), ("flate", "Lossless Flate"))),
-    Field("regions.quality", "JPEG quality", "Images", 1, 95, slider=True),
-    Field("regions.dither", "Dithering", "Images", choices=(
-        ("none", "None"), ("ordered", "Ordered"), ("diffusion", "Error diffusion"))),
-    Field("regions.contrast", "Crop contrast (1 = off)", "Images", 1, 4, .1),
-    Field("regions.whiten", "Whiten image crop background", "Images"),
-    Field("regions.white_point", "Image crop white point", "Images", 1, 255, slider=True),
-    Field("regions.color_text_mode", "Colored text mode", "Images", choices=(
-        ("follow", "Follow illustration settings"), ("color4", "Color4 - 16 colors"),
-        ("color8", "Color8 - 256 colors"))),
-    Field("regions.color_text_contrast", "Text crop contrast (1 = off)", "Images", 1, 4, .1),
-    Field("regions.color_text_whiten", "Whiten text crop background", "Images"),
-    Field("regions.color_text_white_point", "Text crop white point", "Images", 1, 255, slider=True),
-    Field("regions.denoise", "Remove isolated binary specks", "Cleanup"),
-    Field("regions.denoise_area", "Maximum speck area at 240 DPI", "Cleanup", .1, 100, .5),
-    Field("regions.denoise_distance", "Distance from other ink", "Cleanup", 1, 100),
-    Field("regions.clean_background", "Clean shaded text (Sauvola)", "Cleanup"),
-    Field("vectors", "Vector colors: non-white to black", "Cleanup"),
-)
-
-GROUP_STARTS = {
-    "dpi": "Resolution", "mode": "Binarization", "levels": "Black / white points",
-    "sharpen": "Sharpening", "regions.enabled": "Region detection",
-    "regions.mode": "Protected image appearance", "regions.codec": "Compression",
-    "regions.dither": "Tone reproduction", "regions.denoise": "Binary speck removal",
-    "regions.color_text_mode": "Colored text",
-    "regions.whiten": "Image background",
-    "regions.clean_background": "Shaded text", "vectors": "Vector graphics",
+NUMBER_RANGES = {
+    "dpi": (36, 1200, 1),
+    "upscale": (1, 4, 1),
+    "threshold": (1, 255, 1),
+    "window": (3, 501, 2),
+    "k": (0.01, 1, 0.01),
+    "black_point": (0, 254, 1),
+    "white_point": (1, 255, 1),
+    "sharpen_radius": (0.1, 10, 0.1),
+    "sharpen_percent": (1, 500, 1),
+    "regions.threshold": (0.1, 2, 0.05),
+    "regions.quality": (1, 95, 1),
+    "regions.contrast": (1, 4, 0.1),
+    "regions.white_point": (1, 255, 1),
+    "regions.color_text_contrast": (1, 4, 0.1),
+    "regions.color_text_white_point": (1, 255, 1),
+    "regions.denoise_area": (0.1, 100, 0.5),
+    "regions.denoise_distance": (1, 100, 1),
 }
 
 TIPS = {
@@ -116,7 +78,7 @@ TIPS = {
 type Editor = QtWidgets.QCheckBox | QtWidgets.QComboBox | QtWidgets.QSpinBox | QtWidgets.QDoubleSpinBox
 
 
-class SettingsPanel(QtWidgets.QTabWidget):
+class SettingsPanel(QtWidgets.QTabWidget, Ui_SettingsPanel):
     """Edit a complete profile through grouped, dependency-aware controls.
 
     Signals:
@@ -135,102 +97,111 @@ class SettingsPanel(QtWidgets.QTabWidget):
         self.imported_regions = False
         self._loading = False
         self.editing = False
-        self.editors: dict[str, Editor] = {}
-        self.sliders: dict[str, QtWidgets.QSlider] = {}
-        self.labels: dict[str, QtWidgets.QLabel] = {}
+        self.setupUi(self)
+        self.editors: dict[str, Editor] = {
+            "dpi": self.dpi_editor,
+            "dpi_policy": self.dpi_policy_editor,
+            "upscale": self.upscale_editor,
+            "mode": self.mode_editor,
+            "threshold": self.threshold_editor,
+            "window": self.window_editor,
+            "k": self.k_editor,
+            "levels": self.levels_editor,
+            "black_point": self.black_point_editor,
+            "white_point": self.white_point_editor,
+            "sharpen": self.sharpen_editor,
+            "sharpen_radius": self.sharpen_radius_editor,
+            "sharpen_percent": self.sharpen_percent_editor,
+            "regions.enabled": self.regions_enabled_editor,
+            "regions.profile": self.regions_profile_editor,
+            "regions.threshold": self.regions_threshold_editor,
+            "regions.mode": self.regions_mode_editor,
+            "regions.codec": self.regions_codec_editor,
+            "regions.quality": self.regions_quality_editor,
+            "regions.dither": self.regions_dither_editor,
+            "regions.contrast": self.regions_contrast_editor,
+            "regions.whiten": self.regions_whiten_editor,
+            "regions.white_point": self.regions_white_point_editor,
+            "regions.color_text_mode": self.regions_color_text_mode_editor,
+            "regions.color_text_contrast": self.regions_color_text_contrast_editor,
+            "regions.color_text_whiten": self.regions_color_text_whiten_editor,
+            "regions.color_text_white_point": self.regions_color_text_white_point_editor,
+            "regions.denoise": self.regions_denoise_editor,
+            "regions.denoise_area": self.regions_denoise_area_editor,
+            "regions.denoise_distance": self.regions_denoise_distance_editor,
+            "regions.clean_background": self.regions_clean_background_editor,
+            "vectors": self.vectors_editor,
+        }
+        self.labels = {
+            "dpi": self.dpi_label,
+            "dpi_policy": self.dpi_policy_label,
+            "upscale": self.upscale_label,
+            "mode": self.mode_label,
+            "threshold": self.threshold_label,
+            "window": self.window_label,
+            "k": self.k_label,
+            "black_point": self.black_point_label,
+            "white_point": self.white_point_label,
+            "sharpen_radius": self.sharpen_radius_label,
+            "sharpen_percent": self.sharpen_percent_label,
+            "regions.profile": self.regions_profile_label,
+            "regions.threshold": self.regions_threshold_label,
+            "regions.mode": self.regions_mode_label,
+            "regions.codec": self.regions_codec_label,
+            "regions.quality": self.regions_quality_label,
+            "regions.dither": self.regions_dither_label,
+            "regions.contrast": self.regions_contrast_label,
+            "regions.white_point": self.regions_white_point_label,
+            "regions.color_text_mode": self.regions_color_text_mode_label,
+            "regions.color_text_contrast": self.regions_color_text_contrast_label,
+            "regions.color_text_white_point": self.regions_color_text_white_point_label,
+            "regions.denoise_area": self.regions_denoise_area_label,
+            "regions.denoise_distance": self.regions_denoise_distance_label,
+        }
+        self.sliders = {
+            "threshold": self.threshold_slider,
+            "regions.quality": self.regions_quality_slider,
+            "regions.white_point": self.regions_white_point_slider,
+            "regions.color_text_white_point": self.regions_color_text_white_point_slider,
+        }
         self._keys: dict[QtCore.QObject, str] = {}
-        self._forms: dict[str, QtWidgets.QFormLayout] = {}
-        values = self.config.values()
-        bodies: dict[str, QtWidgets.QVBoxLayout] = {}
-        for name in ("Text", "Images", "Cleanup"):
-            scroll = QtWidgets.QScrollArea()
-            scroll.setWidgetResizable(True)
-            body = QtWidgets.QWidget()
-            layout = QtWidgets.QVBoxLayout(body)
-            layout.setContentsMargins(4, 4, 4, 4)
-            layout.setSpacing(5)
-            bodies[name] = layout
-            scroll.setWidget(body)
-            self.addTab(scroll, name)
-        # ── create editors from the same field table ──
-        for spec in FIELDS:
-            if spec.key in GROUP_STARTS:
-                layout = bodies[spec.tab]
-                if layout.count():
-                    line = QtWidgets.QFrame()
-                    line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-                    layout.addWidget(line)
-                group = QtWidgets.QGroupBox(GROUP_STARTS[spec.key])
-                form = QtWidgets.QFormLayout(group)
-                form.setContentsMargins(7, 8, 7, 7)
-                form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-                form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
-                layout.addWidget(group)
-                self._forms[spec.tab] = form
-            original = values[spec.key]
-            editor: Editor
-            if spec.choices:
-                combo = NoWheelComboBox()
-                for value, label in spec.choices:
-                    combo.addItem(label, value)
-                combo.activated.connect(lambda _, key=spec.key: self._commit(key))
-                editor = combo
-            elif type(original) is bool:
-                check = QtWidgets.QCheckBox(spec.label)
-                check.toggled.connect(lambda _, key=spec.key: self._commit(key))
-                editor = check
+        for key, editor in self.editors.items():
+            editor.setToolTip(TIPS[key])
+            if key in self.labels:
+                self.labels[key].setToolTip(TIPS[key])
+            if isinstance(editor, QtWidgets.QComboBox):
+                for value, label in CHOICES[key]:
+                    editor.addItem(label, value)
+                # The scroll area measured the empty Designer combo. Refresh Qt's
+                # cached minimum size so long choices wrap their form rows correctly.
+                QtCore.QCoreApplication.sendEvent(editor, QtCore.QEvent(QtCore.QEvent.Type.StyleChange))
+                editor.activated.connect(lambda _, key=key: self._commit(key))
+            elif isinstance(editor, QtWidgets.QCheckBox):
+                editor.toggled.connect(lambda _, key=key: self._commit(key))
             else:
-                if type(original) is float or original is None:
-                    spin = NoWheelDoubleSpinBox()
-                    spin.setDecimals(2)
-                    spin.setRange(spec.minimum, spec.maximum)
-                    spin.setSingleStep(spec.step)
+                low, high, step = NUMBER_RANGES[key]
+                if isinstance(editor, QtWidgets.QSpinBox):
+                    editor.setRange(int(low), int(high))
+                    editor.setSingleStep(int(step))
                 else:
-                    spin = NoWheelSpinBox()
-                    spin.setRange(int(spec.minimum), int(spec.maximum))
-                    spin.setSingleStep(int(spec.step))
-                spin.setKeyboardTracking(False)
-                spin.lineEdit().textEdited.connect(self._editing_started)
-                spin.editingFinished.connect(lambda key=spec.key: self._commit(key))
-                spin.installEventFilter(self)
-                self._keys[spin] = spec.key
-                editor = spin
-            self.editors[spec.key] = editor
-            editor.setToolTip(TIPS[spec.key])
-            label = QtWidgets.QLabel(spec.label)
-            label.setToolTip(TIPS[spec.key])
-            self.labels[spec.key] = label
-            form = self._forms[spec.tab]
-            if isinstance(editor, QtWidgets.QCheckBox):
-                form.addRow(editor)
-            elif spec.slider:
-                row = QtWidgets.QWidget()
-                layout = QtWidgets.QHBoxLayout(row)
-                layout.setContentsMargins(0, 0, 0, 0)
-                slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-                slider.setRange(int(spec.minimum), int(spec.maximum))
-                spin = cast(QtWidgets.QSpinBox, editor)
-                slider.valueChanged.connect(spin.setValue)
-                spin.valueChanged.connect(slider.setValue)
-                slider.sliderReleased.connect(lambda key=spec.key: self._commit(key))
-                slider.sliderPressed.connect(self._editing_started)
-                slider.installEventFilter(self)
-                self._keys[slider] = spec.key
-                self.sliders[spec.key] = slider
-                layout.addWidget(slider, 1)
-                layout.addWidget(spin)
-                form.addRow(label, row)
-            else:
-                form.addRow(label, editor)
-        hint = QtWidgets.QLabel("Text backgrounds always use lossless CCITT Group 4.\nLow-depth crops use lossless Flate.")
-        hint.setWordWrap(True)
-        self._forms["Images"].addRow(hint)
-        self.error = QtWidgets.QLabel()
-        self.error.setWordWrap(True)
-        self.error.setStyleSheet("color: #c43b32;")
-        self._forms["Cleanup"].addRow(self.error)
-        for layout in bodies.values():
-            layout.addStretch()
+                    editor.setDecimals(2)
+                    editor.setRange(low, high)
+                    editor.setSingleStep(step)
+                editor.setKeyboardTracking(False)
+                editor.lineEdit().textEdited.connect(self._editing_started)
+                editor.editingFinished.connect(lambda key=key: self._commit(key))
+                editor.installEventFilter(self)
+                self._keys[editor] = key
+        for key, slider in self.sliders.items():
+            spin = cast(QtWidgets.QSpinBox, self.editors[key])
+            slider.setRange(spin.minimum(), spin.maximum())
+            slider.valueChanged.connect(spin.setValue)
+            spin.valueChanged.connect(slider.setValue)
+            slider.sliderReleased.connect(lambda key=key: self._commit(key))
+            slider.sliderPressed.connect(self._editing_started)
+            slider.installEventFilter(self)
+            self._keys[slider] = key
+        set_text_style(self.error, "red")
         self.set_config(self.config)
 
     def set_config(self, config: Config) -> None:

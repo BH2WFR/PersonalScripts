@@ -19,14 +19,14 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .coordinates import AxisCoordinates
-from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 from .data_model import Crop, Document, ImageMember, Limits, Selection, ViewMode, is_phase_view
 from .fourier import (TransformDirection, TransformNorm, TransformOptions,
                       TransformRange, TransformWindow)
 from .fourier_values import FourierValuePolicy, ValueReplacement
+from .ui_fourier_dialog import Ui_FourierDialog
 
 
-class FourierDialog(QtWidgets.QDialog):
+class FourierDialog(QtWidgets.QDialog, Ui_FourierDialog):
     """Collect transform settings for one stable source interpretation.
 
     Args:
@@ -51,6 +51,7 @@ class FourierDialog(QtWidgets.QDialog):
                  row: bool, index: int | None, parent: QtWidgets.QWidget | None = None,
                  *, limits: Limits = Limits()) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.document, self.selection, self.crop = document, selection, crop
         self.limits = limits
         self._apply_bounds = False
@@ -58,25 +59,15 @@ class FourierDialog(QtWidgets.QDialog):
         self._busy = False
         self._shape: tuple[int, ...] = ()
         self._source_axes: tuple[int, ...] = ()
-        self.setWindowTitle("Fourier transform")
         self.setModal(True)
-        self.resize(650, 710)
-        layout = QtWidgets.QVBoxLayout(self)
-        source = QtWidgets.QLabel(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}")
-        source.setWordWrap(True)
-        layout.addWidget(source)
-        self.settings = QtWidgets.QWidget()
-        form = QtWidgets.QFormLayout(self.settings)
-        layout.addWidget(self.settings)
-        self.direction = NoWheelComboBox()
+        source = self.form_source
+        source.setText(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}")
+        form = self.form_form
         for value in TransformDirection:
             if value == TransformDirection.FORWARD or document.is_complex:
                 self.direction.addItem(value.value, value)
-        self.direction.setToolTip("IFFT is available only for complex sources and always uses both real and imaginary parts.")
         if document.is_complex and document.transform is not None and document.transform.direction == TransformDirection.FORWARD:
             self.direction.setCurrentIndex(self.direction.findData(TransformDirection.INVERSE))
-        form.addRow("Operation", self.direction)
-        self.range = NoWheelComboBox()
         matrix = selection.mode == ViewMode.MATRIX
         self.range.addItem("Full 2D matrix" if matrix else "Full 1D signal", TransformRange.FULL)
         self.range.addItem("Cropped 2D matrix (X/Y + Z bounds)" if matrix else
@@ -85,9 +76,6 @@ class FourierDialog(QtWidgets.QDialog):
             identity = f"{'Row' if row else 'Column'} {index}"
             self.range.addItem(f"Full 1D Slice — {identity}", TransformRange.FULL_SLICE)
             self.range.addItem(f"Cropped 1D Slice — {identity} (X/Y + Z bounds)", TransformRange.SLICE)
-        self.range.setToolTip("Full scopes ignore current X/Y and value bounds. Cropped real-channel inputs use X/Y and Z bounds with the treatment below; full complex and phase inputs use X/Y only.")
-        form.addRow("Input range", self.range)
-        self.channel = NoWheelComboBox()
         for key in document.keys:
             if key not in (ImageMember.RGB_COLOR, ImageMember.RGBA_COLOR, ImageMember.MONO_COLOR):
                 self.channel.addItem(key, key)
@@ -96,93 +84,33 @@ class FourierDialog(QtWidgets.QDialog):
                      (ImageMember.MONO if ImageMember.MONO in document.keys else ImageMember.RGB_GRAY)
                      if document.key == ImageMember.MONO_COLOR else document.key)
         self.channel.setCurrentIndex(max(0, self.channel.findData(preferred)))
-        form.addRow("Numeric image channel", self.channel)
         form.setRowVisible(self.channel, document.is_image)
-        self.component = NoWheelComboBox()
         self.component.addItem("Full complex values (preserve phase)", False)
         self.component.addItem(f"Current display: {selection.component.value}", True)
-        form.addRow("Complex input", self.component)
         form.setRowVisible(self.component, np.iscomplexobj(document.array))
-        self.axes = NoWheelComboBox()
-        form.addRow("Transform axes", self.axes)
-        self.axis_fields: list[tuple[QtWidgets.QLabel, QtWidgets.QLineEdit, QtWidgets.QLineEdit, QtWidgets.QSpinBox, QtWidgets.QWidget]] = []
-        for axis in range(2):
-            label = QtWidgets.QLabel()
-            fields = QtWidgets.QWidget()
-            line = QtWidgets.QHBoxLayout(fields)
-            line.setContentsMargins(0, 0, 0, 0)
-            spacing = QtWidgets.QLineEdit("1")
-            spacing.setMaximumWidth(110)
-            spacing.setToolTip("Distance/time between samples. Scientific notation is accepted.")
-            unit = QtWidgets.QLineEdit("sample")
-            unit.setMaximumWidth(90)
-            size = NoWheelSpinBox()
+        self.axis_fields = [
+            (self.first_axis_label, self.first_spacing, self.first_unit, self.first_size, self.first_fields),
+            (self.second_axis_label, self.second_spacing, self.second_unit, self.second_size, self.second_fields),
+        ]
+        for _, _, _, size, _ in self.axis_fields:
             size.setRange(1, 2_147_483_647)
             size.setKeyboardTracking(False)
-            line.addWidget(QtWidgets.QLabel("Δ"))
-            line.addWidget(spacing)
-            line.addWidget(QtWidgets.QLabel("Unit"))
-            line.addWidget(unit)
-            line.addWidget(QtWidgets.QLabel("Output N"))
-            line.addWidget(size)
-            form.addRow(label, fields)
-            self.axis_fields.append((label, spacing, unit, size, fields))
             size.valueChanged.connect(self._summary)
-        self.norm = NoWheelComboBox()
         for value in TransformNorm:
             self.norm.addItem(value.value, value)
-        self.norm.setToolTip("backward: FFT unscaled, IFFT divided by N. ortho: both divided by sqrt(N). forward: FFT divided by N.")
-        form.addRow("Normalization", self.norm)
-        self.centered = QtWidgets.QCheckBox("Input spectrum is centered (fftshift)")
         self.centered.setChecked(True)
-        form.addRow(self.centered)
-        self.mean = QtWidgets.QCheckBox("Remove mean before FFT")
-        form.addRow(self.mean)
-        self.window_selector = NoWheelComboBox()
         for value in TransformWindow:
             self.window_selector.addItem(value.value, value)
-        self.window_selector.setToolTip("Periodic window, separately on each transformed axis. No amplitude compensation.")
-        form.addRow("Window", self.window_selector)
-        self.bounds = QtWidgets.QLabel()
-        self.bounds.setWordWrap(True)
-        form.addRow("Value bounds", self.bounds)
-        treatment_box = QtWidgets.QGroupBox("Special values")
-        self.treatment_form = QtWidgets.QFormLayout(treatment_box)
-        self.nan_replacement = NoWheelComboBox()
-        self.positive_replacement = NoWheelComboBox()
-        self.negative_replacement = NoWheelComboBox()
-        self.clipped_replacement = NoWheelComboBox()
-        for label, combo in (("NaN", self.nan_replacement), ("+Inf", self.positive_replacement),
-                             ("-Inf", self.negative_replacement), ("Outside value bounds", self.clipped_replacement)):
+        for combo in (self.nan_replacement, self.positive_replacement, self.negative_replacement, self.clipped_replacement):
             if combo is self.clipped_replacement:
                 combo.addItem(ValueReplacement.BOUNDARY.value, ValueReplacement.BOUNDARY)
             for method in (ValueReplacement.ZERO, ValueReplacement.MAXIMUM, ValueReplacement.MINIMUM):
                 combo.addItem(method.value, method)
-            self.treatment_form.addRow(label, combo)
-        self.treatment_note = QtWidgets.QLabel()
-        self.treatment_note.setWordWrap(True)
-        self.treatment_form.addRow(self.treatment_note)
-        form.addRow(treatment_box)
-        self.single = QtWidgets.QCheckBox("Single precision (complex64); default: complex128")
         self.single.toggled.connect(self._summary)
-        form.addRow(self.single)
-        self.trim = QtWidgets.QCheckBox("After IFFT, remove padding recorded by the paired FFT")
-        form.addRow(self.trim)
-        self.name = QtWidgets.QLineEdit()
-        self.name.setPlaceholderText("Automatic: source · channel · FFT / IFFT")
-        form.addRow("Result name", self.name)
-        self.note = QtWidgets.QLabel()
-        self.note.setWordWrap(True)
-        layout.addWidget(self.note)
-        self.estimate = QtWidgets.QLabel()
-        self.estimate.setWordWrap(True)
-        layout.addWidget(self.estimate)
-        layout.addStretch()
-        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         self.generate = self.buttons.addButton("Generate matrix", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Cancel).setDefault(True)
         self.generate.clicked.connect(self._generate)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
         for combo in (self.direction, self.range, self.component):
             combo.currentIndexChanged.connect(self._reconfigure)
         self.axes.currentIndexChanged.connect(self._axes_changed)

@@ -49,10 +49,15 @@ NUMPAD_NAVIGATION = {
 }
 PALETTE = {"letters": "#aadef6", "symbols": "#ffdc68", "modifiers": "#59c1e7",
            "layer": "#f78bb5", "arrows": "#eba7f4", "navigation": "#99db9d",
-           "commands": "#64cd7c", "language": "#438a62", "locks": "#e8a07d"}
+           "commands": "#64cd7c", "language": "#36794f", "locks": "#e8a07d"}
 
 
-def key_color(name: str) -> str:
+DARK_PALETTE = {"letters": "#264b60", "symbols": "#594a22", "modifiers": "#20526a",
+                "layer": "#643750", "arrows": "#583c64", "navigation": "#34513b",
+                "commands": "#205138", "language": "#305d46", "locks": "#66422e"}
+
+
+def key_color(name: str, *, dark: bool = False) -> str:
     if name == "Layer":
         group = "layer"
     elif name in ACCENT_LOCK_KEYS:
@@ -71,7 +76,7 @@ def key_color(name: str) -> str:
         group = "symbols"
     else:
         group = "navigation"
-    return PALETTE[group]
+    return (DARK_PALETTE if dark else PALETTE)[group]
 
 
 

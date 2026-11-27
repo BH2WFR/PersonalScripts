@@ -1,0 +1,565 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SplitPanel</class>
+ <widget class="QWidget" name="SplitPanel">
+  <layout class="QVBoxLayout" name="main_layout" stretch="0,0,1">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QGroupBox" name="general">
+     <property name="title">
+      <string>General</string>
+     </property>
+     <layout class="QFormLayout" name="general_form">
+      <item row="0" column="0">
+       <widget class="QLabel" name="count_label">
+        <property name="text">
+         <string>Pieces per page</string>
+        </property>
+        <property name="buddy">
+         <cstring>count</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="NoWheelSpinBox" name="count" />
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="axis_label">
+        <property name="text">
+         <string>Arrangement</string>
+        </property>
+        <property name="buddy">
+         <cstring>axis</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="NoWheelComboBox" name="axis" />
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="order_label">
+        <property name="text">
+         <string>Output order</string>
+        </property>
+        <property name="buddy">
+         <cstring>order</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QLineEdit" name="order" />
+      </item>
+      <item row="3" column="0" colspan="2">
+       <widget class="QCheckBox" name="reverse">
+        <property name="text">
+         <string>Reverse order</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="start_label">
+        <property name="text">
+         <string>First split page</string>
+        </property>
+        <property name="buddy">
+         <cstring>start</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="NoWheelSpinBox" name="start" />
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="end_label">
+        <property name="text">
+         <string>Last split page</string>
+        </property>
+        <property name="buddy">
+         <cstring>end</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="NoWheelSpinBox" name="end" />
+      </item>
+      <item row="6" column="0" colspan="2">
+       <widget class="QLabel" name="range_note">
+        <property name="text">
+         <string>Outside this range: keep whole.
+Custom pages retain their own crops and order.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="current">
+     <property name="title">
+      <string>Current page</string>
+     </property>
+     <layout class="QVBoxLayout" name="current_layout">
+      <item>
+       <widget class="QCheckBox" name="keep">
+        <property name="text">
+         <string>No processing (keep whole)</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="reset">
+        <property name="text">
+         <string>Reset to general settings</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QWidget" name="geometry_controls">
+        <layout class="QFormLayout" name="crop_form">
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item row="0" column="0">
+          <widget class="QLabel" name="selection_label">
+           <property name="text">
+            <string>Crop</string>
+           </property>
+           <property name="buddy">
+            <cstring>selection</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="NoWheelComboBox" name="selection" />
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="crop_x_row_label">
+           <property name="text">
+            <string>X</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <layout class="QHBoxLayout" name="crop_x_row" stretch="1,0,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="NoWheelDoubleSpinBox" name="crop_x">
+             <property name="minimumSize">
+              <size>
+               <width>70</width>
+               <height>0</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_x_minus">
+             <property name="text">
+              <string>-10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_x_plus">
+             <property name="text">
+              <string>+10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="crop_y_row_label">
+           <property name="text">
+            <string>Y</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <layout class="QHBoxLayout" name="crop_y_row" stretch="1,0,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="NoWheelDoubleSpinBox" name="crop_y">
+             <property name="minimumSize">
+              <size>
+               <width>70</width>
+               <height>0</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_y_minus">
+             <property name="text">
+              <string>-10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_y_plus">
+             <property name="text">
+              <string>+10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="3" column="0">
+          <widget class="QLabel" name="crop_width_row_label">
+           <property name="text">
+            <string>Width</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="1">
+          <layout class="QHBoxLayout" name="crop_width_row" stretch="1,0,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="NoWheelDoubleSpinBox" name="crop_width">
+             <property name="minimumSize">
+              <size>
+               <width>70</width>
+               <height>0</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_width_minus">
+             <property name="text">
+              <string>-10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_width_plus">
+             <property name="text">
+              <string>+10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="4" column="0">
+          <widget class="QLabel" name="crop_height_row_label">
+           <property name="text">
+            <string>Height</string>
+           </property>
+          </widget>
+         </item>
+         <item row="4" column="1">
+          <layout class="QHBoxLayout" name="crop_height_row" stretch="1,0,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="NoWheelDoubleSpinBox" name="crop_height">
+             <property name="minimumSize">
+              <size>
+               <width>70</width>
+               <height>0</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_height_minus">
+             <property name="text">
+              <string>-10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="crop_height_plus">
+             <property name="text">
+              <string>+10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="5" column="0">
+          <widget class="QLabel" name="divider_label">
+           <property name="text">
+            <string>Shared divider</string>
+           </property>
+           <property name="buddy">
+            <cstring>divider</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="5" column="1">
+          <widget class="NoWheelComboBox" name="divider" />
+         </item>
+         <item row="6" column="0">
+          <widget class="QLabel" name="position_row_label">
+           <property name="text">
+            <string>Divider position</string>
+           </property>
+          </widget>
+         </item>
+         <item row="6" column="1">
+          <layout class="QHBoxLayout" name="position_row" stretch="1,0,0">
+           <item>
+            <widget class="NoWheelDoubleSpinBox" name="position">
+             <property name="minimumSize">
+              <size>
+               <width>70</width>
+               <height>0</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="position_minus">
+             <property name="text">
+              <string>-10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="position_plus">
+             <property name="text">
+              <string>+10</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>40</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>40</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="7" column="0" colspan="2">
+          <widget class="QLabel" name="crop_note">
+           <property name="text">
+            <string>Coordinates: top-left origin, in pt (1/72 inch).
+Outside the source: blank. Smaller crops: centered on the same paper size.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <spacer name="panel_stretch">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

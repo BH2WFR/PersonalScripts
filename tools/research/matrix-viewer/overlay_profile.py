@@ -14,7 +14,7 @@ Derivative omission/jump totals share the header; explanations stay in tooltips.
 from time import perf_counter
 
 import numpy as np
-from PySide6 import QtCore, QtGui
+from PySide6 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 
 from .clipping import clip_curve
@@ -31,12 +31,12 @@ class OverlayProfile(ProfileView):
 
     settings_changed = QtCore.Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         self._series: tuple[ProfileSeries, ...] = ()
         self._cache: dict[tuple[object, ...], DerivativeResult] = {}
         self._drawn: list[tuple[object, ...] | None] = [None, None]
         self._items: list[list[pg.PlotDataItem]] = [[], []]
-        super().__init__()
+        super().__init__(parent)
         self.appearance_form.setRowVisible(self.color_button, False)
         self.title.setText("Overlay")
         self.jump_mode.setToolTip(f"{self.jump_mode.toolTip()}\nSettings apply to the selected matrix only.")

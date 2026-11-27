@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MatrixPropertiesDialog</class>
+ <widget class="QDialog" name="MatrixPropertiesDialog">
+  <property name="windowTitle">
+   <string>Matrix properties</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>880</width>
+    <height>640</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout" stretch="0,1,0">
+   <item>
+    <widget class="QLabel" name="form_identity">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTabWidget" name="tabs">
+     <widget class="QTreeWidget" name="metadata">
+      <property name="wordWrap">
+       <bool>true</bool>
+      </property>
+      <attribute name="title">
+       <string>Metadata / display</string>
+      </attribute>
+     </widget>
+     <widget class="QWidget" name="form_page" native="true">
+      <layout class="QVBoxLayout" name="form_stats_layout" stretch="0,0,0,1">
+       <item>
+        <widget class="QLabel" name="form_help_text">
+         <property name="text">
+          <string>Click Calculate statistics to scan samples. Statistics use finite values only; variance / standard deviation use ddof=0.
+NaN is excluded from extrema. inf (90000) means an infinite extreme with finite extreme 90000.
+Original matrix and current channel/crop are separate populations; value bounds do not alter these statistics.
+Exact quartiles use linear interpolation and require a temporary copy of finite values, one population at a time.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="calculate">
+         <property name="text">
+          <string>Calculate statistics</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="status" />
+       </item>
+       <item>
+        <widget class="QTreeWidget" name="statistics" />
+       </item>
+      </layout>
+      <attribute name="title">
+       <string>Statistics</string>
+      </attribute>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="form_close">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Close</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

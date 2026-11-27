@@ -10,12 +10,11 @@ from functools import partial
 from typing import Any
 
 import psutil
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence, QShortcut, QStandardItemModel
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QSizePolicy, QSplitter, QToolBar, QTreeWidget,
-    QAbstractItemView, QTabWidget, QToolTip, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox, QHeaderView,
+    QLineEdit, QMessageBox, QToolTip, QTreeWidget, QTreeWidgetItem, QWidget,
 )
 from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, configure_qt_application, show_cursor_tooltip, show_foreground_tool
 
@@ -23,7 +22,9 @@ from .model import (
     Backend, CONTROLS_HINT, INITIAL_HINT, LOADED_HINT, MIN_OPACITY_PERCENT, ProcessInfo, Properties, PropertyGroup, Rows, Window,
     end_process, find_window, prepare_restart, process_info,
 )
-from .picker import Finder, Outline
+from .picker import Outline
+from .ui_mainwindow import Ui_Inspector
+from .ui_opacity import Ui_OpacityDialog
 
 
 IS_WINDOWS = sys.platform == "win32"
@@ -31,41 +32,10 @@ IS_MACOS = sys.platform == "darwin"
 PREVIEW_MS = 3000
 PRIORITIES = {"Low": 0x40, "BelowNormal": 0x4000, "Normal": 0x20,
               "AboveNormal": 0x8000, "High": 0x80, "Realtime": 0x100}
-CONTROL_COLUMNS = ["#", "HWND", "ClassNN", "Text", "Class", "Position and size"] if IS_WINDOWS else ["#", "Role", "Subrole", "Title"]
+MAC_CONTROL_COLUMNS = ["#", "Role", "Subrole", "Title"]
 
 
-class _Table(QTreeWidget):
-    def __init__(self, headers: list[str]) -> None:
-        super().__init__()
-        self.setHeaderLabels(headers)
-        self.setRootIsDecorated(False)
-        self.setUniformRowHeights(True)
-        self.header().setStretchLastSection(False)
-        self.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-
-
-class _ValueTable(_Table):
-    """Fill the available width while allowing a long value to scroll horizontally."""
-
-    def __init__(self, headers: list[str]) -> None:
-        super().__init__(headers)
-        self.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-
-    def sizeHintForColumn(self, column: int) -> int:
-        content_width = super().sizeHintForColumn(column)
-        if column == 1:
-            return max(content_width, self.viewport().width() - self.columnWidth(0))
-        return content_width
-
-
-def _vertical_separator() -> QFrame:
-    separator = QFrame()
-    separator.setFrameShape(QFrame.Shape.VLine)
-    separator.setFrameShadow(QFrame.Shadow.Sunken)
-    return separator
-
-
-class Inspector(QWidget):
+class Inspector(QWidget, Ui_Inspector):
     def __init__(self, backend: Backend, *, top: bool = False) -> None:
         super().__init__()
         self.backend = backend
@@ -85,214 +55,70 @@ class Inspector(QWidget):
         self.preview_tick = QTimer(self, singleShot=True)
         self.preview_tick.setTimerType(Qt.TimerType.PreciseTimer)
         self.preview_tick.timeout.connect(self._update_countdown)
-        self.setWindowTitle("Window Inspector")
+        self.setupUi(self)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, top)
-        initial_size = QSize(1080, 720)
         if screen := self.screen():
-            initial_size = initial_size.boundedTo(screen.availableGeometry().size() * 0.95)
-        self.resize(initial_size)
-        self.setMinimumHeight(400)
+            self.resize(self.size().boundedTo(screen.availableGeometry().size() * 0.95))
         self.outline = Outline(self, backend)
-        self._build()
+        self._configure_controls()
         self._set_list([], False)
         self._clear()
         self.list_button.setFocus()
 
-    def _row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        self.body.addLayout(row)
-        return row
-
-    def _button(self, row: QHBoxLayout, label: str, tip: str, callback: Callable[[], None],
-                *, needs_target: bool = True) -> QPushButton:
-        button = QPushButton(label)
-        button.setToolTip(tip)
-        button.clicked.connect(lambda: self.guard(callback))
-        row.addWidget(button)
-        if needs_target:
-            self.target_controls.append(button)
-        return button
-
-    def _action(self, bar: QToolBar, label: str, tip: str, callback: Callable[[], None]) -> QAction:
-        action = QAction(label, bar)
-        action.setToolTip(tip)
-        action.triggered.connect(lambda: self.guard(callback))
-        bar.addAction(action)
-        self.target_controls.append(action)
-        return action
-
-    def _window_toggle(self, bar: QToolBar, label: str, tip: str) -> None:
-        action = self._action(bar, label, tip, partial(self._window_action, label))
-        action.setCheckable(True)
-        self.toggles[label] = action
-
-    def _build(self) -> None:
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(8, 4, 8, 8)
-        self.body.setSpacing(6)
-        header = self._row()
-        self.finder = Finder(self.backend, self.outline)
+    def _configure_controls(self) -> None:
+        self.finder.configure(self.backend, self.outline)
         self.finder.picked.connect(lambda w: self.guard(partial(self.load, w)))
         self.finder.started.connect(self._cancel_preview)
-        header.addWidget(self.finder)
-        self.selector = NoWheelComboBox()
-        self.editor = QLineEdit()
-        self.selector.setLineEdit(self.editor)
+        self.finder.message.connect(self.status.setText)
+        self.finder_hint.setIndent(max(0, (self.finder.width() - self.finder_hint.fontMetrics().horizontalAdvance("↑")) // 2))
+        editor = self.selector.lineEdit()
+        assert editor is not None
+        self.editor = editor
         self.selector.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        # Qt installs a completer for the editor. PySide6 6.8 omits its null reset from the stub.
+        # PySide6 6.8 omits the null completer reset from its stub.
         self.selector.setCompleter(None)  # pyright: ignore[reportArgumentType]
         self.selector.setMaxVisibleItems(12)
-        self.selector.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        header.addWidget(self.selector, 1)
-        self.editor.setToolTip("Search by window title, process name, window ID, or PID (for example, PID:1234).")
         self.selector.activated.connect(self._selected)
         self.editor.textEdited.connect(self._edited)
         self.editor.returnPressed.connect(lambda: self.guard(self.search))
-        self.list_button = self._button(header, "Refresh List", "Load the current list of windows.", self.refresh_list, needs_target=False)
-        self._button(header, "Find", "Inspect the first window matching your search.", self.search, needs_target=False)
-
-        options = self._row()
-        finder_hint = QLabel("⬆️ Drag the finder onto a window")
-        finder_hint.setIndent(max(0, (self.finder.width() - finder_hint.fontMetrics().horizontalAdvance("↑")) // 2))
-        options.addWidget(finder_hint)
-        options.addStretch()
-        self.hidden_windows = QCheckBox("Include hidden windows")
-        self.hidden_windows.setToolTip("Include hidden windows when listing or searching.")
+        self.list_button.clicked.connect(lambda: self.guard(self.refresh_list))
+        self.find_button.clicked.connect(lambda: self.guard(self.search))
         self.hidden_windows.clicked.connect(lambda: self.guard(self.refresh_list) if self.loaded else None)
-        options.addWidget(self.hidden_windows)
-        self.pin = QCheckBox("Keep inspector on top")
-        self.pin.setToolTip("Keep Window Inspector above other windows.")
         self.pin.setChecked(bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
         self.pin.toggled.connect(self._pin)
-        options.addWidget(self.pin)
-        options.addWidget(_vertical_separator())
-        self._button(options, "Refresh Info", "Read the selected window and process details again.", self.refresh)
-        self.window_controls.append(self._button(options, "Read Controls", "List the controls exposed by the selected window.", self.read_controls))
+        self.refresh_button.clicked.connect(lambda: self.guard(self.refresh))
+        self.read_button.clicked.connect(lambda: self.guard(self.read_controls))
+        self.target_controls.extend((self.refresh_button, self.read_button))
+        self.window_controls.append(self.read_button)
+        self._configure_actions()
 
-        actions_group = QGroupBox("Actions")
-        self.body.addWidget(actions_group)
-        bars = QGridLayout(actions_group)
-        bars.setContentsMargins(6, 0, 6, 0)
-        bars.setColumnStretch(1, 1)
-        bars.setVerticalSpacing(0)
-        caption_font = self.font()
-        caption_font.setBold(True)
-        process_bar, window_bar = QToolBar("Process"), QToolBar("Window")
-        for row, bar in enumerate((process_bar, window_bar)):
-            bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-            bar.setStyleSheet("QToolBar { border: 0; padding: 0; }")
-            bar.setAccessibleName(bar.windowTitle())
-            caption = QLabel(f"{bar.windowTitle()}:")
-            caption.setFont(caption_font)
-            bars.addWidget(caption, row, 0)
-        process_row = QHBoxLayout()
-        process_row.setSpacing(6)
-        bars.addLayout(process_row, 0, 1)
-        process_row.addWidget(process_bar)
-        window_row = QHBoxLayout()
-        window_row.setSpacing(6)
-        bars.addLayout(window_row, 1, 1)
-        window_row.addWidget(window_bar)
-        self._action(process_bar, "Properties", "Show properties for the selected path.", partial(self._file, True))
-        self._action(process_bar, "Show File", "Reveal the selected path in its containing folder.", partial(self._file, False))
-        process_bar.addSeparator()
-        self._action(process_bar, "Restart", "End the process and relaunch it with its original arguments.", partial(self._end, True))
-        self._action(process_bar, "Terminate", "Force the process to quit, including all of its windows.", partial(self._end, False))
+        self.fields: dict[str, QLineEdit] = {
+            "Title": self.title_field, "Process": self.process_field,
+            "Path": self.path_field, "Command line": self.command_field,
+        }
+        self.paths.setVisible(IS_MACOS)
+        self.copy_button.setVisible(IS_MACOS)
+        if IS_MACOS:
+            self.paths.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+            self.paths.currentIndexChanged.connect(lambda: self.path_field.setText(self.paths.currentData() or ""))
+            self.copy_hint.setText("Double-click a cell to copy it.")
+            self.copy_button.clicked.connect(lambda: self.guard(self._copy_all))
+            self.target_controls.append(self.copy_button)
 
-        self.priority: NoWheelComboBox | NoWheelSpinBox
-        if IS_WINDOWS:
-            self.priority = NoWheelComboBox()
-            self.priority.setToolTip("Choose the scheduling priority for the selected process.")
-            for label, value in PRIORITIES.items():
-                self.priority.addItem(label, value)
-            self.priority.activated.connect(lambda: self.guard(self._set_priority))
-        else:
-            self.priority = NoWheelSpinBox()
-            self.priority.setRange(-20, 19)
-            self.priority.setKeyboardTracking(False)
-            self.priority.valueChanged.connect(lambda: self.guard(self._set_priority))
-            self.priority.setToolTip("Select a nice value from −20 to 19. Lower values give the process higher priority.")
-        process_row.addWidget(_vertical_separator())
-        priority_label = QLabel("Priority:")
-        priority_label.setFont(caption_font)
-        priority_label.setBuddy(self.priority)
-        process_row.addWidget(priority_label)
-        process_row.addWidget(self.priority)
-        self.target_controls.append(self.priority)
-        process_row.addStretch()
-
-        for label, tip in (("Activate", "Bring the window to the front for three seconds."),
-                           ("Center", "Bring the window forward, center it, and highlight it for three seconds."),
-                           ("Reset Size", "Bring the window forward, restore its default size, center it, and highlight it for three seconds."),
-                           ("Highlight", "Outline the window on screen for three seconds.")):
-            self._action(window_bar, label, tip, partial(self._window_action, label))
-        self.toggles: dict[str, QAction] = {}
-        window_bar.addSeparator()
-        self._action(window_bar, "Minimize", "Minimize the selected window.", partial(self._window_action, "Minimize"))
-        self._action(window_bar, "Close Window", "Ask the selected window to close.", partial(self._window_action, "Close Window"))
-        if IS_WINDOWS:
-            window_bar.addSeparator()
-            self._window_toggle(window_bar, "Always on Top", "Keep the selected window above other windows.")
-            self._action(window_bar, "Opacity", "Adjust the opacity of the selected window.", self._edit_opacity)
-            self._window_toggle(window_bar, "Click-through", "Let mouse clicks pass through the selected window.")
-            window_bar.addSeparator()
-            self._action(window_bar, "Enable Controls", "Enable disabled controls in the selected window.",
-                         self._enable_controls)
-            self._action(window_bar, "Show Controls", "Show hidden controls in the selected window.",
-                         self._show_controls)
-            self._action(window_bar, "Enable Menus", "Enable disabled menu items in the selected window.",
-                         self._enable_menus)
-        self.window_controls.extend(a for a in window_bar.actions() if not a.isSeparator())
-        window_row.addStretch()
-
-        details_group = QGroupBox("Window details")
-        self.body.addWidget(details_group, 1)
-        details_layout = QVBoxLayout(details_group)
-        details_layout.setContentsMargins(-1, -1, -1, 2)
-        fields = QGridLayout()
-        fields.setHorizontalSpacing(6)
-        fields.setVerticalSpacing(2)
-        details_layout.addLayout(fields)
-        self.fields: dict[str, QLineEdit] = {}
-        for i, label in enumerate(("Title", "Process", "Path", "Command line")):
-            fields.addWidget(QLabel(label), i, 0)
-            field = QLineEdit(readOnly=True)
-            field.setStyleSheet("max-height: 1.2em;")
-            self.fields[label] = field
-            if IS_MACOS and label == "Path":
-                self.paths = NoWheelComboBox()
-                self.paths.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-                self.paths.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-                self.paths.setToolTip("Choose the executable, application bundle or window document.")
-                self.paths.currentIndexChanged.connect(lambda: self.fields["Path"].setText(self.paths.currentData() or ""))
-                path_row = QHBoxLayout()
-                path_row.setSpacing(fields.horizontalSpacing())
-                path_row.addWidget(self.paths)
-                path_row.addWidget(field, 1)
-                fields.addLayout(path_row, i, 1)
-            else:
-                fields.addWidget(field, i, 1)
-        fields.setColumnStretch(1, 1)
-        self.info, self.controls = _ValueTable(["Property", "Value"]), _Table(CONTROL_COLUMNS)
-        self.info.setRootIsDecorated(True)
-        self.info.setIndentation(round(self.info.indentation() * 0.8))
+        if IS_MACOS:
+            self.controls.setColumnCount(len(MAC_CONTROL_COLUMNS))
+            self.controls.setHeaderLabels(MAC_CONTROL_COLUMNS)
+        for table in (self.info, self.arguments):
+            table.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.info.setColumnWidth(0, self.info.fontMetrics().horizontalAdvance("Layered click-through") + 2 * self.info.indentation() + 12)
         widths = (45, 100, 100, 190, 100, 170) if IS_WINDOWS else (45, 140, 150, 200)
         for i, width in enumerate(widths):
             self.controls.setColumnWidth(i, width)
         self.info.itemDoubleClicked.connect(self._copy_property)
         self.controls.itemDoubleClicked.connect(self._copy_control)
-        split = QSplitter()
-        split.addWidget(self.info)
-        self.arguments = _ValueTable(["#", "Argument"])
         self.arguments.header().setResizeContentsPrecision(-1)
         self.arguments.setColumnWidth(0, 45)
         self.arguments.itemDoubleClicked.connect(lambda item, col: self._copy(item.text(col)))
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self.controls, "Controls")
-        self.tabs.addTab(self.arguments, "Arguments")
-        split.addWidget(self.tabs)
         copy_tables = (self.info, self.controls, self.arguments) if IS_MACOS else (self.arguments,)
         for table in copy_tables:
             table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -301,18 +127,54 @@ class Inspector(QWidget):
             shortcut.activated.connect(partial(self._copy_rows, table))
         if IS_MACOS:
             QShortcut(QKeySequence.StandardKey.Close, self).activated.connect(self.close)
-        split.setSizes([330, 498])
-        details_layout.addWidget(split, 1)
-        self.status = QLabel()
-        self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        footer = self._row()
-        footer.addWidget(self.status, 1)
-        if IS_MACOS:
-            footer.addWidget(QLabel("Double-click a cell to copy it."))
-            self._button(footer, "Copy All", "Copy the displayed details, controls and arguments.", self._copy_all)
+        self.splitter.setSizes([330, 498])
+
+    def _configure_actions(self) -> None:
+        """Connect supported native actions and choose the platform's priority editor."""
+        self.priority: NoWheelComboBox | NoWheelSpinBox
+        self.windows_priority.setVisible(IS_WINDOWS)
+        self.nice_priority.setVisible(not IS_WINDOWS)
+        self.toggles: dict[str, QAction] = {}
+        actions: dict[QAction, Callable[[], None]] = {
+            self.action_properties: partial(self._file, True),
+            self.action_show_file: partial(self._file, False),
+            self.action_restart: partial(self._end, True),
+            self.action_terminate: partial(self._end, False),
+            self.action_activate: partial(self._window_action, "Activate"),
+            self.action_center: partial(self._window_action, "Center"),
+            self.action_reset_size: partial(self._window_action, "Reset Size"),
+            self.action_highlight: partial(self._window_action, "Highlight"),
+            self.action_minimize: partial(self._window_action, "Minimize"),
+            self.action_close_window: partial(self._window_action, "Close Window"),
+        }
+        if IS_WINDOWS:
+            self.priority = self.windows_priority
+            for label, value in PRIORITIES.items():
+                self.priority.addItem(label, value)
+            self.priority.activated.connect(lambda: self.guard(self._set_priority))
+            self.toggles = {"Always on Top": self.action_always_on_top, "Click-through": self.action_click_through}
+            actions.update({
+                self.action_always_on_top: partial(self._window_action, "Always on Top"),
+                self.action_opacity: self._edit_opacity,
+                self.action_click_through: partial(self._window_action, "Click-through"),
+                self.action_enable_controls: self._enable_controls,
+                self.action_show_controls: self._show_controls,
+                self.action_enable_menus: self._enable_menus,
+            })
         else:
-            footer.addWidget(QLabel("Double-click a row to copy its contents."))
-        self.finder.message.connect(self.status.setText)
+            self.priority = self.nice_priority
+            self.priority.setRange(-20, 19)
+            self.priority.setKeyboardTracking(False)
+            self.priority.valueChanged.connect(lambda: self.guard(self._set_priority))
+            for action in self.window_bar.actions():
+                if not action.isSeparator() and action not in actions:
+                    self.window_bar.removeAction(action)
+        self.priority_label.setBuddy(self.priority)
+        self.target_controls.append(self.priority)
+        for action, callback in actions.items():
+            action.triggered.connect(lambda checked=False, fn=callback: self.guard(fn))
+        self.target_controls.extend(actions)
+        self.window_controls.extend(action for action in self.window_bar.actions() if not action.isSeparator())
 
     def guard(self, action: Callable[[], None]) -> None:
         """Native objects may disappear between any two GUI events."""
@@ -682,19 +544,15 @@ class Inspector(QWidget):
         target = self._checked()
         current = self.backend.snapshot(target).opacity
         dialog = QDialog(self)
-        dialog.setWindowTitle("Window opacity")
+        form = Ui_OpacityDialog()
+        form.setupUi(dialog)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        layout = QVBoxLayout(dialog)
-        spin = NoWheelSpinBox()
-        spin.setAccessibleName("Window opacity")
+        spin = form.spin
         spin.setToolTip(f"Choose an opacity from {MIN_OPACITY_PERCENT}% to 100%.")
         spin.setRange(MIN_OPACITY_PERCENT, 100)
-        spin.setSuffix("%")
         spin.setValue(current)
-        layout.addWidget(spin)
         buttons = QDialogButtonBox.StandardButton
-        box = QDialogButtonBox(buttons.Ok | buttons.Reset)
-        layout.addWidget(box)
+        box = form.buttons
         ok, reset = box.button(buttons.Ok), box.button(buttons.Reset)
         ok.setDefault(True)
         ok.setToolTip("Apply this opacity to the selected window.")

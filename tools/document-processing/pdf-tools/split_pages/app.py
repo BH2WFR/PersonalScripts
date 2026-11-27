@@ -5,21 +5,21 @@ from pathlib import Path
 from typing import cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application
+from utils.qt_styles import set_button_style, on_theme_change, theme_text_color, theme_tint
+from utils.qt_widgets import configure_qt_application
 from utils import *
 from ..common.file_actions import choose_pdf_output
 from ..common.preferences import choose_open_file, remember_directory
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
+from ..common.page_toolbar import set_preview_tab_order
 from ..common.task_buttons import TaskButtons
-from ..common.navigation import NavigationPane
 from ..common.page_cache import PageCache, pixmap_bytes
 from ..common.preview_buffer import PreviewBuffer
 from ..common.protocol import Json
 from ..common.tooltips import TooltipFilter
 from .model import Axis, Box, PageOverride, Settings, page_boxes, move_divider
-from .panel import SplitPanel
-from .viewer import SplitViewer
+from .ui_mainwindow import Ui_SplitWindow
 
 PT_TO_MM = 25.4 / 72
 STATUS_WHOLE = "不处理"
@@ -35,7 +35,7 @@ class CachedPage:
     height: float
 
 
-class SplitWindow(QtWidgets.QMainWindow):
+class SplitWindow(QtWidgets.QMainWindow, Ui_SplitWindow):
     """Own session-only crop rules; all PDF work goes through one serial worker."""
 
     def __init__(self, entry: Path) -> None:
@@ -61,33 +61,16 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self._render)
-        self.setWindowTitle("PDF Page Splitter")
-        self.resize(1420, 900)
         self._build()
         self.drop_filter = FileDropFilter(self, self.open_path, lambda: not self.runner.busy, suffixes=(".pdf",))
         self.tooltips = TooltipFilter(self)
         self._enabled()
 
     def _build(self) -> None:
-        splitter = QtWidgets.QSplitter()
-        self.setCentralWidget(splitter)
-        # ── independent left settings column ──────────────────
-        self.left = QtWidgets.QWidget()
-        left = QtWidgets.QVBoxLayout(self.left)
-        left.setContentsMargins(6, 6, 3, 6)
-        files = QtWidgets.QHBoxLayout()
-        self.open_button = QtWidgets.QPushButton("Open PDF")
+        self.setupUi(self)
         self.open_button.clicked.connect(self._open_dialog)
-        self.close_button = QtWidgets.QPushButton("Close")
         self.close_button.clicked.connect(self._close_pdf)
-        files.addWidget(self.open_button)
-        files.addWidget(self.close_button)
-        left.addLayout(files)
-        self.page_info = QtWidgets.QLabel("Page: —\nSize: —")
         self.page_info.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.page_info.setWordWrap(True)
-        left.addWidget(self.page_info)
-        self.panel = SplitPanel()
         self.panel.globalEdited.connect(self._global_changed)
         self.panel.keepChanged.connect(self._keep_changed)
         self.panel.resetRequested.connect(self._reset_page)
@@ -95,59 +78,16 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.panel.dividerEdited.connect(self._divider_changed)
         self.panel.moveRequested.connect(self._move_frames)
         self.panel.selectionChanged.connect(self._draw_crops)
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        scroll.setWidget(self.panel)
-        left.addWidget(scroll, 1)
-        self.left.setMinimumWidth(340)
-        splitter.addWidget(self.left)
 
-        # ── compact viewer toolbar and navigation ─────────────
-        right = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(right)
-        layout.setContentsMargins(3, 6, 6, 6)
-        self.toolbar = QtWidgets.QToolBar()
-        self.previous = self.toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack),
-            "Previous page", lambda: self.go_page(self.current_page - 1))
-        self.next = self.toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowForward),
-            "Next page", lambda: self.go_page(self.current_page + 1))
-        self.page_number = NoWheelSpinBox()
-        self.page_number.setRange(1, 1)
-        self.page_number.setFixedWidth(55)
-        self.page_number.setKeyboardTracking(False)
-        self.page_number.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.page_number.editingFinished.connect(lambda: self.go_page(self.page_number.value()))
-        self.toolbar.addWidget(self.page_number)
-        self.page_total = QtWidgets.QLabel(" / 0 ")
-        self.toolbar.addWidget(self.page_total)
-        self.toolbar.addSeparator()
-        self.viewer = SplitViewer()
-        self.viewer.pageStepRequested.connect(lambda step: self.go_page(self.current_page + step))
-        self.toolbar.addAction("Fit page", self.viewer.fit_page)
-        self.toolbar.addAction("Fit width", self.viewer.fit_width)
-        self.toolbar.addAction("100%", self.viewer.actual_pixels)
-        self.zoom = NoWheelDoubleSpinBox()
-        self.zoom.setRange(2.5, 1600)
-        self.zoom.setSuffix(" %")
-        self.zoom.setFixedWidth(85)
-        self.zoom.setKeyboardTracking(False)
-        self.zoom.editingFinished.connect(lambda: self.viewer.set_zoom(self.zoom.value()))
-        self.viewer.zoomChanged.connect(self.zoom.setValue)
-        self.toolbar.addWidget(self.zoom)
-        self.fit = QtWidgets.QCheckBox("Auto fit")
-        self.fit.setChecked(True)
-        self.fit.toggled.connect(lambda value: setattr(self.viewer, "auto_fit", value))
-        self.toolbar.addWidget(self.fit)
-        self.toolbar.addSeparator()
+        self.toolbar.bind_viewer(self.viewer)
+        self.toolbar.stepRequested.connect(lambda step: self.go_page(self.current_page + step))
+        self.toolbar.pageRequested.connect(self.go_page)
+        self.toolbar.add_auto_fit()
         self.show_boxes = QtWidgets.QCheckBox("Show crops")
         self.show_boxes.setChecked(True)
         self.show_boxes.toggled.connect(self._draw_crops)
-        self.toolbar.addWidget(self.show_boxes)
-        layout.addWidget(self.toolbar)
-        content = QtWidgets.QSplitter()
-        content.addWidget(self.viewer)
-        self.navigation = NavigationPane()
+        self.tool_toolbar.addWidget(self.show_boxes)
+        on_theme_change(self.navigation.pages, self._refresh_markers)
         self.navigation.removeTab(self.navigation.indexOf(self.navigation.image_tab))
         self.navigation.pages.setHeaderLabels(["Page", "Title", "Processing", "Output start"])
         self.navigation.pages.header().setStretchLastSection(False)
@@ -155,24 +95,17 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.navigation.pages.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.navigation.pages.setToolTip("Click a physical page to preview. Orange: no processing; blue: custom crops.")
         self.navigation.pageRequested.connect(lambda index: self.go_page(index + 1))
-        content.addWidget(self.navigation)
-        content.setStretchFactor(0, 1)
-        content.setSizes([740, 260])
-        layout.addWidget(content, 1)
-        footer = QtWidgets.QHBoxLayout()
-        self.status = QtWidgets.QLabel("Open or drop a PDF to begin.")
+        self.content.setStretchFactor(0, 1)
+        self.content.setSizes([740, 260])
         self.status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
-        footer.addWidget(self.status, 1)
         self.task_buttons = TaskButtons(self.runner, with_progress=True)
         self.progress_bar = self.task_buttons.progress_bar
-        footer.addWidget(self.task_buttons)
-        self.export_button = QtWidgets.QPushButton("Export PDF")
+        self.task_slot.addWidget(self.task_buttons)
         self.export_button.clicked.connect(self._export)
-        footer.addWidget(self.export_button)
-        layout.addLayout(footer)
-        splitter.addWidget(right)
-        splitter.setSizes([350, 1070])
+        set_button_style(self.export_button, "blue")
+        self.splitter.setSizes([350, 1070])
+        set_preview_tab_order(self.left, self.toolbar, self.tool_toolbar, self.content, self.task_buttons,
+                              self.export_button)
 
     def _enabled(self, *_args: object) -> None:
         idle, loaded = not self.runner.busy, self.source is not None
@@ -181,11 +114,8 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.panel.general.setEnabled(loaded)
         self.panel.current.setEnabled(loaded and self._shown is not None)
         self.navigation.setEnabled(loaded and idle)
-        self.page_number.setEnabled(loaded and idle)
-        self.previous.setEnabled(loaded and idle and self.current_page > 1)
-        self.next.setEnabled(loaded and idle and self.current_page < self.page_count)
         self.export_button.setEnabled(loaded and idle)
-        self.viewer.navigation_enabled = loaded and idle
+        self.toolbar.set_navigation_enabled(loaded and idle, self.current_page, self.page_count)
         working = self.runner.busy and not self.runner.paused
         if working and not self._cursor_busy:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.BusyCursor)
@@ -240,8 +170,7 @@ class SplitWindow(QtWidgets.QMainWindow):
         self.navigation.load([], [])
         self.panel.load_settings(self.settings, 0)
         self.panel.load_page((), self.settings.axis, 1, 1, False, False)
-        self.page_number.setRange(1, 1)
-        self.page_total.setText(" / 0 ")
+        self.toolbar.set_page_count(0)
         self.page_info.setText("Page: —\nSize: —")
         self.setWindowTitle("PDF Page Splitter")
 
@@ -290,8 +219,9 @@ class SplitWindow(QtWidgets.QMainWindow):
             kept, custom = self._kept(page), page in self.overrides
             label = STATUS_WHOLE if kept else STATUS_CUSTOM if custom else ""
             item.setText(2, label)
-            item.setForeground(2, QtGui.QBrush(QtGui.QColor("#9c5200" if kept else "#1557a0")) if label else QtGui.QBrush())
-            item.setBackground(2, QtGui.QBrush(QtGui.QColor("#fff0cf" if kept else "#e2efff")) if label else QtGui.QBrush())
+            color = "orange" if kept else "blue"
+            item.setForeground(2, QtGui.QBrush(theme_text_color(color, self.navigation.pages)) if label else QtGui.QBrush())
+            item.setBackground(2, QtGui.QBrush(theme_tint(color, self.navigation.pages)) if label else QtGui.QBrush())
             font = item.font(2)
             font.setBold(bool(label))
             item.setFont(2, font)
@@ -401,7 +331,7 @@ class SplitWindow(QtWidgets.QMainWindow):
             return
         changed = page != self.current_page
         self.current_page = page
-        self.page_number.setValue(page)
+        self.toolbar.page_number.setValue(page)
         self.navigation.select_page(page - 1)
         self._schedule_preview(reset_selection=changed)
 
@@ -458,8 +388,7 @@ class SplitWindow(QtWidgets.QMainWindow):
             remember_directory(self, "open-pdf", path)
             self.password = str(message.get("password", ""))
             self.page_count = int(cast(int, message["page_count"]))
-            self.page_number.setRange(1, self.page_count)
-            self.page_total.setText(f" / {self.page_count} ")
+            self.toolbar.set_page_count(self.page_count)
             self.navigation.load(cast(list[str], message["labels"]), cast(list[tuple[int, str, int]], message["bookmarks"]))
             self.panel.load_settings(self.settings, self.page_count)
             self._refresh_markers()

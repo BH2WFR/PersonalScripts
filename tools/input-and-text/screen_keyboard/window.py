@@ -36,6 +36,8 @@ TTS_ALWAYSTIP = 0x01
 TTF_IDISHWND = 0x01
 TTF_SUBCLASS = 0x10
 TTM_ADDTOOLW = 0x0400 + 50
+WM_SETTINGCHANGE = 0x001A
+WM_THEMECHANGED = 0x031A
 WM_MOUSEACTIVATE = 0x0021
 WM_SIZING = 0x0214
 WM_EXITSIZEMOVE = 0x0232
@@ -140,10 +142,12 @@ def prepare_hidden_window(root: tk.Tk) -> None:
 
 
 class NonactivatingWindow:
-    def __init__(self, root: tk.Tk, content_hwnd: int, on_resize_end: Callable[[], None]) -> None:
+    def __init__(self, root: tk.Tk, content_hwnd: int, on_resize_end: Callable[[], None],
+                 on_theme_change: Callable[[], None]) -> None:
         self.root = root
         self.content_hwnd = content_hwnd
         self.on_resize_end = on_resize_end
+        self.on_theme_change = on_theme_change
         self.is_resizing = False
         self.commands: SimpleQueue[Callable[[], None] | None] = SimpleQueue()
         self.hwnd = U.GetAncestor(root.winfo_id(), GA_ROOT)
@@ -159,7 +163,9 @@ class NonactivatingWindow:
     def window_message(self, hwnd: int, message: int, wp: int, lp: int) -> int | None:
         if message == WM_MOUSEACTIVATE:
             return MA_NOACTIVATE
-        if message == WM_SIZING and not self.is_resizing:
+        if message in (WM_SETTINGCHANGE, WM_THEMECHANGED):
+            self.commands.put(self.on_theme_change)
+        elif message == WM_SIZING and not self.is_resizing:
             self.is_resizing = True
             # The native sizing loop can block Tk callbacks until mouse-up.
             U.ShowWindow(self.content_hwnd, SW_HIDE)

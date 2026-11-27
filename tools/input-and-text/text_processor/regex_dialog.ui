@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>RegexDialog</class>
+ <widget class="QDialog" name="RegexDialog">
+  <property name="windowTitle">
+   <string>Regular expression replacement</string>
+  </property>
+  <layout class="QFormLayout" name="form_layout">
+   <item row="0" column="0">
+    <widget class="QLabel" name="pattern_label">
+     <property name="text">
+      <string>Pattern</string>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="QLineEdit" name="pattern">
+     <property name="placeholderText">
+      <string>(\w+),\s*(\w+)</string>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="0">
+    <widget class="QLabel" name="replacement_label">
+     <property name="text">
+      <string>Replacement</string>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="1">
+    <widget class="QLineEdit" name="replacement">
+     <property name="placeholderText">
+      <string>\2 \1</string>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0" colspan="2">
+    <widget class="QLabel" name="capture_hint">
+     <property name="text">
+      <string>Use \1 or \g&lt;name&gt; for a captured group.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="0" colspan="2">
+    <widget class="QCheckBox" name="match_case">
+     <property name="text">
+      <string>Match case</string>
+     </property>
+     <property name="checked">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="0" colspan="2">
+    <widget class="QLabel" name="error">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="0" colspan="2">
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::StandardButton::Cancel|QDialogButtonBox::StandardButton::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

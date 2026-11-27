@@ -5,27 +5,27 @@ import sys
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QPlainTextEdit,
-    QPushButton, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
+from utils.qt_styles import set_text_style
 from utils.qt_widgets import configure_qt_application
 from .strokes import Sender, validate_text
+from .ui_edit_dialog import Ui_EditDialog
+from .ui_panel import Ui_TypingPanel
 
 
 _INTERVAL_MS = 20
 _READY = "Focus the target window, then click Start Typing."
 
 
-class TypingPanel(QWidget):
+class TypingPanel(QWidget, Ui_TypingPanel):
     """Keep the input recipient focused while a timer sends one character at a time."""
 
     def __init__(self, sender: Sender) -> None:
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
                          | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setWindowTitle("Auto Typer")
+        self.setupUi(self)
         self._key_sender: Sender = sender
         self.text = ""
         self.recipient = 0
@@ -35,47 +35,14 @@ class TypingPanel(QWidget):
         self.timer.setInterval(_INTERVAL_MS)
         self.timer.timeout.connect(self._type_next)
 
-        self.preview = QPlainTextEdit()
-        self.preview.setReadOnly(True)
         self.preview.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self.preview.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self.preview.setPlaceholderText("Paste from the clipboard or click Edit to enter text.")
-        self.paste = QPushButton("Paste from Clipboard")
-        self.edit = QPushButton("Edit")
-        self.start = QPushButton("Start Typing")
-        bold_font = self.font()
-        bold_font.setBold(True)
-        self.start.setFont(bold_font)
-        self.stop = QPushButton("Stop")
-        self.stop.setEnabled(False)
-        self.ascii_only = QCheckBox("ASCII Only")
         self.ascii_only.toggled.connect(self._ascii_only_toggled)
         self.paste.clicked.connect(self._paste)
         self.edit.clicked.connect(self._edit)
         self.start.clicked.connect(self._start)
         self.stop.clicked.connect(self._stop)
-        buttons = QGridLayout()
-        buttons.addWidget(self.paste, 0, 0)
-        buttons.addWidget(self.edit, 0, 1)
-        buttons.setColumnStretch(2, 1)
-        buttons.addWidget(self.start, 0, 3)
-        buttons.addWidget(self.stop, 0, 4)
-        buttons.addWidget(self.ascii_only, 1, 4)
-        for control in (self.preview, self.paste, self.edit, self.start, self.stop, self.ascii_only):
-            control.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.status = QLabel()
-        self.status.setWordWrap(True)
-        buttons.addWidget(self.status, 1, 0, 1, 4)
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.preview)
-        layout.addLayout(buttons)
-        ime_notice = QLabel("Please make sure that your IDE is in English mode | 请确保输入法为英文模式 ")
-        ime_notice.setFont(bold_font)
-        palette = ime_notice.palette()
-        palette.setColor(ime_notice.foregroundRole(), Qt.GlobalColor.red)
-        ime_notice.setPalette(palette)
-        layout.addWidget(ime_notice)
-        self.resize(480, 230)
+        set_text_style(self.ime_notice, "red", bold=True)
         self._paste()
 
     def _ascii_only_toggled(self, checked: bool) -> None:
@@ -97,14 +64,12 @@ class TypingPanel(QWidget):
     def _edit(self) -> None:
         previous = self._key_sender.target()
         dialog = QDialog(None, Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint)
-        dialog.setWindowTitle("Edit text")
-        editor = QPlainTextEdit(self.text)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(editor)
-        layout.addWidget(buttons)
+        form = Ui_EditDialog()
+        form.setupUi(dialog)
+        editor = form.editor
+        editor.setPlainText(self.text)
+        form.buttons.accepted.connect(dialog.accept)
+        form.buttons.rejected.connect(dialog.reject)
         dialog.resize(self.size())
         dialog.setModal(True)
         if QApplication.platformName() == "cocoa":

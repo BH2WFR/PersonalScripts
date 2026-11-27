@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>OcrWindow</class>
+ <widget class="QMainWindow" name="OcrWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1420</width>
+    <height>900</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>PDF OCR</string>
+  </property>
+  <widget class="QSplitter" name="splitter">
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+   <widget class="QWidget" name="left" native="true">
+    <property name="minimumSize">
+     <size>
+      <width>340</width>
+      <height>0</height>
+     </size>
+    </property>
+    <layout class="QVBoxLayout" name="left_layout" stretch="0,1,0">
+     <item>
+      <layout class="QHBoxLayout" name="file_actions">
+       <item>
+        <widget class="QPushButton" name="open_button">
+         <property name="text">
+          <string>Open PDF</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="close_button">
+         <property name="text">
+          <string>Close</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="OcrSettingsTabs" name="panel" />
+     </item>
+     <item>
+      <widget class="QPushButton" name="scan_button">
+       <property name="text">
+        <string>Try OCR on this page</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+   <widget class="QWidget" name="right_column">
+    <layout class="QVBoxLayout" name="right_layout">
+     <property name="leftMargin">
+      <number>3</number>
+     </property>
+     <property name="topMargin">
+      <number>6</number>
+     </property>
+     <property name="rightMargin">
+      <number>6</number>
+     </property>
+     <property name="bottomMargin">
+      <number>6</number>
+     </property>
+     <item>
+      <widget class="PreviewPane" name="preview_pane">
+       <widget class="QWidget" name="preview_body">
+        <layout class="QVBoxLayout" name="preview_layout" stretch="1,0">
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QSplitter" name="content">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <widget class="QTabWidget" name="tabs">
+            <widget class="PageViewer" name="viewer">
+             <attribute name="title">
+              <string>Page preview</string>
+             </attribute>
+            </widget>
+            <widget class="QWidget" name="text_tab">
+             <layout class="QVBoxLayout" name="text_layout">
+              <item>
+               <widget class="NoWheelComboBox" name="text_scope" />
+              </item>
+              <item>
+               <widget class="QPlainTextEdit" name="text" />
+              </item>
+             </layout>
+             <attribute name="title">
+              <string>Recognized text</string>
+             </attribute>
+            </widget>
+           </widget>
+           <widget class="NavigationPane" name="navigation" />
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="footer" stretch="1,0,0">
+           <item>
+            <widget class="QLabel" name="status">
+             <property name="text">
+              <string>Open or drop a PDF. OCR runs only when requested.</string>
+             </property>
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="TaskControls" name="task_buttons" />
+           </item>
+           <item>
+            <widget class="QPushButton" name="export_button">
+             <property name="text">
+              <string>Run all / Export PDF</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+       <widget class="PageToolbar" name="toolbar">
+        <property name="windowTitle">
+         <string />
+        </property>
+        <property name="movable">
+         <bool>false</bool>
+        </property>
+        <attribute name="toolBarArea">
+         <enum>TopToolBarArea</enum>
+        </attribute>
+        <attribute name="toolBarBreak">
+         <bool>false</bool>
+        </attribute>
+       </widget>
+       <widget class="PreviewOptionsToolbar" name="tool_toolbar">
+        <property name="windowTitle">
+         <string>Preview options</string>
+        </property>
+        <property name="movable">
+         <bool>false</bool>
+        </property>
+        <attribute name="toolBarArea">
+         <enum>TopToolBarArea</enum>
+        </attribute>
+        <attribute name="toolBarBreak">
+         <bool>false</bool>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>OcrSettingsTabs</class>
+   <extends>QTabWidget</extends>
+   <header>.panel</header>
+  </customwidget>
+  <customwidget>
+   <class>TaskControls</class>
+   <extends>QWidget</extends>
+   <header>..common.task_buttons</header>
+  </customwidget>
+  <customwidget>
+   <class>NavigationPane</class>
+   <extends>QTabWidget</extends>
+   <header>..common.navigation</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>PageToolbar</class>
+   <extends>QToolBar</extends>
+   <header>..common.page_toolbar</header>
+  </customwidget>
+  <customwidget>
+   <class>PageViewer</class>
+   <extends>QGraphicsView</extends>
+   <header>..common.viewer</header>
+  </customwidget>
+  <customwidget>
+   <class>PreviewOptionsToolbar</class>
+   <extends>QToolBar</extends>
+   <header>..common.page_toolbar</header>
+  </customwidget>
+  <customwidget>
+   <class>PreviewPane</class>
+   <extends>QMainWindow</extends>
+   <header>..common.page_toolbar</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

@@ -1,14 +1,13 @@
 """Compact rule editor with PDF-source discovery and explicit target style faces."""
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelComboBox
 from utils import *
-from ..common.range_input import RangeInput
 from .engine import _Embedding
 from .model import ReplacementRule
+from .ui_settings import Ui_RulePanel
 
 
-class RulePanel(QtWidgets.QWidget):
+class RulePanel(QtWidgets.QWidget, Ui_RulePanel):
     """Edit a draft; Add/Update commits it to the active replacement list.
 
     Signals request discovery work from the host instead of reading PDFs/fonts
@@ -28,41 +27,16 @@ class RulePanel(QtWidgets.QWidget):
         self.catalog: list[FontFace] = []
         self._selected_face: FontFace | None = None
         self._loading = False
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.tabs = QtWidgets.QTabWidget()
-        layout.addWidget(self.tabs, 1)
+        self.setupUi(self)
 
-        # ── source matching and discovery ─────────────────────
-        match = QtWidgets.QWidget()
-        match_layout = QtWidgets.QVBoxLayout(match)
-        form = QtWidgets.QFormLayout()
-        self.names = QtWidgets.QLineEdit()
         self.names.setPlaceholderText("All fonts; or PDF names separated by ;")
         self.names.setToolTip("Exact original PDF font names, without the subset prefix. Separate names with semicolons. Blank matches all fonts.")
-        form.addRow("Source fonts", self.names)
-        scan_row = QtWidgets.QWidget()
-        row = QtWidgets.QHBoxLayout(scan_row)
-        row.setContentsMargins(0, 0, 0, 0)
-        self.scan_pages = QtWidgets.QPushButton("Scan in pages")
         self.scan_pages.setToolTip("Enter physical pages to find fonts and text colors; defaults to all. This only scopes discovery, not replacement.")
         self.scan_pages.clicked.connect(self.scanPagesRequested.emit)
-        row.addWidget(self.scan_pages)
-        self.scan_all = QtWidgets.QPushButton("Scan all")
         self.scan_all.setToolTip("Find fonts and text colors throughout the PDF.")
         self.scan_all.clicked.connect(lambda: self.scanRequested.emit("all"))
-        row.addWidget(self.scan_all)
-        self.scan_current = QtWidgets.QPushButton("Scan current")
         self.scan_current.setToolTip("Find fonts and text colors on the currently displayed physical page.")
         self.scan_current.clicked.connect(self.scanCurrentRequested.emit)
-        row.addWidget(self.scan_current)
-        match_layout.addLayout(form)
-        match_layout.addWidget(scan_row)
-        self.sources = QtWidgets.QTreeWidget()
-        self.sources.setHeaderLabels(["Font", "Type", "Embedded", "Size (pt)"])
-        self.sources.setRootIsDecorated(False)
-        self.sources.setUniformRowHeights(True)
-        self.sources.setAlternatingRowColors(True)
         self.sources.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.sources.header().setStretchLastSection(False)
         for column, width in enumerate((160, 80, 75, 90)):
@@ -70,127 +44,54 @@ class RulePanel(QtWidgets.QWidget):
         self.sources.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.sources.setToolTip("Select one or more discovered PDF fonts to fill Source fonts. Clear the text field to match all fonts.")
         self.sources.itemSelectionChanged.connect(self._select_sources)
-        match_layout.addWidget(self.sources, 1)
-        filters = QtWidgets.QFormLayout()
-        self.sizes = QtWidgets.QLineEdit()
         self.sizes.setPlaceholderText("All sizes; e.g. 12,14-18")
-        filters.addRow("Font sizes (pt)", self.sizes)
-        self.ignored = QtWidgets.QLineEdit()
+        self.ignored = self.ignored_range.field
         self.ignored.setPlaceholderText("None; e.g. 1,2,-1; append |odd or |even")
         self.ignored.setToolTip("Physical pages to exclude. Append |odd or |even to filter page numbers.")
-        self.ignored_range = RangeInput(self.ignored)
-        filters.addRow("Ignore pages", self.ignored_range)
-        self.source_colors = QtWidgets.QLineEdit()
         self.source_colors.setPlaceholderText("All colors; e.g. #000; #F00")
         self.source_colors.setToolTip("Match original fill or stroke at 8-bit RGB precision. Separate colors with semicolons; RGB input is also supported.")
-        filters.addRow("Match text colors", self._color_control(self.source_colors, append=True))
-        self.found_colors = NoWheelComboBox()
         self.found_colors.addItem("Discovered colors…", None)
         self.found_colors.activated.connect(self._select_color)
-        filters.addRow("Append color", self.found_colors)
-        match_layout.addLayout(filters)
-        self.tabs.addTab(match, "Match")
 
-        # ── target family and exact style assignments ──────────
-        target = QtWidgets.QWidget()
-        target_layout = QtWidgets.QVBoxLayout(target)
-        self.color_only = QtWidgets.QCheckBox("Change color only (keep original font)")
-        target_layout.addWidget(self.color_only)
-        self.font_controls = QtWidgets.QWidget()
-        font_layout = QtWidgets.QVBoxLayout(self.font_controls)
-        font_layout.setContentsMargins(0, 0, 0, 0)
-        buttons = QtWidgets.QHBoxLayout()
-        installed = QtWidgets.QPushButton("Load installed fonts")
-        installed.clicked.connect(self.catalogRequested.emit)
-        file_button = QtWidgets.QPushButton("Font file…")
-        file_button.clicked.connect(self._font_file)
-        buttons.addWidget(installed)
-        buttons.addWidget(file_button)
-        font_layout.addLayout(buttons)
-        target_form = QtWidgets.QFormLayout()
-        self.search = QtWidgets.QLineEdit()
+        self.installed_button.clicked.connect(self.catalogRequested.emit)
+        self.file_button.clicked.connect(self._font_file)
         self.search.setPlaceholderText("Search names / localized aliases")
         self.search.textChanged.connect(self._search_fonts)
-        font_layout.addWidget(self.search)
-        self.target_status = QtWidgets.QLabel("Load installed fonts or choose a font file first.")
-        self.target_status.setWordWrap(True)
-        font_layout.addWidget(self.target_status)
-        self.target = QtWidgets.QListWidget()
-        self.target.setMinimumHeight(80)
-        self.target.setMaximumHeight(145)
         self.target.setToolTip("Click a result to select its family and available styles. Search accepts canonical names and localized aliases.")
         self.target.itemSelectionChanged.connect(self._target_selected)
-        font_layout.addWidget(self.target)
-        self.selected_target = QtWidgets.QLabel("Selected: none")
         self.selected_target.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.selected_target.setWordWrap(True)
-        font_layout.addWidget(self.selected_target)
-        self.styles: dict[FontStyle, QtWidgets.QComboBox] = {}
-        for style in FontStyle:
-            combo = NoWheelComboBox()
+        self.styles = {
+            FontStyle.REGULAR: self.regular_face,
+            FontStyle.BOLD: self.bold_face,
+            FontStyle.ITALIC: self.italic_face,
+            FontStyle.BOLD_ITALIC: self.bold_italic_face,
+        }
+        for combo in self.styles.values():
             combo.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(10)
             combo.addItem("Not assigned", None)
             combo.setToolTip("An exact matching style is required only when the selected PDF text uses it. Load additional files for missing styles; there is no silent fallback.")
-            self.styles[style] = combo
             combo.currentIndexChanged.connect(self._show_selected_target)
-            target_form.addRow(style.name.replace("_", " ").title(), combo)
-        self.embedding = NoWheelComboBox()
         self.embedding.addItem("Used glyphs (subset)", _Embedding.SUBSET)
         self.embedding.addItem("Full font face", _Embedding.FULL)
         self.embedding.setCurrentIndex(0)
         self.embedding.setToolTip("Default: embed only glyphs used by replaced text. Full font embeds the entire selected face.")
-        target_form.addRow("Embed target", self.embedding)
-        font_layout.addLayout(target_form)
-        self.remove_original = QtWidgets.QCheckBox("Remove unused original font embeddings")
         self.remove_original.setToolTip("Only remove original font programs no longer needed by text, ignored pages, annotations or retaining rules.")
-        font_layout.addWidget(self.remove_original)
-        target_layout.addWidget(self.font_controls)
-        color_form = QtWidgets.QFormLayout()
-        self.color = QtWidgets.QLineEdit()
         self.color.setPlaceholderText("Keep original; or #000 / rgb(0,0,0)")
         self.color.setToolTip("Recolor matched text only. Required in color-only mode; otherwise blank keeps the original color.")
-        color_form.addRow("New text color", self._color_control(self.color))
-        target_layout.addLayout(color_form)
         self.color_only.toggled.connect(lambda checked: self.font_controls.setEnabled(not checked))
-        note = QtWidgets.QLabel("Positions and advances stay fixed. Missing glyphs or styles stop replacement.")
-        note.setWordWrap(True)
-        target_layout.addWidget(note)
-        target_layout.addStretch(1)
-        self.tabs.addTab(target, "Target")
-        scope = QtWidgets.QFormLayout()
-        self.pages = QtWidgets.QLineEdit("all")
+        self.pages = self.pages_range.field
+        self.pages.setText("all")
         self.pages.setPlaceholderText("all; or 1,2,5-10,-1; append |odd or |even")
         self.pages.setToolTip("Physical pages for this rule: all (default), 1,2,5-10, -1 for the last page, or none. Append |odd or |even to filter page numbers. Ignore pages is subtracted from this selection. Applies to preview and export.")
-        self.pages_range = RangeInput(self.pages)
-        scope.addRow("Apply to pages", self.pages_range)
-        layout.addLayout(scope)
-        actions = QtWidgets.QHBoxLayout()
-        self.add = QtWidgets.QPushButton("Add rule")
-        self.update_button = QtWidgets.QPushButton("Update selected")
         self.add.clicked.connect(lambda: self.commitRequested.emit(True))
         self.update_button.clicked.connect(lambda: self.commitRequested.emit(False))
-        actions.addWidget(self.add)
-        actions.addWidget(self.update_button)
-        layout.addLayout(actions)
-        hint = QtWidgets.QLabel("Mark matches previews current filters directly. Add / Update commits replacement rules.")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self.source_colors_button.setToolTip("Append a source color")
+        self.source_colors_button.clicked.connect(lambda: self._choose_color(self.source_colors, append=True))
+        self.color_button.setToolTip("Choose the replacement text color")
+        self.color_button.clicked.connect(lambda: self._choose_color(self.color, append=False))
         for field in (self.names, self.sizes, self.source_colors):
             field.editingFinished.connect(self.matchChanged.emit)
-
-    def _color_control(self, field: QtWidgets.QLineEdit, *, append: bool = False) -> QtWidgets.QWidget:
-        """Pair a shared-parser color field with an optional native color chooser."""
-        widget = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(field, 1)
-        button = QtWidgets.QPushButton("…")
-        button.setFixedWidth(28)
-        button.setToolTip("Append a source color" if append else "Choose the replacement text color")
-        button.clicked.connect(lambda: self._choose_color(field, append=append))
-        layout.addWidget(button)
-        return widget
 
     def _choose_color(self, field: QtWidgets.QLineEdit, *, append: bool) -> None:
         initial = QtGui.QColor("black")

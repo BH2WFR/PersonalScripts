@@ -4,7 +4,7 @@ import re
 
 from PySide6.QtCore import QMimeData
 from PySide6.QtGui import QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
 from utils.qt_clipboard import original_mime_text
 
@@ -64,8 +64,8 @@ def _original_text(document: QTextDocument) -> str:
 class OriginalEditor(QPlainTextEdit):
     """Attach original code points to editable spans so undo restores them too."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
         self.cursorPositionChanged.connect(self._reset_typing_format)
 
     def _reset_typing_format(self) -> None:

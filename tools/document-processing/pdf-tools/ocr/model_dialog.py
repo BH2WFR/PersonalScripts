@@ -7,10 +7,10 @@ from typing import cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from ..common.jobs import JobRunner
 from ..common.protocol import Json
-from ..common.task_buttons import TaskButtons
+from .ui_models import Ui_ModelDialog
 
 
-class ModelDialog(QtWidgets.QDialog):
+class ModelDialog(QtWidgets.QDialog, Ui_ModelDialog):
     """Manage small recognition models without installing more Python packages."""
 
     def __init__(self, runner: JobRunner, submit: Callable[[dict[str, Json]], bool],
@@ -19,56 +19,22 @@ class ModelDialog(QtWidgets.QDialog):
         self.runner, self.submit = runner, submit
         self.rows: dict[str, dict] = {}
         self.directory = ""
-        self.setWindowTitle("OCR models")
-        self.resize(830, 570)
+        self.setupUi(self)
         self.setModal(True)
-        layout = QtWidgets.QVBoxLayout(self)
-        note = QtWidgets.QLabel("Download only the languages you need. Bundled models are read-only.\n"
-            "Downloads use RapidOCR's official registry and are checked with SHA-256. Select a language in OCR settings to use its model.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.tree = QtWidgets.QTreeWidget()
-        self.tree.setHeaderLabels(["Model / languages", "Version", "Status", "Local size"])
-        self.tree.setRootIsDecorated(False)
-        self.tree.setAlternatingRowColors(True)
         self.tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
         for column in (1, 2, 3):
             self.tree.header().setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.tree.currentItemChanged.connect(self._selected)
-        layout.addWidget(self.tree, 1)
-        self.details = QtWidgets.QPlainTextEdit()
         self.details.setReadOnly(True)
-        self.details.setMaximumHeight(110)
-        layout.addWidget(self.details)
-        self.summary = QtWidgets.QLabel()
-        self.summary.setWordWrap(True)
-        layout.addWidget(self.summary)
-        actions = QtWidgets.QHBoxLayout()
-        self.download_button = QtWidgets.QPushButton("Download / Repair")
-        self.verify_button = QtWidgets.QPushButton("Verify")
-        self.delete_button = QtWidgets.QPushButton("Delete")
-        self.refresh_button = QtWidgets.QPushButton("Refresh")
-        self.folder_button = QtWidgets.QPushButton("Open folder")
         for button, callback in ((self.download_button, lambda: self._action("download")),
                                  (self.verify_button, lambda: self._action("verify")),
                                  (self.delete_button, self._delete),
                                  (self.refresh_button, self.refresh),
                                  (self.folder_button, self._open_folder)):
             button.clicked.connect(callback)
-            actions.addWidget(button)
-        layout.addLayout(actions)
-        self.status = QtWidgets.QLabel("Reading local models...")
-        self.status.setWordWrap(True)
         self.status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        layout.addWidget(self.status)
-        footer = QtWidgets.QHBoxLayout()
-        self.controls = TaskButtons(runner, with_progress=True)
-        footer.addWidget(self.controls)
-        footer.addStretch()
-        self.close_button = QtWidgets.QPushButton("Close")
+        self.controls.bind_runner(runner, with_progress=True)
         self.close_button.clicked.connect(self.reject)
-        footer.addWidget(self.close_button)
-        layout.addLayout(footer)
         runner.busyChanged.connect(self._enabled)
         runner.progress.connect(self._progress)
         runner.controlStatus.connect(self.status.setText)
@@ -140,8 +106,9 @@ class ModelDialog(QtWidgets.QDialog):
                 self.tree.addTopLevelItem(item)
                 if key == selected:
                     self.tree.setCurrentItem(item)
-            if self.tree.currentItem() is None:
-                self.tree.setCurrentItem(self.tree.topLevelItem(0))
+            first = self.tree.topLevelItem(0)
+            if self.tree.currentItem() is None and first is not None:
+                self.tree.setCurrentItem(first)
             self.summary.setText(f"Local models: {total / 1048576:.2f} MiB (downloaded: {extra / 1048576:.2f} MiB)\n{self.directory}")
             action = str(message["action"])
             self.status.setText("Local inventory refreshed. Use Verify to check file integrity." if action == "list" else

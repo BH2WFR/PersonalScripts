@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ImageSettings</class>
+ <widget class="QGroupBox" name="ImageSettings">
+  <layout class="QFormLayout" name="image_form">
+   <item row="0" column="0">
+    <widget class="QLabel" name="style_label">
+     <property name="text">
+      <string>Style</string>
+     </property>
+     <property name="buddy">
+      <cstring>image_style</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="NoWheelComboBox" name="image_style" />
+   </item>
+   <item row="1" column="0">
+    <widget class="QLabel" name="point_size_2_label">
+     <property name="text">
+      <string>Point size</string>
+     </property>
+     <property name="buddy">
+      <cstring>image_point_size</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="1">
+    <widget class="NoWheelDoubleSpinBox" name="image_point_size" />
+   </item>
+  </layout>
+  <property name="title">
+   <string>2D rendering</string>
+  </property>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

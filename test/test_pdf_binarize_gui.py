@@ -21,6 +21,7 @@ import pymupdf
 from PIL import Image, ImageDraw
 
 from test_pdf_binarize import ROOT, make_source, page_image, workflow
+from utils.qt_styles import text_stylesheet
 from personal_pdf_tools.binarize.app import ADMIN_DROP_HINT, BinarizeWindow, Operation
 from personal_pdf_tools.binarize.panel import SettingsPanel
 from personal_pdf_tools.binarize.preview_cache import PreviewCache, PreviewFrame, PreviewState
@@ -440,7 +441,7 @@ class GuiTests(unittest.TestCase):
         self.window.profile_list.setCurrentItem(default_item)
         self.window.preview_timer.stop()
         self.assertEqual(self.window.project.assignments[0], DEFAULT_ID)
-        self.assertIn("#b06b00", self.window.original.styleSheet())
+        self.assertEqual(self.window.original.styleSheet(), text_stylesheet("orange", bold=True))
         before = list(self.window.project.assignments)
         self.window.go_page(1)
         self.window.preview_timer.stop()
@@ -450,7 +451,7 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(self.window.settings.widget(0).isEnabled())
         self.window.go_page(2)
         self.window.preview_timer.stop()
-        self.assertIn("#b06b00", self.window.original.styleSheet())
+        self.assertEqual(self.window.original.styleSheet(), text_stylesheet("orange", bold=True))
 
     def test_numeric_settings_wait_for_commit_and_sliders_wait_for_release(self) -> None:
         panel = self.window.settings
@@ -636,7 +637,9 @@ class GuiTests(unittest.TestCase):
         self.assertLessEqual(window.next_button.width(), 30)
         self.assertEqual(window.page_number.width(), 48)
         self.assertEqual(window.page_total.text(), "/ 3")
-        self.assertEqual(sum(action.isSeparator() for action in window.view_toolbar.actions()), 2)
+        self.assertEqual(sum(action.isSeparator() for action in window.view_toolbar.actions()), 1)
+        self.assertTrue(window.tool_toolbar.isAncestorOf(window.original))
+        self.assertTrue(window.tool_toolbar.isAncestorOf(window.show_regions))
         self.assertGreater(window.profile_list.height(), 80)
         toolbar_bottom = window.view_toolbar.mapTo(window, window.view_toolbar.rect().bottomLeft()).y()
         self.assertLessEqual(window.viewer.mapTo(window, QtCore.QPoint()).y(), toolbar_bottom + 8)
@@ -910,7 +913,7 @@ class GuiTests(unittest.TestCase):
             window.original.setChecked(True)
             window._settings_changed(Config(72, 120))
             self.assertEqual(window.viewer._original.toImage(), original)
-            self.assertIn("#b06b00", window.original.styleSheet())
+            self.assertEqual(window.original.styleSheet(), text_stylesheet("orange", bold=True))
             start.assert_not_called()
         window.original.setChecked(False)
         self.assertTrue(window.preview_timer.isActive())

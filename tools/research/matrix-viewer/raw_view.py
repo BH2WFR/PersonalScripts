@@ -14,7 +14,7 @@ from typing import cast
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import Frame, ImageMember, ImageSource, SourceArray
-from .qt_widgets import NoWheelComboBox, NoWheelSpinBox, VerticalSeparator
+from .ui_raw_data_view import Ui_RawDataView
 
 MAX_COPY_CELLS = 1_000_000
 DEFAULT_COLUMN_WIDTH = 48
@@ -159,7 +159,7 @@ class ArrayTableModel(QtCore.QAbstractTableModel):
         return str(source_column)
 
 
-class RawDataView(QtWidgets.QWidget):
+class RawDataView(QtWidgets.QWidget, Ui_RawDataView):
     """Scrollable source table with index navigation and TSV clipboard copying.
 
     Args:
@@ -168,27 +168,15 @@ class RawDataView(QtWidgets.QWidget):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.frame: Frame | None = None
         self.source_name = ""
-        layout = QtWidgets.QVBoxLayout(self)
-        self.note = QtWidgets.QLabel("No data loaded")
-        self.note.setWordWrap(True)
-        heading = QtWidgets.QHBoxLayout()
-        heading.addWidget(self.note, 1)
-        self.hex_checkbox = QtWidgets.QCheckBox("Hexadecimal")
         self.hex_checkbox.setVisible(False)
         self.hex_checkbox.toggled.connect(self._hexadecimal_changed)
-        heading.addWidget(self.hex_checkbox)
-        heading.addWidget(QtWidgets.QLabel("Matrix"))
-        self.matrix_combo = NoWheelComboBox()
-        self.matrix_combo.setPlaceholderText("No matrices")
         self.matrix_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.matrix_combo.setMinimumContentsLength(MATRIX_SELECTOR_CHARS)
         self.matrix_combo.setEnabled(False)
-        heading.addWidget(self.matrix_combo)
-        layout.addLayout(heading)
         self.model = ArrayTableModel(self)
-        self.table = QtWidgets.QTableView()
         self.table.setModel(self.model)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -196,36 +184,19 @@ class RawDataView(QtWidgets.QWidget):
         self.table.horizontalHeader().setMinimumSectionSize(MIN_COLUMN_WIDTH)
         self.table.horizontalHeader().setDefaultSectionSize(DEFAULT_COLUMN_WIDTH)
         self.table.verticalHeader().setDefaultSectionSize(25)
-        self.table.setWordWrap(False)
-        layout.addWidget(self.table)
-        bar = QtWidgets.QHBoxLayout()
-        self.row = NoWheelSpinBox()
-        self.column = NoWheelSpinBox()
-        for label, widget in (("Row", self.row), ("Column", self.column)):
-            bar.addWidget(QtWidgets.QLabel(label))
-            bar.addWidget(widget)
-        go = QtWidgets.QPushButton("Go to cell")
+        go = self.form_go
         go.clicked.connect(self._go_to)
-        bar.addWidget(go)
-        copy = QtWidgets.QPushButton("Copy selection")
+        copy = self.form_copy
         copy.clicked.connect(self._copy)
-        bar.addWidget(copy)
-        bar.addWidget(VerticalSeparator())
-        bar.addWidget(QtWidgets.QLabel("Column width"))
-        self.column_width = NoWheelSpinBox()
         self.column_width.setRange(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
         self.column_width.setValue(DEFAULT_COLUMN_WIDTH)
         self.column_width.setSuffix(" px")
         self.column_width.setKeyboardTracking(False)
-        bar.addWidget(self.column_width)
-        self.width_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.width_slider.setRange(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
         self.width_slider.setValue(DEFAULT_COLUMN_WIDTH)
         self.width_slider.valueChanged.connect(self.column_width.setValue)
         self.column_width.valueChanged.connect(self.width_slider.setValue)
         self.column_width.valueChanged.connect(self._set_column_width)
-        bar.addWidget(self.width_slider, 1)
-        layout.addLayout(bar)
         action = self.copy_action = QtGui.QAction("Copy selection", self.table)
         action.setShortcut(QtGui.QKeySequence.StandardKey.Copy)
         action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)

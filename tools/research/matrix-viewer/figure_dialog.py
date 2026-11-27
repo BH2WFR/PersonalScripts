@@ -11,16 +11,15 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
-from .image_preview import ImagePreview
 from .figure_export import (FigureFormat, FigureOptions, FigureSource, FigureView,
                             figure_size, render_figure, save_figure)
+from .ui_figure_export_dialog import Ui_FigureExportDialog
 
 PREVIEW_WIDTH = 1000
 PREVIEW_DELAY_MS = 180
 
 
-class FigureExportDialog(QtWidgets.QDialog):
+class FigureExportDialog(QtWidgets.QDialog, Ui_FigureExportDialog):
     """Choose one currently displayed view, preview it, and save a figure.
 
     Args:
@@ -36,90 +35,37 @@ class FigureExportDialog(QtWidgets.QDialog):
                  prepare: Callable[[FigureView], FigureSource], directory: Path,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Export figure")
+        self.setupUi(self)
         self.setModal(True)
-        self.resize(1020, 680)
         self.prepare = prepare
         self.directory = directory
         self.source: FigureSource | None = None
         self.saved_path: Path | None = None
         self._suggested_title = ""
-        root = QtWidgets.QVBoxLayout(self)
-        body = QtWidgets.QHBoxLayout()
-        root.addLayout(body, 1)
-        settings = QtWidgets.QWidget()
-        settings.setMaximumWidth(350)
-        form = QtWidgets.QFormLayout(settings)
-        self.view_selector = NoWheelComboBox()
         for view in views:
             self.view_selector.addItem(view.value, view.value)
         self.view_selector.setCurrentIndex(views.index(initial))
-        form.addRow("View", self.view_selector)
-        self.format_selector = NoWheelComboBox()
-        form.addRow("Format", self.format_selector)
-        self.pixel_width = NoWheelSpinBox()
         self.pixel_width.setRange(64, 12000)
         self.pixel_width.setValue(2400)
         self.pixel_width.setSuffix(" px")
         self.pixel_width.setKeyboardTracking(False)
-        form.addRow("Image width", self.pixel_width)
-        self.pixel_height = NoWheelSpinBox()
         self.pixel_height.setRange(64, 12000)
         self.pixel_height.setSuffix(" px")
         self.pixel_height.setKeyboardTracking(False)
-        form.addRow("Image height", self.pixel_height)
-        self.lock_aspect = QtWidgets.QCheckBox("Lock original plot aspect ratio")
         self.lock_aspect.setChecked(True)
-        self.lock_aspect.setToolTip("Uncheck to set width and height independently. Both dimensions include the title and legend.")
-        form.addRow(self.lock_aspect)
-        self.dpi = NoWheelSpinBox()
         self.dpi.setRange(36, 2400)
         self.dpi.setValue(300)
         self.dpi.setKeyboardTracking(False)
-        form.addRow("DPI", self.dpi)
-        self.transparent = QtWidgets.QCheckBox("Transparent background")
-        form.addRow(self.transparent)
-        self.title = QtWidgets.QLineEdit()
-        self.title.setPlaceholderText("Optional title; leave empty to omit")
-        form.addRow("Title", self.title)
-        self.legend = QtWidgets.QCheckBox("Include channel / matrix legend")
         self.legend.setChecked(True)
-        form.addRow(self.legend)
-        self.annotation_size = NoWheelSpinBox()
         self.annotation_size.setRange(6, 28)
         self.annotation_size.setValue(10)
         self.annotation_size.setSuffix(" pt")
-        form.addRow("Title / legend size", self.annotation_size)
-        self.dimensions = QtWidgets.QLabel()
-        self.dimensions.setWordWrap(True)
-        form.addRow(self.dimensions)
-        note = QtWidgets.QLabel(
-            "Unlock the aspect ratio to set width and height independently. "
-            "Dimensions include the title and wrapped legend. Plots reflow to fit; "
-            "a locked X:Y unit ratio is preserved by expanding the visible range. "
-            "3D renders into the new viewport. DPI sets print size.\n\n"
-            "Axes and lines scale with the plot. Viewer controls and hover cursors are excluded. "
-            "Image pixels and curves use full source detail; 2D points and 3D use the current grid sampling. "
-            "Background and text colors follow the viewer theme. "
-            "SVG keeps Qt plot text/curves as vectors and embeds 2D image pixels.")
-        note.setWordWrap(True)
-        form.addRow(note)
-        self.source_note = QtWidgets.QLabel()
-        self.source_note.setWordWrap(True)
-        form.addRow(self.source_note)
-        body.addWidget(settings)
-        self.preview = ImagePreview()
-        self.preview.setMinimumSize(380, 260)
-        body.addWidget(self.preview, 1)
-        self.status = QtWidgets.QLabel("Preparing preview…")
-        self.status.setWordWrap(True)
-        root.addWidget(self.status)
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        buttons = self.form_buttons
         self.save_button = buttons.addButton("Save figure…", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Close).setDefault(True)
         self.save_button.setEnabled(False)
         self.save_button.clicked.connect(self._save)
         buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
         self._preview_timer = QtCore.QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(PREVIEW_DELAY_MS)

@@ -1,0 +1,368 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ViewSettingsDialog</class>
+ <widget class="QDialog" name="ViewSettingsDialog">
+  <property name="windowTitle">
+   <string>View settings</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>570</width>
+    <height>570</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>460</width>
+    <height>420</height>
+   </size>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout" stretch="0,0,1,0,0">
+   <item>
+    <widget class="QLabel" name="source">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="form_note">
+     <property name="text">
+      <string>Unlock appearance to restore each matrix's styles. Colors can be locked in single matrix mode; ranges stay independent. Background, slice markers and axes options are shared.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTabWidget" name="tabs">
+     <widget class="QScrollArea" name="signal_page">
+      <property name="widgetResizable">
+       <bool>true</bool>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::NoFrame</enum>
+      </property>
+      <attribute name="title">
+       <string>1D</string>
+      </attribute>
+      <widget class="QWidget" name="signal_content" native="true">
+       <layout class="QVBoxLayout" name="signal_layout">
+        <item>
+         <layout class="QVBoxLayout" name="signal_lock_slot" />
+        </item>
+        <item>
+         <widget class="QLabel" name="profile_scope">
+          <property name="text">
+           <string>Multiple matrices: line width and point size apply to all. Rendering, line style, dash scale, point shape and color apply to the active matrix/channel.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="signal_scaling">
+          <property name="title">
+           <string>Scaling (all visible matrices)</string>
+          </property>
+          <layout class="QHBoxLayout" name="signal_scaling_layout">
+           <item>
+            <widget class="QPushButton" name="signal_scaling_button">
+             <property name="text">
+              <string>1D plot / slice scaling…</string>
+             </property>
+             <property name="toolTip">
+              <string>Open the corresponding plot first. Adjust ranges, individual axes or equal-unit presets; data values stay unchanged.</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="derivative_scaling_button">
+             <property name="text">
+              <string>1D derivative scaling…</string>
+             </property>
+             <property name="toolTip">
+              <string>Open the corresponding plot first. Adjust ranges, individual axes or equal-unit presets; data values stay unchanged.</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QStackedWidget" name="profile_stack">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="axes">
+          <property name="title">
+           <string>Axes</string>
+          </property>
+          <layout class="QVBoxLayout" name="axes_layout">
+           <item>
+            <widget class="QCheckBox" name="signal_grid">
+             <property name="text">
+              <string>Signal grid</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="derivative_grid">
+             <property name="text">
+              <string>Derivative grid</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="y_lock">
+             <property name="text">
+              <string>Lock Y range (expand only)</string>
+             </property>
+             <property name="toolTip">
+              <string>Shared across slices and 1D matrices. Signal and derivative have separate histories. Overrides Auto Y until unlocked.</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="auto_y">
+             <property name="text">
+              <string>Auto Y on slice change</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="signal_stretch">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QScrollArea" name="image_page">
+      <property name="widgetResizable">
+       <bool>true</bool>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::NoFrame</enum>
+      </property>
+      <attribute name="title">
+       <string>2D</string>
+      </attribute>
+      <widget class="QWidget" name="image_content" native="true">
+       <layout class="QVBoxLayout" name="image_layout">
+        <item>
+         <layout class="QVBoxLayout" name="image_lock_slot" />
+        </item>
+        <item>
+         <widget class="QGroupBox" name="image_scaling">
+          <property name="title">
+           <string>Scaling (all visible matrices)</string>
+          </property>
+          <layout class="QHBoxLayout" name="image_scaling_layout">
+           <item>
+            <widget class="QPushButton" name="image_scaling_button">
+             <property name="text">
+              <string>2D image scaling…</string>
+             </property>
+             <property name="toolTip">
+              <string>Open the corresponding plot first. Adjust ranges, individual axes or equal-unit presets; data values stay unchanged.</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="image_controls_slot" />
+        </item>
+        <item>
+         <spacer name="image_stretch">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QScrollArea" name="surface_page">
+      <property name="widgetResizable">
+       <bool>true</bool>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::NoFrame</enum>
+      </property>
+      <attribute name="title">
+       <string>3D</string>
+      </attribute>
+      <widget class="QWidget" name="surface_content" native="true">
+       <layout class="QVBoxLayout" name="surface_layout">
+        <item>
+         <layout class="QVBoxLayout" name="surface_lock_slot" />
+        </item>
+        <item>
+         <widget class="QGroupBox" name="surface_scaling">
+          <property name="title">
+           <string>Scaling (all visible matrices)</string>
+          </property>
+          <layout class="QHBoxLayout" name="surface_scaling_layout">
+           <item>
+            <widget class="QPushButton" name="surface_scaling_button">
+             <property name="text">
+              <string>3D view scaling…</string>
+             </property>
+             <property name="toolTip">
+              <string>Open the corresponding plot first. Adjust ranges, individual axes or equal-unit presets; data values stay unchanged.</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QCheckBox" name="z_lock">
+          <property name="text">
+           <string>Lock Z range (expand only)</string>
+          </property>
+          <property name="toolTip">
+           <string>3D geometry only; independent of the shared 2D/3D color range lock.</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="surface_controls_slot" />
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="slice_appearance_slot" />
+        </item>
+        <item>
+         <spacer name="surface_stretch">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QScrollArea" name="colors_page">
+      <property name="widgetResizable">
+       <bool>true</bool>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::NoFrame</enum>
+      </property>
+      <attribute name="title">
+       <string>Colors</string>
+      </attribute>
+      <widget class="QWidget" name="colors_content" native="true">
+       <layout class="QVBoxLayout" name="colors_layout">
+        <item>
+         <layout class="QVBoxLayout" name="colors_lock_slot" />
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="display_box_slot" />
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="overlay_appearance_slot" />
+        </item>
+        <item>
+         <spacer name="colors_stretch">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QScrollArea" name="markers_page">
+      <property name="widgetResizable">
+       <bool>true</bool>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::NoFrame</enum>
+      </property>
+      <attribute name="title">
+       <string>Markers</string>
+      </attribute>
+      <widget class="QWidget" name="markers_content" native="true">
+       <layout class="QVBoxLayout" name="markers_layout">
+        <item>
+         <layout class="QVBoxLayout" name="markers_lock_slot" />
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="marker_controls_slot" />
+        </item>
+        <item>
+         <spacer name="markers_stretch">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="background_slot" />
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="form_buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Close</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

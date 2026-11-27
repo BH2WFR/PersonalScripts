@@ -469,6 +469,20 @@ class FontGuiTests(unittest.TestCase):
         self.settled(window)
         self.assertEqual(window.viewer._original.toImage(), original)
 
+    def test_narrow_toolbar_expands_to_show_tool_specific_controls(self) -> None:
+        window = self.window()
+        splitter = window.centralWidget()
+        assert isinstance(splitter, QtWidgets.QSplitter)
+        splitter.setSizes([window.width() - 400, 400])
+        extension = window.tool_toolbar.findChild(QtWidgets.QToolButton, "qt_toolbar_ext_button")
+        assert extension is not None
+        wait_for(extension.isVisible)
+        self.assertFalse(window.mark_color_button.isVisible())
+        extension.click()
+        wait_for(window.mark_color_button.isVisible)
+        self.assertTrue(window.raw.isVisible())
+        self.assertTrue(window.mark_matches.isVisible())
+
     def test_gui_readonly_navigation_shortcuts_and_debounce(self) -> None:
         window = self.window()
         self.assertEqual(window.navigation.count(), 2)

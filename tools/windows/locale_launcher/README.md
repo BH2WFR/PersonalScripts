@@ -11,6 +11,10 @@ The optional **Arguments** field passes its text to the target as a Windows comm
 
 Double-click [`_locale-info.com`](../_locale-info.com) to view the host defaults, or open it in Locale Launcher to inspect the effective settings for that launch. Its dialog shows the user and system regions, ANSI/OEM code pages, UI languages, time zone, local time, actual process elevation, working directory and received argument text.
 
+## Edit the window layout
+
+Open [launcher.ui](launcher.ui) in Qt Creator. After saving, run `conda run -n base python _pyside6_uic.py` from the repository root and commit both files together. [ui.py](ui.py) populates the controls from Windows settings and connects their actions.
+
 ## Compatibility
 
 When every selection is **Unchanged (use host)**, Windows starts the target directly. For overrides the launcher selects the included x86 or x64 runtime by the target's PE machine type. Each override applies to the selected process for its lifetime. Programs that hand off to another executable need that executable selected directly.

@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Properties</class>
+ <widget class="QWidget" name="Properties">
+  <layout class="QVBoxLayout" name="main_layout">
+   <item>
+    <layout class="QFormLayout" name="fields_form">
+     <item row="0" column="0">
+      <widget class="QLabel" name="title_row_label">
+       <property name="text">
+        <string>Title</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <layout class="QHBoxLayout" name="title_row">
+       <item>
+        <widget class="QLineEdit" name="title_field" />
+       </item>
+       <item>
+        <widget class="QPushButton" name="edit_titles">
+         <property name="text">
+          <string>Multilingual…</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="author_field_label">
+       <property name="text">
+        <string>Author</string>
+       </property>
+       <property name="buddy">
+        <cstring>author_field</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLineEdit" name="author_field" />
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="subject_field_label">
+       <property name="text">
+        <string>Subject</string>
+       </property>
+       <property name="buddy">
+        <cstring>subject_field</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLineEdit" name="subject_field" />
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="keywords_field_label">
+       <property name="text">
+        <string>Keywords</string>
+       </property>
+       <property name="buddy">
+        <cstring>keywords_field</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QLineEdit" name="keywords_field" />
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="creator_field_label">
+       <property name="text">
+        <string>Creator</string>
+       </property>
+       <property name="buddy">
+        <cstring>creator_field</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QLineEdit" name="creator_field" />
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="producer_field_label">
+       <property name="text">
+        <string>Producer</string>
+       </property>
+       <property name="buddy">
+        <cstring>producer_field</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QLineEdit" name="producer_field" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="extra_actions">
+     <item>
+      <widget class="QLabel" name="extra_label">
+       <property name="text">
+        <string>Additional document properties</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="actions_stretch">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="add">
+       <property name="text">
+        <string>Add property</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="remove">
+       <property name="text">
+        <string>Remove</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="table">
+     <column>
+      <property name="text">
+       <string>Property</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Format</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Value</string>
+      </property>
+     </column>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

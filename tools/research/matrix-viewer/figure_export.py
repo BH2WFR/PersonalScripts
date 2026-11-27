@@ -17,6 +17,7 @@ from io import BytesIO
 import math
 from pathlib import Path
 import re
+from typing import cast
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -140,10 +141,11 @@ def _full_detail(exporter: Exporter) -> Iterator[None]:
 @contextmanager
 def _plot_geometry(plot: PlotItem, height: float) -> Iterator[QtCore.QRectF]:
     """Reflow axes, honoring locked unit ratios; restore the viewer afterward."""
-    native: object = plot
+    native = cast(object, plot)
     view_box: object = plot.getViewBox()
     if not isinstance(native, QtWidgets.QGraphicsWidget) or not isinstance(view_box, QtCore.QObject):
         raise TypeError("Figure layout requires native PySide6 graphics widgets.")
+    layout = QtWidgets.QGraphicsWidget.layout(native)
     geometry = native.geometry()
     minimum = native.effectiveSizeHint(QtCore.Qt.SizeHint.MinimumSize).height()
     if height < minimum + 20:
@@ -162,7 +164,7 @@ def _plot_geometry(plot: PlotItem, height: float) -> Iterator[QtCore.QRectF]:
             box.disableAutoRange()
             box.setAspectLocked(False)
             native.setGeometry(QtCore.QRectF(geometry.x(), geometry.y(), geometry.width(), height))
-            plot.layout.activate()
+            layout.activate()
             if state["aspectLocked"] is not False:
                 box.setAspectLocked(True, ratio=state["aspectLocked"])
             box.setRange(xRange=state["viewRange"][0], yRange=state["viewRange"][1], padding=0)
@@ -175,7 +177,7 @@ def _plot_geometry(plot: PlotItem, height: float) -> Iterator[QtCore.QRectF]:
             yield native.sceneBoundingRect()
         finally:
             native.setGeometry(geometry)
-            plot.layout.activate()
+            layout.activate()
             box.setState(state)
             for name in ("left", "bottom", "right", "top"):
                 axis = plot.getAxis(name)
@@ -433,7 +435,7 @@ def _svg_bytes(source: FigureSource, options: FigureOptions, size: QtCore.QSize)
         _paint_figure(painter, source, options, size, include_plot=False)
     finally:
         painter.end()
-    root = ET.fromstring(bytes(buffer.data()))
+    root = ET.fromstring(bytes(buffer.data().data()))
     _, logical, rect = _layout(source, options)
     scale = size.width() / logical.width()
     plot_size = QtCore.QSize(max(1, round(rect.width() * scale)), max(1, round(rect.height() * scale)))
@@ -488,7 +490,7 @@ def save_figure(path: Path, format_: FigureFormat, source: FigureSource, options
                 raise OSError(file.errorString())
         else:
             image = render_figure(source, options)
-            pixels = Image.frombytes("RGBA", (image.width(), image.height()), image.constBits().tobytes(),
+            pixels = Image.frombytes("RGBA", (image.width(), image.height()), bytes(image.constBits()),
                                      "raw", "RGBA", image.bytesPerLine())
             data = BytesIO()
             dpi = (options.dpi, options.dpi)

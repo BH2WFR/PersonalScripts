@@ -14,36 +14,37 @@ from typing import Callable, cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils.qt_images import copy_image_to_clipboard
-from utils.qt_widgets import (
-    NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application, monospace_ui_font,
-)
+from utils.gui_colors import TextColor
+from utils.qt_styles import on_theme_change, set_button_style, set_text_style, theme_text_color
+from utils.qt_widgets import configure_qt_application, monospace_ui_font
 
 from utils import *
 from ..common.bookmark_editor import BookmarkEditor, OutlineRow
-from ..common.crop_viewer import CropViewer, Rectangle
+from ..common.crop_viewer import Rectangle
 from ..common.file_drop import FileDropFilter
 from ..common.file_actions import choose_pdf_output
 from ..common.tooltips import TooltipFilter
 from ..common.jobs import JobRunner
+from ..common.page_toolbar import set_preview_tab_order
 from ..common.llm_window import LlmWindow
 from ..common.task_buttons import TaskButtons
 from ..common.preferences import choose_open_file, remember_directory
 from ..common.protocol import Json
 from ..common.page_cache import PageCache, pixmap_bytes
-from ..common.navigation import PageTree
 from ..common.preview_buffer import PreviewBuffer
 from ..common.range_input import RangeInput
 from .recognition import SYSTEM_PROMPT, build_request
 from .model import MAX_DRAFT, Bookmark, BookSession, ConversationTurn, NeedsInformation, Status, TocPage
+from .ui_mainwindow import Ui_BookmarksWindow
 
-STATUS_COLORS: dict[Status, str] = {
-    Status.PENDING: "#1769c2", Status.DONE: "#16803c", Status.MODIFIED: "#16803c",
-    Status.ERROR: "#c02020", Status.NEEDS_INFO: "#c02020",
+STATUS_COLORS: dict[Status, TextColor] = {
+    Status.PENDING: "blue", Status.DONE: "green", Status.MODIFIED: "green",
+    Status.ERROR: "red", Status.NEEDS_INFO: "red",
 }
 
 
 
-class BookmarksWindow(LlmWindow):
+class BookmarksWindow(LlmWindow, Ui_BookmarksWindow):
     """Own a single book and its ordered recognition queue, with explicit PDF export."""
 
     def __init__(self, entry: Path) -> None:
@@ -86,238 +87,110 @@ class BookmarksWindow(LlmWindow):
         self.draft_timer.setSingleShot(True)
         self.draft_timer.setInterval(400)
         self.draft_timer.timeout.connect(self._apply_yaml)
-        self.setWindowTitle("PDF Bookmark Editor")
-        self.resize(1500, 950)
-        self.setMinimumSize(1050, 650)
         self._build()
         self.tooltips = TooltipFilter(self)
         self.setAcceptDrops(True)
         self.file_drops = FileDropFilter(self, self.open_path, lambda: not self._api_busy and not self.runner.busy, suffixes=(".pdf",))
         self._enabled()
 
-    def _build(self) -> None:
-        splitter = QtWidgets.QSplitter()
-        self.setCentralWidget(splitter)
-        self.left = QtWidgets.QWidget()
-        left = QtWidgets.QVBoxLayout(self.left)
-        left.setContentsMargins(6, 6, 6, 6)
-        self.files = QtWidgets.QWidget()
-        row = QtWidgets.QHBoxLayout(self.files)
-        row.setContentsMargins(0, 0, 0, 0)
-        for text, action in (("Open PDF", self._open_dialog),):
-            row.addWidget(self._button(text, action))
-        self.close_pdf_button = self._button("Close", self._close_pdf)
-        row.addWidget(self.close_pdf_button)
-        left.addWidget(self.files)
-        self.tabs = QtWidgets.QTabWidget()
-        recognition = QtWidgets.QWidget()
-        form = QtWidgets.QFormLayout(recognition)
-        self.toc_first = self._spin(1, 1)
-        self.toc_last = self._spin(1, 1)
-        self.body_pdf = self._spin(1, 1)
-        self.body_book = self._spin(1, 1_000_000)
-        self.current_page_buttons: list[QtWidgets.QPushButton] = []
-        for text, spin in (("First TOC PDF page", self.toc_first), ("Last TOC PDF page", self.toc_last),
-                           ("First body PDF page", self.body_pdf)):
-            row = QtWidgets.QHBoxLayout()
-            row.addWidget(spin, 1)
-            button = self._button("Use current", lambda _checked=False, target=spin: self._use_current_page(target))
+    def _build(self, *, preserve_size: bool = False) -> None:
+        size = self.size()
+        self.setupUi(self)
+        if preserve_size:
+            self.resize(size)
+        self.open_button.clicked.connect(self._open_dialog)
+        self.close_pdf_button.clicked.connect(self._close_pdf)
+        for spin in (self.toc_first, self.toc_last, self.body_pdf):
+            spin.setRange(1, 1)
+            spin.setKeyboardTracking(False)
+        self.body_book.setRange(1, 1_000_000)
+        self.body_book.setKeyboardTracking(False)
+        self.current_page_buttons = [self.toc_first_current_button, self.toc_last_current_button, self.body_pdf_current_button]
+        for button, spin in zip(self.current_page_buttons, (self.toc_first, self.toc_last, self.body_pdf)):
+            button.clicked.connect(lambda _checked=False, target=spin: self._use_current_page(target))
             button.setToolTip("Fill this field with the currently displayed physical PDF page.")
-            self.current_page_buttons.append(button)
-            row.addWidget(button)
-            form.addRow(text, row)
-        form.addRow("Its printed page number", self.body_book)
         self.body_pdf.editingFinished.connect(self._mapping_changed)
         self.body_book.editingFinished.connect(self._mapping_changed)
-        mark_toc_button = self._button("Mark TOC", self._mark_toc)
-        primary_button_font = mark_toc_button.font()
-        primary_button_font.setBold(True)
-        mark_toc_button.setFont(primary_button_font)
-        toc_actions = QtWidgets.QHBoxLayout()
-        toc_actions.addWidget(mark_toc_button)
-        self.clear_toc_button = self._button("Clear TOC", self._clear_toc)
+        self.mark_toc_button.clicked.connect(self._mark_toc)
+        self.clear_toc_button.clicked.connect(self._clear_toc)
         self.clear_toc_button.setToolTip("Clear all TOC tasks and recognition settings; keep existing bookmarks.")
-        toc_actions.addWidget(self.clear_toc_button)
-        form.addRow(toc_actions)
-        self.angle = NoWheelDoubleSpinBox()
         self.angle.setRange(-180, 180)
         self.angle.setDecimals(1)
         self.angle.setSuffix(" °")
         self.angle.setKeyboardTracking(False)
         self.angle.editingFinished.connect(self._rotation_changed)
-        form.addRow("Current TOC rotation", self.angle)
-        crop_row = QtWidgets.QHBoxLayout()
-        self.draw_crop = QtWidgets.QCheckBox("Draw recognition box")
         self.draw_crop.toggled.connect(self._enabled)
-        crop_row.addWidget(self.draw_crop)
-        crop_row.addWidget(self._button("Whole page", self._whole_page))
-        crop_row.addWidget(self._button("Unmark", self._unmark_toc))
-        form.addRow(crop_row)
-        self.requirement_scope = NoWheelComboBox()
+        self.whole_page.clicked.connect(self._whole_page)
+        self.unmark.clicked.connect(self._unmark_toc)
         self.requirement_scope.addItems(["Whole book", "Current TOC page"])
         self.requirement_scope.currentIndexChanged.connect(self._load_requirements)
-        self.requirements = QtWidgets.QPlainTextEdit()
         self.requirements.setPlaceholderText("Transcription requirements or retry corrections (whole book / current page)")
-        self.requirements.setMaximumHeight(105)
         self.requirements.textChanged.connect(self._requirements_changed)
-        form.addRow(self.requirement_scope)
-        form.addRow(self.requirements)
-        self.clear_context = QtWidgets.QCheckBox("Clear conversation before this run / retry")
         self.clear_context.setToolTip("Clear previous LLM exchanges once before the queue starts. Keeps recognized results, drafts and your requirements. Current-page diagnostics still accompany retries.")
-        self.only_pending = QtWidgets.QCheckBox("Run only pending / failed pages")
         self.only_pending.setChecked(True)
-        self.append_existing = QtWidgets.QCheckBox("Keep existing PDF bookmarks")
         self.append_existing.setToolTip("Keep original bookmarks alongside recognized entries when applying YAML.")
         for check in (self.clear_context, self.only_pending, self.append_existing):
-            form.addRow(check)
             check.toggled.connect(self._options_changed)
-        outline_actions = QtWidgets.QHBoxLayout()
-        outline_actions.addWidget(self._button("Add Cover + TOC", self._add_roots))
-        outline_actions.addWidget(self._button("Clear bookmarks", self._clear_bookmarks))
-        outline_actions.addWidget(self._button("Undo", self._undo_bookmarks))
-        form.addRow(outline_actions)
-        recognition_scroll = QtWidgets.QScrollArea()
-        recognition_scroll.setWidgetResizable(True)
-        recognition_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        recognition_scroll.setWidget(recognition)
-        self.tabs.addTab(recognition_scroll, "Recognition")
+        self.add_roots.clicked.connect(self._add_roots)
+        self.clear_bookmarks.clicked.connect(self._clear_bookmarks)
+        self.undo_bookmarks.clicked.connect(self._undo_bookmarks)
 
-        self.tabs.addTab(self._api_form(SYSTEM_PROMPT), "API")
+        self.tabs.insertTab(1, self._api_form(SYSTEM_PROMPT), "API")
 
-        labels = QtWidgets.QWidget()
-        label_form = QtWidgets.QFormLayout(labels)
         self.label_range = QtWidgets.QLineEdit()
         self.label_range.setPlaceholderText("1,2,5-10,-1; append |odd or |even")
-        self.label_first = self._spin(-1_000_000, 1_000_000)
-        self.label_prefix = QtWidgets.QLineEdit()
+        self.label_first.setRange(-1_000_000, 1_000_000)
+        self.label_first.setValue(1)
+        self.label_first.setKeyboardTracking(False)
         self.label_range_input = RangeInput(self.label_range)
-        label_form.addRow("PDF pages", self.label_range_input)
-        label_form.addRow("Starting number", self.label_first)
-        label_form.addRow("Prefix", self.label_prefix)
-        label_buttons = QtWidgets.QGridLayout()
-        for index, (text, callback) in enumerate((
-                ("Apply numbered labels", self._label_numbered),
-                ("Clear selected labels", self._label_clear),
-                ("Clear all labels", lambda: self._label_clear(True)))):
-            label_buttons.addWidget(self._button(text, callback), index // 2, index % 2)
-        generate_labels = self._button("Generate TOC + body labels", self._label_generate)
-        generate_labels.setFont(primary_button_font)
-        label_buttons.addWidget(generate_labels, 1, 1)
-        label_buttons.setColumnStretch(0, 1)
-        label_buttons.setColumnStretch(1, 1)
-        label_form.addRow(label_buttons)
-        label_note = QtWidgets.QLabel("Navigation labels only; printed page content stays unchanged.")
-        label_note.setWordWrap(True)
-        label_form.addRow(label_note)
-        self.labels_tab = labels
-        self.tabs.addTab(labels, "Page labels")
-        left.addWidget(self.tabs)
+        self.range_slot.addWidget(self.label_range_input)
+        self.label_numbered.clicked.connect(self._label_numbered)
+        self.label_clear.clicked.connect(self._label_clear)
+        self.label_clear_all.clicked.connect(lambda: self._label_clear(True))
+        self.generate_labels.clicked.connect(self._label_generate)
+        set_button_style(self.generate_labels, "blue")
 
-        actions = QtWidgets.QHBoxLayout()
-        self.run_button = self._button("Run TOC", lambda: self._request_recognition(self._run_all))
-        self.run_button.setFont(primary_button_font)
-        self.retry_button = self._button("Retry page", lambda: self._request_recognition(self._retry))
-        self.retry_all_button = self._button("Retry all", lambda: self._request_recognition(self._retry_all))
+        self.run_button.clicked.connect(lambda: self._request_recognition(self._run_all))
+        set_button_style(self.run_button, "blue")
+        self.retry_button.clicked.connect(lambda: self._request_recognition(self._retry))
+        self.retry_all_button.clicked.connect(lambda: self._request_recognition(self._retry_all))
         self.retry_all_button.setToolTip("Resend every marked TOC page in page order, even accepted pages. Ignores the pending-only checkbox; each reply replaces only its source page's results.")
         for button in (self.run_button, self.retry_button, self.retry_all_button):
             # Receive mouse clicks before committing the focused editor. Its
             # focus-out may start a render and disable this button mid-click.
             # Tab focus keeps keyboard activation available.
             button.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
-            actions.addWidget(button)
-        left.addLayout(actions)
-        self.yaml_label = QtWidgets.QLabel("YAML draft — current TOC page")
-        left.addWidget(self.yaml_label)
-        self.yaml = QtWidgets.QPlainTextEdit()
         self.yaml.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         self.yaml.setFont(monospace_ui_font())
         self.yaml.setPlaceholderText('- {page: 1, level: 1, index: "", title: "Introduction"}')
         self.yaml.textChanged.connect(self._yaml_changed)
-        self.result_tabs = QtWidgets.QTabWidget()
-        self.result_tabs.addTab(self.yaml, "YAML draft")
-        self.trace = QtWidgets.QPlainTextEdit()
         self.trace.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         self.trace.setReadOnly(True)
         self.trace.setPlaceholderText("Request settings, problems and original replies for this page appear here. Kept in memory only.")
-        self.result_tabs.addTab(self.trace, "Request / errors")
-        self.information_tab = QtWidgets.QWidget()
-        information_layout = QtWidgets.QVBoxLayout(self.information_tab)
-        self.information_status = QtWidgets.QLabel("No page selected.")
         self.information_status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.information_status.setWordWrap(True)
-        information_layout.addWidget(self.information_status)
-        self.information = QtWidgets.QPlainTextEdit()
         self.information.setReadOnly(True)
         self.information.setPlaceholderText("Questions, requested information and errors for this page.")
-        information_layout.addWidget(self.information, 1)
-        information_layout.addWidget(QtWidgets.QLabel("Additional instructions for this page"))
-        self.information_input = QtWidgets.QPlainTextEdit()
         self.information_input.setPlaceholderText("Answer the questions above or correct this page's instructions. Connection errors can be retried without an answer.")
-        self.information_input.setMaximumHeight(100)
         self.information_input.textChanged.connect(self._information_changed)
-        information_layout.addWidget(self.information_input)
-        self.information_retry = self._button("Retry page", self._retry_information)
-        information_layout.addWidget(self.information_retry)
-        self.result_tabs.addTab(self.information_tab, "Information")
-        left.addWidget(self.result_tabs, 1)
-        self.yaml_status = QtWidgets.QLabel("Valid YAML updates the tree. Export uses the tree.")
-        self.yaml_status.setWordWrap(True)
+        self.information_retry.clicked.connect(self._retry_information)
         self.yaml_status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.yaml_status.setMaximumHeight(65)
-        left.addWidget(self.yaml_status)
-        self.yaml_actions = QtWidgets.QWidget()
-        yaml_actions = QtWidgets.QHBoxLayout(self.yaml_actions)
-        yaml_actions.setContentsMargins(0, 0, 0, 0)
-        yaml_actions.addWidget(self._button("Apply YAML", self._apply_yaml))
-        self.supplement_button = self._button("Add page information", self._supplement)
-        yaml_actions.addWidget(self.supplement_button)
-        yaml_actions.addWidget(self._button("Copy recognition image", self._copy_image))
-        left.addWidget(self.yaml_actions)
+        self.apply_yaml.clicked.connect(self._apply_yaml)
+        self.supplement_button.clicked.connect(self._supplement)
+        self.copy_image.clicked.connect(self._copy_image)
         self.result_tabs.currentChanged.connect(self._result_tab_changed)
-        splitter.addWidget(self.left)
 
-        right = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(right)
-        layout.setContentsMargins(3, 6, 6, 6)
-        toolbar = QtWidgets.QToolBar()
-        self.previous = toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack),
-                                          "Previous page", lambda: self._step(-1))
-        self.next = toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowForward),
-                                      "Next page", lambda: self._step(1))
-        self.page_number = self._spin(1, 1)
-        self.page_number.setFixedWidth(55)
-        self.page_number.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.page_number.editingFinished.connect(lambda: self.go_page(self.page_number.value()))
-        toolbar.addWidget(self.page_number)
-        self.page_total = QtWidgets.QLabel(" / 0 ")
-        toolbar.addWidget(self.page_total)
-        toolbar.addSeparator()
-        self.viewer = CropViewer()
-        self.viewer.pageStepRequested.connect(self._step)
         self.viewer.cropChanged.connect(self._crop_changed)
-        toolbar.addAction("Fit page", self.viewer.fit_page)
-        toolbar.addAction("Fit width", self.viewer.fit_width)
-        toolbar.addAction("100%", self.viewer.actual_pixels)
-        self.zoom = NoWheelDoubleSpinBox()
-        self.zoom.setRange(2.5, 1600)
-        self.zoom.setSuffix(" %")
-        self.zoom.setFixedWidth(85)
-        self.zoom.setKeyboardTracking(False)
-        self.zoom.editingFinished.connect(lambda: self.viewer.set_zoom(self.zoom.value()))
-        self.viewer.zoomChanged.connect(self.zoom.setValue)
-        toolbar.addWidget(self.zoom)
-        layout.addWidget(toolbar)
-        content = QtWidgets.QSplitter()
-        content.addWidget(self.viewer)
-        self.navigation = QtWidgets.QTabWidget()
+        self.toolbar.bind_viewer(self.viewer)
+        self.toolbar.stepRequested.connect(self._step)
+        self.toolbar.pageRequested.connect(self.go_page)
+        self.page_number = self.toolbar.page_number
         self.tree = BookmarkEditor(editable=True, show_level=True,
                                    current_page=lambda: self.session.current_page if self.session else 1)
         self.tree.changed.connect(self._tree_changed)
         self.tree.pageRequested.connect(lambda index: self.go_page(index + 1))
-        self.pages = PageTree()
+        on_theme_change(self.pages, self._refresh_page_colors)
         self.pages.pageRequested.connect(lambda index: self.go_page(index + 1))
         self.pages.setToolTip("Click or use arrow/PgUp/PgDn keys to turn pages. Ctrl/Shift selects multiple pages.")
-        self.pages.setHeaderLabels(["Page", "Label", "TOC task"])
         self.pages.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.pages.itemClicked.connect(self._page_clicked)
         self.pages.itemSelectionChanged.connect(self._enabled)
@@ -351,38 +224,21 @@ class BookmarksWindow(LlmWindow):
         self.delete_pages_action.triggered.connect(self._delete_pages)
         self.pages.addAction(self.delete_pages_action)
         self.pages.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
-        pages_panel = QtWidgets.QWidget()
-        pages_layout = QtWidgets.QVBoxLayout(pages_panel)
-        pages_layout.setContentsMargins(0, 0, 0, 0)
-        pages_layout.addWidget(self.pages)
-        self.delete_pages_button = self._button("Delete selected pages...", self._delete_pages)
-        pages_layout.addWidget(self.delete_pages_button)
-        self.navigation.addTab(self.tree, "Bookmarks")
-        self.navigation.addTab(pages_panel, "Pages")
-        content.addWidget(self.navigation)
-        content.setStretchFactor(0, 1)
-        content.setSizes([650, 320])
-        layout.addWidget(content, 1)
-        footer = QtWidgets.QHBoxLayout()
-        self.status = QtWidgets.QLabel("Open or drop a PDF.")
-        self.status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
-        footer.addWidget(self.status, 1)
-        self.progress_bar = QtWidgets.QProgressBar()
-        self.progress_bar.setFixedWidth(180)
+        self.delete_pages_button.clicked.connect(self._delete_pages)
+        self.navigation.insertTab(0, self.tree, "Bookmarks")
+        self.navigation.setCurrentIndex(0)
+        self.content.setStretchFactor(0, 1)
+        self.content.setSizes([650, 320])
         self.progress_bar.setVisible(False)
-        footer.addWidget(self.progress_bar)
-        self.balance_summary = QtWidgets.QLabel("API balance: not queried")
         self.balance_summary.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.task_buttons = TaskButtons(self.runner, external_pause=self._toggle_queue_pause, external_stop=self._stop)
         self.pause_button = self.task_buttons.pause_button
         self.stop_button = self.task_buttons.stop_button
-        footer.addWidget(self.task_buttons)
-        footer.addWidget(self.balance_summary)
-        self.export_button = self._button("Export PDF", self._export)
-        footer.addWidget(self.export_button)
-        layout.addLayout(footer)
-        splitter.addWidget(right)
-        splitter.setSizes([420, 1080])
+        self.task_slot.addWidget(self.task_buttons)
+        self.export_button.clicked.connect(self._export)
+        set_button_style(self.export_button, "blue")
+        self.splitter.setSizes([420, 1080])
+        set_preview_tab_order(self.left, self.toolbar, self.content, self.task_buttons, self.export_button)
         if self._api_loaded:
             self._show_api_profiles()
         else:
@@ -400,8 +256,8 @@ class BookmarksWindow(LlmWindow):
         self.files.setEnabled(idle)
         self.close_pdf_button.setEnabled(loaded and idle)
         self.tabs.setEnabled(idle or waiting)
-        self.tabs.widget(0).setEnabled(loaded and not waiting)
-        self.tabs.widget(2).setEnabled(loaded and not waiting)
+        self.recognition_scroll.setEnabled(loaded and not waiting)
+        self.labels_tab.setEnabled(loaded and not waiting)
         self.test_button.setEnabled(idle)
         self.fetch_button.setEnabled(idle)
         self.balance_button.setEnabled(not self._api_busy and self.balance_client.reply is None)
@@ -436,14 +292,12 @@ class BookmarksWindow(LlmWindow):
         self.retry_all_button.setEnabled(idle and has_toc)
         self.retry_button.setEnabled(idle and session.current_page in session.toc if session else False)
         self.export_button.setEnabled(loaded and idle)
-        self.page_number.setEnabled(loaded and browsing)
-        self.previous.setEnabled(browsing and session.current_page > 1 if session else False)
-        self.next.setEnabled(browsing and session.current_page < session.page_count if session else False)
+        self.toolbar.set_navigation_enabled(loaded and browsing, session.current_page if session else 1,
+                                            session.page_count if session else 0)
         self.task_buttons.set_external_state(
             self._api_busy or self.balance_client.reply is not None or self._pending_recognition is not None,
             pausable=self._running and not (self._recognition_paused and self.runner.busy),
             pause_requested=self._queue_pause_requested)
-        self.viewer.navigation_enabled = loaded and browsing
         marked = bool(session and session.current_page in session.toc)
         if not marked:
             with QtCore.QSignalBlocker(self.draw_crop):
@@ -534,7 +388,7 @@ class BookmarksWindow(LlmWindow):
         old = self.takeCentralWidget()
         if old:
             old.deleteLater()
-        self._build()
+        self._build(preserve_size=True)
         self.setWindowTitle("PDF Bookmark Editor")
         self._enabled()
 
@@ -594,17 +448,25 @@ class BookmarksWindow(LlmWindow):
             task = self.session.toc.get(page)
             item = QtWidgets.QTreeWidgetItem([str(page), label, task.status.value if task else ""])
             if task:
-                item.setForeground(0, QtGui.QBrush(QtGui.QColor("#e00000")))
                 item.setToolTip(2, task.error)
-                if color := STATUS_COLORS.get(task.status):
-                    item.setForeground(2, QtGui.QBrush(QtGui.QColor(color)))
                 if task.status in (Status.DONE, Status.MODIFIED, Status.ERROR, Status.NEEDS_INFO):
                     font = item.font(2)
                     font.setBold(True)
                     item.setFont(2, font)
             self.pages.addTopLevelItem(item)
             item.setSelected(page in selected)
+        self._refresh_page_colors()
         self.pages.select_page(self.session.current_page - 1, preserve_selection=True)
+
+    def _refresh_page_colors(self) -> None:
+        if self.session is None:
+            return
+        for page, task in self.session.toc.items():
+            item = self.pages.topLevelItem(page - 1)
+            if item is not None:
+                item.setForeground(0, QtGui.QBrush(theme_text_color("red", self.pages)))
+                if color := STATUS_COLORS.get(task.status):
+                    item.setForeground(2, QtGui.QBrush(theme_text_color(color, self.pages)))
 
     def _load_page(self) -> None:
         if self.session is None:
@@ -621,7 +483,7 @@ class BookmarksWindow(LlmWindow):
         self.yaml_status.setText(task.error if task and task.error else
             "Tree edits are final. Applying YAML replaces this page's tree entries.")
         self.yaml_status.setToolTip(task.error if task else "")
-        self.yaml_status.setStyleSheet("color: #c02020;" if task and task.error else "")
+        set_text_style(self.yaml_status, "red" if task and task.error else None)
         self._load_requirements()
         self._load_information()
         self._loading = False
@@ -676,9 +538,9 @@ class BookmarksWindow(LlmWindow):
         self._shown = None
         self.viewer.clear()
         self._loading = True
-        for spin in (self.page_number, self.toc_first, self.toc_last, self.body_pdf):
+        for spin in (self.toc_first, self.toc_last, self.body_pdf):
             spin.setRange(1, session.page_count)
-        self.page_total.setText(f" / {session.page_count} ")
+        self.toolbar.set_page_count(session.page_count)
         self.body_pdf.setValue(session.body_pdf)
         self.body_book.setValue(session.body_book)
         self.toc_first.setValue(min(session.toc) if session.toc else session.current_page)
@@ -687,7 +549,9 @@ class BookmarksWindow(LlmWindow):
         self._loading = False
         self.pages.clearSelection()
         self._refresh_pages()
-        self.pages.topLevelItem(session.current_page - 1).setSelected(True)
+        page_item = self.pages.topLevelItem(session.current_page - 1)
+        if page_item is not None:
+            page_item.setSelected(True)
         self._refresh_tree()
         self._load_page()
         self._mark_dirty()
@@ -961,7 +825,7 @@ class BookmarksWindow(LlmWindow):
             self._accept_draft(page, task.draft)
             task.status = Status.MODIFIED
             self._refresh_pages()
-            self.yaml_status.setStyleSheet("")
+            set_text_style(self.yaml_status, None)
             self.yaml_status.setText("YAML applied. Comments retained; tree targets are physical PDF pages.")
             self._load_information()
             return True
@@ -972,7 +836,7 @@ class BookmarksWindow(LlmWindow):
             task.draft_invalid = True
             self.yaml_status.setText(str(exc))
             self.yaml_status.setToolTip(str(exc))
-            self.yaml_status.setStyleSheet("color: #c02020;")
+            set_text_style(self.yaml_status, "red")
             self._refresh_pages()
             self._load_information()
             return False
@@ -1412,9 +1276,9 @@ class BookmarksWindow(LlmWindow):
             self.viewer.clear()
             self.viewer.set_crop(None)
             self._loading = True
-            for spin in (self.page_number, self.toc_first, self.toc_last, self.body_pdf):
+            for spin in (self.toc_first, self.toc_last, self.body_pdf):
                 spin.setRange(1, count)
-            self.page_total.setText(f" / {count} ")
+            self.toolbar.set_page_count(count)
             self.body_pdf.setValue(self.session.body_pdf)
             self.body_book.setValue(self.session.body_book)
             self.toc_first.setValue(min(self.session.toc) if self.session.toc else 1)

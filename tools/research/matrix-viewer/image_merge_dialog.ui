@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ImageMergeDialog</class>
+ <widget class="QDialog" name="ImageMergeDialog">
+  <property name="windowTitle">
+   <string>Image merge — selected matrices / channels</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1000</width>
+    <height>720</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout" stretch="0,0,1,0,0">
+   <item>
+    <widget class="QWidget" name="settings" native="true">
+     <layout class="QVBoxLayout" name="form_fields">
+      <item>
+       <layout class="QFormLayout" name="form_top">
+        <item row="0" column="0">
+         <widget class="QLabel" name="form_output_8_bit_per_channel_label">
+          <property name="text">
+           <string>Output (8-bit per channel)</string>
+          </property>
+          <property name="buddy">
+           <cstring>mode</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="mode" />
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="form_result_name_2_label">
+          <property name="text">
+           <string>Result name</string>
+          </property>
+          <property name="buddy">
+           <cstring>result_name</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QLineEdit" name="result_name">
+          <property name="placeholderText">
+           <string>Automatic: Image merge · RGB / RGBA / Monochrome + alpha</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="0" colspan="2">
+         <widget class="QCheckBox" name="link_ranges">
+          <property name="text">
+           <string>Link input ranges</string>
+          </property>
+          <property name="toolTip">
+           <string>Use the first row's range mode and limits for all output channels.
+Current-channel auto uses the first row's source; shared auto uses all assigned sources.
+Source assignments and gains remain independent.</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QGridLayout" name="grid" />
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="form_note">
+     <property name="text">
+      <string>Full-size channels → range → gain → 8-bit image. Hover for details.</string>
+     </property>
+     <property name="toolTip">
+      <string>Crop, value bounds and overlay alignment are ignored. All shapes must match. RGB/M gains adjust brightness / white balance; A gain adjusts opacity. NaN / -Inf become 0, +Inf becomes 255. Constant auto-range channels become 0. Alpha is stored separately, without multiplying the color channels.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="ImagePreview" name="preview" />
+   </item>
+   <item>
+    <widget class="QLabel" name="status">
+     <property name="text">
+      <string>Preparing selected sources…</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ImagePreview</class>
+   <extends>QWidget</extends>
+   <header>.image_preview</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

@@ -105,8 +105,8 @@ class ModeOptions(QtWidgets.QScrollArea):
 
 class VisionPanel(QtWidgets.QStackedWidget):
     """Restore both modes, including preferences from the original flat settings."""
-    def __init__(self, saved: object) -> None:
-        super().__init__()
+    def load_modes(self, saved: object) -> None:
+        """Create the text and formula pages from the window's saved preferences."""
         prefs = saved if isinstance(saved, dict) else {}
         text = {"layout": prefs.get("text_layout"), "keep_lines": prefs.get("keep_lines", True),
                 "prompt": prefs.get("text_prompt")}

@@ -23,8 +23,8 @@ from .data_model import ColorArray, ImageMember
 from .fourier import TransformResult
 from .image_merge import (ImageChannel, ImageMapping, ImageMergeMode, PreparedImages,
                           channel_limits, generate_image, merge_pixels, prepare_images)
-from .image_preview import ImagePreview
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox
+from .ui_image_merge_dialog import Ui_ImageMergeDialog
 
 PREVIEW_DELAY_MS = 120
 MAX_GAIN = 1000.0
@@ -81,7 +81,7 @@ class _Row:
                             255 if self.member == ImageMember.ALPHA else 0)
 
 
-class ImageMergeDialog(QtWidgets.QDialog):
+class ImageMergeDialog(QtWidgets.QDialog, Ui_ImageMergeDialog):
     """Assign selected sources to output channels, preview, then generate.
 
     Args:
@@ -93,53 +93,20 @@ class ImageMergeDialog(QtWidgets.QDialog):
 
     def __init__(self, sources: tuple[MergeInput, ...], parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.sources = sources
         self.prepared: PreparedImages | None = None
         self._job: _Job | None = None
         self._busy = False
         self.rows: list[_Row] = []
-        self.setWindowTitle("Image merge — selected matrices / channels")
         self.setModal(True)
-        self.resize(1000, 720)
-        layout = QtWidgets.QVBoxLayout(self)
-        self.settings = QtWidgets.QWidget()
-        fields = QtWidgets.QVBoxLayout(self.settings)
-        top = QtWidgets.QFormLayout()
-        self.mode = NoWheelComboBox()
         for mode in ImageMergeMode:
             self.mode.addItem(mode.value, mode)
-        self.result_name = QtWidgets.QLineEdit()
-        self.result_name.setPlaceholderText("Automatic: Image merge · RGB / RGBA / Monochrome + alpha")
-        top.addRow("Output (8-bit per channel)", self.mode)
-        top.addRow("Result name", self.result_name)
-        self.link_ranges = QtWidgets.QCheckBox("Link input ranges")
-        self.link_ranges.setToolTip("Use the first row's range mode and limits for all output channels.\n"
-                                    "Current-channel auto uses the first row's source; shared auto uses all assigned sources.\n"
-                                    "Source assignments and gains remain independent.")
-        top.addRow(self.link_ranges)
-        fields.addLayout(top)
-        self.grid = QtWidgets.QGridLayout()
         self.grid.setHorizontalSpacing(6)
-        fields.addLayout(self.grid)
-        layout.addWidget(self.settings)
-        note = QtWidgets.QLabel("Full-size channels → range → gain → 8-bit image. Hover for details.")
-        note.setToolTip(
-            "Crop, value bounds and overlay alignment are ignored. All shapes must match. "
-            "RGB/M gains adjust brightness / white balance; A gain adjusts opacity. "
-            "NaN / -Inf become 0, +Inf becomes 255. Constant auto-range channels become 0. "
-            "Alpha is stored separately, without multiplying the color channels.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.preview = ImagePreview()
-        layout.addWidget(self.preview, 1)
-        self.status = QtWidgets.QLabel("Preparing selected sources…")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         self.generate = self.buttons.addButton("Generate image matrix", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Cancel).setDefault(True)
         self.generate.clicked.connect(self._generate)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(PREVIEW_DELAY_MS)

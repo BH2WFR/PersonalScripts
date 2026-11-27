@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>DataConversionDialog</class>
+ <widget class="QDialog" name="DataConversionDialog">
+  <property name="windowTitle">
+   <string>Data conversion</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>650</width>
+    <height>530</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout">
+   <item>
+    <widget class="QLabel" name="form_source">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="settings" native="true">
+     <layout class="QFormLayout" name="form">
+      <item row="0" column="0">
+       <widget class="QLabel" name="form_operation_2_label">
+        <property name="text">
+         <string>Operation</string>
+        </property>
+        <property name="buddy">
+         <cstring>operation</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="NoWheelComboBox" name="operation" />
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="form_input_range_label">
+        <property name="text">
+         <string>Input range</string>
+        </property>
+        <property name="buddy">
+         <cstring>range_selector</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="NoWheelComboBox" name="range_selector" />
+      </item>
+      <item row="2" column="0" colspan="2">
+       <widget class="QCheckBox" name="full_complex">
+        <property name="text">
+         <string>Use full complex values (instead of selected component)</string>
+        </property>
+        <property name="toolTip">
+         <string>Full complex input offers amplitude dB, magnitude and scale/offset. Uncheck to convert the displayed real channel.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0" colspan="2">
+       <widget class="QCheckBox" name="bounds">
+        <property name="text">
+         <string>Apply current value bounds before conversion</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="form_db_reference_label">
+        <property name="text">
+         <string>dB reference</string>
+        </property>
+        <property name="buddy">
+         <cstring>reference_mode</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="NoWheelComboBox" name="reference_mode" />
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="form_reference_value_label">
+        <property name="text">
+         <string>Reference value</string>
+        </property>
+        <property name="buddy">
+         <cstring>reference</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QLineEdit" name="reference">
+        <property name="text">
+         <string>1</string>
+        </property>
+        <property name="toolTip">
+         <string>Reference amplitude or power in the same units as the input; must be positive.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0" colspan="2">
+       <widget class="QCheckBox" name="use_floor">
+        <property name="text">
+         <string>Clamp dB output below this floor</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="0">
+       <widget class="QLabel" name="form_db_floor_label">
+        <property name="text">
+         <string>dB floor</string>
+        </property>
+        <property name="buddy">
+         <cstring>floor</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="1">
+       <widget class="QLineEdit" name="floor" />
+      </item>
+      <item row="8" column="0">
+       <widget class="QLabel" name="form_scale_label">
+        <property name="text">
+         <string>Scale</string>
+        </property>
+        <property name="buddy">
+         <cstring>gain</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="8" column="1">
+       <widget class="QLineEdit" name="gain">
+        <property name="text">
+         <string>1</string>
+        </property>
+       </widget>
+      </item>
+      <item row="9" column="0">
+       <widget class="QLabel" name="form_offset_2_label">
+        <property name="text">
+         <string>Offset</string>
+        </property>
+        <property name="buddy">
+         <cstring>offset</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="9" column="1">
+       <widget class="QLineEdit" name="offset">
+        <property name="text">
+         <string>0</string>
+        </property>
+       </widget>
+      </item>
+      <item row="10" column="0">
+       <widget class="QLabel" name="form_result_name_2_label">
+        <property name="text">
+         <string>Result name</string>
+        </property>
+        <property name="buddy">
+         <cstring>result_name</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="10" column="1">
+       <widget class="QLineEdit" name="result_name">
+        <property name="placeholderText">
+         <string>Automatic: source · channel · operation</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="formula">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="form_note">
+     <property name="text">
+      <string>Creates a new matrix. Original arrays are unchanged. XY converts Y only; point clouds convert Z only. Source coordinates, repeated X values and record order are preserved. Color composites use grayscale height. NaN / Inf and undefined results remain gaps. Peak dB uses the selected range after optional value bounds; all-zero input uses reference 1. Transformed values can be exported through the Export group.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

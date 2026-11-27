@@ -201,6 +201,8 @@ class WindowTests(unittest.TestCase):
         paste = buttons["Load text from clipboard"]
         wrap = next(c for c in self.window.findChildren(QCheckBox) if c.text() == "Word wrap")
         self.assertTrue(get_paths.font().bold() and paste.font().bold())
+        self.assertEqual((get_paths.styleSheet(), paste.styleSheet()), ("", ""))
+        self.assertIn("background-color", buttons["Copy result"].styleSheet())
         self.assertLess(get_paths.geometry().right(), paste.x())
         self.assertTrue(any(frame.frameShape() == QFrame.Shape.VLine
                             and wrap.geometry().right() < frame.x() < get_paths.x()

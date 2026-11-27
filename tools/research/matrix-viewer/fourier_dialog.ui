@@ -1,0 +1,479 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>FourierDialog</class>
+ <widget class="QDialog" name="FourierDialog">
+  <property name="windowTitle">
+   <string>Fourier transform</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>650</width>
+    <height>710</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout">
+   <item>
+    <widget class="QLabel" name="form_source">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="settings" native="true">
+     <layout class="QFormLayout" name="form_form">
+      <item row="0" column="0">
+       <widget class="QLabel" name="form_operation_label">
+        <property name="text">
+         <string>Operation</string>
+        </property>
+        <property name="buddy">
+         <cstring>direction</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="NoWheelComboBox" name="direction">
+        <property name="toolTip">
+         <string>IFFT is available only for complex sources and always uses both real and imaginary parts.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="form_input_range_label">
+        <property name="text">
+         <string>Input range</string>
+        </property>
+        <property name="buddy">
+         <cstring>range</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="NoWheelComboBox" name="range">
+        <property name="toolTip">
+         <string>Full scopes ignore current X/Y and value bounds. Cropped real-channel inputs use X/Y and Z bounds with the treatment below; full complex and phase inputs use X/Y only.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="form_numeric_image_channel_label">
+        <property name="text">
+         <string>Numeric image channel</string>
+        </property>
+        <property name="buddy">
+         <cstring>channel</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="NoWheelComboBox" name="channel" />
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="form_complex_input_label">
+        <property name="text">
+         <string>Complex input</string>
+        </property>
+        <property name="buddy">
+         <cstring>component</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="NoWheelComboBox" name="component" />
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="form_transform_axes_label">
+        <property name="text">
+         <string>Transform axes</string>
+        </property>
+        <property name="buddy">
+         <cstring>axes</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="NoWheelComboBox" name="axes" />
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="first_axis_label">
+        <property name="text">
+         <string>Axis 1</string>
+        </property>
+        <property name="buddy">
+         <cstring>first_fields</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QWidget" name="first_fields" native="true">
+        <layout class="QHBoxLayout" name="first_axis_layout">
+         <item>
+          <widget class="QLabel" name="first_spacing_label">
+           <property name="text">
+            <string>Δ</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="first_spacing">
+           <property name="text">
+            <string>1</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>110</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Distance/time between samples. Scientific notation is accepted.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="first_unit_label">
+           <property name="text">
+            <string>Unit</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="first_unit">
+           <property name="text">
+            <string>sample</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>90</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="first_size_label">
+           <property name="text">
+            <string>Output N</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="NoWheelSpinBox" name="first_size" />
+         </item>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+        </layout>
+       </widget>
+      </item>
+      <item row="6" column="0">
+       <widget class="QLabel" name="second_axis_label">
+        <property name="text">
+         <string>Axis 2</string>
+        </property>
+        <property name="buddy">
+         <cstring>second_fields</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="1">
+       <widget class="QWidget" name="second_fields" native="true">
+        <layout class="QHBoxLayout" name="second_axis_layout">
+         <item>
+          <widget class="QLabel" name="second_spacing_label">
+           <property name="text">
+            <string>Δ</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="second_spacing">
+           <property name="text">
+            <string>1</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>110</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Distance/time between samples. Scientific notation is accepted.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="second_unit_label">
+           <property name="text">
+            <string>Unit</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="second_unit">
+           <property name="text">
+            <string>sample</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>90</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="second_size_label">
+           <property name="text">
+            <string>Output N</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="NoWheelSpinBox" name="second_size" />
+         </item>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+        </layout>
+       </widget>
+      </item>
+      <item row="7" column="0">
+       <widget class="QLabel" name="form_normalization_label">
+        <property name="text">
+         <string>Normalization</string>
+        </property>
+        <property name="buddy">
+         <cstring>norm</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="1">
+       <widget class="NoWheelComboBox" name="norm">
+        <property name="toolTip">
+         <string>backward: FFT unscaled, IFFT divided by N. ortho: both divided by sqrt(N). forward: FFT divided by N.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="8" column="0" colspan="2">
+       <widget class="QCheckBox" name="centered">
+        <property name="text">
+         <string>Input spectrum is centered (fftshift)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="9" column="0" colspan="2">
+       <widget class="QCheckBox" name="mean">
+        <property name="text">
+         <string>Remove mean before FFT</string>
+        </property>
+       </widget>
+      </item>
+      <item row="10" column="0">
+       <widget class="QLabel" name="form_window_label">
+        <property name="text">
+         <string>Window</string>
+        </property>
+        <property name="buddy">
+         <cstring>window_selector</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="10" column="1">
+       <widget class="NoWheelComboBox" name="window_selector">
+        <property name="toolTip">
+         <string>Periodic window, separately on each transformed axis. No amplitude compensation.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="11" column="0">
+       <widget class="QLabel" name="form_value_bounds_label">
+        <property name="text">
+         <string>Value bounds</string>
+        </property>
+        <property name="buddy">
+         <cstring>bounds</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="11" column="1">
+       <widget class="QLabel" name="bounds">
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="12" column="0" colspan="2">
+       <widget class="QGroupBox" name="form_treatment_box">
+        <property name="title">
+         <string>Special values</string>
+        </property>
+        <layout class="QFormLayout" name="treatment_form">
+         <item row="0" column="0">
+          <widget class="QLabel" name="nan_replacement_label">
+           <property name="text">
+            <string>NaN</string>
+           </property>
+           <property name="buddy">
+            <cstring>nan_replacement</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="NoWheelComboBox" name="nan_replacement" />
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="positive_replacement_label">
+           <property name="text">
+            <string>+Inf</string>
+           </property>
+           <property name="buddy">
+            <cstring>positive_replacement</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="NoWheelComboBox" name="positive_replacement" />
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="negative_replacement_label">
+           <property name="text">
+            <string>-Inf</string>
+           </property>
+           <property name="buddy">
+            <cstring>negative_replacement</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="NoWheelComboBox" name="negative_replacement" />
+         </item>
+         <item row="3" column="0">
+          <widget class="QLabel" name="clipped_replacement_label">
+           <property name="text">
+            <string>Outside value bounds</string>
+           </property>
+           <property name="buddy">
+            <cstring>clipped_replacement</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="1">
+          <widget class="NoWheelComboBox" name="clipped_replacement" />
+         </item>
+         <item row="4" column="0" colspan="2">
+          <widget class="QLabel" name="treatment_note">
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item row="13" column="0" colspan="2">
+       <widget class="QCheckBox" name="single">
+        <property name="text">
+         <string>Single precision (complex64); default: complex128</string>
+        </property>
+       </widget>
+      </item>
+      <item row="14" column="0" colspan="2">
+       <widget class="QCheckBox" name="trim">
+        <property name="text">
+         <string>After IFFT, remove padding recorded by the paired FFT</string>
+        </property>
+       </widget>
+      </item>
+      <item row="15" column="0">
+       <widget class="QLabel" name="form_result_name_label">
+        <property name="text">
+         <string>Result name</string>
+        </property>
+        <property name="buddy">
+         <cstring>name</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="15" column="1">
+       <widget class="QLineEdit" name="name">
+        <property name="placeholderText">
+         <string>Automatic: source · channel · FFT / IFFT</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="note">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="estimate">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="layout_spacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

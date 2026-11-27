@@ -27,6 +27,7 @@ import pymupdf
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from utils import *
+from utils.qt_styles import theme_text_color
 ENTRY = ROOT / "tools/document-processing/pdf-bookmark-editor.py"
 runpy.run_path(str(ENTRY))["load_app"]("bookmarks.model")
 from personal_pdf_tools.bookmarks.model import Bookmark, BookSession, ConversationTurn, NeedsInformation, Status, TocPage, parse_draft
@@ -763,7 +764,7 @@ class BookmarksTests(unittest.TestCase):
             self.assertTrue(window.information_input.isEnabled())
             self.assertTrue(window.tabs.widget(1).isEnabled())  # API settings can be repaired.
             self.assertEqual([window.pages.topLevelItem(i).foreground(2).color().name() for i in range(3)],
-                             ["#16803c", "#c02020", "#1769c2"])
+                             [theme_text_color(color).name() for color in ("green", "red", "blue")])
             window.go_page(5)
             wait_for(lambda: not window.runner.busy)
             self.assertEqual(window.session.current_page, 5)

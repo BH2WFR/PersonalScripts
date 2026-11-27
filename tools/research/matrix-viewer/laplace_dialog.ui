@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>LaplaceDialog</class>
+ <widget class="QDialog" name="LaplaceDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>630</width>
+    <height>590</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout">
+   <item>
+    <widget class="QLabel" name="form_source">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="settings" native="true">
+     <layout class="QFormLayout" name="form_form">
+      <item row="0" column="0">
+       <widget class="QLabel" name="row_label">
+        <property name="text">
+         <string>Sigma row (zero-based)</string>
+        </property>
+        <property name="buddy">
+         <cstring>row</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="NoWheelSpinBox" name="row" />
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="inverse_sigma_label">
+        <property name="text">
+         <string>Sigma of this row (1 / time unit)</string>
+        </property>
+        <property name="buddy">
+         <cstring>inverse_sigma</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="inverse_sigma">
+        <property name="text">
+         <string>0</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="omega_spacing_label">
+        <property name="text">
+         <string>Angular-frequency step (rad / time unit)</string>
+        </property>
+        <property name="buddy">
+         <cstring>omega_spacing</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QLineEdit" name="omega_spacing">
+        <property name="text">
+         <string>1</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="output_count_label">
+        <property name="text">
+         <string>Original sample count (without padding)</string>
+        </property>
+        <property name="buddy">
+         <cstring>output_count</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="NoWheelSpinBox" name="output_count" />
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="origin_label">
+        <property name="text">
+         <string>Output coordinate origin</string>
+        </property>
+        <property name="buddy">
+         <cstring>origin</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QLineEdit" name="origin">
+        <property name="text">
+         <string>0</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="inverse_unit_label">
+        <property name="text">
+         <string>Output time unit</string>
+        </property>
+        <property name="buddy">
+         <cstring>inverse_unit</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QLineEdit" name="inverse_unit">
+        <property name="text">
+         <string>sample</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0" colspan="2">
+       <widget class="QCheckBox" name="centered">
+        <property name="text">
+         <string>Frequency columns use centered order (fftshift)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="0">
+       <widget class="QLabel" name="range_selector_label">
+        <property name="text">
+         <string>Input range</string>
+        </property>
+        <property name="buddy">
+         <cstring>range_selector</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="1">
+       <widget class="NoWheelComboBox" name="range_selector" />
+      </item>
+      <item row="8" column="0">
+       <widget class="QLabel" name="spacing_label">
+        <property name="text">
+         <string>Sampling interval dt</string>
+        </property>
+        <property name="buddy">
+         <cstring>spacing</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="8" column="1">
+       <widget class="QLineEdit" name="spacing" />
+      </item>
+      <item row="9" column="0">
+       <widget class="QLabel" name="unit_label">
+        <property name="text">
+         <string>Time / sample unit</string>
+        </property>
+        <property name="buddy">
+         <cstring>unit</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="9" column="1">
+       <widget class="QLineEdit" name="unit" />
+      </item>
+      <item row="10" column="0" colspan="2">
+       <widget class="QCheckBox" name="auto_sigma">
+        <property name="text">
+         <string>Automatic sigma range (±4 / signal duration)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="11" column="0">
+       <widget class="QLabel" name="sigma_min_label">
+        <property name="text">
+         <string>Sigma minimum</string>
+        </property>
+        <property name="buddy">
+         <cstring>sigma_min</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="11" column="1">
+       <widget class="QLineEdit" name="sigma_min" />
+      </item>
+      <item row="12" column="0">
+       <widget class="QLabel" name="sigma_max_label">
+        <property name="text">
+         <string>Sigma maximum</string>
+        </property>
+        <property name="buddy">
+         <cstring>sigma_max</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="12" column="1">
+       <widget class="QLineEdit" name="sigma_max" />
+      </item>
+      <item row="13" column="0">
+       <widget class="QLabel" name="sigma_count_label">
+        <property name="text">
+         <string>Sigma rows</string>
+        </property>
+        <property name="buddy">
+         <cstring>sigma_count</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="13" column="1">
+       <widget class="NoWheelSpinBox" name="sigma_count" />
+      </item>
+      <item row="14" column="0">
+       <widget class="QLabel" name="fft_size_label">
+        <property name="text">
+         <string>Frequency columns (optional zero padding)</string>
+        </property>
+        <property name="buddy">
+         <cstring>fft_size</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="14" column="1">
+       <widget class="NoWheelSpinBox" name="fft_size" />
+      </item>
+      <item row="15" column="0" colspan="2">
+       <widget class="QCheckBox" name="component" />
+      </item>
+      <item row="16" column="0" colspan="2">
+       <widget class="QCheckBox" name="bounds">
+        <property name="text">
+         <string>Apply current value bounds before transforming</string>
+        </property>
+       </widget>
+      </item>
+      <item row="17" column="0" colspan="2">
+       <widget class="QCheckBox" name="fill_zero">
+        <property name="text">
+         <string>Replace NaN / Inf / filtered samples with zero</string>
+        </property>
+       </widget>
+      </item>
+      <item row="18" column="0" colspan="2">
+       <widget class="QCheckBox" name="single">
+        <property name="text">
+         <string>Single precision (complex64)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="19" column="0">
+       <widget class="QLabel" name="form_result_name_label">
+        <property name="text">
+         <string>Result name</string>
+        </property>
+        <property name="buddy">
+         <cstring>name</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="19" column="1">
+       <widget class="QLineEdit" name="name">
+        <property name="placeholderText">
+         <string>Automatic: source · channel · Laplace / Inverse Laplace</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="note">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="estimate">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="form_persistence">
+     <property name="text">
+      <string>NPY / MAT / CSV / TXT exports save values only. After reloading, enter the inverse parameters manually.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

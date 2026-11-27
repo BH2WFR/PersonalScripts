@@ -7,7 +7,7 @@ Uses offscreen Qt and synthetic rows; no PDF or network access is needed.
 from unittest.mock import patch
 import unittest
 from test_pdf_bookmarks_gui import QtCore, QtGui, QtTest, QtWidgets
-from personal_pdf_tools.common.bookmark_editor import BookmarkEditor, OutlineRow, IDENTITY_ROLE
+from personal_pdf_tools.common.bookmark_editor import BookmarkEditor, OutlineRow, IDENTITY_ROLE, _DeletionChoice
 from personal_pdf_tools.common.tooltips import TooltipFilter
 
 
@@ -155,7 +155,9 @@ class BookmarkEditorTests(unittest.TestCase):
         self.select("B", "b", "D")
         self.editor._set_selected_targets()
         self.assertEqual([row.page for row in self.editor.rows()], [1, 9, 9, 4, 9, 6])
-        self.editor._delete()
+        with patch.object(self.editor, "_confirm_bookmark_deletion", return_value=_DeletionChoice()) as confirm:
+            self.editor._delete()
+        confirm.assert_called_once()
         self.assertEqual(self.result(), [("A", 1), ("C", 2), ("E", 1)])
 
     def test_batch_move_retains_selection_and_drag_does_not_use_default_cleanup(self) -> None:

@@ -176,6 +176,8 @@
 
   > **不可以把功能脚本单独拿出来运行**，会因找不到 `utils` 中的依赖代码而报错！
 
+- 在 Qt Creator 中编辑并保存 PySide6 表单后，从项目根目录运行 `conda run -n base python _pyside6_uic.py`。脚本会递归编译 `tools/` 下所有 `.ui` 文件，在每个表单所在目录生成 `ui_<name>.py`。请将修改的表单和对应的生成文件一起提交。
+
 ### 如何使用启动器
 
 ```bash

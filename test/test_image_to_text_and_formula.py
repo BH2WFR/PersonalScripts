@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_pdf_ocr_gui import QtCore, QtGui, QtWidgets, ROOT, wait_for
+from utils.qt_styles import theme_text_color
 from personal_pdf_tools.ocr.image_app import ImageWindow
 from personal_pdf_tools.ocr.model import Settings
 from personal_pdf_tools.ocr.panel import SettingsPanel
@@ -77,7 +78,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                 self.assertEqual(len(window.results), 3, window.status.text())
                 for item in window.rows.values():
                     self.assertTrue(item.font(3).bold())
-                    self.assertEqual(item.foreground(3).color().name(), "#188038")
+                    self.assertEqual(item.foreground(3).color(), theme_text_color("green"))
                 self.assertIs(window.tabs.currentWidget(), window.text)
                 self.assertEqual(window.text.toPlainText(), window.results[window._current_key()])
                 self.assertEqual(window._all_text().lower().count("sample"), 3, window.results)
@@ -209,7 +210,7 @@ assert not any(name.startswith("PyQt6.") for name in sys.modules)
                     self.assertEqual(log.request_name.text(), "another.png")
                     self.assertIn("HTTP 401", log.status.text())
                     self.assertTrue(window.rows[str(second)].font(3).bold())
-                    self.assertEqual(window.rows[str(second)].foreground(3).color().name(), "#c02020")
+                    self.assertEqual(window.rows[str(second)].foreground(3).color(), theme_text_color("red"))
                     self.assertIn("[redacted]", log.body.toPlainText())
                     self.assertNotIn("test-key", log.body.toPlainText())
                     self.assertEqual(len(other_requests[0]["messages"]), 2)

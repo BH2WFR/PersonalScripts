@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MappingDialog</class>
+ <widget class="QDialog" name="MappingDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>930</width>
+    <height>280</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Add mapping</string>
+  </property>
+  <layout class="QVBoxLayout" name="main_layout">
+   <item>
+    <layout class="QGridLayout" name="key_grid">
+     <item row="0" column="0">
+      <widget class="QLabel" name="source_label">
+       <property name="text">
+        <string>FROM - original physical key</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLabel" name="target_label">
+       <property name="text">
+        <string>TO - replacement key</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="SourceKeyPicker" name="source"/>
+     </item>
+     <item row="1" column="1">
+      <widget class="TargetKeyPicker" name="target"/>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="notice">
+     <property name="text">
+      <string>Scan codes, not characters or shortcuts. US labels describe base positions; ISO/JIS/Korean aliases may share codes.
+Unknown words are preserved but are not guaranteed to work. Capture cannot recover a key that Windows has already disabled or remapped.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::StandardButton::Cancel|QDialogButtonBox::StandardButton::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>SourceKeyPicker</class>
+   <extends>QWidget</extends>
+   <header>personal_keyboard_remap.widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>TargetKeyPicker</class>
+   <extends>QWidget</extends>
+   <header>personal_keyboard_remap.widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

@@ -10,6 +10,7 @@ launcher:
         - "run-script.sh"
         - "run-script.ps1"
         - "package-project.py"
+        - "_pyside6_uic.py"
     script-types:
         python:
             extension: ".py"
@@ -103,6 +104,7 @@ ignore-list:
         no-gui: # 仅列出无 GUI，但是在无桌面环境时可能不适用的工具
             - &keyboard_hook_viewer "input-and-text/keyboard-hook-viewer.py"
             - "document-processing/document-screenshot.py"
+            - "others/script-to-app.py"
             # 也包含所有 gui-tools-list 中的软件
         wayland:
             - *keyboard_hook_viewer
@@ -119,7 +121,7 @@ gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no
     - "others/screen-mask.py"
     - "others/system-event-viewer.py"
     - "others/window-inspector.py"
-    - "document-processing/document-screenshot.py"
+    # - "document-processing/document-screenshot.py"
     - "document-processing/image-to-text-and-formula.py"
     - "document-processing/pdf-binarizer.py"
     - "document-processing/pdf-bookmark-editor.py"
@@ -128,15 +130,17 @@ gui-tools-list: # 下列程序在列出时会带上 `[GUI]` 的尾巴；linux-no
     - "document-processing/pdf-ocr.py"
     - "document-processing/pdf-page-splitter.py"
     - "research/matrix-viewer.py"
-    - "others/script-to-app.py"
     - "input-and-text/text-path-processor.py"
     - "input-and-text/unicode-inspector.py"
+    - "qt-style-preview.py"
+    - "filesystem/link-utils.py"
 
 elevation-needed-list: # 下列程序，启动时需要提权，启动器中列出时会带上 `[SUDO]` 的尾巴
     all-platforms:
         - "filesystem/executable-bit-setter.sh"
         - "filesystem/link-creator.py"
         - "filesystem/path-in-use.py"
+        - "filesystem/link-utils.py"
         - "others/disk-smart-info-viewer.py"
         - "others/script-to-app.py"
     windows:

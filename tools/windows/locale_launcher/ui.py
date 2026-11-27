@@ -6,123 +6,63 @@ from pathlib import Path
 from typing import cast
 
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QStyle, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QStyle, QWidget
 from utils.qt_clipboard import clipboard_file_paths, local_file_paths
 from utils.path_text import remove_quotes
 from utils.qt_widgets import configure_qt_application
 from .settings import CODE_PAGES, EXECUTABLE_SUFFIXES, Selection, code_pages, host_settings, launch, locales, time_zones
+from .ui_launcher import Ui_Launcher
 
 
-class Launcher(QWidget):
+class Launcher(QWidget, Ui_Launcher):
     """Select a target and independently override its Windows locale settings."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.startup_directory = Path.cwd()
-        self.setWindowTitle("Locale Launcher")
+        self.setupUi(self)
         self.setAcceptDrops(True)
-        layout = QVBoxLayout(self)
-        target_row = QHBoxLayout()
-        self.path = QLineEdit()
         self.path.setReadOnly(True)
         self.path.setAcceptDrops(False)
-        self.path.setPlaceholderText("Drop an .exe or .com here")
-        self.path.setAccessibleName("Target executable")
-        target_row.addWidget(self.path, 1)
-        browse = QPushButton("Open…")
-        browse.clicked.connect(self.browse)
-        target_row.addWidget(browse)
-        paste = QPushButton("Paste")
-        paste.clicked.connect(self.paste)
-        target_row.addWidget(paste)
-        layout.addLayout(target_row)
-        arguments_row = QHBoxLayout()
-        arguments_label = QLabel("Arguments")
-        self.arguments = QLineEdit()
-        self.arguments.setPlaceholderText("Optional command-line arguments")
-        self.arguments.setAccessibleName("Arguments")
-        arguments_label.setBuddy(self.arguments)
-        arguments_row.addWidget(arguments_label)
-        arguments_row.addWidget(self.arguments, 1)
-        layout.addLayout(arguments_row)
-        directory_row = QHBoxLayout()
-        directory_label = QLabel("Start in")
-        self.directory = QLineEdit(str(self.startup_directory))
+        self.startup_directory = Path.cwd()
+        self.directory.setText(str(self.startup_directory))
         self.directory.setPlaceholderText(str(self.startup_directory))
-        self.directory.setAccessibleName("Working directory")
-        directory_label.setBuddy(self.directory)
-        open_folder = QPushButton("Open folder…")
-        open_folder.clicked.connect(self.browse_directory)
-        directory_row.addWidget(directory_label)
-        directory_row.addWidget(self.directory, 1)
-        directory_row.addWidget(open_folder)
-        layout.addLayout(directory_row)
+
+        self.open_button.clicked.connect(self.browse)
+        self.paste_button.clicked.connect(self.paste)
+        self.folder_button.clicked.connect(self.browse_directory)
         QShortcut(QKeySequence.StandardKey.Open, self, self.browse)
         QShortcut(QKeySequence.StandardKey.Paste, self, self.paste)
+        self.admin_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_VistaShield))
+        self.admin_button.clicked.connect(lambda: self.start(True))
+        self.run_button.clicked.connect(lambda: self.start(False))
+        self.run_button.setDefault(True)
+        self.admin_button.setEnabled(False)
+        self.run_button.setEnabled(False)
 
-        host = host_settings()
-        regions = locales()
-        zones = time_zones()
-        fields = QGridLayout()
-        fields.setRowMinimumHeight(0, layout.spacing())
-        for column, title in ((1, "Launch settings"), (3, "This computer")):
-            heading = QLabel(title)
+        self.fields.setRowMinimumHeight(0, self.main_layout.spacing())
+        for heading in (self.launch_heading, self.host_heading):
             font = heading.font()
             font.setBold(True)
             heading.setFont(font)
-            fields.addWidget(heading, 1, column)
-        layout.addLayout(fields)
 
-        def add_field(title: str, choices: list[tuple[str, str]], current: str) -> QComboBox:
-            row = fields.rowCount()
-            label = QLabel(title)
-            box = QComboBox()
+        regions = locales()
+        for box, choices in ((self.region, regions), (self.page, code_pages()),
+                             (self.language, regions), (self.zone, time_zones())):
             box.addItem("Unchanged (use host)", "")
             for display, value in choices:
                 box.addItem(display, value)
-            label.setBuddy(box)
-            box.setAccessibleName(title)
-            box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-            box.setMinimumContentsLength(27)
-            fields.addWidget(label, row, 0)
-            fields.addWidget(box, row, 1)
-            current_label = QLabel(current)
-            current_label.setWordWrap(True)
-            fields.addWidget(current_label, row, 3)
-            return box
 
         def user_and_system(user: str, system: str) -> str:
             return user if user == system else f"User: {user}\nSystem: {system}"
 
-        self.region = add_field("Region", regions, user_and_system(host.user_region, host.system_region))
+        host = host_settings()
+        self.host_region.setText(user_and_system(host.user_region, host.system_region))
         current_page = f"{host.ansi_page} · {CODE_PAGES.get(host.ansi_page, 'ANSI')}"
         if host.oem_page != host.ansi_page:
             current_page = f"ANSI: {current_page}\nOEM: {host.oem_page}"
-        self.page = add_field("Code page", code_pages(), current_page)
-        self.language = add_field("UI language", regions, user_and_system(host.user_language, host.system_language))
-        self.zone = add_field("Time zone", zones, host.time_zone)
-        fields.setColumnStretch(1, 3)
-        fields.setColumnStretch(3, 2)
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFrameShadow(QFrame.Shadow.Sunken)
-        fields.addWidget(divider, 0, 2, -1, 1)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch()
-        self.admin_button = QPushButton("Run as administrator")
-        self.admin_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_VistaShield))
-        self.admin_button.clicked.connect(lambda: self.start(True))
-        self.run_button = QPushButton("Run")
-        self.run_button.setDefault(True)
-        self.run_button.clicked.connect(lambda: self.start(False))
-        for button in (self.admin_button, self.run_button):
-            button.setEnabled(False)
-            buttons.addWidget(button)
-        layout.addLayout(buttons)
+        self.host_page.setText(current_page)
+        self.host_language.setText(user_and_system(host.user_language, host.system_language))
+        self.host_zone.setText(host.time_zone)
         self.resize(max(self.sizeHint().width(), self.fontMetrics().horizontalAdvance("M") * 64),
                     self.sizeHint().height())
 

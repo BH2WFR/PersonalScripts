@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Protocol
 
 from utils import ConfigStore
+from utils.gui_colors import button_fills, text_hex
 from .layout import ACCENT_LOCK_KEYS, DEFAULT_SIZE, MAC_LABELS, MODIFIERS, NUMPAD_NAVIGATION, key_color
 
 
@@ -255,27 +256,59 @@ class KeyboardState:
             return NUMPAD_NAVIGATION[name][1]
         return MAC_LABELS.get(name, label) if self.output.mac else label
 
-    def colors(self, name: str) -> tuple[str, str]:
+    def colors(self, name: str, *, dark: bool = False) -> tuple[str, str]:
+        """Return themed keycap colors while preserving input and lock state cues."""
+        foreground = "#f4f5f6" if dark else "#202124"
         active = name in self.held or name == self.pressed
         if name == "language":
-            return ("#185337" if active else key_color(name)), "white"
+            background = key_color(name, dark=dark)
+            if active:
+                background = "#24734b" if dark else "#185337"
+            return background, "white"
         lock = "CapsLock" if name == "Layer" and not self.adapted else name
         palette_key = "NumLock" if lock == "CapsLock" and not self.adapted else name
         if lock in self.lock_states:
             accent = palette_key in ACCENT_LOCK_KEYS
             if active:
-                return ("#f4bd9d" if accent else "#99db9d"), "#202124"
+                if dark:
+                    return ("#79492e" if accent else "#34653f"), foreground
+                return ("#f4bd9d" if accent else "#99db9d"), foreground
             if self.lock_states[lock]:
+                if dark:
+                    return ("#a04a2b" if accent else "#267146"), "white"
                 return ("#9f4929" if accent else "#185337"), "white"
         if name in self.locked:
-            return "#7a202a", "#ffe160"
+            return ("#8d3642" if dark else "#7a202a"), "#ffe160"
         if self.shows_layer_hint(name):
             palette_key = "Layer"
-        return ("#34657c", "white") if active else (key_color(palette_key), "#202124")
+        return (button_fills("blue", dark=dark)[0], "white") if active else (key_color(palette_key, dark=dark), foreground)
 
 
-def hover_color(color: str) -> str:
-    """Brighten the current key colour using the Windows palette."""
-    rgb = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
-    blend = 0.18 if max(rgb) < 128 else 0.35
+@dataclass(frozen=True)
+class KeyboardTheme:
+    """Colors shared by the Tk and Cocoa keyboard surfaces."""
+
+    dark: bool
+    surface: str
+    footer: str
+    divider: str
+    border: str
+
+    def toolbar(self, active: bool) -> tuple[str, str]:
+        if active:
+            return button_fills("blue", dark=self.dark)[0], "white"
+        return self.surface, text_hex("gray", dark=self.dark)
+
+
+LIGHT_THEME = KeyboardTheme(False, "#f1f3f5", "#e4e8eb", "#aab2b8", "#c1c9ce")
+DARK_THEME = KeyboardTheme(True, "#272b30", "#23262a", "#575e65", "#596168")
+
+
+def hover_color(background: str, foreground: str = "#202124", *, dark: bool = False) -> str:
+    """Brighten the hovered keycap, using the shared hover fill for blue accents."""
+    normal, hover, _ = button_fills("blue", dark=dark)
+    if background == normal:
+        return hover
+    blend = 0.30 if foreground in ("#202124", text_hex("gray", dark=False)) else 0.06
+    rgb = (int(background[i:i + 2], 16) for i in (1, 3, 5))
     return "#" + "".join(f"{round(c + (255 - c) * blend):02x}" for c in rgb)

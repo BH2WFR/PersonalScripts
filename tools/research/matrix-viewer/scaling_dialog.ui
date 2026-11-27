@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ScalingDialog</class>
+ <widget class="QDialog" name="ScalingDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>600</width>
+    <height>320</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout">
+   <item>
+    <widget class="QLabel" name="form_note">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="form_auto">
+     <property name="text">
+      <string>Apply auto scaling</string>
+     </property>
+     <property name="toolTip">
+      <string>Fit once. In 3D, restore automatic Z bounds and matrix-height balance without changing camera direction.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="endpoint_ticks">
+     <property name="text">
+      <string>Show range endpoints on value axes / color bars (all views)</string>
+     </property>
+     <property name="toolTip">
+      <string>Off: automatic ticks. On: include minimum/maximum on 1D Y, 3D Z and 2D/3D color scales. Does not change manual ranges.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="y_lock">
+     <property name="text">
+      <string>Lock Y range (expand only, across slices and matrices)</string>
+     </property>
+     <property name="toolTip">
+      <string>Signal and derivative accumulate separate ranges. Turn off/on to start again. While locked, Y fitting and manual edits can only expand the range.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QGridLayout" name="form_grid" />
+   </item>
+   <item>
+    <widget class="QPushButton" name="form_apply" />
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="form_presets" />
+   </item>
+   <item>
+    <widget class="QCheckBox" name="equal_lock">
+     <property name="text">
+      <string>Lock X:Y = 1:1 (data units)</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="geometry_box">
+     <property name="title">
+      <string>Geometry Z range (all visible layers)</string>
+     </property>
+     <layout class="QGridLayout" name="form_geometry_layout">
+      <item row="1" column="0" rowspan="1" colspan="2">
+       <widget class="QPushButton" name="apply_geometry">
+        <property name="text">
+         <string>Apply Z range</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="2" rowspan="1" colspan="2">
+       <widget class="QPushButton" name="auto_geometry">
+        <property name="text">
+         <string>Auto Z range</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0" rowspan="1" colspan="4">
+       <widget class="QLabel" name="form_geometry_note">
+        <property name="text">
+         <string>Display only: geometry outside this interval is hidden. Use full Z coordinates after height/alignment, before scene multipliers (not the abbreviated scientific ticks). Color bounds and source data are unchanged. Applies across matrix switches.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0" rowspan="1" colspan="4">
+       <widget class="QCheckBox" name="z_lock">
+        <property name="text">
+         <string>Lock Z range (expand only)</string>
+        </property>
+        <property name="toolTip">
+         <string>Independent of the shared 2D/3D color lock. Keeps geometry bounds across matrices, overlays and height changes. Turn off/on to restart.</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="color_box">
+     <property name="title">
+      <string>Color scale (shared by 2D and 3D)</string>
+     </property>
+     <layout class="QGridLayout" name="form_color_layout">
+      <item row="1" column="0" rowspan="1" colspan="2">
+       <widget class="QPushButton" name="apply_colors">
+        <property name="text">
+         <string>Apply color range</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="2" rowspan="1" colspan="2">
+       <widget class="QPushButton" name="auto_colors">
+        <property name="text">
+         <string>Auto color range</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0" rowspan="1" colspan="4">
+       <widget class="QLabel" name="form_color_note">
+        <property name="text">
+         <string>Stored for the active channel. Use the same bounds for comparable figures. Unavailable for original image colors or solid-color overlays.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0" rowspan="1" colspan="4">
+       <widget class="QCheckBox" name="color_lock">
+        <property name="text">
+         <string>Lock color range (expand only, shared by 2D / 3D)</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="form_buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Close</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

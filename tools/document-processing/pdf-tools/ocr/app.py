@@ -5,25 +5,26 @@ from typing import cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import *
-from utils.qt_widgets import NoWheelSpinBox, NoWheelComboBox, configure_qt_application
+from utils.qt_styles import set_button_style, set_text_style
+from utils.qt_widgets import configure_qt_application
 from ..common.file_actions import choose_pdf_output
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
-from ..common.navigation import NavigationPane, PAGE_ROLE
+from ..common.page_toolbar import set_preview_tab_order
+from ..common.navigation import PAGE_ROLE
 from ..common.page_cache import PageCache, pixmap_bytes
 from ..common.preferences import choose_open_file, read_preferences, save_preferences, remember_directory
 from ..common.preview_buffer import PreviewBuffer
 from ..common.protocol import Json
 from ..common.range_input import PageRangeDialog
-from ..common.task_buttons import TaskButtons
 from ..common.tooltips import TooltipFilter
-from ..common.viewer import PageViewer
 from .model import Result, Settings, adjusted_result
-from .panel import SettingsPanel, overlay_text
+from .panel import overlay_text
 from .model_dialog import ModelDialog
+from .ui_pdf_mainwindow import Ui_OcrWindow
 
 
-class OcrWindow(QtWidgets.QMainWindow):
+class OcrWindow(QtWidgets.QMainWindow, Ui_OcrWindow):
     """Keep OCR results in session memory; exporting adds an invisible text layer."""
 
     def __init__(self, entry: Path) -> None:
@@ -49,8 +50,6 @@ class OcrWindow(QtWidgets.QMainWindow):
         self.timer.setSingleShot(True)
         self.timer.setInterval(300)
         self.timer.timeout.connect(self._render)
-        self.setWindowTitle("PDF OCR")
-        self.resize(1420, 900)
         preferences = read_preferences(self, "ocr")
         try:
             self.settings = Settings.from_data(preferences.get("settings", {}))
@@ -70,19 +69,10 @@ class OcrWindow(QtWidgets.QMainWindow):
         self._enabled()
 
     def _build(self) -> None:
-        splitter = QtWidgets.QSplitter()
-        self.setCentralWidget(splitter)
-        self.left = QtWidgets.QWidget()
-        left = QtWidgets.QVBoxLayout(self.left)
-        files = QtWidgets.QHBoxLayout()
-        self.open_button = QtWidgets.QPushButton("Open PDF")
+        self.setupUi(self)
         self.open_button.clicked.connect(self._open_dialog)
-        self.close_button = QtWidgets.QPushButton("Close")
         self.close_button.clicked.connect(self._close_pdf)
-        files.addWidget(self.open_button)
-        files.addWidget(self.close_button)
-        left.addLayout(files)
-        self.panel = SettingsPanel(self.settings)
+        self.panel.configure(self.settings)
         self.panel.recognitionChanged.connect(self._settings_changed)
         self.panel.manageModelsRequested.connect(self._manage_models)
         self.panel.appearanceChanged.connect(self._appearance_changed)
@@ -91,81 +81,32 @@ class OcrWindow(QtWidgets.QMainWindow):
         self.panel.removePagesRequested.connect(self._remove_ignored_pages)
         self.panel.clearPagesRequested.connect(lambda: self._set_ignored(list(self.ignored), False))
         self.panel.ignored_list.itemSelectionChanged.connect(self._enabled)
-        left.addWidget(self.panel, 1)
-        self.scan_button = QtWidgets.QPushButton("Try OCR on this page")
         self.scan_button.clicked.connect(self._scan)
-        left.addWidget(self.scan_button)
-        self.left.setMinimumWidth(340)
-        splitter.addWidget(self.left)
-        right = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(right)
-        layout.setContentsMargins(3, 6, 6, 6)
-        self.toolbar = QtWidgets.QToolBar()
-        self.previous = self.toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack),
-                                              "Previous page", lambda: self.go_page(self.current_page - 1))
-        self.next = self.toolbar.addAction(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowForward),
-                                          "Next page", lambda: self.go_page(self.current_page + 1))
-        self.page_number = NoWheelSpinBox()
-        self.page_number.setRange(1, 1)
-        self.page_number.setKeyboardTracking(False)
-        self.page_number.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.page_number.setFixedWidth(55)
-        self.page_number.editingFinished.connect(lambda: self.go_page(self.page_number.value()))
-        self.toolbar.addWidget(self.page_number)
-        self.page_total = QtWidgets.QLabel(" / 0 ")
-        self.toolbar.addWidget(self.page_total)
-        self.toolbar.addSeparator()
-        self.viewer = PageViewer()
-        self.viewer.pageStepRequested.connect(lambda step: self.go_page(self.current_page + step))
-        self.toolbar.addAction("Fit page", self.viewer.fit_page)
-        self.toolbar.addAction("Fit width", self.viewer.fit_width)
-        self.toolbar.addAction("100%", self.viewer.actual_pixels)
-        self.zoom_label = QtWidgets.QLabel(" 100% ")
-        self.viewer.zoomChanged.connect(lambda value: self.zoom_label.setText(f" {value:.0f}% "))
-        self.toolbar.addWidget(self.zoom_label)
+        self.toolbar.bind_viewer(self.viewer, editable_zoom=False)
+        self.toolbar.stepRequested.connect(lambda step: self.go_page(self.current_page + step))
+        self.toolbar.pageRequested.connect(self.go_page)
         self.original = QtWidgets.QCheckBox("Show original")
         self.original.setToolTip("Unchecked: overlay recognized text in the preview color. No OCR runs automatically.")
         self.original.toggled.connect(self._show_cached)
-        self.toolbar.addWidget(self.original)
-        layout.addWidget(self.toolbar)
-        content = QtWidgets.QSplitter()
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.addTab(self.viewer, "Page preview")
-        text_tab = QtWidgets.QWidget()
-        text_layout = QtWidgets.QVBoxLayout(text_tab)
-        self.text_scope = NoWheelComboBox()
+        self.tool_toolbar.addWidget(self.original)
         self.text_scope.addItems(["Current page", "All recognized pages"])
         self.text_scope.currentIndexChanged.connect(self._update_text)
-        text_layout.addWidget(self.text_scope)
-        self.text = QtWidgets.QPlainTextEdit()
         self.text.setReadOnly(True)
         self.text.setPlaceholderText("Run OCR to view and copy recognized text.")
-        text_layout.addWidget(self.text)
-        self.tabs.addTab(text_tab, "Recognized text")
-        content.addWidget(self.tabs)
-        self.navigation = NavigationPane()
         self.navigation.removeTab(self.navigation.indexOf(self.navigation.image_tab))
         self.navigation.pages.setHeaderLabels(["Page", "Title", "OCR"])
         self.navigation.bookmarks.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.navigation.pageRequested.connect(lambda index: self.go_page(index + 1))
         self.navigation.contextActionsRequested.connect(self._context_actions)
-        content.addWidget(self.navigation)
-        content.setSizes([740, 250])
-        content.setStretchFactor(0, 1)
-        layout.addWidget(content, 1)
-        footer = QtWidgets.QHBoxLayout()
-        self.status = QtWidgets.QLabel("Open or drop a PDF. OCR runs only when requested.")
+        self.content.setSizes([740, 250])
+        self.content.setStretchFactor(0, 1)
         self.status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
-        footer.addWidget(self.status, 1)
-        self.task_buttons = TaskButtons(self.runner, with_progress=True)
-        footer.addWidget(self.task_buttons)
-        self.export_button = QtWidgets.QPushButton("Run all / Export PDF")
+        self.task_buttons.bind_runner(self.runner, with_progress=True)
         self.export_button.clicked.connect(self._export)
-        footer.addWidget(self.export_button)
-        layout.addLayout(footer)
-        splitter.addWidget(right)
-        splitter.setSizes([365, 1055])
+        set_button_style(self.export_button, "blue")
+        self.splitter.setSizes([365, 1055])
+        set_preview_tab_order(self.open_button, self.close_button, self.panel, self.scan_button, self.toolbar,
+                              self.tool_toolbar, self.content, self.task_buttons, self.export_button)
 
     def _enabled(self, *_args: object) -> None:
         if not hasattr(self, "export_button"):
@@ -180,11 +121,8 @@ class OcrWindow(QtWidgets.QMainWindow):
         self.panel.remove_pages.setEnabled(bool(self.panel.ignored_list.selectedItems()))
         self.panel.clear_pages.setEnabled(bool(self.ignored))
         self.navigation.setEnabled(loaded and idle)
-        self.page_number.setEnabled(loaded and idle)
         self.original.setEnabled(loaded and idle)
-        self.previous.setEnabled(loaded and idle and self.current_page > 1)
-        self.next.setEnabled(loaded and idle and self.current_page < self.page_count)
-        self.viewer.navigation_enabled = loaded and idle
+        self.toolbar.set_navigation_enabled(loaded and idle, self.current_page, self.page_count)
         working = self.runner.busy and not self.runner.paused
         if working and not self._cursor_busy:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.BusyCursor)
@@ -337,8 +275,7 @@ class OcrWindow(QtWidgets.QMainWindow):
         self.viewer.clear()
         self.navigation.load([], [])
         self.text.clear()
-        self.page_number.setRange(1, 1)
-        self.page_total.setText(" / 0 ")
+        self.toolbar.set_page_count(0)
         self.setWindowTitle("PDF OCR")
 
     def _close_pdf(self) -> None:
@@ -354,7 +291,7 @@ class OcrWindow(QtWidgets.QMainWindow):
         if self.runner.busy or not 1 <= number <= self.page_count:
             return
         self.current_page = number
-        self.page_number.setValue(number)
+        self.toolbar.page_number.setValue(number)
         self.navigation.select_page(number - 1)
         self._update_text()
         if not self._show_cached():
@@ -377,7 +314,7 @@ class OcrWindow(QtWidgets.QMainWindow):
         self.viewer.set_pixmap(shown, (str(self.source), self.current_page))
         state = "Ignored" if self.current_page - 1 in self.ignored else "Not recognized" if result is None else f"{len(result.tokens)} text anchors"
         self.status.setText(f"Page {self.current_page} / {self.page_count} — {state}")
-        self.original.setStyleSheet("color: #b16b00;" if self.original.isChecked() else "")
+        set_text_style(self.original, "orange" if self.original.isChecked() else None)
         return True
 
     def _render(self) -> None:
@@ -434,8 +371,7 @@ class OcrWindow(QtWidgets.QMainWindow):
             self.source = Path(str(self._request["path"]))
             self.password = str(message.get("password", ""))
             self.page_count = int(cast(int, message["page_count"]))
-            self.page_number.setRange(1, self.page_count)
-            self.page_total.setText(f" / {self.page_count} ")
+            self.toolbar.set_page_count(self.page_count)
             self.navigation.load(cast(list[str], message["labels"]), cast(list[tuple[int, str, int]], message["bookmarks"]))
             remember_directory(self, "open-pdf", self.source)
             self.setWindowTitle(f"PDF OCR — {self.source.name}")

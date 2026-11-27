@@ -39,6 +39,7 @@ from .image_view import IMAGE_FIT_PADDING
 from .surface_view import MAX_AXIS_SCALE, MIN_AXIS_SCALE
 from .plot_support import EndpointAxis, NavigationViewBox
 from .profile_view import ExpandingYRange
+from .ui_scaling_dialog import Ui_ScalingDialog
 
 if TYPE_CHECKING:
     from .workspace_window import WorkspaceWindow
@@ -231,7 +232,7 @@ class ViewScaling(QtCore.QObject):
         else:
             for profile in (window.profile_view, window.overlay_profile):
                 pane = profile.derivative_pane if view == FigureView.DERIVATIVE else profile.signal_pane
-                pane.view_box.setAspectLocked(enabled, ratio=1.0)
+                pane.view_box.setAspectLocked(enabled, ratio=1)
 
     def apply_auto(self, view: FigureView) -> None:
         """Fit once; 3D also restores automatic Z bounds and height balance."""
@@ -396,7 +397,7 @@ class ViewScaling(QtCore.QObject):
         self.window._presentation_changed()
 
 
-class ScalingDialog(QtWidgets.QDialog):
+class ScalingDialog(QtWidgets.QDialog, Ui_ScalingDialog):
     """Edit one view's ranges or scene multipliers with explicit Apply buttons.
 
     Args:
@@ -409,38 +410,26 @@ class ScalingDialog(QtWidgets.QDialog):
 
     def __init__(self, controller: ViewScaling, view: FigureView) -> None:
         super().__init__(controller.window)
+        self.setupUi(self)
         self.controller, self.view = controller, view
         self.setWindowTitle(f"Scaling — {view.value}")
         self.setModal(True)
-        self.resize(600, 320)
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = self.form_layout
         spatial = view == FigureView.SURFACE
-        note = QtWidgets.QLabel(
-            "Applies to all visible layers in this view. Scene multipliers act after each matrix's height and alignment. "
-            "Axis labels and source values are unchanged." if spatial else
-            "Change display ranges without cropping data. Single-axis edits release the X:Y lock. "
-            "Manual Y changes turn off Auto Y on slice change."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        auto = QtWidgets.QPushButton("Apply auto scaling")
-        auto.setToolTip("Fit once. In 3D, restore automatic Z bounds and matrix-height balance without changing camera direction.")
+        note = self.form_note
+        note.setText("Applies to all visible layers in this view. Scene multipliers act after each matrix's height and alignment. "
+                    "Axis labels and source values are unchanged." if spatial else
+                    "Change display ranges without cropping data. Single-axis edits release the X:Y lock. "
+                    "Manual Y changes turn off Auto Y on slice change.")
+        auto = self.form_auto
         auto.clicked.connect(self._auto)
-        layout.addWidget(auto)
-        self.endpoint_ticks = QtWidgets.QCheckBox("Show range endpoints on value axes / color bars (all views)")
         self.endpoint_ticks.setChecked(controller.endpoint_ticks)
-        self.endpoint_ticks.setToolTip("Off: automatic ticks. On: include minimum/maximum on 1D Y, 3D Z and 2D/3D color scales. Does not change manual ranges.")
         self.endpoint_ticks.toggled.connect(controller.set_endpoint_ticks)
-        layout.addWidget(self.endpoint_ticks)
-        self.y_lock = QtWidgets.QCheckBox("Lock Y range (expand only, across slices and matrices)")
         self.y_lock.setChecked(controller.y_range_lock)
         self.y_lock.setVisible(view in (FigureView.SIGNAL, FigureView.DERIVATIVE))
-        self.y_lock.setToolTip("Signal and derivative accumulate separate ranges. Turn off/on to start again. While locked, Y fitting and manual edits can only expand the range.")
         self.y_lock.toggled.connect(controller.set_y_range_lock)
-        layout.addWidget(self.y_lock)
-        grid = QtWidgets.QGridLayout()
+        grid = self.form_grid
         grid.setColumnMinimumWidth(0, 36)
-        layout.addLayout(grid)
         headings = ("Axis", "Multiplier", "", "Zoom in", "Zoom out") if spatial else ("Axis", "Minimum", "Maximum", "Zoom in", "Zoom out")
         for column, text in enumerate(headings):
             grid.addWidget(QtWidgets.QLabel(text), 0, column)
@@ -459,92 +448,60 @@ class ScalingDialog(QtWidgets.QDialog):
                                   else f"{axis.name} axis only; enlarge" if factor > 1 else f"{axis.name} axis only; shrink")
                 button.clicked.connect(partial(self._zoom, axis, factor))
                 grid.addWidget(button, row, column)
-        apply = QtWidgets.QPushButton("Apply multipliers" if spatial else "Apply ranges")
+        apply = self.form_apply
+        apply.setText("Apply multipliers" if spatial else "Apply ranges")
         apply.clicked.connect(self._apply)
-        layout.addWidget(apply)
         self.axis_extents: dict[Axis, QtWidgets.QLabel] = {}
         if not spatial:
             for axis in (Axis.X, Axis.Y):
                 label = self._range_label()
                 self.axis_extents[axis] = label
-                layout.addWidget(label)
-        presets = QtWidgets.QHBoxLayout()
-        layout.addLayout(presets)
+                layout.insertWidget(layout.count() - 5, label)
+        presets = self.form_presets
         if spatial:
             for preset in EqualAxes:
                 button = QtWidgets.QPushButton(preset.value)
                 button.setToolTip("Match unit scales once. Z presets reset per-matrix height to 1; matched stretch alignments are reset. Afterwards every axis remains editable.")
                 button.clicked.connect(partial(self._equal, preset))
                 presets.addWidget(button)
-        self.equal_lock = QtWidgets.QCheckBox("Lock X:Y = 1:1 (data units)")
         if spatial:
             self.equal_lock.setToolTip("Lock scene X/Y scales together. Enabling matches Y to X; Z and per-matrix overlay alignment stay independent.")
             for axis in (Axis.X, Axis.Y):
                 self.fields[axis][0].textEdited.connect(partial(self._mirror_xy_text, axis))
         self.equal_lock.toggled.connect(self._lock)
-        layout.addWidget(self.equal_lock)
-        self.geometry_box = QtWidgets.QGroupBox("Geometry Z range (all visible layers)")
-        geometry_layout = QtWidgets.QGridLayout(self.geometry_box)
+        geometry_layout = self.form_geometry_layout
         self.z_minimum, self.z_maximum = QtWidgets.QLineEdit(), QtWidgets.QLineEdit()
         for column, (label, field) in enumerate((("Minimum", self.z_minimum), ("Maximum", self.z_maximum))):
             geometry_layout.addWidget(QtWidgets.QLabel(label), 0, column * 2)
             geometry_layout.addWidget(field, 0, column * 2 + 1)
             field.setPlaceholderText("Automatic")
             field.setToolTip("Enter both bounds, or leave both blank for automatic bounds. Scientific notation is accepted.")
-        self.apply_geometry = QtWidgets.QPushButton("Apply Z range")
         self.apply_geometry.clicked.connect(self._apply_geometry)
-        self.auto_geometry = QtWidgets.QPushButton("Auto Z range")
         self.auto_geometry.clicked.connect(self._auto_geometry)
-        geometry_layout.addWidget(self.apply_geometry, 1, 0, 1, 2)
-        geometry_layout.addWidget(self.auto_geometry, 1, 2, 1, 2)
-        geometry_note = QtWidgets.QLabel(
-            "Display only: geometry outside this interval is hidden. Use full Z coordinates after "
-            "height/alignment, before scene multipliers (not the abbreviated scientific ticks). "
-            "Color bounds and source data are unchanged. Applies across matrix switches.")
-        geometry_note.setWordWrap(True)
-        geometry_layout.addWidget(geometry_note, 2, 0, 1, 4)
         self.geometry_extents = self._range_label()
         geometry_layout.addWidget(self.geometry_extents, 3, 0, 1, 4)
-        self.z_lock = QtWidgets.QCheckBox("Lock Z range (expand only)")
-        self.z_lock.setToolTip("Independent of the shared 2D/3D color lock. Keeps geometry bounds across matrices, overlays and height changes. Turn off/on to restart.")
         self.z_lock.toggled.connect(self._z_lock_changed)
-        geometry_layout.addWidget(self.z_lock, 4, 0, 1, 4)
         self.effective_geometry_extents = self._range_label()
         geometry_layout.addWidget(self.effective_geometry_extents, 5, 0, 1, 4)
         self.geometry_box.setVisible(spatial)
-        layout.addWidget(self.geometry_box)
-        self.color_box = QtWidgets.QGroupBox("Color scale (shared by 2D and 3D)")
-        color_layout = QtWidgets.QGridLayout(self.color_box)
+        color_layout = self.form_color_layout
         self.color_minimum, self.color_maximum = QtWidgets.QLineEdit(), QtWidgets.QLineEdit()
         for column, (label, field) in enumerate((("Minimum", self.color_minimum), ("Maximum", self.color_maximum))):
             color_layout.addWidget(QtWidgets.QLabel(label), 0, column * 2)
             color_layout.addWidget(field, 0, column * 2 + 1)
             field.setPlaceholderText("Automatic")
             field.setToolTip("Blank uses the data bound. Scientific notation is accepted. Does not clip data.")
-        self.apply_colors = QtWidgets.QPushButton("Apply color range")
         self.apply_colors.clicked.connect(self._apply_colors)
-        self.auto_colors = QtWidgets.QPushButton("Auto color range")
         self.auto_colors.clicked.connect(self._auto_colors)
-        color_layout.addWidget(self.apply_colors, 1, 0, 1, 2)
-        color_layout.addWidget(self.auto_colors, 1, 2, 1, 2)
-        color_note = QtWidgets.QLabel(
-            "Stored for the active channel. Use the same bounds for comparable figures. "
-            "Unavailable for original image colors or solid-color overlays.")
-        color_note.setWordWrap(True)
-        color_layout.addWidget(color_note, 2, 0, 1, 4)
         self.color_extents = self._range_label()
         color_layout.addWidget(self.color_extents, 3, 0, 1, 4)
-        self.color_lock = QtWidgets.QCheckBox("Lock color range (expand only, shared by 2D / 3D)")
         self.color_lock.setToolTip(controller.window.color_range_lock.toolTip())
         self.color_lock.toggled.connect(self._color_lock_changed)
-        color_layout.addWidget(self.color_lock, 4, 0, 1, 4)
         self.effective_color_extents = self._range_label()
         color_layout.addWidget(self.effective_color_extents, 5, 0, 1, 4)
         self.color_box.setVisible(view in (FigureView.IMAGE, FigureView.SURFACE))
-        layout.addWidget(self.color_box)
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        buttons = self.form_buttons
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
         self._refresh()
 
     @staticmethod

@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ApiForm</class>
+ <widget class="QWidget" name="ApiForm">
+  <layout class="QFormLayout" name="settings_form">
+   <item row="0" column="0" colspan="2">
+    <layout class="QHBoxLayout" name="preferences_row">
+     <item>
+      <widget class="QPushButton" name="save_api_button">
+       <property name="text">
+        <string>Save</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="load_api_button">
+       <property name="text">
+        <string>Load</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QLabel" name="api_config_status">
+     <property name="text">
+      <string>API settings are loaded at startup; Save or close this window to write changes.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0">
+    <widget class="QLabel" name="api_url_label">
+     <property name="text">
+      <string>API preset / URL</string>
+     </property>
+     <property name="buddy">
+      <cstring>api_url</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="1">
+    <widget class="NoWheelComboBox" name="api_url" />
+   </item>
+   <item row="3" column="0">
+    <widget class="QLabel" name="model_row_label">
+     <property name="text">
+      <string>Model</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="1">
+    <layout class="QHBoxLayout" name="model_row" stretch="1,0">
+     <item>
+      <widget class="NoWheelComboBox" name="api_model" />
+     </item>
+     <item>
+      <widget class="QPushButton" name="fetch_button">
+       <property name="text">
+        <string>Get models</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="4" column="0" colspan="2">
+    <widget class="QCheckBox" name="vision_models_only">
+     <property name="text">
+      <string>Vision models only (strict)</string>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="0" colspan="2">
+    <widget class="QLabel" name="models_status">
+     <property name="text">
+      <string>Get models or enter a vision model name. Local servers may leave API key empty.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="6" column="0">
+    <widget class="QLabel" name="api_key_label">
+     <property name="text">
+      <string>API key</string>
+     </property>
+     <property name="buddy">
+      <cstring>api_key</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="6" column="1">
+    <widget class="QLineEdit" name="api_key" />
+   </item>
+   <item row="7" column="0">
+    <widget class="QLabel" name="temperature_label">
+     <property name="text">
+      <string>Temperature</string>
+     </property>
+     <property name="buddy">
+      <cstring>temperature</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="7" column="1">
+    <widget class="NoWheelDoubleSpinBox" name="temperature" />
+   </item>
+   <item row="8" column="0">
+    <widget class="QLabel" name="max_tokens_label">
+     <property name="text">
+      <string>Max output tokens</string>
+     </property>
+     <property name="buddy">
+      <cstring>max_tokens</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="8" column="1">
+    <widget class="NoWheelSpinBox" name="max_tokens" />
+   </item>
+   <item row="9" column="0">
+    <widget class="QLabel" name="timeout_label">
+     <property name="text">
+      <string>Timeout (seconds)</string>
+     </property>
+     <property name="buddy">
+      <cstring>timeout</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="9" column="1">
+    <widget class="NoWheelSpinBox" name="timeout" />
+   </item>
+   <item row="10" column="0">
+    <widget class="QLabel" name="context_images_label">
+     <property name="text">
+      <string>Context images</string>
+     </property>
+     <property name="buddy">
+      <cstring>context_images</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="10" column="1">
+    <widget class="NoWheelSpinBox" name="context_images" />
+   </item>
+   <item row="11" column="0">
+    <widget class="QLabel" name="reasoning_effort_label">
+     <property name="text">
+      <string>Reasoning effort</string>
+     </property>
+     <property name="buddy">
+      <cstring>reasoning_effort</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="11" column="1">
+    <widget class="NoWheelComboBox" name="reasoning_effort" />
+   </item>
+   <item row="12" column="0" colspan="2">
+    <widget class="QPushButton" name="reset_api_parameters_button">
+     <property name="text">
+      <string>Reset parameters</string>
+     </property>
+    </widget>
+   </item>
+   <item row="13" column="0" colspan="2">
+    <widget class="QCheckBox" name="skip_certificate_verification">
+     <property name="text">
+      <string>Skip certificate verification</string>
+     </property>
+    </widget>
+   </item>
+   <item row="14" column="0">
+    <widget class="QLabel" name="balance_key_label">
+     <property name="text">
+      <string>Balance key</string>
+     </property>
+     <property name="buddy">
+      <cstring>balance_key</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="14" column="1">
+    <widget class="QLineEdit" name="balance_key" />
+   </item>
+   <item row="15" column="0" colspan="2">
+    <widget class="QPushButton" name="balance_button">
+     <property name="text">
+      <string>Refresh API balance</string>
+     </property>
+    </widget>
+   </item>
+   <item row="16" column="0" colspan="2">
+    <widget class="QLabel" name="balance_status">
+     <property name="text">
+      <string>Enter an API key to display the account balance.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="17" column="0" colspan="2">
+    <widget class="QLabel" name="usage">
+     <property name="text">
+      <string>Context: no request yet</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="18" column="0" colspan="2">
+    <widget class="QPushButton" name="test_button">
+     <property name="text">
+      <string>Test API (small image)</string>
+     </property>
+    </widget>
+   </item>
+   <item row="19" column="0" colspan="2">
+    <widget class="QLabel" name="test_status">
+     <property name="text">
+      <string>API not tested</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="20" column="0" colspan="2">
+    <widget class="QPushButton" name="copy_prompt">
+     <property name="text">
+      <string>Copy system prompt</string>
+     </property>
+    </widget>
+   </item>
+   <property name="rowWrapPolicy">
+    <enum>QFormLayout::WrapLongRows</enum>
+   </property>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

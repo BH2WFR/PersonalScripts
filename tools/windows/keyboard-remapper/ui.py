@@ -12,209 +12,31 @@ from pathlib import Path
 import datetime
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelComboBox, monospace_ui_font
+from utils.qt_styles import set_text_style
+from utils.qt_widgets import monospace_ui_font
 from utils import *
 
-from . import USAGE_NOTICE
-from .capture import CaptureDialog
-from .catalog import choices, key_label, parse_key
+from .catalog import key_label
 from .models import Mapping, Snapshot, MAX_BYTES, encode_map, hex_view, parse_backup, validate_mappings
 from .registry import RegistryBackend, apply_snapshot, save_backup
+from .ui_mainwindow import Ui_RemapWindow
+from .ui_mapping import Ui_MappingDialog
+from .widgets import KeyPicker as KeyPicker, MappingTable as MappingTable
 
 RestartEditor = Callable[[Snapshot, Snapshot], None]
 
 
-class MappingTable(QtWidgets.QTableWidget):
-    """Request whole-row moves within this table without Qt moving cell data.
-
-    The owning window updates the authoritative draft through move_requested.
-    External drops and copy operations are rejected; cancellation changes nothing.
-    """
-
-    move_requested = QtCore.Signal(int, int)
-    MIME_TYPE = "application/x-personal-keyboard-remap-row"
-    INSERTION_COLOR = "#2878d0"
-
-    def __init__(self) -> None:
-        super().__init__(0, 3)
-        self._drag_row: int | None = None
-        self._insertion: int | None = None
-        self.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
-        self.setDefaultDropAction(QtCore.Qt.DropAction.MoveAction)
-        self.setDropIndicatorShown(False)  # Paint a full-width insertion line.
-        self.setDragDropOverwriteMode(False)
-        self.setToolTip("Drag a row above or below another row to change the stored order.")
-
-    def startDrag(self, supportedActions: QtCore.Qt.DropAction) -> None:
-        """Start a move-only drag; the drop handler alone requests draft changes."""
-        if not self.dragEnabled() or self.currentRow() < 0:
-            return
-        self._drag_row = self.currentRow()
-        drag = QtGui.QDrag(self)
-        mime = QtCore.QMimeData()
-        mime.setData(self.MIME_TYPE, b"row")
-        drag.setMimeData(mime)
-        try:
-            drag.exec(QtCore.Qt.DropAction.MoveAction)
-        finally:
-            self._drag_row = None
-            self._insertion = None
-            self.viewport().update()
-            drag.deleteLater()
-
-    def _accepts(self, event: QtGui.QDropEvent) -> bool:
-        return (self.dragEnabled() and event.source() is self and self._drag_row is not None
-                and event.mimeData().hasFormat(self.MIME_TYPE)
-                and bool(event.possibleActions() & QtCore.Qt.DropAction.MoveAction))
-
-    def _slot_at(self, point: QtCore.QPoint) -> int:
-        row = self.rowAt(point.y())
-        if row < 0:
-            return 0 if point.y() < 0 else self.rowCount()
-        return row + int(point.y() >= self.rowViewportPosition(row) + self.rowHeight(row) / 2)
-
-    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
-        """Accept only a move originating from this table's active drag."""
-        self.dragMoveEvent(event)
-
-    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:
-        """Update the insertion marker without changing any mappings."""
-        if self._accepts(event):
-            self._insertion = self._slot_at(event.position().toPoint())
-            event.setDropAction(QtCore.Qt.DropAction.MoveAction)
-            event.accept()
-        else:
-            self._insertion = None
-            event.ignore()
-        self.viewport().update()
-
-    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent) -> None:
-        """Hide the insertion marker when the pointer leaves the table."""
-        self._insertion = None
-        self.viewport().update()
-        event.accept()
-
-    def dropEvent(self, event: QtGui.QDropEvent) -> None:
-        """Emit one source-row/insertion-slot request; never overwrite cells."""
-        if self._accepts(event) and self._drag_row is not None:
-            self.move_requested.emit(self._drag_row, self._slot_at(event.position().toPoint()))
-            event.setDropAction(QtCore.Qt.DropAction.MoveAction)
-            event.accept()
-        else:
-            event.ignore()
-        self._insertion = None
-        self.viewport().update()
-
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        """Draw the table and a high-contrast, full-width insertion marker."""
-        super().paintEvent(event)
-        if self._insertion is None:
-            return
-        slot = self._insertion
-        y = (self.rowViewportPosition(slot) if slot < self.rowCount() else
-             self.rowViewportPosition(slot - 1) + self.rowHeight(slot - 1) if slot else 0)
-        painter = QtGui.QPainter(self.viewport())
-        painter.setPen(QtGui.QPen(QtGui.QColor(self.INSERTION_COLOR), 2))
-        painter.drawLine(0, max(1, y), self.viewport().width(), max(1, y))
-        painter.end()
-
-
-class KeyPicker(QtWidgets.QWidget):
-    """Editable scan-code dropdown with an independent visible capture action.
-
-    Args:
-        allow_disable: Include a target-only Disable option (scan word zero).
-        parent: Owning mapping dialog.
-    """
-
-    def __init__(self, allow_disable: bool, parent: QtWidgets.QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.allow_disable = allow_disable
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.combo = NoWheelComboBox()
-        self.combo.setEditable(True)
-        self.combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
-        self.combo.setMinimumWidth(420)
-        self.combo.setMaxVisibleItems(18)
-        if allow_disable:
-            self.combo.addItem(key_label(0), 0)
-        for item in choices():
-            self.combo.addItem(item.label, item.code)
-        completer = self.combo.completer()
-        if completer is not None:
-            completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
-            completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
-            completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
-        self.combo.setCurrentIndex(-1)
-        edit = self.combo.lineEdit()
-        if edit is not None:
-            edit.setPlaceholderText("Search key name / scan code, or enter 0xE01D")
-        layout.addWidget(self.combo)
-        capture = QtWidgets.QPushButton("Capture key...")
-        capture.clicked.connect(self._capture)
-        layout.addWidget(capture)
-
-    def code(self) -> int:
-        """Return the selected/input word, rejecting blank and disabled source keys.
-
-        Raises:
-            ValueError: Input is unrecognized or source zero was requested.
-        """
-        index = self.combo.currentIndex()
-        if index >= 0 and self.combo.currentText() == self.combo.itemText(index):
-            value = int(self.combo.itemData(index))
-        else:
-            value = parse_key(self.combo.currentText())
-        if value == 0 and not self.allow_disable:
-            raise ValueError("A source key cannot be 0x0000 (Disable).")
-        return value
-
-    def set_code(self, code: int) -> None:
-        """Select a code, retaining unknown words as explicit custom entries."""
-        index = self.combo.findData(code)
-        if index < 0:
-            self.combo.addItem(key_label(code), code)
-            index = self.combo.count() - 1
-        self.combo.setCurrentIndex(index)
-
-    def _capture(self) -> None:
-        dialog = CaptureDialog(self)
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted and dialog.result_key is not None:
-            self.set_code(dialog.result_key.code)
-
-
-class MappingDialog(QtWidgets.QDialog):
+class MappingDialog(QtWidgets.QDialog, Ui_MappingDialog):
     """Choose a source and destination via dropdown, raw scan word or capture."""
 
     def __init__(self, row: Mapping | None, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.mapping: Mapping | None = None
-        self.setWindowTitle("Edit mapping" if row is not None else "Add mapping")
-        self.resize(930, 280)
-        layout = QtWidgets.QVBoxLayout(self)
-        grid = QtWidgets.QGridLayout()
-        grid.addWidget(QtWidgets.QLabel("FROM - original physical key"), 0, 0)
-        grid.addWidget(QtWidgets.QLabel("TO - replacement key"), 0, 1)
-        self.source = KeyPicker(False)
-        self.target = KeyPicker(True)
-        grid.addWidget(self.source, 1, 0)
-        grid.addWidget(self.target, 1, 1)
-        layout.addLayout(grid)
-        notice = QtWidgets.QLabel(
-            "Scan codes, not characters or shortcuts. US labels describe base positions; "
-            "ISO/JIS/Korean aliases may share codes.\n"
-            "Unknown words are preserved but are not guaranteed to work. Capture cannot recover "
-            "a key that Windows has already disabled or remapped."
-        )
-        notice.setWordWrap(True)
-        layout.addWidget(notice)
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok
-                                            | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.setupUi(self)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
         if row is not None:
+            self.setWindowTitle("Edit mapping")
             self.source.set_code(row.source)
             self.target.set_code(row.target)
 
@@ -231,7 +53,7 @@ class MappingDialog(QtWidgets.QDialog):
         super().accept()
 
 
-class RemapWindow(QtWidgets.QMainWindow):
+class RemapWindow(QtWidgets.QMainWindow, Ui_RemapWindow):
     """Edit a saved snapshot without writing until the user confirms Apply.
 
     Args:
@@ -251,86 +73,27 @@ class RemapWindow(QtWidgets.QMainWindow):
         self.draft = Snapshot(None)
         self.rows: tuple[Mapping, ...] = ()
         self.restart_required = False
-        self.setWindowTitle("Keyboard Remapper")
-        self.resize(1120, 660)
-        self.setMinimumSize(860, 480)
-
-        # ── header and mapping table ──────────────────────
-        root = QtWidgets.QWidget()
-        self.setCentralWidget(root)
-        layout = QtWidgets.QVBoxLayout(root)
-        layout.setContentsMargins(20, 18, 20, 18)
-        title = QtWidgets.QLabel("Keyboard Remapper")
-        font = title.font()
-        font.setPointSize(20)
-        font.setBold(True)
-        title.setFont(font)
-        layout.addWidget(title)
-        info = QtWidgets.QLabel("Windows registry mappings - all users and keyboards - restart required after writing")
-        layout.addWidget(info)
-        self.status = QtWidgets.QLabel()
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-        self.table = MappingTable()
-        self.table.setHorizontalHeaderLabels(["Original key / scan code", "Replacement key / scan code", "Draft status"])
-        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setVisible(False)
+        self.setupUi(self)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.cellDoubleClicked.connect(self._edit)
         self.table.move_requested.connect(self._move_row)
-        layout.addWidget(self.table, 1)
-
-        # ── exact pending binary preview ─────────────────
-        self.hex_toggle = QtWidgets.QToolButton()
-        self.hex_toggle.setText("Final hexadecimal view (draft)")
-        self.hex_toggle.setCheckable(True)
-        self.hex_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.hex_toggle.setArrowType(QtCore.Qt.ArrowType.RightArrow)
-        layout.addWidget(self.hex_toggle)
-        self.hex_panel = QtWidgets.QWidget()
-        hex_layout = QtWidgets.QVBoxLayout(self.hex_panel)
-        hex_layout.setContentsMargins(0, 0, 0, 0)
-        self.hex_text = QtWidgets.QPlainTextEdit()
-        self.hex_text.setReadOnly(True)
         self.hex_text.setFont(monospace_ui_font())
-        self.hex_text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
-        self.hex_text.setMinimumHeight(100)
-        self.hex_text.setMaximumHeight(180)
-        hex_layout.addWidget(self.hex_text)
-        hex_actions = QtWidgets.QHBoxLayout()
-        self.copy_hex_button = self._button("Copy hex bytes", self._copy_hex, hex_actions)
-        hex_actions.addStretch()
-        hex_layout.addLayout(hex_actions)
-        layout.addWidget(self.hex_panel)
-        self.hex_panel.setVisible(False)
+        self.hex_panel.hide()
         self.hex_toggle.toggled.connect(self._toggle_hex)
-
-        # ── draft controls and explicit storage actions ──
-        actions = QtWidgets.QHBoxLayout()
-        self.add_button = self._button("Add...", self._add, actions)
-        self.edit_button = self._button("Edit...", self._edit, actions)
-        self.remove_button = self._button("Remove", self._remove, actions)
-        self.clear_button = self._button("Clear all mappings", self._clear, actions)
-        actions.addStretch()
-        layout.addLayout(actions)
-        storage = QtWidgets.QHBoxLayout()
-        self._button("Reload registry", self._reload_clicked, storage)
-        self.backup_button = self._button("Back up saved state...", self._backup, storage)
-        self.restore_button = self._button("Load backup into draft...", self._restore, storage)
-        storage.addStretch()
-        self.preview_button = self._button("Review changes...", self._preview, storage)
-        self.apply_button = self._button("Write to registry...", self._apply, storage)
-        layout.addLayout(storage)
-        notice = QtWidgets.QLabel(USAGE_NOTICE)
-        notice.setWordWrap(True)
-        notice.setStyleSheet("color: #737b86; font-size: 11px;")
-        layout.addWidget(notice)
+        self.copy_hex_button.clicked.connect(self._copy_hex)
+        self.add_button.clicked.connect(self._add)
+        self.edit_button.clicked.connect(self._edit)
+        self.remove_button.clicked.connect(self._remove)
+        self.clear_button.clicked.connect(self._clear)
+        self.reload_button.clicked.connect(self._reload_clicked)
+        self.backup_button.clicked.connect(self._backup)
+        self.restore_button.clicked.connect(self._restore)
+        self.preview_button.clicked.connect(self._preview)
+        self.apply_button.clicked.connect(self._apply)
+        set_text_style(self.notice, "gray")
         self.table.itemSelectionChanged.connect(self._update_actions)
         self.reload()
         if handoff is not None and self.baseline is not None:
@@ -339,13 +102,6 @@ class RemapWindow(QtWidgets.QMainWindow):
             self.set_draft(desired)
             self.status.setText("Administrator draft loaded. Review it and click Write to registry again. "
                                 "External changes will be checked before writing.")
-
-    def _button(self, text: str, handler: Callable[[], None],
-                layout: QtWidgets.QHBoxLayout) -> QtWidgets.QPushButton:
-        button = QtWidgets.QPushButton(text)
-        button.clicked.connect(handler)
-        layout.addWidget(button)
-        return button
 
     @property
     def dirty(self) -> bool:

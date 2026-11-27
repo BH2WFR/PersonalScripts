@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SliceAppearance</class>
+ <widget class="QGroupBox" name="SliceAppearance">
+  <layout class="QFormLayout" name="appearance">
+   <item row="0" column="0">
+    <widget class="QLabel" name="color_label">
+     <property name="text">
+      <string>Color</string>
+     </property>
+     <property name="buddy">
+      <cstring>profile_color_3d_button</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="QPushButton" name="profile_color_3d_button">
+     <property name="text">
+      <string>3D color</string>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="0">
+    <widget class="QLabel" name="style_label">
+     <property name="text">
+      <string>Style</string>
+     </property>
+     <property name="buddy">
+      <cstring>profile_style</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="1">
+    <widget class="NoWheelComboBox" name="profile_style" />
+   </item>
+   <item row="2" column="0" colspan="2">
+    <widget class="QStackedWidget" name="profile_style_options">
+     <property name="maximumSize">
+      <size>
+       <width>165</width>
+       <height>16777215</height>
+      </size>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <widget class="NoWheelDoubleSpinBox" name="profile_lift">
+      <property name="toolTip">
+       <string>Raise the 3D curve by this percentage of the visible height range. Source values stay unchanged.</string>
+      </property>
+     </widget>
+     <widget class="NoWheelSpinBox" name="profile_opacity" />
+    </widget>
+   </item>
+  </layout>
+  <property name="title">
+   <string>Slice marker (all matrices)</string>
+  </property>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

@@ -10,6 +10,7 @@ in memory. The chosen region/slice is preserved in either case.
 from PySide6 import QtCore, QtWidgets
 
 from .complex_input import ComplexDataChoice as ComplexExportChoice, choose_complex_data
+from .ui_matrix_export_dialog import Ui_MatrixExportDialog
 
 
 def choose_complex_export(parent: QtWidgets.QWidget, source: str, channel: str,
@@ -41,7 +42,7 @@ def choose_complex_export(parent: QtWidgets.QWidget, source: str, channel: str,
                                details=f"{result}Complex data supports X/Y cropping; value bounds are ignored.{destination}")
 
 
-class MatrixExportDialog(QtWidgets.QDialog):
+class MatrixExportDialog(QtWidgets.QDialog, Ui_MatrixExportDialog):
     """Keep export settings outside the plotting workspace.
 
     Args:
@@ -54,20 +55,12 @@ class MatrixExportDialog(QtWidgets.QDialog):
 
     def __init__(self, controls: QtWidgets.QGroupBox, parent: QtWidgets.QWidget) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Export matrix")
+        self.setupUi(self)
         self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
-        self.resize(570, 460)
-        layout = QtWidgets.QVBoxLayout(self)
-        self.source_info = QtWidgets.QLabel()
+        layout = self.form_layout
         self.source_info.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.source_info.setWordWrap(True)
         self.source_info.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.source_info)
-        layout.addWidget(controls)
-        self.status = QtWidgets.QLabel()
-        self.status.setWordWrap(True)
+        layout.insertWidget(layout.count() - 2, controls)
         self.status.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.status)
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        buttons = self.form_buttons
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)

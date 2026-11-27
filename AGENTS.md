@@ -195,11 +195,40 @@ can print `HELP` directly. Private implementation modules do not need a CLI.
   `utils.qt_widgets` before creating widgets, including with a reused application.
   It configures Fusion Style, the default UI font, glyph fallbacks and wheel guards.
   Use the shared [no-wheel form controls](utils/docs/qt.md) for Qt inputs.
+- For new PySide6 windows and dialogs, prefer `.ui` files so users can edit
+  layouts in Qt Creator. Blank windows, input boxes and other simple dialogs
+  may be built entirely in code. Migrate existing code-only interfaces only on request.
+  In Designer forms, define widget structure, indentation, text and widget
+  alignment, `sizePolicy`, minimum and maximum widget sizes, layout spacing
+  and contents margins, and borders in the `.ui` file for live preview.
+  Use shared theme styles for theme-dependent border colors. Prefer setting
+  custom point sizes and bold text in the form. Inherit the application font family.
+  Prefer setting other font and style properties in code at startup. Configure
+  widget behavior in code by default, including combo box items, spin box
+  minimum and maximum values, and text input character limits.
+- After editing a `.ui` form under `tools/`, run `conda run -n base python _pyside6_uic.py`
+  from the repository root. It recursively generates `ui_<name>.py` beside each form.
+  Commit the form and its generated module together.
+- For reusable composite widgets, custom controls or nested forms, a parent
+  `.ui` may promote a `QWidget` placeholder (or a matching Qt base widget)
+  to a Python widget class. In Designer, set Header file to its importable
+  Python module. The class must accept the parent passed by `pyside6-uic`.
+- Use one light/dark mode per window for all custom button and text colors. Qt
+  follows the system color scheme. If it is unknown, use the top-level window's
+  background. Refresh open windows when the system scheme or palette changes.
+  Use the [shared theme styles](utils/docs/qt.md#theme-colors) for semantic text
+  and result actions. Use bold text with native colors for ordinary emphasis,
+  including loading or pasting input. Reserve colored buttons for special
+  emphasis on actions that produce or copy a result. Brighten their fill on
+  hover. Show user-selected colors as swatches.
 - Centralize default and monospaced GUI fonts and regional CJK fallback order.
   Qt controls inherit the configured application font or use `monospace_ui_font()`
   from `utils.qt_widgets`; it uses the UI size on macOS and the system fixed-font
   size elsewhere. Keep font families and fallback lists out of individual tools.
   Tk uses `TkDpi.font()` and AppKit uses native system fonts and glyph fallback.
+- When changing shared Qt styles or fonts, run `conda run -n base python test/qt-style-preview.py`
+  from the repository root. Switch between light and dark themes to check text colors, default,
+  bold and colored button states, and multilingual font samples on labels, buttons and text fields.
 - In scrollable containers, every combo box and spin box must ignore wheel
   input by default, even when focused, so scrolling the container preserves
   the current selection or value. Shared setup calls `install_no_wheel_controls`

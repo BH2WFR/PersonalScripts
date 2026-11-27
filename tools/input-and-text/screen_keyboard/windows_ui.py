@@ -5,9 +5,10 @@ import tkinter as tk
 from tkinter import messagebox
 
 from utils import System, TkDpi
+from utils.gui_colors import text_hex, windows_apps_use_dark_theme
 from .layout import (DEFAULT_SIZE, EXTRA_HEIGHT, EXTENDED_KEYS, MINIMUM_SIZE, NUMPAD_KEYS, ROWS, TOOLBAR,
                      TOOLBAR_DIVIDERS, TOOLBAR_TIPS, WINDOW_TITLE, frames, panel_width)
-from .state import KeyboardState, LeftKeyMode, WindowLayout, hover_color
+from .state import DARK_THEME, LIGHT_THEME, KeyboardState, LeftKeyMode, WindowLayout, hover_color
 from .window import NonactivatingWindow, prepare_hidden_window, reopen_signal
 from .windows import WindowsOutput
 
@@ -21,7 +22,8 @@ class ScreenKeyboard:
         self.window = root = tk.Tk()
         prepare_hidden_window(root)
         root.title(WINDOW_TITLE)
-        root.configure(background="#f1f3f5")
+        self.theme = DARK_THEME if windows_apps_use_dark_theme() else LIGHT_THEME
+        root.configure(background=self.theme.surface)
         self.dpi = TkDpi(root)
         self.closing = False
         self.timer: str | None = None
@@ -39,13 +41,13 @@ class ScreenKeyboard:
                                    self.schedule, self.cancel, self.refresh, force_layer)
         saved = self.state.window_layout
         self.expanded, self.numpad = saved.expanded, saved.numpad
-        self.content = tk.Frame(root, background="#f1f3f5")
+        self.content = tk.Frame(root, background=self.theme.surface)
         self.content.place(x=0, y=0, relwidth=1, relheight=1)
-        self.header = tk.Frame(self.content, background="#f1f3f5")
-        self.footer = tk.Frame(self.content, background="#e4e8eb")
-        self.status = tk.Label(self.content, anchor="w", background="#f1f3f5", foreground="#505760")
+        self.header = tk.Frame(self.content, background=self.theme.surface)
+        self.footer = tk.Frame(self.content, background=self.theme.footer)
+        self.status = tk.Label(self.content, anchor="w", background=self.theme.surface, foreground=text_hex("gray", dark=self.theme.dark))
         self.drag_offset: tuple[int, int] | None = None
-        self.dividers = {name: tk.Frame(self.content, background="#aab2b8") for name in TOOLBAR_DIVIDERS.values()}
+        self.dividers = {name: tk.Frame(self.content, background=self.theme.divider) for name in TOOLBAR_DIVIDERS.values()}
         for grip in (self.header, self.footer, self.status, *self.dividers.values()):
             grip.bind("<ButtonPress-1>", self.start_drag)
             grip.bind("<B1-Motion>", self.drag)
@@ -54,7 +56,7 @@ class ScreenKeyboard:
             toolbar = name in self.actions
             button = tk.Label(self.content, text=label, cursor="hand2" if toolbar else "arrow", borderwidth=0,
                               highlightthickness=int(not toolbar or name in {"extended", "numpad"}),
-                              highlightcolor="#c1c9ce", highlightbackground="#c1c9ce")
+                              highlightcolor=self.theme.border, highlightbackground=self.theme.border)
             if toolbar:
                 button.bind("<ButtonRelease-1>", lambda e, n=name: self.perform(self.actions[n]))
             else:
@@ -78,7 +80,7 @@ class ScreenKeyboard:
         root.bind("<ButtonRelease-1>", lambda e: self.perform(self.state.release))
         root.bind("<Configure>", lambda e: self.layout() if e.widget is root else None)
         self.dpi.start(lambda scale: self.rescaled())
-        self.native = NonactivatingWindow(root, self.content.winfo_id(), self.finish_resize)
+        self.native = NonactivatingWindow(root, self.content.winfo_id(), self.finish_resize, self.update_theme)
         self.native.add_tooltips({self.buttons[name].winfo_id(): tip for name, tip in TOOLBAR_TIPS.items()})
         self.layout()
         root.bind("<Unmap>", self.unmapped)
@@ -143,10 +145,10 @@ class ScreenKeyboard:
     def paint(self, name: str) -> None:
         if name in self.actions:
             active = (name == "extended" and self.expanded) or (name == "numpad" and self.numpad)
-            bg, fg = ("#34657c", "white") if active else ("#f1f3f5", "#202124")
+            bg, fg = self.theme.toolbar(active)
         else:
-            bg, fg = self.state.colors(name)
-        self.buttons[name].configure(background=hover_color(bg) if name in self.hovered else bg, foreground=fg)
+            bg, fg = self.state.colors(name, dark=self.theme.dark)
+        self.buttons[name].configure(background=hover_color(bg, fg, dark=self.theme.dark) if name in self.hovered else bg, foreground=fg)
 
     def hover(self, name: str, entered: bool) -> None:
         if entered:
@@ -163,6 +165,21 @@ class ScreenKeyboard:
             self.paint(name)
             if name in self.labels:
                 self.buttons[name].configure(text=self.state.label(name, self.labels[name]))
+
+    def update_theme(self) -> None:
+        dark = windows_apps_use_dark_theme()
+        if dark == self.theme.dark or self.closing:
+            return
+        self.theme = DARK_THEME if dark else LIGHT_THEME
+        for surface in (self.window, self.content, self.header, self.status):
+            surface.configure(background=self.theme.surface)
+        self.status.configure(foreground=text_hex("gray", dark=dark))
+        self.footer.configure(background=self.theme.footer)
+        for divider in self.dividers.values():
+            divider.configure(background=self.theme.divider)
+        for button in self.buttons.values():
+            button.configure(highlightcolor=self.theme.border, highlightbackground=self.theme.border)
+        self.refresh()
 
     def poll_locks(self) -> None:
         if self.reopen_requested and (mode := self.reopen_requested()) is not None:

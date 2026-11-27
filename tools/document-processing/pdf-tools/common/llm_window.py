@@ -4,9 +4,23 @@ from dataclasses import asdict, replace
 from typing import Callable
 from PySide6 import QtCore, QtWidgets
 from utils import Llm, LlmProfile, LlmProfiles, LlmSettings, LlmReasoning
-from utils.qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, NoWheelSpinBox
+from utils.qt_styles import set_text_style
 from .preferences import report_config_error
 from .jobs import JobRunner
+from .ui_api_form import Ui_ApiForm
+
+
+class ApiSettingsForm(QtWidgets.QScrollArea):
+    """Scrollable provider settings shared by document and image tools."""
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.ui = Ui_ApiForm()
+        page = QtWidgets.QWidget()
+        self.ui.setupUi(page)
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setWidget(page)
 
 
 class LlmWindow(QtWidgets.QMainWindow):
@@ -59,29 +73,21 @@ class LlmWindow(QtWidgets.QMainWindow):
         button.clicked.connect(callback)
         return button
 
-    def _spin(self, low: int, high: int, value: int = 1) -> QtWidgets.QSpinBox:
-        spin = NoWheelSpinBox()
-        spin.setRange(low, high)
-        spin.setValue(value)
-        spin.setKeyboardTracking(False)
-        return spin
-
     def _api_form(self, prompt: str) -> QtWidgets.QScrollArea:
-        api = QtWidgets.QWidget()
-        settings = QtWidgets.QFormLayout(api)
-        settings.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
-        api_actions = QtWidgets.QHBoxLayout()
-        self.save_api_button = self._button("Save", self._save_api_preferences)
-        self.load_api_button = self._button("Load", self._load_api_preferences)
+        form = ApiSettingsForm()
+        self._bind_api_form(form, prompt)
+        return form
+
+    def _bind_api_form(self, form: ApiSettingsForm, prompt: str) -> None:
+        ui = form.ui
+        self.save_api_button = ui.save_api_button
+        self.save_api_button.clicked.connect(self._save_api_preferences)
+        self.load_api_button = ui.load_api_button
+        self.load_api_button.clicked.connect(self._load_api_preferences)
         self.save_api_button.setToolTip("Save all changed source settings to llm.yaml. Closing this window also saves them.")
         self.load_api_button.setToolTip("Reload llm.yaml, replacing unsaved API drafts for all sources.")
-        api_actions.addWidget(self.save_api_button)
-        api_actions.addWidget(self.load_api_button)
-        settings.addRow(api_actions)
-        self.api_config_status = QtWidgets.QLabel("API settings are loaded at startup; Save or close this window to write changes.")
-        self.api_config_status.setWordWrap(True)
-        settings.addRow(self.api_config_status)
-        self.api_url = NoWheelComboBox()
+        self.api_config_status = ui.api_config_status
+        self.api_url = ui.api_url
         self.api_url.setEditable(True)
         self.api_url.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
         self.api_url.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -90,75 +96,64 @@ class LlmWindow(QtWidgets.QMainWindow):
             self.api_url.addItem(name, url)
         self.api_url.setEditText(LlmSettings().base_url)
         self.api_url.setToolTip("Select a provider or custom URL. Switching sources restores its in-memory draft; Save commits all changed sources.")
-        self.api_model = NoWheelComboBox()
+        self.api_model = ui.api_model
         self.api_model.setEditable(True)
         self.api_model.addItems(["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"])
         self.api_model.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
         self.api_model.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.api_model.setMinimumContentsLength(20)
-        self.api_key = QtWidgets.QLineEdit()
+        self.api_key = ui.api_key
         self.api_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText("Saved encrypted in user configuration")
         api_defaults = LlmSettings()
-        self.temperature = NoWheelDoubleSpinBox()
+        self.temperature = ui.temperature
         self.temperature.setRange(0, 2)
         self.temperature.setSingleStep(.1)
         self.temperature.setValue(api_defaults.temperature)
-        self.max_tokens = self._spin(1, 65536, api_defaults.max_tokens)
-        self.timeout = self._spin(5, 1800, api_defaults.timeout_seconds)
-        self.context_images = self._spin(0, 10000, api_defaults.max_context_images)
+        self.max_tokens = ui.max_tokens
+        self.max_tokens.setRange(1, 65536)
+        self.max_tokens.setValue(api_defaults.max_tokens)
+        self.max_tokens.setKeyboardTracking(False)
+        self.timeout = ui.timeout
+        self.timeout.setRange(5, 1800)
+        self.timeout.setValue(api_defaults.timeout_seconds)
+        self.timeout.setKeyboardTracking(False)
+        self.context_images = ui.context_images
+        self.context_images.setRange(0, 10000)
+        self.context_images.setValue(api_defaults.max_context_images)
+        self.context_images.setKeyboardTracking(False)
         self.context_images.setSpecialValueText("0 — unlimited")
         self.context_images.setToolTip("Maximum images in each request, including the current page. Keeps the newest images; older image parts are omitted but text/replies remain. Use 5 for a five-image model, 1 for only the current image, or 0 for no limit.")
-        self.reasoning_effort = NoWheelComboBox()
+        self.reasoning_effort = ui.reasoning_effort
         self.reasoning_effort.setToolTip("Saved per API source. Enabled uses the provider's default effort (medium for generic compatible APIs). Server default sends no reasoning controls. Available levels vary by API and model; generic options are not a guarantee of model support. The API test uses this selected reasoning mode.")
         self._refresh_reasoning_options(api_defaults.reasoning_effort)
-        self.skip_certificate_verification = QtWidgets.QCheckBox("Skip certificate verification")
+        self.skip_certificate_verification = ui.skip_certificate_verification
         self.skip_certificate_verification.setToolTip("Off by default. Applies to HTTPS recognition, API tests, model lists and balances for this source. HTTP local servers work without enabling this. Enabling skips certificate and hostname checks.")
-        self.fetch_button = self._button("Get models", self._fetch_models)
+        self.fetch_button = ui.fetch_button
+        self.fetch_button.clicked.connect(self._fetch_models)
         self.fetch_button.setToolTip("Request the provider's model catalog with this key. No document content is sent; select a vision-capable model.")
-        model_row = QtWidgets.QHBoxLayout()
-        model_row.addWidget(self.api_model, 1)
-        model_row.addWidget(self.fetch_button)
-        settings.addRow("API preset / URL", self.api_url)
-        settings.addRow("Model", model_row)
-        self.vision_models_only = QtWidgets.QCheckBox("Vision models only (strict)")
+        self.vision_models_only = ui.vision_models_only
         self.vision_models_only.setToolTip("Get models includes only models explicitly reporting image input. Unknown capabilities are excluded; image-generation-only models are excluded. Some APIs do not publish this metadata.")
         self.vision_models_only.toggled.connect(self._model_filter_changed)
-        settings.addRow(self.vision_models_only)
-        self.models_status = QtWidgets.QLabel("Get models or enter a vision model name. Local servers may leave API key empty.")
-        self.models_status.setWordWrap(True)
-        settings.addRow(self.models_status)
-        for label, widget in (("API key", self.api_key),
-                              ("Temperature", self.temperature), ("Max output tokens", self.max_tokens),
-                              ("Timeout (seconds)", self.timeout), ("Context images", self.context_images)):
-            settings.addRow(label, widget)
-        settings.addRow("Reasoning effort", self.reasoning_effort)
-        self.reset_api_parameters_button = self._button("Reset parameters", self._reset_api_parameters)
+        self.models_status = ui.models_status
+        self.reset_api_parameters_button = ui.reset_api_parameters_button
+        self.reset_api_parameters_button.clicked.connect(self._reset_api_parameters)
         self.reset_api_parameters_button.setToolTip("Restore default temperature, output-token limit, timeout, context-image limit and reasoning effort for this source. Save or close to persist.")
-        settings.addRow(self.reset_api_parameters_button)
-        settings.addRow(self.skip_certificate_verification)
-        self.balance_key = QtWidgets.QLineEdit()
+        self.balance_key = ui.balance_key
         self.balance_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.balance_key.setPlaceholderText("Optional; defaults to API key")
         self.balance_key.setToolTip("OpenRouter account balance requires a management key. Used only for balance queries; never for recognition.")
-        settings.addRow("Balance key", self.balance_key)
-        self.balance_button = self._button("Refresh API balance", self._refresh_balance)
-        settings.addRow(self.balance_button)
-        self.balance_status = QtWidgets.QLabel("Enter an API key to display the account balance.")
-        self.balance_status.setWordWrap(True)
+        self.balance_button = ui.balance_button
+        self.balance_button.clicked.connect(self._refresh_balance)
+        self.balance_status = ui.balance_status
         self.balance_status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        settings.addRow(self.balance_status)
-        self.usage = QtWidgets.QLabel("Context: no request yet")
-        self.usage.setWordWrap(True)
-        settings.addRow(self.usage)
-        self.test_button = self._button("Test API (small image)", self._test_api)
+        self.usage = ui.usage
+        self.test_button = ui.test_button
+        self.test_button.clicked.connect(self._test_api)
         self.test_button.setToolTip("Send a generated color square to verify credentials, model and image input. No document content is sent.")
-        settings.addRow(self.test_button)
-        self.test_status = QtWidgets.QLabel("API not tested")
-        self.test_status.setWordWrap(True)
+        self.test_status = ui.test_status
         self.test_status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        settings.addRow(self.test_status)
-        settings.addRow(self._button("Copy system prompt", lambda: QtWidgets.QApplication.clipboard().setText(prompt)))
+        ui.copy_prompt.clicked.connect(lambda: QtWidgets.QApplication.clipboard().setText(prompt))
         self._previous_api_url = LlmSettings().base_url
         self.api_url.activated.connect(self._select_api_preset)
         self.api_url.currentTextChanged.connect(self._endpoint_changed)
@@ -177,11 +172,6 @@ class LlmWindow(QtWidgets.QMainWindow):
         self.reasoning_effort.currentIndexChanged.connect(self._api_changed)
         self.skip_certificate_verification.toggled.connect(self._api_changed)
         self.skip_certificate_verification.toggled.connect(self._invalidate_balance)
-        api_scroll = QtWidgets.QScrollArea()
-        api_scroll.setWidgetResizable(True)
-        api_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        api_scroll.setWidget(api)
-        return api_scroll
 
     @staticmethod
     def _api_source_id(base: str) -> str:
@@ -193,7 +183,7 @@ class LlmWindow(QtWidgets.QMainWindow):
     def _api_config_feedback(self, text: str, error: Exception | None = None) -> None:
         self.api_config_status.setText(text)
         self.api_config_status.setToolTip(text)
-        self.api_config_status.setStyleSheet("color: #c02020;" if error else "")
+        set_text_style(self.api_config_status, "red" if error else None)
         if error is not None:
             report_config_error(self.api_config_status, error)
 
@@ -333,7 +323,7 @@ class LlmWindow(QtWidgets.QMainWindow):
             self._api_preferences_dirty = True
             self.models_status.setText("Provider changed. Source draft restored; Get models or enter a model name.")
             self.test_status.setText("API not tested")
-            self.test_status.setStyleSheet("")
+            set_text_style(self.test_status, None)
             self._invalidate_balance()
             self._sync_api()
         self._previous_api_url = base
@@ -363,8 +353,7 @@ class LlmWindow(QtWidgets.QMainWindow):
         self.balance_summary.setToolTip(detail)
         self.balance_status.setText(detail)
         for label in (self.balance_summary, self.balance_status):
-            label.setStyleSheet("color: #c02020;" if error else
-                               "color: #1769c2; font-weight: bold;" if available else "")
+            set_text_style(label, "red" if error else "blue" if available else None, bold=available and not error)
 
     def _invalidate_balance(self, *_args: object) -> None:
         # Invalidate before abort: Qt may deliver cancellation synchronously.
@@ -444,7 +433,7 @@ class LlmWindow(QtWidgets.QMainWindow):
             capture = self._begin_api_test()
             body = Llm.vision_test_request(settings)
             self.test_status.setText("Testing image input…")
-            self.test_status.setStyleSheet("")
+            set_text_style(self.test_status, None)
             self.client.send(settings, self.api_key.text(), body, capture=capture)
             self._enabled()
         except (ValueError, RuntimeError) as exc:
@@ -464,8 +453,7 @@ class LlmWindow(QtWidgets.QMainWindow):
         else:
             message = f"API connected ({elapsed:.2f}s), but unexpected image response: {text[:200]}"
         self.test_status.setText(message)
-        color = "#16803a" if passed else "#c02020"
-        self.test_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+        set_text_style(self.test_status, "green" if passed else "red", bold=True)
         self.status.setText(message)
         self._enabled()
         self._refresh_balance()

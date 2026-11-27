@@ -10,13 +10,44 @@ Implementations: [qt_widgets.py](../qt_widgets.py) and [qt_images.py](../qt_imag
 | --- | --- |
 | Show an interactive tool window | `show_foreground_tool(widget)` shows or restores the window and requests keyboard focus. On macOS it makes a one-time activation request 100 ms after showing the window. Capture any source window or selection before calling it. |
 | Show a no-focus tool window | `show_nonactivating_tool(widget)` shows a configured tool window and preserves the typing target. It applies the native Windows nonactivation style before display and raises the panel on macOS. |
-| Raise a native Cocoa window | `utils.macos_windows.order_window_front(window, activate=...)` restores a minimized NSWindow and raises it. Use `True` for interactive windows and `False` for nonactivating panels. Both Qt helpers reuse it on Cocoa with PyObjC installed. |
+| Raise a native Cocoa window | `utils.macos_windows.order_window_front(window, activate=...)` restores a minimized NSWindow and raises it. Use `True` for interactive windows and `False` for nonactivating panels. Both Qt helpers load PyObjC on demand on Cocoa. If it is unavailable, they use Qt to raise the window. |
 | Start a standalone macOS Qt overlay | Enter `utils.macos_windows.nonactivating_qt_session()` before creating QApplication and keep the context through the event loop so Qt startup also preserves the source application's focus. |
 | Show feedback near the mouse | `show_cursor_tooltip(text, duration_ms=..., parent=None)` displays a timed Qt tooltip at the current global cursor position and preserves keyboard focus. Import it from `utils.qt_widgets` and call it on the GUI thread. |
 | Set up a PySide6 tool | `configure_qt_application(application, style="Fusion")` applies the style, CJK fallback families and wheel guards. Pass a Fusion-based proxy style when the tool supplies one. |
 | Customize an editor or label font | `with_cjk_fallbacks(font) -> QFont` returns a copy with installed Chinese, Japanese and Korean fallbacks appended to the requested families. Size, weight and style hint are preserved. |
 | Use a monospaced UI font | `monospace_ui_font() -> QFont` uses the configured application size on macOS and the system fixed-font size on Windows and Linux. It prefers Consolas, then the platform fixed family, Menlo and DejaVu Sans Mono, with the shared regional glyph fallbacks. |
 | Qt inputs without wheel edits | Explicitly import `NoWheelComboBox`, `NoWheelSpinBox`, `NoWheelDoubleSpinBox`, `install_no_wheel_controls` from `utils.qt_widgets`; subclasses ignore wheel edits even with focus; idempotent `install_no_wheel_controls(application)` also protects native dialog editors without blocking popup-list scrolling |
+
+## Theme colors
+
+Import Qt styling helpers from [qt_styles.py](../qt_styles.py). After creating
+the application, `is_dark_theme(widget)` prefers the Qt system scheme and uses
+its top-level window's active `QPalette.Window` background when the scheme is
+unknown. Omitting the widget uses the application palette for that fallback.
+For a manual preview, `set_window_theme_palette(widget, palette)` makes that window
+use its explicit palette for both native and semantic colors. All controls in a window use the same mode. A view's `Base` brush only supplies
+the background for tinted status cells. Scheme signals and palette changes are
+coalesced until Qt has updated its palette; moving controls between windows
+also refreshes their styles. The theme observer keeps its last colors on the Qt
+object so callbacks retain their state when PySide recreates a Python wrapper.
+
+| Use | API |
+| --- | --- |
+| Semantic widget text | `set_text_style(widget, color, bold=False)` accepts red, brown, blue, cyan, green, magenta, orange or gray. Pass `None` to restore the default. |
+| Emphasized push or tool button | `set_button_style(button, color)` supports blue, red, green, orange and magenta. Reserve colored fills for actions that produce or copy a result. Ordinary emphasis uses `set_bold(widget)` from `utils.qt_widgets` and inherits native colors. Accent buttons have bold white text, a brighter hover fill and a darker checked or pressed fill. The focus border is navy in light mode and pale blue in dark mode. Checked or pressed buttons use pale blue against their darker fill in both modes. Disabled buttons use Qt's native disabled appearance and keep their bold caption. |
+| Custom QSS | `text_stylesheet(color, bold=False)` and `button_stylesheet(color)` return a stylesheet for the current theme. The live setters above own the widget's local stylesheet and refresh it on light/dark transitions. |
+| Model or delegate colors | `theme_text_color(color)` returns a QColor. `theme_tint(color, selected=False)` provides a matching background. Use `on_theme_change(view, bound_method)` to update stored brushes in an open view. |
+| User-selected document or plot color | `color_swatch_icon(color)` displays the selected QColor on a button whose caption inherits the theme. |
+
+Native tools can import [gui_colors.py](../gui_colors.py) without loading Qt.
+`text_hex(color, dark=...)` and `button_fills(color, dark=...)` share the Qt color
+choices. Windows Tk tools can call `windows_apps_use_dark_theme()`; Cocoa views
+use their effective appearance. Each toolkit owns its rendering and theme updates.
+
+Run `conda run -n base python test/qt-style-preview.py` from the repository root
+to compare all eight text colors, five accent buttons and inherited or monospaced
+fonts. The preview starts in the system theme. Use its switch to compare modes
+in place and compare accent styles with the Default and Bold button samples.
 
 ## Clipboard file paths
 

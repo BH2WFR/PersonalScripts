@@ -11,11 +11,12 @@ from Foundation import NSRect, NSSize  # pyright: ignore[reportMissingImports, r
 import objc  # pyright: ignore[reportMissingImports]
 
 from utils import System
+from utils.gui_colors import text_hex
 from utils.macos_windows import order_window_front
 from .layout import (DEFAULT_SIZE, EXTRA_HEIGHT, MAC_EXTENDED, MAC_LABELS, MAC_ROWS, MINIMUM_SIZE, NUMPAD_KEYS,
                      TOOLBAR, TOOLBAR_DIVIDERS, TOOLBAR_TIPS, WINDOW_TITLE, frames, mac_frame_near_pointer, panel_width)
 from .macos import MacOutput
-from .state import KeyboardState, LeftKeyMode, WindowLayout, hover_color
+from .state import DARK_THEME, LIGHT_THEME, KeyboardState, LeftKeyMode, WindowLayout, hover_color
 
 # PyObjC resolves framework members at runtime from Objective-C metadata.
 A = cast(Any, AppKit)
@@ -37,6 +38,14 @@ class KeyboardPanel(A.NSPanel):
 
     def canBecomeMainWindow(self) -> bool:
         return False
+
+
+class KeyboardContent(A.NSView):
+    def viewDidChangeEffectiveAppearance(self) -> None:
+        objc.super(KeyboardContent, self).viewDidChangeEffectiveAppearance()
+        window = self.window()
+        if window is not None and (controller := window.delegate()) is not None:
+            controller.update_theme()
 
 
 class DragStrip(A.NSView):
@@ -130,23 +139,19 @@ class PanelController(F.NSObject):
         self.remember_item.setTarget_(self)
         content = panel.contentView()
         content.setWantsLayer_(True)
-        content.layer().setBackgroundColor_(color("#f1f3f5").CGColor())
         self.status = A.NSTextField.labelWithString_("")
-        self.status.setTextColor_(color("#505760"))
         self.status.setFont_(A.NSFont.systemFontOfSize_(11))
         content.addSubview_(self.status)
         # The transparent header receives drags over the status, behind the buttons.
         self.header = DragStrip.alloc().initWithFrame_(((0, 0), (0, 0)))
         self.footer = DragStrip.alloc().initWithFrame_(((0, 0), (0, 0)))
         self.footer.setWantsLayer_(True)
-        self.footer.layer().setBackgroundColor_(color("#e4e8eb").CGColor())
         content.addSubview_(self.header)
         content.addSubview_(self.footer)
         self.dividers = {}
         for name in TOOLBAR_DIVIDERS.values():
             line = DragStrip.alloc().initWithFrame_(((0, 0), (0, 0)))
             line.setWantsLayer_(True)
-            line.layer().setBackgroundColor_(color("#aab2b8").CGColor())
             content.addSubview_(line)
             self.dividers[name] = line
         for name, label in [*TOOLBAR, *self.labels.items()]:
@@ -168,7 +173,6 @@ class PanelController(F.NSObject):
             button.cell().setUsesSingleLineMode_(True)
             button.setWantsLayer_(True)
             button.layer().setActions_({"backgroundColor": F.NSNull.null()})
-            button.layer().setBorderColor_(color("#c1c9ce").CGColor())
             button.layer().setBorderWidth_(int(name not in self.actions or name in {"extended", "numpad"}))
             button.hovered = button.tracking_toolbar = False
             button.appearance_key = None
@@ -179,7 +183,23 @@ class PanelController(F.NSObject):
             button.addTrackingArea_(tracking)
             content.addSubview_(button)
             self.buttons[name] = button
+        self.update_theme()
         self.resize(saved.width, saved.height)
+
+    @objc.python_method
+    def update_theme(self) -> None:
+        content = self.panel.contentView()
+        names = [A.NSAppearanceNameAqua, A.NSAppearanceNameDarkAqua]
+        match = content.effectiveAppearance().bestMatchFromAppearancesWithNames_(names)
+        self.theme = DARK_THEME if match == A.NSAppearanceNameDarkAqua else LIGHT_THEME
+        content.layer().setBackgroundColor_(color(self.theme.surface).CGColor())
+        self.status.setTextColor_(color(text_hex("gray", dark=self.theme.dark)))
+        self.footer.layer().setBackgroundColor_(color(self.theme.footer).CGColor())
+        for divider in self.dividers.values():
+            divider.layer().setBackgroundColor_(color(self.theme.divider).CGColor())
+        for button in self.buttons.values():
+            button.layer().setBorderColor_(color(self.theme.border).CGColor())
+        self.refresh()
 
     def adapt_(self, sender) -> None:
         self.perform(lambda: self.state.set_mode(LeftKeyMode(sender.representedObject())))
@@ -239,10 +259,10 @@ class PanelController(F.NSObject):
         button = self.buttons[name]
         if name in self.actions:
             active = (name == "extended" and self.expanded) or (name == "numpad" and self.numpad)
-            bg, fg = ("#34657c", "white") if active else ("#f1f3f5", "#202124")
+            bg, fg = self.theme.toolbar(active)
             label = dict(TOOLBAR)[name]
         else:
-            bg, fg = self.state.colors(name)
+            bg, fg = self.state.colors(name, dark=self.theme.dark)
             label = self.state.label(name, self.labels[name])
             button.setEnabled_(name != "Numpad5" or self.state.lock_states["NumLock"])
         size = self.panel.contentView().bounds().size
@@ -252,7 +272,7 @@ class PanelController(F.NSObject):
         if button.appearance_key == appearance:
             return
         button.appearance_key = appearance
-        button.layer().setBackgroundColor_(color(hover_color(bg) if button.hovered else bg).CGColor())
+        button.layer().setBackgroundColor_(color(hover_color(bg, fg, dark=self.theme.dark) if button.hovered else bg).CGColor())
         if name == "language":
             return
         title = F.NSAttributedString.alloc().initWithString_attributes_(label, {
@@ -425,6 +445,7 @@ def create_panel() -> KeyboardPanel:
             | A.NSWindowStyleMaskNonactivatingPanel)
     panel = KeyboardPanel.alloc().initWithContentRect_styleMask_backing_defer_(
         ((0, 0), DEFAULT_SIZE), mask, A.NSBackingStoreBuffered, False)
+    panel.setContentView_(KeyboardContent.alloc().initWithFrame_(panel.contentView().frame()))
     panel.setTitle_(WINDOW_TITLE)
     panel.setRestorable_(False)
     panel.setContentMinSize_(MINIMUM_SIZE)

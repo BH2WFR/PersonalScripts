@@ -66,6 +66,13 @@ class RangeInput(QtWidgets.QWidget):
         self.field.setText(expression if parity is None else f"{expression or 'all'}|{parity.value}")
 
 
+class PageRangeField(RangeInput):
+    """A Designer-promotable range editor with its own line edit."""
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(QtWidgets.QLineEdit(), parent)
+
+
 class PageRangeDialog(QtWidgets.QDialog):
     """Modal page-range input with the same parity controls as embedded fields.
 

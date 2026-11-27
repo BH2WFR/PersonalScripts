@@ -11,9 +11,10 @@ Axis footer captions follow the X-title row and reflow with exported plots.
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TypedDict, cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt import QtCore as GraphQtCore
 from pyqtgraph.GraphicsScene.GraphicsScene import GraphicsScene
 from pyqtgraph.graphicsItems.AxisItem import AxisItem
 from pyqtgraph.graphicsItems.ViewBox.ViewBox import ViewBox
@@ -50,13 +51,16 @@ class NavigationViewBox(ViewBox):
         self._fit_padding = fit_padding
         self._constrain_after_zoom = constrain_after_zoom
         self._sample_pitch: tuple[float, float | None] | None = None
-        self._sample_target: QtCore.QRectF | None = None
+        self._sample_target: GraphQtCore.QRectF | None = None
         super().__init__()
         self.sigResized.connect(self._reflow_sample_size)
 
     def set_sample_size(self, dx: float, dy: float | None) -> None:
         """Set coordinates per physical pixel, keeping the center as axis labels reflow."""
-        viewport = pyside_graphics_view(self.getViewWidget()).viewport()
+        view = self.getViewWidget()
+        if view is None:
+            raise RuntimeError("Sample scaling requires a plot attached to a graphics view.")
+        viewport = view.viewport()
         if self._sample_pitch is None:
             viewport.installEventFilter(self)
         dpr = viewport.devicePixelRatioF()
@@ -81,10 +85,11 @@ class NavigationViewBox(ViewBox):
         elif self.width() > 0 and self.height() > 0:
             self.set_sample_size(*self._sample_pitch)
 
-    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if event.type() == QtCore.QEvent.Type.DevicePixelRatioChange and self._sample_target is not None:
+    def eventFilter(self, a0: GraphQtCore.QObject | None, a1: GraphQtCore.QEvent | None) -> bool:
+        if (a1 is not None and a1.type() == GraphQtCore.QEvent.Type.DevicePixelRatioChange
+                and self._sample_target is not None):
             self._reflow_sample_size()
-        return super().eventFilter(watched, event)
+        return super().eventFilter(a0, a1)
 
     def _zoom_caps(self, bounds: PlotBounds) -> tuple[float, float]:
         """Measure each axis at the current and fully fitted scales, accounting for aspect lock."""
@@ -213,7 +218,7 @@ class AxisFooterLabel(QtWidgets.QGraphicsObject):
 
     def boundingRect(self) -> QtCore.QRectF:
         """Cover the plot so axis layout and export resizing remain dynamic."""
-        return QtCore.QRectF(self.plot.boundingRect())
+        return cast(QtCore.QRectF, self.plot.boundingRect())
 
     def paint(self, painter: QtGui.QPainter, option: QtWidgets.QStyleOptionGraphicsItem,
               widget: QtWidgets.QWidget | None = None) -> None:
@@ -232,6 +237,12 @@ class AxisFooterLabel(QtWidgets.QGraphicsObject):
         text = painter.fontMetrics().elidedText(self._text, QtCore.Qt.TextElideMode.ElideRight, int(width))
         painter.drawText(rect, QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter, text)
         painter.restore()
+
+
+class _AxisTickStyle(TypedDict):
+    showValues: bool
+    tickLength: int
+    tickTextOffset: Sequence[int]
 
 
 class EndpointAxis(AxisItem):
@@ -258,16 +269,18 @@ class EndpointAxis(AxisItem):
         # QtGraph can type its Qt objects against another installed binding;
         # the application selects PySide6 before importing it.
         specs = cast(AxisSpecs | None, super().generateDrawSpecs(p))
+        # AxisItem stores instance data under the inherited Qt method names style and scale.
+        style = cast(_AxisTickStyle, self.style)
         if (specs is None or not self.endpoint_ticks or self.logMode
-                or self.orientation not in ("left", "right") or not self.style["showValues"]):
+                or self.orientation not in ("left", "right") or not style["showValues"]):
             return specs
         bounds = self.mapRectFromParent(self.geometry())
         values = self.range
         if not all(math.isfinite(value) for value in values) or values[0] == values[1]:
             return specs
         axis_line, ticks, texts = specs
-        offset = max(0, self.style["tickLength"]) + self.style["tickTextOffset"][0]
-        scale = self.autoSIPrefixScale * self.scale
+        offset = max(0, style["tickLength"]) + style["tickTextOffset"][0]
+        scale = self.autoSIPrefixScale * cast(float, self.scale)
         endpoints: list[TextSpec] = []
         for value, top in ((values[1], True), (values[0], False)):
             text = f"{value * scale:.10g}"
@@ -279,7 +292,7 @@ class EndpointAxis(AxisItem):
             flags = QtCore.Qt.AlignmentFlag.AlignVCenter | (
                 QtCore.Qt.AlignmentFlag.AlignRight if self.orientation == "left" else QtCore.Qt.AlignmentFlag.AlignLeft)
             endpoints.append((rect, int(flags), text))
-        self._updateMaxTextSize(max(rect.width() for rect, _, _ in endpoints))
+        self._updateMaxTextSize(math.ceil(max(rect.width() for rect, _, _ in endpoints)))
         texts = [spec for spec in texts if not any(
             rect.adjusted(-2, -2, 2, 2).intersects(spec[0]) for rect, _, _ in endpoints)]
         return axis_line, ticks, [*texts, *endpoints]

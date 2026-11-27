@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>OutputTab</class>
+ <widget class="QScrollArea" name="OutputTab">
+  <property name="widgetResizable">
+   <bool>true</bool>
+  </property>
+  <widget class="QWidget" name="output_page" native="true">
+   <layout class="QVBoxLayout" name="output_layout">
+    <item>
+     <widget class="QGroupBox" name="export_group">
+      <property name="title">
+       <string>Export</string>
+      </property>
+      <layout class="QFormLayout" name="export_form">
+       <item row="0" column="0">
+        <widget class="QLabel" name="workers_label">
+         <property name="text">
+          <string>Image encoders</string>
+         </property>
+         <property name="buddy">
+          <cstring>workers</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="NoWheelSpinBox" name="workers" />
+       </item>
+       <item row="1" column="0" colspan="2">
+        <widget class="QCheckBox" name="open_saved_preview">
+         <property name="text">
+          <string>Open saved page in external viewer</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QFrame" name="separator">
+      <property name="frameShape">
+       <enum>QFrame::HLine</enum>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="review_group">
+      <property name="title">
+       <string>Optional region review files</string>
+      </property>
+      <layout class="QFormLayout" name="review_form">
+       <item row="0" column="0" colspan="2">
+        <widget class="QCheckBox" name="save_regions">
+         <property name="text">
+          <string>Export region JSON</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <widget class="QCheckBox" name="save_annotations">
+         <property name="text">
+          <string>Export box annotation PNGs</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="region_path_label">
+         <property name="text">
+          <string>Region input</string>
+         </property>
+         <property name="buddy">
+          <cstring>region_path</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QLineEdit" name="region_path" />
+       </item>
+       <item row="3" column="0" colspan="2">
+        <layout class="QHBoxLayout" name="region_actions">
+         <item>
+          <widget class="QPushButton" name="browse_regions">
+           <property name="text">
+            <string>Browse regions...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="clear_regions">
+           <property name="text">
+            <string>Clear</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="output_note">
+      <property name="text">
+       <string>These settings apply to the whole project.
+Export defaults to the source PDF folder.
+Existing outputs require overwrite confirmation; the source is protected.</string>
+      </property>
+      <property name="wordWrap">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <spacer name="output_stretch">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+      </property>
+      <property name="sizeHint">
+       <size>
+        <width>0</width>
+        <height>0</height>
+       </size>
+      </property>
+     </spacer>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

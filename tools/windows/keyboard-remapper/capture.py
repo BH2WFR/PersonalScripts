@@ -16,6 +16,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from utils import *
 
 from .catalog import key_label
+from .ui_capture import Ui_CaptureDialog
 
 _KEY_DOWN = frozenset({0x0100, 0x0104})
 _KEY_UP = frozenset({0x0101, 0x0105})
@@ -79,7 +80,7 @@ def decode_message(message: int, vk: int, lparam: int) -> CapturedKey | None:
     return CapturedKey(WindowsScanCode(code, prefix).value, vk)
 
 
-class CaptureDialog(QtWidgets.QDialog):
+class CaptureDialog(QtWidgets.QDialog, Ui_CaptureDialog):
     """Capture one key while this dialog is active, then require a mouse confirmation.
 
     Args:
@@ -93,34 +94,10 @@ class CaptureDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.result_key: CapturedKey | None = None
         self.listening = False
-        self.setWindowTitle("Capture a key")
-        self.setMinimumWidth(590)
-        layout = QtWidgets.QVBoxLayout(self)
-        explanation = QtWidgets.QLabel(
-            "Keep this window focused and press ONE key, including a modifier.\n"
-            "Capture stops after one key or 20 seconds. Use the mouse to confirm/cancel.\n\n"
-            "Already remapped keys may report their destination. Select the original\n"
-            "key from the list instead. Disabled keys, Fn and system-reserved keys\n"
-            "may not reach this window. System shortcuts are not blocked."
-        )
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-        self.status = QtWidgets.QLabel()
-        self.status.setWordWrap(True)
-        self.status.setMinimumHeight(80)
-        layout.addWidget(self.status)
-        row = QtWidgets.QHBoxLayout()
-        self.retry_button = QtWidgets.QPushButton("Listen again")
-        self.use_button = QtWidgets.QPushButton("Use this key")
-        cancel = QtWidgets.QPushButton("Cancel")
-        for button in (self.retry_button, self.use_button, cancel):
-            button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-            button.setAutoDefault(False)
-            row.addWidget(button)
-        layout.addLayout(row)
+        self.setupUi(self)
         self.retry_button.clicked.connect(self.begin)
         self.use_button.clicked.connect(self.accept)
-        cancel.clicked.connect(self.reject)
+        self.cancel_button.clicked.connect(self.reject)
         self.timer = QtCore.QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self._timeout)

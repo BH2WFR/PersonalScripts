@@ -95,7 +95,9 @@ their use and its consequences.
 | `registry.py` | One-value native backend, backup and conflict/write verification |
 | `catalog.py` | Shared-catalog labels and manual scan-word input |
 | `capture.py` | Bounded focused-window capture and pure native-message decoding |
-| `ui.py` | Draft editing, dropdowns, previews and explicit user actions |
+| [mainwindow.ui](mainwindow.ui), [mapping.ui](mapping.ui), [key_picker.ui](key_picker.ui), [capture.ui](capture.ui) | Qt Designer layouts for the editor, mapping dialog, key picker and capture dialog |
+| `widgets.py` | Mapping row drag-and-drop and searchable key pickers |
+| `ui.py` | Draft editing, previews and explicit user actions |
 | `app.py` | Fusion startup and draft-only administrator handoff |
 
 The entry loads this folder as `personal_keyboard_remap`. Launcher discovery skips the private modules.

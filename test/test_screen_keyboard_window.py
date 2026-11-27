@@ -63,6 +63,30 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(keyboard.native.position(), (rect.left, rect.top))
             self.assertEqual(window.U.GetForegroundWindow(), foreground)
 
+    def test_theme_change_recolors_existing_keys_and_keeps_layout(self) -> None:
+        from screen_keyboard import window, windows_ui
+        from utils import ConfigStore
+
+        with (tempfile.TemporaryDirectory() as scratch,
+              patch.object(ConfigStore, "directory", return_value=Path(scratch)),
+              patch.object(window.NonactivatingWindow, "cursor_position", return_value=wintypes.POINT(100, 100)),
+              patch.object(windows_ui, "windows_apps_use_dark_theme", return_value=False) as dark):
+            keyboard = windows_ui.ScreenKeyboard()
+            try:
+                key = keyboard.buttons["a"]
+                colors = (key.cget("background"), key.cget("foreground"))
+                bounds = key.place_info()
+                dark.return_value = True
+                keyboard.update_theme()
+                self.assertEqual((key.cget("background"), key.cget("foreground")), keyboard.state.colors("a", dark=True))
+                self.assertNotEqual(key.cget("background"), colors[0])
+                self.assertEqual(key.place_info(), bounds)
+                dark.return_value = False
+                keyboard.update_theme()
+                self.assertEqual((key.cget("background"), key.cget("foreground")), colors)
+            finally:
+                keyboard.close()
+
     def test_duplicate_process_moves_existing_window(self) -> None:
         from screen_keyboard import window
         from screen_keyboard.windows_ui import ScreenKeyboard

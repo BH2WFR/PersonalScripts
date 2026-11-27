@@ -1,0 +1,903 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TextProcessor</class>
+ <widget class="QWidget" name="TextProcessor">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>740</width>
+    <height>660</height>
+   </rect>
+  </property>
+  <property name="acceptDrops">
+   <bool>true</bool>
+  </property>
+  <property name="windowTitle">
+   <string>Text and Path Processor</string>
+  </property>
+  <layout class="QVBoxLayout" name="main_layout" stretch="0,1,0,0,0,1,0">
+   <item>
+    <layout class="QHBoxLayout" name="input_toolbar">
+     <item>
+      <widget class="QLabel" name="input_label">
+       <property name="text">
+        <string>Input:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="input_stretch">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="wrap">
+       <property name="text">
+        <string>Word wrap</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="Line" name="clipboard_separator">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="load_paths">
+       <property name="text">
+        <string>Load paths from clipboard</string>
+       </property>
+       <property name="font">
+        <font>
+         <bold>true</bold>
+        </font>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="load_text">
+       <property name="text">
+        <string>Load text from clipboard</string>
+       </property>
+       <property name="font">
+        <font>
+         <bold>true</bold>
+        </font>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="InputEditor" name="source">
+     <property name="accessibleName">
+      <string>Input</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTabWidget" name="tabs">
+     <widget class="QWidget" name="path_tab">
+      <attribute name="title">
+       <string>File paths</string>
+      </attribute>
+      <layout class="QGridLayout" name="path_tab_layout" columnstretch="0,1">
+       <item row="0" column="0">
+        <widget class="QLabel" name="cleanup_label">
+         <property name="text">
+          <string>Cleanup:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <layout class="QHBoxLayout" name="cleanup_controls">
+         <item>
+          <widget class="QPushButton" name="quick_clean">
+           <property name="text">
+            <string>Quick clean paths</string>
+           </property>
+           <property name="toolTip">
+            <string>Remove paired quotes and file://, then convert backslashes to forward slashes.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="cleanup_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <widget class="Line" name="separators_separator">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="separators_label">
+         <property name="text">
+          <string>Separators:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <layout class="QHBoxLayout" name="separators_controls">
+         <item>
+          <widget class="NoWheelComboBox" name="source_separator"/>
+         </item>
+         <item>
+          <widget class="QLabel" name="to_label">
+           <property name="text">
+            <string>to</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="NoWheelComboBox" name="target_separator"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="convert_separators">
+           <property name="text">
+            <string>Convert</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="separators_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="3" column="0" colspan="2">
+        <widget class="Line" name="path_operation_separator">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="path_operation_label">
+         <property name="text">
+          <string>Path operation:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <layout class="QHBoxLayout" name="path_operation_controls">
+         <item>
+          <widget class="NoWheelComboBox" name="path_action"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="apply_path_action">
+           <property name="text">
+            <string>Apply to lines</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="path_operation_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="5" column="0" colspan="2">
+        <spacer name="path_tab_stretch">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="environment_tab">
+      <attribute name="title">
+       <string>Home &amp;&amp; variables</string>
+      </attribute>
+      <layout class="QGridLayout" name="environment_tab_layout" columnstretch="0,1">
+       <item row="0" column="0">
+        <widget class="QLabel" name="syntax_label">
+         <property name="text">
+          <string>Variable syntax:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <layout class="QHBoxLayout" name="syntax_controls">
+         <item>
+          <widget class="NoWheelComboBox" name="variable_syntax"/>
+         </item>
+         <item>
+          <spacer name="syntax_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <widget class="Line" name="home_path_separator">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="home_path_label">
+         <property name="text">
+          <string>Home path:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <layout class="QHBoxLayout" name="home_path_controls">
+         <item>
+          <widget class="QPushButton" name="to_tilde">
+           <property name="text">
+            <string>To ~</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="to_absolute">
+           <property name="text">
+            <string>To absolute</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="to_home_variable">
+           <property name="text">
+            <string>To home variable</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="home_path_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="3" column="0" colspan="2">
+        <widget class="Line" name="system_paths_separator">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="system_paths_label">
+         <property name="text">
+          <string>System paths:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <layout class="QHBoxLayout" name="system_paths_controls">
+         <item>
+          <widget class="QPushButton" name="shorten_variable">
+           <property name="text">
+            <string>Use longest variable</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="expand_variable">
+           <property name="text">
+            <string>Expand variable</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="system_paths_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="5" column="0" colspan="2">
+        <spacer name="environment_tab_stretch">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="text_tab">
+      <attribute name="title">
+       <string>Text</string>
+      </attribute>
+      <layout class="QGridLayout" name="text_tab_layout" columnstretch="0,1">
+       <item row="0" column="0">
+        <widget class="QLabel" name="pdf_text_label">
+         <property name="text">
+          <string>PDF text:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <layout class="QHBoxLayout" name="pdf_text_controls">
+         <item>
+          <widget class="QPushButton" name="clean_pdf">
+           <property name="text">
+            <string>Clean copied PDF text</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="pdf_text_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <widget class="Line" name="text_operation_separator">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="text_operation_label">
+         <property name="text">
+          <string>Text operation:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <layout class="QHBoxLayout" name="text_operation_controls">
+         <item>
+          <widget class="NoWheelComboBox" name="text_action"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="apply_text_action">
+           <property name="text">
+            <string>Apply</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="text_operation_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="3" column="0" colspan="2">
+        <spacer name="text_tab_stretch">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="letter_tab">
+      <attribute name="title">
+       <string>Letter Style</string>
+      </attribute>
+      <layout class="QGridLayout" name="letter_tab_layout" columnstretch="0,1">
+       <item row="0" column="0">
+        <widget class="QLabel" name="letter_style_label">
+         <property name="text">
+          <string>Style:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <layout class="QHBoxLayout" name="letter_style_controls">
+         <item>
+          <widget class="NoWheelComboBox" name="letter_styles"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="style_letters">
+           <property name="text">
+            <string>Style letters and digits</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="plain_letters">
+           <property name="text">
+            <string>Restore plain letters and digits</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="letter_style_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <spacer name="letter_tab_stretch">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="url_tab">
+      <attribute name="title">
+       <string>URL</string>
+      </attribute>
+      <layout class="QGridLayout" name="url_tab_layout" columnstretch="0,1">
+       <item row="0" column="0">
+        <widget class="QLabel" name="hostnames_label">
+         <property name="text">
+          <string>Hostnames:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <layout class="QHBoxLayout" name="hostnames_controls">
+         <item>
+          <widget class="QPushButton" name="extract_hostnames">
+           <property name="text">
+            <string>Extract URL hostnames</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="hostnames_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <spacer name="url_tab_stretch">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="line_tab">
+      <attribute name="title">
+       <string>Lines</string>
+      </attribute>
+      <layout class="QGridLayout" name="line_tab_layout" columnstretch="0,1">
+       <item row="0" column="0">
+        <widget class="QLabel" name="trim_label">
+         <property name="text">
+          <string>Trim:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <layout class="QHBoxLayout" name="trim_controls">
+         <item>
+          <widget class="NoWheelComboBox" name="trim_side"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="trim_lines">
+           <property name="text">
+            <string>Trim lines</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Line" name="blank_lines_separator">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="blank_lines_label">
+           <property name="text">
+            <string>Blank lines:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="remove_blank_lines">
+           <property name="text">
+            <string>Remove blank lines</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="trim_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <widget class="Line" name="indent_separator">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="indent_label">
+         <property name="text">
+          <string>Indent:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <layout class="QHBoxLayout" name="indent_controls">
+         <item>
+          <widget class="NoWheelComboBox" name="indent_unit"/>
+         </item>
+         <item>
+          <widget class="QLabel" name="indent_width_label">
+           <property name="text">
+            <string>Width:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="NoWheelSpinBox" name="indent_width"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="indent_lines">
+           <property name="text">
+            <string>Indent</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="unindent_lines">
+           <property name="text">
+            <string>Unindent</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Line" name="tabs_separator">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="tabs_label">
+           <property name="text">
+            <string>Tabs:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="expand_tabs">
+           <property name="text">
+            <string>Tabs to spaces</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="indent_stretch">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="3" column="0" colspan="2">
+        <spacer name="line_tab_stretch">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="operation_toolbar">
+     <item>
+      <widget class="QLabel" name="chain_label">
+       <property name="text">
+        <string>Chaining:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="chain">
+       <property name="text">
+        <string>Use result for the next operation</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="operation_stretch">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="Line" name="regex_separator">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="regex_label">
+       <property name="text">
+        <string>Find and replace:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="regex_button">
+       <property name="text">
+        <string>Regex replace…</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="result_toolbar">
+     <item>
+      <widget class="QLabel" name="result_label">
+       <property name="text">
+        <string>Result:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="result_stretch">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="apply_result">
+       <property name="text">
+        <string>Apply</string>
+       </property>
+       <property name="accessibleName">
+        <string>Apply result to input</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="reset_result">
+       <property name="text">
+        <string>Reset</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="Line" name="clear_separator">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="clear_result">
+       <property name="text">
+        <string>Clear result</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="clear_all">
+       <property name="text">
+        <string>Clear all</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="copy_result">
+       <property name="text">
+        <string>Copy result</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="result">
+     <property name="accessibleName">
+      <string>Result</string>
+     </property>
+     <property name="readOnly">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="preference_notice">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>InputEditor</class>
+   <extends>QPlainTextEdit</extends>
+   <header>text_processor.editor</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

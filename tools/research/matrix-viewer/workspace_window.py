@@ -9,7 +9,9 @@ Multi-file drops use the same sequential queue as command-line batches. Entries
 are registered first; activation, tree refresh and view preparation run after
 the batch, so hidden intermediate matrices do not generate disposable frames.
 Duplicate source paths/members prompt to open another instance, replace a chosen instance,
-or skip. Replacement commits only after loading and interpretation succeed.
+or skip. The choice can apply to later duplicates in the same import. Replacing
+still asks for a target when several instances match. Replacement commits only
+after loading and interpretation succeed.
 Numeric 3D arrays prompt for an axis to split into independent 2D matrices or
 skip that member. Skipping all incoming members retains the existing session.
 NPZ selection also offers a filename-prefix checkbox, including single-member
@@ -113,14 +115,12 @@ from vtkmodules.vtkRenderingCore import vtkCamera
 
 from .app import DEFAULT_MAX_EDGE, FILE_FILTER, JobKind, ViewerWindow
 from .coordinates import AxisMap
-from .channel_tree import ChannelTree
 from .bundle_export import BUNDLE_FORMATS, prepare_bundle, serialize_bundle
 from .context_menus import WorkspaceMenus
 from .view_settings import AppearancePage, ViewSettingsDialog
 from .view_scaling import Axis, ViewScaling
 from .data_model import (DEFAULT_MAX_POINTS, Component, Document, FilterMode, Frame, ImageMember, Limits, RealArray,
                          Selection, ViewMode, default_selection, prepare_frame, select_image_member)
-from .overlay_profile import OverlayProfile
 from .fourier import TransformDirection, TransformOptions, TransformResult, run_transform
 from .fourier_dialog import FourierDialog
 from .laplace import LaplaceDirection, LaplaceOptions, run_laplace
@@ -140,7 +140,7 @@ from .figure_dialog import FigureExportDialog
 from .figure_export import FigureSource, FigureView, figure_stem, plot_source, surface_source
 from .view_extrema import ViewExtrema
 from .plot_support import pyside_graphics_view
-from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
+from .qt_widgets import NoWheelComboBox
 from .profile_view import CHANNEL_COLORS, JumpMode
 from .render_style import (DEFAULT_DASH_SCALE, DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_POINT_SIZE,
                            CurveStyle, ImageStyle, LineStyle, PointShape, SurfaceStyle)
@@ -152,6 +152,8 @@ from .workspace import (COLORS, Alignment, ChannelChoice, LoadedFile, MatrixEntr
                         overlay_auto_height, profile_series, AUTO_HEIGHT_FRACTION)
 from .workspace_export import (ExportScope, default_stem, mat_variable_names,
                                prepare_displayed_export, serialize_displayed_mat)
+from .ui_overlay_colors import Ui_OverlayColors
+from .ui_workspace_actions import Ui_WorkspaceActions
 
 SETTINGS: tuple[str, ...] = (
     "filter_low", "filter_high", "filter_mode", "color_low", "color_high", "colormap",
@@ -230,6 +232,7 @@ class WorkspaceWindow(ViewerWindow):
         self._pending_activation: tuple[int, bool] | None = None
         self._resolved_import_paths: dict[Path, Path] = {}
         self._name_fit_pending = False
+        self._duplicate_choice: DuplicateChoice | None = None
         self._opening_modes: dict[tuple[int, int, bool], ViewMode] = {}
         self._split_choices: dict[tuple[SplitAxis, int], bool] = {}
         self._workspace_ready = False
@@ -253,9 +256,6 @@ class WorkspaceWindow(ViewerWindow):
         self._color_lock_single_mode = True
         self._shared_profile_sizes: dict[str, Setting] = {}
         super().__init__(max_edge, initial_mode, initial_channel_axis)
-        self.overlay_profile = OverlayProfile()
-        self.profile_layout.addWidget(self.overlay_profile)
-        self.overlay_profile.hide()
         self.overlay_profile.settings_changed.connect(self._profile_settings_changed)
         self._defaults = self._read_settings()
         self._shared_profile_sizes = {name: self._defaults[name] for name in PROFILE_SIZE_SETTINGS}
@@ -279,6 +279,7 @@ class WorkspaceWindow(ViewerWindow):
         for name in tuple(self._defaults):
             if name.startswith("crop_"):
                 self._defaults.pop(name)
+        self.matrix_box.show()
         self._build_workspace()
         self.raw_view.matrix_combo.currentIndexChanged.connect(self._raw_matrix_changed)
         self.export_scope = NoWheelComboBox()
@@ -294,57 +295,44 @@ class WorkspaceWindow(ViewerWindow):
         self.scaling = ViewScaling(self)
         self.context_menus = WorkspaceMenus(self)
         self.view_settings = ViewSettingsDialog(self)
-        self.view_settings_button = QtWidgets.QPushButton("View settings…")
+        tab_actions = QtWidgets.QWidget()
+        ui = Ui_WorkspaceActions()
+        ui.setupUi(tab_actions)
+        self.view_settings_button = ui.view_settings_button
         self.view_settings_button.clicked.connect(self.view_settings.show_current)
-        self.profile_fit_button = QtWidgets.QPushButton("Fit curve")
+        self.profile_fit_button = ui.profile_fit_button
         self.profile_fit_button.clicked.connect(
             lambda: (self.overlay_profile if self._profile_uses_overlay else self.profile_view).reset_view())
-        tab_actions = QtWidgets.QWidget()
-        tab_actions_layout = QtWidgets.QHBoxLayout(tab_actions)
-        tab_actions_layout.setContentsMargins(0, 0, 0, 0)
-        tab_actions_layout.setSpacing(2)
-        self.extrema_button = QtWidgets.QPushButton("Calculate extrema")
-        tab_actions_layout.addWidget(self.extrema_button)
-        self.tab_actions_separator = VerticalSeparator()
-        tab_actions_layout.addWidget(self.tab_actions_separator)
-        self.color_lock_button = QtWidgets.QPushButton("Lock color range")
-        self.color_lock_button.setCheckable(True)
+        self.extrema_button = ui.extrema_button
+        self.tab_actions_separator = ui.tab_actions_separator
+        self.color_lock_button = ui.color_lock_button
         self.color_lock_button.setChecked(self.color_range_lock.isChecked())
         self.color_lock_button.setToolTip(self.color_range_lock.toolTip())
         self.color_lock_button.toggled.connect(self.color_range_lock.setChecked)
         self.color_range_lock.toggled.connect(self.color_lock_button.setChecked)
-        tab_actions_layout.addWidget(self.color_lock_button)
-        self.profile_y_lock_button = QtWidgets.QPushButton("Lock Y range")
+        self.profile_y_lock_button = ui.profile_y_lock_button
         for button in (self.profile_y_lock_button, self.profile_view.y_lock_button, self.overlay_profile.y_lock_button):
             button.setCheckable(True)
             button.setToolTip(self.view_settings.y_lock.toolTip())
             button.toggled.connect(self.scaling.set_y_range_lock)
-        tab_actions_layout.addWidget(self.profile_y_lock_button)
-        tab_actions_layout.addWidget(self.profile_fit_button)
-        self.spatial_fit_button = QtWidgets.QPushButton("Fit view")
+        self.spatial_fit_button = ui.spatial_fit_button
         self.spatial_fit_button.clicked.connect(lambda: self.scaling.fit_view(
             FigureView.SURFACE if self.tabs.currentIndex() == 1 else FigureView.IMAGE))
-        tab_actions_layout.addWidget(self.spatial_fit_button)
-        tab_actions_layout.addWidget(self.view_settings_button)
         self.tabs.setCornerWidget(tab_actions, QtCore.Qt.Corner.TopRightCorner)
         self.view_extrema = ViewExtrema(self)
         self.tabs.currentChanged.connect(self.view_settings.refresh)
         for profile in (self.profile_view, self.overlay_profile):
             profile.settings_button.clicked.connect(self.view_settings.show_profile)
         self.view_settings.refresh()
+        self.tabs.tabBar().setFocus()
         self._theme_changed()
 
     def _build_workspace(self) -> None:
-        self.matrix_box = QtWidgets.QGroupBox("Matrices / channels")
-        layout = QtWidgets.QVBoxLayout(self.matrix_box)
-        self.single_matrix_mode = QtWidgets.QRadioButton("Single matrix")
-        self.multiple_matrix_mode = QtWidgets.QRadioButton("Multiple matrices")
+        layout = self.matrix_panel_layout
         self.selection_modes = QtWidgets.QButtonGroup(self)
         self.selection_modes.addButton(self.single_matrix_mode)
         self.selection_modes.addButton(self.multiple_matrix_mode)
         self.single_matrix_mode.setChecked(True)
-        self.single_matrix_mode.setToolTip("Click a channel or single-channel matrix to show it exclusively. Click a multichannel matrix to expand its channels.")
-        self.multiple_matrix_mode.setToolTip("Use channel checkboxes to overlay compatible matrices/channels. Row clicks only choose the editing target.")
         self.multiple_matrix_mode.toggled.connect(self._display_mode_changed)
         self.open_file_action = QtGui.QAction("Open and replace…", self)
         self.open_file_action.setShortcut(QtGui.QKeySequence.StandardKey.Open)
@@ -357,16 +345,11 @@ class WorkspaceWindow(ViewerWindow):
         self.add_file_action.setToolTip("Open one or more files in this session. Existing matrices remain in the list.")
         self.add_file_action.triggered.connect(self._choose_overlay)
         self.addAction(self.add_file_action)
-        bar = QtWidgets.QHBoxLayout()
-        self.add_overlay = QtWidgets.QToolButton()
         self.add_overlay.setDefaultAction(self.add_file_action)
         self.add_overlay.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         file_menu = QtWidgets.QMenu(self.add_overlay)
         file_menu.addActions([self.add_file_action, self.open_file_action])
         self.add_overlay.setMenu(file_menu)
-        self.add_overlay.setToolTip("Open one or more files, or choose Open and replace from the arrow menu. Files can also be dropped anywhere in the window.")
-        bar.addWidget(self.add_overlay)
-        self.fourier_button = QtWidgets.QPushButton("Transform…")
         self.fourier_button.setEnabled(False)
         transform_menu = QtWidgets.QMenu(self.fourier_button)
         self.conversion_action = transform_menu.addAction("Data conversion…")
@@ -384,23 +367,13 @@ class WorkspaceWindow(ViewerWindow):
         self.image_merge_action.setEnabled(False)
         self.image_merge_action.triggered.connect(self._choose_image_merge)
         self.fourier_button.setMenu(transform_menu)
-        bar.addWidget(self.fourier_button)
-        bar.addWidget(self.single_matrix_mode)
-        bar.addWidget(self.multiple_matrix_mode)
-        bar.addStretch()
-        layout.addLayout(bar)
-        actions = QtWidgets.QHBoxLayout()
-        self.none_visible = QtWidgets.QPushButton("Hide all")
+        actions = self.matrix_panel_actions
         self.none_visible.setVisible(self.multiple_matrix_mode.isChecked())
         self.none_visible.clicked.connect(self._hide_all)
-        actions.addWidget(self.none_visible)
         self.remove_action = QtGui.QAction("Close", self)
         self.remove_action.triggered.connect(self._remove_selected)
-        self.remove_matrix = QtWidgets.QToolButton()
         self.remove_matrix.setDefaultAction(self.remove_action)
         self.remove_matrix.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self.remove_matrix.setToolTip("Close the selected matrix and its channels. The source file is unchanged.")
-        actions.addWidget(self.remove_matrix)
         self.remove_all = QtGui.QAction("Close all", self)
         self.remove_all.triggered.connect(self._remove_all)
         self.remove_all.setToolTip("Close all matrices in this session. Source files are unchanged.")
@@ -418,15 +391,10 @@ class WorkspaceWindow(ViewerWindow):
             "In Single matrix mode, keep pan, zoom and the 3D camera when switching "
             "between channels/matrices with the same interpreted shape. Different shapes are fitted automatically.")
         self.file_bar.hide()
-        layout.addLayout(actions)
-        self.matrix_list = ChannelTree()
         self.matrix_list.setColumnCount(3)
         self.matrix_list.setHeaderLabels(["Matrix / channel", "Shape · type", "Color"])
         self.matrix_list.setRootIsDecorated(True)
         self.matrix_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.matrix_list.setMinimumHeight(90)
-        self.matrix_list.setIndentation(14)
-        self.matrix_list.setToolTip("Single matrix: click a channel or single-channel matrix to show it. Multichannel matrices expand without changing visibility. Multiple matrices: click rows to edit and use checkboxes to combine channels. F2 renames the matrix.")
         self.matrix_list.header().setStretchLastSection(False)
         self.matrix_list.header().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         self.matrix_list.header().setToolTip("Drag column dividers to resize. Scroll horizontally to see columns outside the panel.")
@@ -440,7 +408,6 @@ class WorkspaceWindow(ViewerWindow):
         self.matrix_list.itemDoubleClicked.connect(self._list_color)
         self.matrix_list.itemSelectionChanged.connect(self._sync_image_merge_action)
         self.matrix_list.setToolTip(f"{self.matrix_list.toolTip()}\nCtrl/Shift-click rows to select image-merge candidates without changing plotted channels.")
-        layout.addWidget(self.matrix_list)
         self.rename_shortcut = QtGui.QShortcut(QtGui.QKeySequence("F2"), self.matrix_list)
         self.rename_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.rename_shortcut.activated.connect(self._rename_selected)
@@ -449,11 +416,6 @@ class WorkspaceWindow(ViewerWindow):
         left.removeWidget(self.info)
         self.info.setParent(self.matrix_box)
         layout.addWidget(self.info)
-        self.workspace_split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.main_split.replaceWidget(0, self.workspace_split)
-        self.workspace_split.addWidget(self.matrix_box)
-        self.workspace_split.addWidget(self.control_scroll)
-        self.workspace_split.setChildrenCollapsible(False)
         self.workspace_split.setSizes([270, 570])
         self.workspace_split.setStretchFactor(1, 1)
         self.archive_label.hide()
@@ -461,18 +423,9 @@ class WorkspaceWindow(ViewerWindow):
         self.display_label.hide()
         self.display_channel.hide()
 
-        self.alignment_box = QtWidgets.QGroupBox("Overlay alignment (active channel)")
-        form = QtWidgets.QFormLayout(self.alignment_box)
-        self.reference = NoWheelComboBox()
         self.reference.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.reference.setMinimumContentsLength(16)
         self.reference.currentIndexChanged.connect(self._reference_changed)
-        self.reference.setToolTip("Shared reference for checked channels. Clicking matrix/channel rows does not change the reference.")
-        form.addRow("Align relative to", self.reference)
-        self.alignment_x = NoWheelComboBox()
-        self.alignment_y = NoWheelComboBox()
-        self.alignment_z = NoWheelComboBox()
-        self.alignment_z.setToolTip("Align visible Z ranges to the reference after height scaling. Affects 3D geometry only; images, profiles and numeric exports keep source values.")
         for combo, start, end in ((self.alignment_x, "Left", "Right"),
                                   (self.alignment_y, "Top / minimum Y", "Bottom / maximum Y"),
                                   (self.alignment_z, "Minimum Z", "Maximum Z")):
@@ -480,28 +433,17 @@ class WorkspaceWindow(ViewerWindow):
                 label = start if mode == Alignment.START else end if mode == Alignment.END else mode.value
                 combo.addItem(label, mode.value)
             combo.currentIndexChanged.connect(self._alignment_changed)
-        form.addRow("X alignment", self.alignment_x)
-        form.addRow("Y alignment", self.alignment_y)
-        form.addRow("Z alignment (3D)", self.alignment_z)
-        self.overlay_appearance = QtWidgets.QGroupBox("Overlay colors (active channel)", self.appearance_storage)
-        colors = QtWidgets.QFormLayout(self.overlay_appearance)
-        self.layer_color = QtWidgets.QPushButton("Solid color…")
+        self.overlay_appearance = QtWidgets.QGroupBox(self.appearance_storage)
+        overlay_colors_ui = Ui_OverlayColors()
+        overlay_colors_ui.setupUi(self.overlay_appearance)
+        self.layer_color = overlay_colors_ui.layer_color
         self.layer_color.clicked.connect(self._choose_layer_color)
-        colors.addRow("Color", self.layer_color)
-        self.layer_opacity = NoWheelDoubleSpinBox()
+        self.layer_opacity = overlay_colors_ui.layer_opacity
         self.layer_opacity.setRange(0.05, 1)
         self.layer_opacity.setSingleStep(0.05)
         self.layer_opacity.setDecimals(2)
         self.layer_opacity.setValue(0.65)
         self.layer_opacity.valueChanged.connect(self._alignment_changed)
-        colors.addRow("2D / 3D opacity", self.layer_opacity)
-        color_note = QtWidgets.QLabel("Overlays use one solid color per channel. In 2D, values also control opacity.")
-        color_note.setWordWrap(True)
-        colors.addRow(color_note)
-        note = QtWidgets.QLabel("X/Y alignment is included in visible-matrix exports. Z alignment and height scaling affect only 3D geometry. Data and derivatives retain source values. 2D values control opacity.")
-        note.setWordWrap(True)
-        form.addRow(note)
-        left.insertWidget(0, self.alignment_box)
         self.alignment_box.hide()
 
     def _entry(self, uid: int | None = None) -> MatrixEntry | None:
@@ -1322,6 +1264,7 @@ class WorkspaceWindow(ViewerWindow):
         self._resolved_import_paths.clear()
         self._opening_modes = {}
         self._split_choices = {}
+        self._duplicate_choice = None
         self._rebuild.stop()
         for kind in (JobKind.FRAME, JobKind.LOAD, JobKind.BUNDLE, JobKind.INSPECT, JobKind.FOURIER, JobKind.LAPLACE, JobKind.COMPLEX_MERGE, JobKind.DATA_CONVERSION):
             self._latest[kind] = -1
@@ -1594,6 +1537,7 @@ class WorkspaceWindow(ViewerWindow):
         self._pending_files.clear()
         self._pending_activation = None
         self._resolved_import_paths.clear()
+        self._duplicate_choice = None
         if not paths:
             return
         self._opening_modes = {}
@@ -1619,15 +1563,21 @@ class WorkspaceWindow(ViewerWindow):
                 and not members[0].document.import_provenance.startswith("Slice snapshot:")
                 and (None if members[0].document.is_image else members[0].document.key) == key]
 
-    def _choose_duplicate(self, document: Document, matches: list[MatrixEntry]) -> tuple[DuplicateChoice, MatrixEntry | None]:
-        """Warn before reimporting; closing the dialog skips only this matrix."""
+    def _choose_duplicate(
+        self, document: Document, matches: list[MatrixEntry],
+    ) -> tuple[DuplicateChoice, MatrixEntry | None, bool]:
+        """Return the action, replacement target and whether to reuse the action."""
         dialog = QtWidgets.QMessageBox(self)
+        dialog.setOption(QtWidgets.QMessageBox.Option.DontUseNativeDialog)
         dialog.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         dialog.setWindowTitle("Matrix already open")
         dialog.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         name = document.path.name if document.is_image or document.key is None else f"{document.path.name} :: {document.key}"
         dialog.setText(f"{name} is already open.")
         dialog.setInformativeText(f"{document.path}\n\nOpen another instance, replace an existing matrix, or skip this matrix. Source files are unchanged.")
+        apply_all = QtWidgets.QCheckBox("Apply to remaining duplicates in this import", dialog)
+        apply_all.setToolTip("When several open instances match, Replace will still ask which one to replace.")
+        dialog.setCheckBox(apply_all)
         target = NoWheelComboBox()
         for entry in matches:
             target.addItem(entry.label)
@@ -1641,21 +1591,31 @@ class WorkspaceWindow(ViewerWindow):
         replace_button = dialog.addButton("Replace", QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
         skip_button = dialog.addButton("Do not open", QtWidgets.QMessageBox.ButtonRole.RejectRole)
         dialog.setDefaultButton(skip_button)
-        dialog.setEscapeButton(skip_button)
+        # Closing or pressing Escape skips only this matrix, even with Apply checked.
+        dismiss = dialog.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        dismiss.hide()
+        dialog.setEscapeButton(dismiss)
         dialog.exec()
         chosen = dialog.clickedButton()
-        replacement = matches[max(0, target.currentIndex())]
-        result = ((DuplicateChoice.NEW, None) if chosen is new_button else
-                  (DuplicateChoice.REPLACE, replacement) if chosen is replace_button else (DuplicateChoice.SKIP, None))
+        replacement = None
+        if chosen is replace_button:
+            choice = DuplicateChoice.REPLACE
+            replacement = matches[target.currentIndex()]
+        elif chosen is new_button:
+            choice = DuplicateChoice.NEW
+        else:
+            choice = DuplicateChoice.SKIP
+        remember = apply_all.isChecked() and chosen in (new_button, replace_button, skip_button)
         target.deleteLater()
         dialog.deleteLater()
-        return result
+        return choice, replacement, remember
 
     def _open_next_path(self) -> None:
         """Continue loading, or activate the last successful import at batch end."""
         if self._closing:
             return
         if not self._pending_files:
+            self._duplicate_choice = None
             if self._pending_activation is not None:
                 uid, reset_selection = self._pending_activation
                 self._pending_activation = None
@@ -1687,12 +1647,7 @@ class WorkspaceWindow(ViewerWindow):
         Side effects:
             Discards queued imports and batch choices, then starts this file's load.
         """
-        self._pending_files.clear()
-        self._pending_activation = None
-        self._resolved_import_paths.clear()
-        self._opening_modes = {}
-        self._split_choices = {}
-        self._start_open_path(path, key, append=append)
+        self.open_paths((path,), key, append=append)
 
     def _start_open_path(self, path: Path, key: str | None, *, append: bool) -> None:
         """Start one asynchronous import without changing the pending file queue.
@@ -1733,8 +1688,7 @@ class WorkspaceWindow(ViewerWindow):
                 self._import_dialog = None
                 dialog.deleteLater()
         else:
-            member = catalog.members[0]
-            choices = (ImportChoice(member.key),) if not member.error else ()
+            choices = tuple(ImportChoice(member.key) for member in catalog.members if not member.error)
         if self._closing or self._latest.get(JobKind.INSPECT) != number:
             return
         resolved: list[ImportChoice] = []
@@ -1905,11 +1859,16 @@ class WorkspaceWindow(ViewerWindow):
             replacement: MatrixEntry | None = None
             matches = self._duplicate_entries(document)
             if matches:
-                choice, replacement = self._choose_duplicate(document, matches)
-                if self._closing or self._latest.get(kind) != number:
-                    return
-                # A duplicate decision applies to this source, not the whole
-                # workspace, even when invoked through Open and replace.
+                choice = self._duplicate_choice
+                if choice is None or (choice is DuplicateChoice.REPLACE and len(matches) > 1):
+                    choice, replacement, remember = self._choose_duplicate(document, matches)
+                    if self._closing or self._latest.get(kind) != number:
+                        return
+                    if remember:
+                        self._duplicate_choice = choice
+                elif choice is DuplicateChoice.REPLACE:
+                    replacement = matches[0]
+                # Preserve unrelated matrices even when invoked through Open and replace.
                 keep_existing = True
                 if choice == DuplicateChoice.SKIP:
                     continue
@@ -2827,7 +2786,9 @@ class WorkspaceWindow(ViewerWindow):
         format_ = ExportFormat(self.export_format.currentData())
         directory = self._export_directory or (self.document.path.parent if self.document else Path.cwd())
         if format_ in (ExportFormat.MAT, ExportFormat.XLSX):
-            stem = f"{captured[0].stem[:100]}_and_{len(captured)-1}_matrices" if len(captured) > 1 else captured[0].stem
+            stem = snapshots[0].stem
+            if len(captured) > 1:
+                stem = f"{stem[:100]}_and_{len(captured) - 1}_matrices"
             defaults = (directory / f"{stem}.{format_.value}",)
         else:
             defaults = tuple(directory / f"{snapshot.stem}.{format_.value}" for snapshot in captured)

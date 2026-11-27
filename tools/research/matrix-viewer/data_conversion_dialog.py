@@ -15,10 +15,10 @@ from .data_conversion import (COMPLEX_CONVERSIONS, DB_CONVERSIONS, DEFAULT_DB_FL
                               Conversion, ConversionOptions, DBReference)
 from .data_model import Component, Document, Selection, ViewMode, is_phase_view
 from .fourier import TransformRange
-from .qt_widgets import NoWheelComboBox
+from .ui_data_conversion_dialog import Ui_DataConversionDialog
 
 
-class DataConversionDialog(QtWidgets.QDialog):
+class DataConversionDialog(QtWidgets.QDialog, Ui_DataConversionDialog):
     """Collect scope and arithmetic parameters without reading full arrays.
 
     Args:
@@ -41,72 +41,31 @@ class DataConversionDialog(QtWidgets.QDialog):
                  row: bool = True, index: int | None = None,
                  parent: QtWidgets.QWidget | None = None, *, full_complex: bool | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self._busy = False
         self.document, self.selection = document, selection
         self.row, self.index = row, index
-        self.setWindowTitle("Data conversion")
         self.setModal(True)
-        self.resize(650, 530)
-        layout = QtWidgets.QVBoxLayout(self)
         component = f"\nCurrent channel: {selection.component.value}" if document.is_complex else ""
-        source = QtWidgets.QLabel(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}{component}")
+        source = self.form_source
+        source.setText(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}{component}")
         source.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        source.setWordWrap(True)
-        layout.addWidget(source)
-        self.settings = QtWidgets.QWidget()
-        self.form = QtWidgets.QFormLayout(self.settings)
-        layout.addWidget(self.settings)
-        self.operation = NoWheelComboBox()
         for operation in Conversion:
             self.operation.addItem(operation.value, operation)
-        self.form.addRow("Operation", self.operation)
-        self.range_selector = NoWheelComboBox()
         for scope in (TransformRange.FULL, TransformRange.CROP, TransformRange.SLICE):
             if scope != TransformRange.SLICE or (selection.mode == ViewMode.MATRIX and index is not None):
                 self.range_selector.addItem(scope.value, scope)
-        self.form.addRow("Input range", self.range_selector)
-        self.full_complex = QtWidgets.QCheckBox("Use full complex values (instead of selected component)")
         complex_input = (selection.component != Component.PHASE) if full_complex is None else full_complex
         self.full_complex.setChecked(document.is_complex and complex_input)
-        self.full_complex.setToolTip("Full complex input offers amplitude dB, magnitude and scale/offset. Uncheck to convert the displayed real channel.")
-        self.form.addRow(self.full_complex)
         self.form.setRowVisible(self.full_complex, document.is_complex)
-        self.bounds = QtWidgets.QCheckBox("Apply current value bounds before conversion")
-        self.form.addRow(self.bounds)
-        self.reference_mode = NoWheelComboBox()
         for mode in DBReference:
             self.reference_mode.addItem(mode.value, mode)
-        self.form.addRow("dB reference", self.reference_mode)
-        self.reference = QtWidgets.QLineEdit("1")
-        self.reference.setToolTip("Reference amplitude or power in the same units as the input; must be positive.")
-        self.form.addRow("Reference value", self.reference)
-        self.use_floor = QtWidgets.QCheckBox("Clamp dB output below this floor")
         self.use_floor.setChecked(True)
-        self.form.addRow(self.use_floor)
-        self.floor = QtWidgets.QLineEdit(f"{DEFAULT_DB_FLOOR:g}")
-        self.form.addRow("dB floor", self.floor)
-        self.gain = QtWidgets.QLineEdit("1")
-        self.offset = QtWidgets.QLineEdit("0")
-        self.form.addRow("Scale", self.gain)
-        self.form.addRow("Offset", self.offset)
-        self.result_name = QtWidgets.QLineEdit()
-        self.result_name.setPlaceholderText("Automatic: source · channel · operation")
-        self.form.addRow("Result name", self.result_name)
-        self.formula = QtWidgets.QLabel()
-        self.formula.setWordWrap(True)
-        layout.addWidget(self.formula)
-        note = QtWidgets.QLabel(
-            "Creates a new matrix. Original arrays are unchanged. XY converts Y only; point clouds convert Z only. "
-            "Source coordinates, repeated X values and record order are preserved. Color composites use grayscale height. "
-            "NaN / Inf and undefined results remain gaps. Peak dB uses the selected range after optional value bounds; "
-            "all-zero input uses reference 1. Transformed values can be exported through the Export group.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        self.floor.setText(f"{DEFAULT_DB_FLOOR:g}")
         self.generate = self.buttons.addButton("Generate matrix", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Cancel).setDefault(True)
         self.generate.clicked.connect(self._generate)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
         self.operation.currentIndexChanged.connect(self._update_controls)
         self.reference_mode.currentIndexChanged.connect(self._update_controls)
         self.full_complex.toggled.connect(self._update_controls)

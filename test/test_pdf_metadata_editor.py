@@ -18,6 +18,7 @@ TOOLS = ROOT / "tools/document-processing"
 sys.path[:0] = [str(TOOLS), str(ROOT)]
 app = importlib.import_module("pdf-ocr").load_app("metadata.app")
 from personal_pdf_tools.metadata import engine, worker, xmp
+from utils.qt_styles import theme_tint
 from utils import Pdf, PdfProtection
 
 PACKET = f'''<rdf:RDF xmlns:rdf="{xmp.RDF}" xmlns:a="{xmp.PDFA}" xmlns:dc="{xmp.DC}">
@@ -190,13 +191,13 @@ class MetadataTests(unittest.TestCase):
         self.assertGreater(color.green(), max(color.red(), color.blue()))
         background = first.background().color()
         self.assertGreater(background.green(), max(background.red(), background.blue()))
-        self.assertGreater(background.lightness(), 200)
+        self.assertEqual(background, theme_tint("green"))
         style = QtWidgets.QStyleOptionViewItem()
         languages.itemDelegate().initStyleOption(style, languages.model().index(0, 0))
         self.assertEqual(style.palette.color(QtGui.QPalette.ColorRole.HighlightedText), color)
         selected = style.palette.color(QtGui.QPalette.ColorRole.Highlight)
         self.assertGreater(selected.green(), max(selected.red(), selected.blue()))
-        self.assertLess(selected.lightness(), background.lightness())
+        self.assertEqual(selected, theme_tint("green", selected=True))
         self.assertFalse(languages.item(2).font().bold())
         languages.setCurrentRow(1)
         self.assertEqual(dialog.editor.toPlainText(), "Livre")

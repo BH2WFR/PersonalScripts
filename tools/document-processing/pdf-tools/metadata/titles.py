@@ -2,7 +2,12 @@
 
 import re
 
+from typing import cast
+
 from PySide6 import QtCore, QtGui, QtWidgets
+
+from utils.qt_styles import on_theme_change, theme_text_color, theme_tint
+from .ui_titles import Ui_TitleDialog
 
 
 def _language_name(tag: str) -> str:
@@ -16,22 +21,22 @@ def _language_name(tag: str) -> str:
 
 
 class _LanguageDelegate(QtWidgets.QStyledItemDelegate):
-    def initStyleOption(self, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex) -> None:
+    def initStyleOption(self, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex | QtCore.QPersistentModelIndex) -> None:
         super().initStyleOption(option, index)
         brush = index.data(QtCore.Qt.ItemDataRole.ForegroundRole)
         if isinstance(brush, QtGui.QBrush):
-            palette = QtGui.QPalette.ColorRole
-            option.palette.setBrush(palette.HighlightedText, brush)
-            option.palette.setColor(palette.Highlight, QtGui.QColor("#b5dfbc"))
+            palette: QtGui.QPalette = option.palette  # pyright: ignore[reportAttributeAccessIssue]
+            palette.setBrush(QtGui.QPalette.ColorRole.HighlightedText, brush)
+            view = cast(QtWidgets.QWidget, self.parent())
+            palette.setColor(QtGui.QPalette.ColorRole.Highlight, theme_tint("green", view, selected=True))
 
 
-class TitleDialog(QtWidgets.QDialog):
+class TitleDialog(QtWidgets.QDialog, Ui_TitleDialog):
     """Edit a private draft so Cancel rolls back every operation, including Remove all."""
 
     def __init__(self, titles: dict[str, str], parent: QtWidgets.QWidget, *, has_property: bool) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Multilingual titles")
-        self.resize(680, 410)
+        self.setupUi(self)
         self.titles = dict(titles)
         self.removed_all = False
         self._has_property = has_property
@@ -44,44 +49,19 @@ class TitleDialog(QtWidgets.QDialog):
         self._tags.update((tag.lower(), tag) for tag in titles)
         self._labels = {tag: _language_name(tag) for tag in self._tags.values()}
 
-        layout = QtWidgets.QVBoxLayout(self)
-        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        layout.addWidget(split)
-        left = QtWidgets.QWidget()
-        left_layout = QtWidgets.QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(QtWidgets.QLabel("Language"))
-        self.languages = QtWidgets.QListWidget()
         self.languages.setItemDelegate(_LanguageDelegate(self.languages))
-        left_layout.addWidget(self.languages)
-        add = QtWidgets.QPushButton("Add language…")
-        add.clicked.connect(self._add_language)
-        left_layout.addWidget(add)
-        split.addWidget(left)
-        right = QtWidgets.QWidget()
-        right_layout = QtWidgets.QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        self.label = QtWidgets.QLabel("Title")
-        right_layout.addWidget(self.label)
-        self.editor = QtWidgets.QPlainTextEdit()
-        right_layout.addWidget(self.editor)
-        self.clear_one = QtWidgets.QPushButton("Clear this language")
+        self.add_language.clicked.connect(self._add_language)
         self.clear_one.clicked.connect(self._clear_one)
-        right_layout.addWidget(self.clear_one)
-        split.addWidget(right)
-        split.setChildrenCollapsible(False)
-        split.setStretchFactor(1, 2)
-
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        self.clear_all = buttons.addButton("Remove all multilingual titles", QtWidgets.QDialogButtonBox.ButtonRole.ResetRole)
+        self.split.setChildrenCollapsible(False)
+        self.split.setStretchFactor(1, 2)
+        self.clear_all = self.buttons.addButton("Remove all multilingual titles", QtWidgets.QDialogButtonBox.ButtonRole.ResetRole)
         self.clear_all.setToolTip("Remove the entire XMP title property. Keep the ordinary PDF title.")
         self.clear_all.clicked.connect(self._clear_all)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
         self.languages.currentItemChanged.connect(self._select)
         self.editor.textChanged.connect(self._edit)
+        on_theme_change(self.languages, self._color_languages)
         self._list_languages(None)
         self._select()
 
@@ -102,12 +82,19 @@ class TitleDialog(QtWidgets.QDialog):
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
-                    item.setForeground(QtGui.QColor("#166534"))
-                    item.setBackground(QtGui.QColor("#e4f5e7"))
+            self._color_languages()
             self.languages.setCurrentRow(ordered.index(selected) if selected else 0)
             current = self.languages.currentItem()
             assert current is not None
             self.languages.scrollToItem(current)
+
+    def _color_languages(self) -> None:
+        foreground, background = theme_text_color("green", self.languages), theme_tint("green", self.languages)
+        for row in range(self.languages.count()):
+            item = self.languages.item(row)
+            if item.font().bold():
+                item.setForeground(foreground)
+                item.setBackground(background)
 
     def _select(self) -> None:
         tag = self._tag()

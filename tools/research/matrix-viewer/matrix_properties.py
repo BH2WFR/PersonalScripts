@@ -19,10 +19,12 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from PySide6 import QtCore, QtWidgets
+from utils.qt_styles import set_button_style
 
 from .data_model import Array, RealArray, ViewMode
 from .workspace import MatrixEntry, Setting, active_channel
 from .plot_support import range_texts
+from .ui_matrix_properties_dialog import Ui_MatrixPropertiesDialog
 
 if TYPE_CHECKING:
     from .workspace_window import WorkspaceWindow
@@ -259,7 +261,7 @@ class _StatisticsJob(QtCore.QRunnable):
             self.signals.failed.emit(f"{type(error).__name__}: {error}")
 
 
-class MatrixPropertiesDialog(QtWidgets.QDialog):
+class MatrixPropertiesDialog(QtWidgets.QDialog, Ui_MatrixPropertiesDialog):
     """Read-only snapshot with manually requested statistics and no data edits.
 
     Args:
@@ -272,8 +274,7 @@ class MatrixPropertiesDialog(QtWidgets.QDialog):
     def __init__(self, entry: MatrixEntry, settings: dict[str, Setting],
                  parent: QtWidgets.QWidget | None = None, *, view: ViewProperties | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Matrix properties")
-        self.resize(880, 640)
+        self.setupUi(self)
         self._job: _StatisticsJob | None = None
         document, frame = entry.document, entry.frame
         source = document.image_source.pixels if document.image_source is not None else document.array
@@ -284,18 +285,11 @@ class MatrixPropertiesDialog(QtWidgets.QDialog):
         if view is not None:
             self._sources += view.sources
 
-        layout = QtWidgets.QVBoxLayout(self)
-        identity = QtWidgets.QLabel(f"{entry.label} / {active_channel(entry).label}")
-        identity.setWordWrap(True)
+        identity = self.form_identity
+        identity.setText(f"{entry.label} / {active_channel(entry).label}")
         identity.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(identity)
-        self.tabs = QtWidgets.QTabWidget()
-        layout.addWidget(self.tabs, 1)
-        self.metadata = QtWidgets.QTreeWidget()
         self.metadata.setHeaderLabels(["Property", "Value"])
         self.metadata.setColumnWidth(0, 235)
-        self.metadata.setWordWrap(True)
-        self.tabs.addTab(self.metadata, "Metadata / display")
 
         def group(title: str, rows: list[tuple[str, str]]) -> None:
             node = QtWidgets.QTreeWidgetItem(self.metadata, [title])
@@ -357,30 +351,16 @@ class MatrixPropertiesDialog(QtWidgets.QDialog):
         if provenance:
             group("Provenance", provenance)
 
-        page = QtWidgets.QWidget()
-        stats_layout = QtWidgets.QVBoxLayout(page)
-        help_text = QtWidgets.QLabel("Click Calculate statistics to scan samples. Statistics use finite values only; variance / standard deviation use ddof=0.\n"
-            "NaN is excluded from extrema. inf (90000) means an infinite extreme with finite extreme 90000.\n"
-            "Original matrix and current channel/crop are separate populations; value bounds do not alter these statistics.\n"
-            "Exact quartiles use linear interpolation and require a temporary copy of finite values, one population at a time.")
-        help_text.setWordWrap(True)
-        stats_layout.addWidget(help_text)
-        self.calculate = QtWidgets.QPushButton("Calculate statistics")
+        set_button_style(self.calculate, "blue")
         self.calculate.setEnabled(bool(self._sources))
         self.calculate.clicked.connect(self._calculate)
-        stats_layout.addWidget(self.calculate)
-        self.status = QtWidgets.QLabel("Not calculated" if self._sources else "String arrays: numeric statistics unavailable")
-        stats_layout.addWidget(self.status)
-        self.statistics = QtWidgets.QTreeWidget()
+        self.status.setText("Not calculated" if self._sources else "String arrays: numeric statistics unavailable")
         self.statistics.setHeaderLabels(["Population / statistic", "Value"])
         self.statistics.setColumnWidth(0, 430)
         self.statistics.setRootIsDecorated(True)
         self.statistics.setAlternatingRowColors(True)
-        stats_layout.addWidget(self.statistics, 1)
-        self.tabs.addTab(page, "Statistics")
-        close = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        close = self.form_close
         close.rejected.connect(self.reject)
-        layout.addWidget(close)
 
     def _calculate(self) -> None:
         self.calculate.setEnabled(False)

@@ -1,0 +1,716 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>BookmarksWindow</class>
+ <widget class="QMainWindow" name="BookmarksWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1500</width>
+    <height>950</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>PDF Bookmark Editor</string>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1050</width>
+    <height>650</height>
+   </size>
+  </property>
+  <widget class="QSplitter" name="splitter">
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+   <widget class="QWidget" name="left" native="true">
+    <layout class="QVBoxLayout" name="left_layout" stretch="0,0,0,0,1,0,0">
+     <property name="leftMargin">
+      <number>6</number>
+     </property>
+     <property name="topMargin">
+      <number>6</number>
+     </property>
+     <property name="rightMargin">
+      <number>6</number>
+     </property>
+     <property name="bottomMargin">
+      <number>6</number>
+     </property>
+     <item>
+      <widget class="QWidget" name="files">
+       <layout class="QHBoxLayout" name="file_actions">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <item>
+         <widget class="QPushButton" name="open_button">
+          <property name="text">
+           <string>Open PDF</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="close_pdf_button">
+          <property name="text">
+           <string>Close</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QTabWidget" name="tabs">
+       <widget class="QScrollArea" name="recognition_scroll">
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::NoFrame</enum>
+        </property>
+        <widget class="QWidget" name="recognition">
+         <layout class="QFormLayout" name="recognition_form">
+          <item row="0" column="0">
+           <widget class="QLabel" name="toc_first_row_label">
+            <property name="text">
+             <string>First TOC PDF page</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <layout class="QHBoxLayout" name="toc_first_row" stretch="1,0">
+            <item>
+             <widget class="NoWheelSpinBox" name="toc_first" />
+            </item>
+            <item>
+             <widget class="QPushButton" name="toc_first_current_button">
+              <property name="text">
+               <string>Use current</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="toc_last_row_label">
+            <property name="text">
+             <string>Last TOC PDF page</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <layout class="QHBoxLayout" name="toc_last_row" stretch="1,0">
+            <item>
+             <widget class="NoWheelSpinBox" name="toc_last" />
+            </item>
+            <item>
+             <widget class="QPushButton" name="toc_last_current_button">
+              <property name="text">
+               <string>Use current</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="body_pdf_row_label">
+            <property name="text">
+             <string>First body PDF page</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <layout class="QHBoxLayout" name="body_pdf_row" stretch="1,0">
+            <item>
+             <widget class="NoWheelSpinBox" name="body_pdf" />
+            </item>
+            <item>
+             <widget class="QPushButton" name="body_pdf_current_button">
+              <property name="text">
+               <string>Use current</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="body_book_label">
+            <property name="text">
+             <string>Its printed page number</string>
+            </property>
+            <property name="buddy">
+             <cstring>body_book</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="NoWheelSpinBox" name="body_book" />
+          </item>
+          <item row="4" column="0" colspan="2">
+           <layout class="QHBoxLayout" name="toc_actions">
+            <item>
+             <widget class="QPushButton" name="mark_toc_button">
+              <property name="text">
+               <string>Mark TOC</string>
+              </property>
+              <property name="font">
+               <font>
+                <bold>true</bold>
+               </font>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="clear_toc_button">
+              <property name="text">
+               <string>Clear TOC</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="5" column="0">
+           <widget class="QLabel" name="angle_label">
+            <property name="text">
+             <string>Current TOC rotation</string>
+            </property>
+            <property name="buddy">
+             <cstring>angle</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="1">
+           <widget class="NoWheelDoubleSpinBox" name="angle" />
+          </item>
+          <item row="6" column="0" colspan="2">
+           <layout class="QHBoxLayout" name="crop_row">
+            <item>
+             <widget class="QCheckBox" name="draw_crop">
+              <property name="text">
+               <string>Draw recognition box</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="whole_page">
+              <property name="text">
+               <string>Whole page</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="unmark">
+              <property name="text">
+               <string>Unmark</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="7" column="0" colspan="2">
+           <widget class="NoWheelComboBox" name="requirement_scope" />
+          </item>
+          <item row="8" column="0" colspan="2">
+           <widget class="QPlainTextEdit" name="requirements">
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>105</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+          <item row="9" column="0" colspan="2">
+           <widget class="QCheckBox" name="clear_context">
+            <property name="text">
+             <string>Clear conversation before this run / retry</string>
+            </property>
+           </widget>
+          </item>
+          <item row="10" column="0" colspan="2">
+           <widget class="QCheckBox" name="only_pending">
+            <property name="text">
+             <string>Run only pending / failed pages</string>
+            </property>
+           </widget>
+          </item>
+          <item row="11" column="0" colspan="2">
+           <widget class="QCheckBox" name="append_existing">
+            <property name="text">
+             <string>Keep existing PDF bookmarks</string>
+            </property>
+           </widget>
+          </item>
+          <item row="12" column="0" colspan="2">
+           <layout class="QHBoxLayout" name="outline_actions">
+            <item>
+             <widget class="QPushButton" name="add_roots">
+              <property name="text">
+               <string>Add Cover + TOC</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="clear_bookmarks">
+              <property name="text">
+               <string>Clear bookmarks</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="undo_bookmarks">
+              <property name="text">
+               <string>Undo</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+        <attribute name="title">
+         <string>Recognition</string>
+        </attribute>
+       </widget>
+       <widget class="QWidget" name="labels_tab">
+        <layout class="QFormLayout" name="label_form">
+         <item row="0" column="0">
+          <widget class="QLabel" name="range_slot_label">
+           <property name="text">
+            <string>PDF pages</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <layout class="QVBoxLayout" name="range_slot" />
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="label_first_label">
+           <property name="text">
+            <string>Starting number</string>
+           </property>
+           <property name="buddy">
+            <cstring>label_first</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="NoWheelSpinBox" name="label_first" />
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="label_prefix_label">
+           <property name="text">
+            <string>Prefix</string>
+           </property>
+           <property name="buddy">
+            <cstring>label_prefix</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="QLineEdit" name="label_prefix" />
+         </item>
+         <item row="3" column="0" colspan="2">
+          <layout class="QGridLayout" name="label_buttons" columnstretch="1,1">
+           <item row="0" column="0">
+            <widget class="QPushButton" name="label_numbered">
+             <property name="text">
+              <string>Apply numbered labels</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QPushButton" name="label_clear">
+             <property name="text">
+              <string>Clear selected labels</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QPushButton" name="label_clear_all">
+             <property name="text">
+              <string>Clear all labels</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QPushButton" name="generate_labels">
+             <property name="text">
+              <string>Generate TOC + body labels</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="4" column="0" colspan="2">
+          <widget class="QLabel" name="label_note">
+           <property name="text">
+            <string>Navigation labels only; printed page content stays unchanged.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+        <attribute name="title">
+         <string>Page labels</string>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="run_actions">
+       <item>
+        <widget class="QPushButton" name="run_button">
+         <property name="text">
+          <string>Run TOC</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="retry_button">
+         <property name="text">
+          <string>Retry page</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="retry_all_button">
+         <property name="text">
+          <string>Retry all</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="QLabel" name="yaml_label">
+       <property name="text">
+        <string>YAML draft — current TOC page</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QTabWidget" name="result_tabs">
+       <widget class="QPlainTextEdit" name="yaml">
+        <attribute name="title">
+         <string>YAML draft</string>
+        </attribute>
+       </widget>
+       <widget class="QPlainTextEdit" name="trace">
+        <attribute name="title">
+         <string>Request / errors</string>
+        </attribute>
+       </widget>
+       <widget class="QWidget" name="information_tab">
+        <layout class="QVBoxLayout" name="information_layout" stretch="0,1,0,0,0">
+         <item>
+          <widget class="QLabel" name="information_status">
+           <property name="text">
+            <string>No page selected.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPlainTextEdit" name="information" />
+         </item>
+         <item>
+          <widget class="QLabel" name="instructions_label">
+           <property name="text">
+            <string>Additional instructions for this page</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPlainTextEdit" name="information_input">
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>100</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="information_retry">
+           <property name="text">
+            <string>Retry page</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+        <attribute name="title">
+         <string>Information</string>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="yaml_status">
+       <property name="text">
+        <string>Valid YAML updates the tree. Export uses the tree.</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>16777215</width>
+         <height>65</height>
+        </size>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="yaml_actions">
+       <layout class="QHBoxLayout" name="yaml_buttons">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <item>
+         <widget class="QPushButton" name="apply_yaml">
+          <property name="text">
+           <string>Apply YAML</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="supplement_button">
+          <property name="text">
+           <string>Add page information</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="copy_image">
+          <property name="text">
+           <string>Copy recognition image</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+   <widget class="QWidget" name="right_column">
+    <layout class="QVBoxLayout" name="right_layout">
+     <property name="leftMargin">
+      <number>3</number>
+     </property>
+     <property name="topMargin">
+      <number>6</number>
+     </property>
+     <property name="rightMargin">
+      <number>6</number>
+     </property>
+     <property name="bottomMargin">
+      <number>6</number>
+     </property>
+     <item>
+      <widget class="PreviewPane" name="preview_pane">
+       <widget class="QWidget" name="preview_body">
+        <layout class="QVBoxLayout" name="preview_layout" stretch="1,0">
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QSplitter" name="content">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <widget class="CropViewer" name="viewer" />
+           <widget class="QTabWidget" name="navigation">
+            <widget class="QWidget" name="pages_panel">
+             <layout class="QVBoxLayout" name="pages_layout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="PageTree" name="pages">
+                <column>
+                 <property name="text">
+                  <string>Page</string>
+                 </property>
+                </column>
+                <column>
+                 <property name="text">
+                  <string>Label</string>
+                 </property>
+                </column>
+                <column>
+                 <property name="text">
+                  <string>TOC task</string>
+                 </property>
+                </column>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="delete_pages_button">
+                <property name="text">
+                 <string>Delete selected pages...</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+             <attribute name="title">
+              <string>Pages</string>
+             </attribute>
+            </widget>
+           </widget>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="footer" stretch="1,0,0,0,0">
+           <item>
+            <widget class="QLabel" name="status">
+             <property name="text">
+              <string>Open or drop a PDF.</string>
+             </property>
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QProgressBar" name="progress_bar">
+             <property name="minimumSize">
+              <size>
+               <width>180</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>180</width>
+               <height>16777215</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="task_slot" />
+           </item>
+           <item>
+            <widget class="QLabel" name="balance_summary">
+             <property name="text">
+              <string>API balance: not queried</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="export_button">
+             <property name="text">
+              <string>Export PDF</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+       <widget class="PageToolbar" name="toolbar">
+        <property name="windowTitle">
+         <string />
+        </property>
+        <property name="movable">
+         <bool>false</bool>
+        </property>
+        <attribute name="toolBarArea">
+         <enum>TopToolBarArea</enum>
+        </attribute>
+        <attribute name="toolBarBreak">
+         <bool>false</bool>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>CropViewer</class>
+   <extends>QGraphicsView</extends>
+   <header>..common.crop_viewer</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>PageToolbar</class>
+   <extends>QToolBar</extends>
+   <header>..common.page_toolbar</header>
+  </customwidget>
+  <customwidget>
+   <class>PageTree</class>
+   <extends>QTreeWidget</extends>
+   <header>..common.navigation</header>
+  </customwidget>
+  <customwidget>
+   <class>PreviewPane</class>
+   <extends>QMainWindow</extends>
+   <header>..common.page_toolbar</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

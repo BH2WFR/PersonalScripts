@@ -20,7 +20,7 @@ fonttools
 rapidocr>=3.10,<4
 onnxruntime
 pynput
-PySide6
+PySide6>=6.5
 pyobjc-framework-Cocoa; sys_platform == "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
 pyobjc-framework-ApplicationServices; sys_platform == "darwin"

@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ImageWindow</class>
+ <widget class="QMainWindow" name="ImageWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1160</width>
+    <height>780</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Image to Text and Formula</string>
+  </property>
+  <widget class="QSplitter" name="splitter">
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+   <widget class="QWidget" name="left" native="true">
+    <layout class="QVBoxLayout" name="controls" stretch="0,0,0,0,1,1">
+     <item>
+      <widget class="NoWheelComboBox" name="mode">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="NoWheelComboBox" name="delimiter">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="formula_controls">
+       <layout class="QHBoxLayout" name="formula_buttons">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <item>
+         <widget class="QPushButton" name="formula_install">
+          <property name="text">
+           <string>Install model (99 MiB)</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="formula_remove">
+          <property name="text">
+           <string>Uninstall model</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="formula_hint">
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+       <property name="text">
+        <string />
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="OcrSettingsTabs" name="panel" />
+     </item>
+     <item>
+      <widget class="QTabWidget" name="api_tabs">
+       <widget class="VisionPanel" name="vision_options">
+        <attribute name="title">
+         <string>Recognition</string>
+        </attribute>
+       </widget>
+       <widget class="ApiSettingsForm" name="api_form">
+        <attribute name="title">
+         <string>API settings</string>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+   <widget class="QWidget" name="body" native="true">
+    <layout class="QVBoxLayout" name="body_layout" stretch="0,1,2,0,0">
+     <item>
+      <layout class="QHBoxLayout" name="input_actions">
+       <item>
+        <widget class="QPushButton" name="open_button">
+         <property name="text">
+          <string>Add images...</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="paste_button">
+         <property name="text">
+          <string>Paste image</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="remove_button">
+         <property name="text">
+          <string>Remove selected</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="current_button">
+         <property name="text">
+          <string>Recognize current</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="run_button">
+         <property name="text">
+          <string>Recognize all</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="QTreeWidget" name="list">
+       <property name="rootIsDecorated">
+        <bool>false</bool>
+       </property>
+       <property name="alternatingRowColors">
+        <bool>true</bool>
+       </property>
+       <property name="selectionMode">
+        <enum>QAbstractItemView::ExtendedSelection</enum>
+       </property>
+       <property name="contextMenuPolicy">
+        <enum>Qt::CustomContextMenu</enum>
+       </property>
+       <column>
+        <property name="text">
+         <string>Image</string>
+        </property>
+       </column>
+       <column>
+        <property name="text">
+         <string>Pixels</string>
+        </property>
+       </column>
+       <column>
+        <property name="text">
+         <string>File size</string>
+        </property>
+       </column>
+       <column>
+        <property name="text">
+         <string>Status</string>
+        </property>
+       </column>
+      </widget>
+     </item>
+     <item>
+      <widget class="QTabWidget" name="tabs">
+       <widget class="QPlainTextEdit" name="text">
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+        <attribute name="title">
+         <string>Recognized text</string>
+        </attribute>
+       </widget>
+       <widget class="PageViewer" name="viewer">
+        <attribute name="title">
+         <string>Image preview</string>
+        </attribute>
+       </widget>
+       <widget class="FormulaPreviewTab" name="preview_tab">
+        <attribute name="title">
+         <string>Formula preview</string>
+        </attribute>
+       </widget>
+       <widget class="ExchangeView" name="api_log">
+        <attribute name="title">
+         <string>API exchange</string>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="output_actions">
+       <item>
+        <widget class="QPushButton" name="copy">
+         <property name="text">
+          <string>Copy current</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="copy_all">
+         <property name="text">
+          <string>Copy all</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="save">
+         <property name="text">
+          <string>Save all as TXT...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="footer" stretch="1,0">
+       <item>
+        <widget class="QLabel" name="status">
+         <property name="text">
+          <string>Add or drop images, or paste from the clipboard.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="TaskControls" name="tasks" />
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>OcrSettingsTabs</class>
+   <extends>QTabWidget</extends>
+   <header>.panel</header>
+  </customwidget>
+  <customwidget>
+   <class>TaskControls</class>
+   <extends>QWidget</extends>
+   <header>..common.task_buttons</header>
+  </customwidget>
+  <customwidget>
+   <class>VisionPanel</class>
+   <extends>QStackedWidget</extends>
+   <header>.vision_panel</header>
+  </customwidget>
+  <customwidget>
+   <class>ApiSettingsForm</class>
+   <extends>QScrollArea</extends>
+   <header>..common.llm_window</header>
+  </customwidget>
+  <customwidget>
+   <class>FormulaPreviewTab</class>
+   <extends>QWidget</extends>
+   <header>.formula_preview</header>
+  </customwidget>
+  <customwidget>
+   <class>ExchangeView</class>
+   <extends>QWidget</extends>
+   <header>.exchange_view</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>PageViewer</class>
+   <extends>QGraphicsView</extends>
+   <header>..common.viewer</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

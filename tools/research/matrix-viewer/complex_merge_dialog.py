@@ -8,10 +8,10 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .complex_merge import MergeInput, MergeMatrix, MergeMode, PhaseUnit
 from .data_model import Component
-from .qt_widgets import NoWheelComboBox
+from .ui_complex_merge_dialog import Ui_ComplexMergeDialog
 
 
-class ComplexMergeDialog(QtWidgets.QDialog):
+class ComplexMergeDialog(QtWidgets.QDialog, Ui_ComplexMergeDialog):
     """Choose two numeric channels without loading derived pixels in the GUI.
 
     Args:
@@ -29,68 +29,26 @@ class ComplexMergeDialog(QtWidgets.QDialog):
     def __init__(self, matrices: tuple[MergeMatrix, ...], initial: int = 0,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.matrices = matrices
         self._busy = False
-        self.setWindowTitle("Complex matrix merge")
         self.setModal(True)
-        self.resize(720, 470)
-        layout = QtWidgets.QVBoxLayout(self)
-        self.settings = QtWidgets.QWidget()
-        settings_layout = QtWidgets.QVBoxLayout(self.settings)
-        form = QtWidgets.QFormLayout()
-        self.mode_selector = NoWheelComboBox()
         for mode in MergeMode:
             self.mode_selector.addItem(mode.value, mode)
-        form.addRow("Combine", self.mode_selector)
-        settings_layout.addLayout(form)
-        self.matrix_selectors: list[QtWidgets.QComboBox] = []
-        self.channel_selectors: list[QtWidgets.QComboBox] = []
-        self.input_boxes: list[QtWidgets.QGroupBox] = []
-        self.details: list[QtWidgets.QLabel] = []
-        for side in range(2):
-            box = QtWidgets.QGroupBox()
-            fields = QtWidgets.QFormLayout(box)
-            matrix = NoWheelComboBox()
-            channel = NoWheelComboBox()
-            for combo in (matrix, channel):
-                combo.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-                combo.setMinimumContentsLength(28)
+        self.input_boxes = [self.first_input, self.second_input]
+        self.matrix_selectors = [self.first_matrix, self.second_matrix]
+        self.channel_selectors = [self.first_channel, self.second_channel]
+        self.details = [self.first_detail, self.second_detail]
+        for side, (matrix, channel) in enumerate(zip(self.matrix_selectors, self.channel_selectors)):
             matrix.addItems([item.label for item in matrices])
-            fields.addRow("Matrix", matrix)
-            fields.addRow("Channel", channel)
-            detail = QtWidgets.QLabel()
-            detail.setWordWrap(True)
-            fields.addRow(detail)
-            self.input_boxes.append(box)
-            self.matrix_selectors.append(matrix)
-            self.channel_selectors.append(channel)
-            self.details.append(detail)
-            settings_layout.addWidget(box)
             matrix.currentIndexChanged.connect(lambda _index, side=side: self._matrix_changed(side))
             channel.currentIndexChanged.connect(lambda _index, side=side: self._channel_changed(side))
-        bottom = QtWidgets.QFormLayout()
-        self.phase_unit = NoWheelComboBox()
         for unit in PhaseUnit:
             self.phase_unit.addItem(unit.value, unit)
-        bottom.addRow("Phase unit (polar mode)", self.phase_unit)
-        self.result_name = QtWidgets.QLineEdit()
-        self.result_name.setPlaceholderText("Automatic: Complex merge · first source + second source")
-        bottom.addRow("Result name", self.result_name)
-        settings_layout.addLayout(bottom)
-        layout.addWidget(self.settings)
-        self.note = QtWidgets.QLabel(
-            "Uses complete numeric channels before display crop, value bounds or overlay alignment. "
-            "Shapes and sample coordinates must match; no broadcasting or resampling. "
-            "XY signals require the same unique, uniform X grid. Color composites use their numeric grayscale fusion channels. "
-            "Polar magnitude must be linear and nonnegative. NaN / Inf remain gaps. "
-            "The result is a new complex matrix; source arrays are unchanged.")
-        self.note.setWordWrap(True)
-        layout.addWidget(self.note)
-        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         self.generate = self.buttons.addButton("Generate complex matrix", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Cancel).setDefault(True)
         self.generate.clicked.connect(self._generate)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
         self.mode_selector.currentIndexChanged.connect(self._mode_changed)
         for side, matrix in enumerate(self.matrix_selectors):
             with QtCore.QSignalBlocker(matrix):

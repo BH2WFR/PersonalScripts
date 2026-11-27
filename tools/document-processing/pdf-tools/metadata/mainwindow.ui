@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MetadataWindow</class>
+ <widget class="QWidget" name="MetadataWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>760</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>PDF Metadata Editor</string>
+  </property>
+  <layout class="QVBoxLayout" name="main_layout">
+   <item alignment="Qt::AlignLeft">
+    <widget class="QPushButton" name="open_button">
+     <property name="text">
+      <string>Open PDF…</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="info">
+     <property name="text">
+      <string>Open a PDF to edit its document properties.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTabWidget" name="tabs">
+     <widget class="Properties" name="properties">
+      <attribute name="title">
+       <string>Document properties</string>
+      </attribute>
+     </widget>
+     <widget class="QPlainTextEdit" name="xml">
+      <attribute name="title">
+       <string>XMP (XML)</string>
+      </attribute>
+     </widget>
+     <widget class="OutputOptions" name="options">
+      <attribute name="title">
+       <string>Output settings</string>
+      </attribute>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="status">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="footer">
+     <item>
+      <spacer name="footer_stretch">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="task_slot" />
+     </item>
+     <item>
+      <widget class="QPushButton" name="save">
+       <property name="text">
+        <string>Save as…</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>OutputOptions</class>
+   <extends>QWidget</extends>
+   <header>.panels</header>
+  </customwidget>
+  <customwidget>
+   <class>Properties</class>
+   <extends>QWidget</extends>
+   <header>.panels</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

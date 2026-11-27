@@ -87,7 +87,8 @@ class Worker:
             from .image_batch import image_rgb
             with BytesIO() as stream, image_rgb(Path(str(request["path"]))) as pixels:
                 pixels.save(stream, format="PNG")
-                return {"kind": "vision-image", "image": Llm.image_content(stream.getvalue(), mime_type="image/png")}
+                image = Llm.image_content(stream.getvalue(), mime_type="image/png")
+                return {"kind": "vision-image", "image": cast(dict[str, Json], image)}
         if operation == "scan" and "images" in request:
             if request.get("local_formula"):
                 from .local_formula import recognizer
@@ -177,7 +178,7 @@ def main() -> int:
         for line in sys.stdin:
             try:
                 with redirect_stdout(sys.stderr):
-                    reply = worker.run(json.loads(line))
+                    reply: dict[str, Json] = worker.run(json.loads(line))
             except Cancelled as exc:
                 reply = {"kind": "cancelled", "message": str(exc)}
             except Exception as exc:

@@ -176,7 +176,7 @@ def main() -> int:
         default=crop_rectangle.y2,
         allow_float=False,
     )
-    crop_rectangle = Region(crop_x1, crop_y1, crop_x2, crop_y2)
+    crop_rectangle = Region(int(crop_x1), int(crop_y1), int(crop_x2), int(crop_y2))
 
     # main execution
     os.system("chcp 65001")

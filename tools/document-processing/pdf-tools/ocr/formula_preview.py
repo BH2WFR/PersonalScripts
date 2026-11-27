@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from markdown_it.token import Token
 
 from PySide6 import QtCore, QtGui, QtWidgets, __version__ as pyside_version
+from utils.qt_styles import set_text_style
 from ..common.viewer import MAX_SCALE, MIN_SCALE, ZOOM_STEP, install_preview_menu
 
 
@@ -26,7 +27,7 @@ def _markdown_parser() -> MarkdownIt:
     parser.inline.ruler.before("escape", "tex", _inline_math)
     parser.block.ruler.before("paragraph", "display_tex", _display_block,
                               {"alt": ["paragraph", "reference", "blockquote", "list"]})
-    parser.renderer.rules["tex"] = _render_math
+    parser.add_render_rule("tex", _render_math)
     return parser
 
 
@@ -70,7 +71,7 @@ def _display_block(state: "StateBlock", start: int, stop: int, silent: bool) -> 
     return False
 
 
-def _render_math(tokens: list["Token"], index: int, options: Any, env: Any) -> str:
+def _render_math(_renderer: object, tokens: list["Token"], index: int, options: Any, env: Any) -> str:
     token = tokens[index]
     opening = r"\[" if token.markup in ("$$", r"\[") else r"\("
     return f"<{token.tag}>{opening}{escape(token.content)}{_MATH_END[opening]}</{token.tag}>"
@@ -114,9 +115,9 @@ class FormulaPreview(QtWidgets.QWidget):
     exportFailed = QtCore.Signal(str)
     MAX_EXPORT_PIXELS = 48_000_000
 
-    def __init__(self, root: Path) -> None:
-        super().__init__()
-        self.root = root.resolve()
+    def __init__(self, root: Path | None, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.root = root.resolve() if root is not None else None
         self.layout_box = QtWidgets.QVBoxLayout(self)
         self.layout_box.setContentsMargins(0, 0, 0, 0)
         self.value = ""
@@ -145,6 +146,8 @@ class FormulaPreview(QtWidgets.QWidget):
             self.browser.page().runJavaScript("fitView()")
 
     def display(self, text: str, *, fragment: bool = False) -> None:
+        if self.root is None:
+            return
         from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineUrlRequestInterceptor
         from PySide6.QtWebEngineWidgets import QWebEngineView
         if self.browser is not None and self.value == text and self.fragment == fragment:
@@ -401,3 +404,19 @@ resetView();
             finally:
                 painter.end()
             return image
+
+
+class FormulaPreviewTab(FormulaPreview):
+    """Show the optional renderer or its installation hint in the same tab."""
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        root, hint = preview_resources()
+        super().__init__(root, parent)
+        if root is None:
+            self.setToolTip("")
+            label = QtWidgets.QLabel(hint)
+            label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+            label.setWordWrap(True)
+            set_text_style(label, "red")
+            self.layout_box.addWidget(label)

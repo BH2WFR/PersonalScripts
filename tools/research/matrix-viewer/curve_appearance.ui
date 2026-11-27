@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>CurveAppearance</class>
+ <widget class="QWidget" name="CurveAppearance">
+  <layout class="QFormLayout" name="appearance_form">
+   <item row="0" column="0">
+    <widget class="QLabel" name="style_label">
+     <property name="text">
+      <string>Style</string>
+     </property>
+     <property name="buddy">
+      <cstring>style_selector</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="NoWheelComboBox" name="style_selector" />
+   </item>
+   <item row="1" column="0">
+    <widget class="QLabel" name="line_style_2_label">
+     <property name="text">
+      <string>Line style</string>
+     </property>
+     <property name="buddy">
+      <cstring>line_style</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="1">
+    <widget class="NoWheelComboBox" name="line_style">
+     <property name="toolTip">
+      <string>Line pattern for this signal/slice and its derivative.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0">
+    <widget class="QLabel" name="dash_scale_2_label">
+     <property name="text">
+      <string>Dash scale</string>
+     </property>
+     <property name="buddy">
+      <cstring>dash_scale</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="1">
+    <widget class="NoWheelDoubleSpinBox" name="dash_scale">
+     <property name="toolTip">
+      <string>Multiply dash and gap lengths for this curve. 1× uses the original pattern.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="0">
+    <widget class="QLabel" name="point_shape_2_label">
+     <property name="text">
+      <string>Point shape</string>
+     </property>
+     <property name="buddy">
+      <cstring>point_shape</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="1">
+    <widget class="NoWheelComboBox" name="point_shape">
+     <property name="toolTip">
+      <string>Sample symbol for Points and Line + points; also applies to the derivative.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="0">
+    <widget class="QLabel" name="line_width_2_label">
+     <property name="text">
+      <string>Line width</string>
+     </property>
+     <property name="buddy">
+      <cstring>line_width</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="1">
+    <widget class="NoWheelDoubleSpinBox" name="line_width">
+     <property name="toolTip">
+      <string>Line width for this signal/slice and its derivative. Applies to Line and Line + points.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="0">
+    <widget class="QLabel" name="point_size_2_label">
+     <property name="text">
+      <string>Point size</string>
+     </property>
+     <property name="buddy">
+      <cstring>point_size</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="1">
+    <widget class="NoWheelDoubleSpinBox" name="point_size">
+     <property name="toolTip">
+      <string>Sample diameter for this signal/slice and its derivative. Select Points or Line + points to see samples.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="6" column="0">
+    <widget class="QLabel" name="color_label">
+     <property name="text">
+      <string>Color</string>
+     </property>
+     <property name="buddy">
+      <cstring>color_button</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="6" column="1">
+    <widget class="QPushButton" name="color_button">
+     <property name="text">
+      <string>Line color</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

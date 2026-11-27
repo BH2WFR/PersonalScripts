@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SplitWindow</class>
+ <widget class="QMainWindow" name="SplitWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1420</width>
+    <height>900</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>PDF Page Splitter</string>
+  </property>
+  <widget class="QSplitter" name="splitter">
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+   <widget class="QWidget" name="left" native="true">
+    <property name="minimumSize">
+     <size>
+      <width>340</width>
+      <height>0</height>
+     </size>
+    </property>
+    <layout class="QVBoxLayout" name="left_layout" stretch="0,0,1">
+     <property name="leftMargin">
+      <number>6</number>
+     </property>
+     <property name="topMargin">
+      <number>6</number>
+     </property>
+     <property name="rightMargin">
+      <number>3</number>
+     </property>
+     <property name="bottomMargin">
+      <number>6</number>
+     </property>
+     <item>
+      <layout class="QHBoxLayout" name="file_actions">
+       <item>
+        <widget class="QPushButton" name="open_button">
+         <property name="text">
+          <string>Open PDF</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="close_button">
+         <property name="text">
+          <string>Close</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="QLabel" name="page_info">
+       <property name="text">
+        <string>Page: —
+Size: —</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QScrollArea" name="settings_scroll">
+       <property name="widgetResizable">
+        <bool>true</bool>
+       </property>
+       <property name="frameShape">
+        <enum>QFrame::NoFrame</enum>
+       </property>
+       <widget class="SplitPanel" name="panel" />
+      </widget>
+     </item>
+    </layout>
+   </widget>
+   <widget class="QWidget" name="right_column">
+    <layout class="QVBoxLayout" name="right_layout">
+     <property name="leftMargin">
+      <number>3</number>
+     </property>
+     <property name="topMargin">
+      <number>6</number>
+     </property>
+     <property name="rightMargin">
+      <number>6</number>
+     </property>
+     <property name="bottomMargin">
+      <number>6</number>
+     </property>
+     <item>
+      <widget class="PreviewPane" name="preview_pane">
+       <widget class="QWidget" name="preview_body">
+        <layout class="QVBoxLayout" name="preview_layout" stretch="1,0">
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QSplitter" name="content">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <widget class="SplitViewer" name="viewer" />
+           <widget class="NavigationPane" name="navigation" />
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="footer" stretch="1,0,0">
+           <item>
+            <widget class="QLabel" name="status">
+             <property name="text">
+              <string>Open or drop a PDF to begin.</string>
+             </property>
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="task_slot" />
+           </item>
+           <item>
+            <widget class="QPushButton" name="export_button">
+             <property name="text">
+              <string>Export PDF</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+       <widget class="PageToolbar" name="toolbar">
+        <property name="windowTitle">
+         <string />
+        </property>
+        <property name="movable">
+         <bool>false</bool>
+        </property>
+        <attribute name="toolBarArea">
+         <enum>TopToolBarArea</enum>
+        </attribute>
+        <attribute name="toolBarBreak">
+         <bool>false</bool>
+        </attribute>
+       </widget>
+       <widget class="PreviewOptionsToolbar" name="tool_toolbar">
+        <property name="windowTitle">
+         <string>Preview options</string>
+        </property>
+        <property name="movable">
+         <bool>false</bool>
+        </property>
+        <attribute name="toolBarArea">
+         <enum>TopToolBarArea</enum>
+        </attribute>
+        <attribute name="toolBarBreak">
+         <bool>false</bool>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NavigationPane</class>
+   <extends>QTabWidget</extends>
+   <header>..common.navigation</header>
+  </customwidget>
+  <customwidget>
+   <class>PageToolbar</class>
+   <extends>QToolBar</extends>
+   <header>..common.page_toolbar</header>
+  </customwidget>
+  <customwidget>
+   <class>PreviewOptionsToolbar</class>
+   <extends>QToolBar</extends>
+   <header>..common.page_toolbar</header>
+  </customwidget>
+  <customwidget>
+   <class>PreviewPane</class>
+   <extends>QMainWindow</extends>
+   <header>..common.page_toolbar</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>SplitPanel</class>
+   <extends>QWidget</extends>
+   <header>.panel</header>
+  </customwidget>
+  <customwidget>
+   <class>SplitViewer</class>
+   <extends>QGraphicsView</extends>
+   <header>.viewer</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

@@ -1,6 +1,7 @@
 """Shared PySide6 application setup, font fallback and form controls."""
 
 from functools import lru_cache
+from importlib import import_module
 import struct
 import sys
 
@@ -9,7 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 def _order_cocoa_window(widget: QtWidgets.QWidget, *, activate: bool) -> None:
     try:
-        import objc
+        objc = import_module("objc")
         from .macos_windows import order_window_front
     except ImportError:
         # Standalone Qt editors also support installations without PyObjC.
@@ -17,7 +18,7 @@ def _order_cocoa_window(widget: QtWidgets.QWidget, *, activate: bool) -> None:
         if activate:
             widget.activateWindow()
         return
-    view = objc.objc_object(c_void_p=int(widget.winId()))  # pyright: ignore[reportAttributeAccessIssue]
+    view = objc.objc_object(c_void_p=int(widget.winId()))
     order_window_front(view.window(), activate=activate)
 
 
@@ -183,6 +184,13 @@ def with_cjk_fallbacks(font: QtGui.QFont) -> QtGui.QFont:
     if fallbacks:
         result.setFamilies([*families, *fallbacks])
     return result
+
+
+def set_bold(widget: QtWidgets.QWidget) -> None:
+    """Emphasize the caption while preserving the widget's font family, size and colors."""
+    font = widget.font()
+    font.setBold(True)
+    widget.setFont(font)
 
 
 def monospace_ui_font() -> QtGui.QFont:

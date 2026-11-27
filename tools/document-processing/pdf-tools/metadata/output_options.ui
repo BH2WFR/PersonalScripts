@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>OutputOptions</class>
+ <widget class="QWidget" name="OutputOptions">
+  <layout class="QFormLayout" name="options_form">
+   <item row="0" column="0">
+    <widget class="QLabel" name="marker_label">
+     <property name="text">
+      <string>PDF/A identification</string>
+     </property>
+     <property name="buddy">
+      <cstring>marker</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="NoWheelComboBox" name="marker" />
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QLabel" name="marker_note">
+     <property name="text">
+      <string>Writing identification alone does not establish PDF/A conformance.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0">
+    <widget class="QLabel" name="mode_label">
+     <property name="text">
+      <string>Output security</string>
+     </property>
+     <property name="buddy">
+      <cstring>mode</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="1">
+    <widget class="NoWheelComboBox" name="mode" />
+   </item>
+   <item row="3" column="0">
+    <widget class="QLabel" name="owner_label">
+     <property name="text">
+      <string>Owner password</string>
+     </property>
+     <property name="buddy">
+      <cstring>owner</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="1">
+    <widget class="QLineEdit" name="owner" />
+   </item>
+   <item row="4" column="0">
+    <widget class="QLabel" name="user_label">
+     <property name="text">
+      <string>Opening password</string>
+     </property>
+     <property name="buddy">
+      <cstring>user</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="1">
+    <widget class="QLineEdit" name="user" />
+   </item>
+   <item row="5" column="0" colspan="2">
+    <widget class="QGroupBox" name="group">
+     <property name="title">
+      <string>Allowed actions</string>
+     </property>
+     <layout class="QGridLayout" name="permission_grid">
+      <item row="0" column="0">
+       <widget class="QCheckBox" name="print_pages">
+        <property name="text">
+         <string>Print</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QCheckBox" name="print_hq">
+        <property name="text">
+         <string>High-quality printing</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QCheckBox" name="copy_content">
+        <property name="text">
+         <string>Copy text and images</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QCheckBox" name="accessible">
+        <property name="text">
+         <string>Accessibility</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QCheckBox" name="modify">
+        <property name="text">
+         <string>Modify content</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QCheckBox" name="annotate">
+        <property name="text">
+         <string>Add annotations</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QCheckBox" name="fill_forms">
+        <property name="text">
+         <string>Fill forms</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QCheckBox" name="assemble">
+        <property name="text">
+         <string>Assemble pages</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

@@ -9,7 +9,7 @@ import csv
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from typing import BinaryIO
+from typing import IO
 from zipfile import ZipFile
 
 import numpy as np
@@ -67,7 +67,7 @@ class ImportCatalog:
     preferred_key: str | None = None
 
 
-def _numpy_member(stream: BinaryIO, key: str | None, label: str) -> ImportMember:
+def _numpy_member(stream: IO[bytes], key: str | None, label: str) -> ImportMember:
     """Read an NPY header, preserving shape/type even for unsupported members."""
     shape: tuple[int, ...] = ()
     kind = "unknown"

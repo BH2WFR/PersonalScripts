@@ -16,7 +16,8 @@ Run `../system-event-viewer.py`; this directory is a private package loaded as
 | `macos_activity.py` | Source-qualified unified-log activity patterns and predicates |
 | `linux.py` | systemd journal collection and decoding |
 | `history.py` | Query dispatch, time bounds, deduplication and CSV/JSON exports |
-| `ui.py` | Lazy Qt loading, query worker, table, filters and XML/JSON structured view |
+| [mainwindow.ui](mainwindow.ui) | Qt Designer layout for the query controls, result table and evidence tabs |
+| `ui.py` | Lazy Qt loading, query worker, adaptive event filters and XML/JSON structured view |
 | `app.py` | Desktop/platform checks and application startup |
 
 The entry owns CLI help. Preserve the `PersonalScripts/PowerEvents` QSettings

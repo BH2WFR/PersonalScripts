@@ -13,12 +13,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .data_model import Crop, Document, Selection, ViewMode, is_phase_view
 from .fourier import TransformRange
-from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 from .laplace import (DEFAULT_SIGMA_COUNT, MAX_OUTPUT_BYTES, LaplaceDirection,
                       LaplaceOptions, default_sigma_range, sigma_values)
+from .ui_laplace_dialog import Ui_LaplaceDialog
 
 
-class LaplaceDialog(QtWidgets.QDialog):
+class LaplaceDialog(QtWidgets.QDialog, Ui_LaplaceDialog):
     """Collect one stable source's Laplace sampling or inverse contour settings.
 
     Args:
@@ -40,6 +40,7 @@ class LaplaceDialog(QtWidgets.QDialog):
                  source_name: str, parent: QtWidgets.QWidget | None = None, *,
                  display_component: bool = False) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.document, self.selection, self.crop = document, selection, crop
         self._busy = False
         self.inverse = selection.mode == ViewMode.MATRIX
@@ -47,109 +48,60 @@ class LaplaceDialog(QtWidgets.QDialog):
         self.paired = self.inverse and record is not None and record.direction == LaplaceDirection.FORWARD
         self.setWindowTitle("Inverse Laplace transform" if self.inverse else "Laplace transform")
         self.setModal(True)
-        self.resize(630, 590)
-        layout = QtWidgets.QVBoxLayout(self)
-        source = QtWidgets.QLabel(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}")
-        source.setWordWrap(True)
-        layout.addWidget(source)
-        self.settings = QtWidgets.QWidget()
-        form = QtWidgets.QFormLayout(self.settings)
-        layout.addWidget(self.settings)
-        self.range_selector = NoWheelComboBox()
+        source = self.form_source
+        source.setText(f"Source: {source_name}\n{document.array.shape} · {document.array.dtype}")
+        form = self.form_form
         for value in (TransformRange.FULL, TransformRange.CROP):
             self.range_selector.addItem(value.value, value)
-        self.spacing = QtWidgets.QLineEdit(f"{document.axes[selection.x_axis].spacing:.15g}" if document.axes else "1")
+        self.spacing.setText(f"{document.axes[selection.x_axis].spacing:.15g}" if document.axes else "1")
         self.spacing.setEnabled(selection.mode != ViewMode.XY)
         if selection.mode == ViewMode.XY:
             self.spacing.setToolTip("Uses the actual sorted, unique, uniformly spaced X coordinates.")
-        self.unit = QtWidgets.QLineEdit(document.axes[selection.x_axis].unit if document.axes else "sample")
-        self.auto_sigma = QtWidgets.QCheckBox("Automatic sigma range (±4 / signal duration)")
+        self.unit.setText(document.axes[selection.x_axis].unit if document.axes else "sample")
         self.auto_sigma.setChecked(True)
-        self.sigma_min = QtWidgets.QLineEdit()
-        self.sigma_max = QtWidgets.QLineEdit()
-        self.sigma_count = NoWheelSpinBox()
         self.sigma_count.setRange(2, 65536)
         self.sigma_count.setValue(DEFAULT_SIGMA_COUNT)
-        self.fft_size = NoWheelSpinBox()
         self.fft_size.setRange(0, 2_147_483_647)
         self.fft_size.setSpecialValueText("Same as input")
-        self.component = QtWidgets.QCheckBox(f"Transform current display component ({selection.component.value})")
+        self.component.setText(f"Transform current display component ({selection.component.value})")
         self.component.setChecked(document.is_complex and display_component and not self.inverse)
-        self.bounds = QtWidgets.QCheckBox("Apply current value bounds before transforming")
-        self.fill_zero = QtWidgets.QCheckBox("Replace NaN / Inf / filtered samples with zero")
-        self.single = QtWidgets.QCheckBox("Single precision (complex64)")
-        self.row = NoWheelSpinBox()
         row_count = record.sigma_count if self.paired and record is not None else document.array.shape[selection.y_axis or 0]
         self.row.setRange(-1 if self.paired else 0, max(0, row_count - 1))
         if self.paired:
             self.row.setSpecialValueText("Automatic: sigma nearest zero")
             self.row.setValue(-1)
-        self.inverse_sigma = QtWidgets.QLineEdit("0")
-        self.omega_spacing = QtWidgets.QLineEdit("1")
-        self.output_count = NoWheelSpinBox()
         frequency_count = record.fft_size if self.paired and record is not None else document.array.shape[selection.x_axis]
         self.output_count.setRange(1, frequency_count)
         self.output_count.setValue(document.array.shape[selection.x_axis])
-        self.origin = QtWidgets.QLineEdit("0")
-        self.inverse_unit = QtWidgets.QLineEdit("sample")
-        self.centered = QtWidgets.QCheckBox("Frequency columns use centered order (fftshift)")
         self.centered.setChecked(True)
-        if self.inverse:
-            form.addRow("Sigma row (zero-based)", self.row)
-            form.addRow("Sigma of this row (1 / time unit)", self.inverse_sigma)
-            form.addRow("Angular-frequency step (rad / time unit)", self.omega_spacing)
-            form.addRow("Original sample count (without padding)", self.output_count)
-            form.addRow("Output coordinate origin", self.origin)
-            form.addRow("Output time unit", self.inverse_unit)
-            form.addRow(self.centered)
-            if self.paired and record is not None:
-                self.omega_spacing.setText(f"{2 * np.pi / (record.fft_size * record.time_grid.spacing):.15g}")
-                self.output_count.setValue(record.input_count)
-                self.origin.setText(f"{record.time_grid.origin:.15g}")
-                self.inverse_unit.setText(record.time_grid.unit)
-                for widget in (self.inverse_sigma, self.omega_spacing, self.output_count, self.origin, self.inverse_unit, self.centered):
-                    widget.setEnabled(False)
-        else:
-            form.addRow("Input range", self.range_selector)
-            form.addRow("Sampling interval dt", self.spacing)
-            form.addRow("Time / sample unit", self.unit)
-            form.addRow(self.auto_sigma)
-            form.addRow("Sigma minimum", self.sigma_min)
-            form.addRow("Sigma maximum", self.sigma_max)
-            form.addRow("Sigma rows", self.sigma_count)
-            form.addRow("Frequency columns (optional zero padding)", self.fft_size)
-            if np.iscomplexobj(document.array):
-                form.addRow(self.component)
-            form.addRow(self.bounds)
-            form.addRow(self.fill_zero)
-            form.addRow(self.single)
-        self.name = QtWidgets.QLineEdit()
-        self.name.setPlaceholderText("Automatic: source · channel · Laplace / Inverse Laplace")
-        form.addRow("Result name", self.name)
-        self.note = QtWidgets.QLabel(
-            ("Recorded plane: sampling and length are restored automatically. " if self.paired else
-             "External plane: enter the original spectrum parameters. An arbitrary complex matrix cannot supply them automatically. ") +
-            "Inversion uses one complete sigma row; other rows are not averaged. "
-            "Columns must cover the full uniform DFT angular-frequency grid, with normalization dt × FFT. "
-            "A row nearer sigma = 0 usually reduces numerical error. Cropping and value bounds are ignored."
-            if self.inverse else
-            "Output: rows = sigma, columns = omega (rad / time unit). Input representation is shown below. "
-            "Kernel time starts at the first selected sample; its original coordinate is restored by inversion. "
-            "This computes a finite-record numerical Laplace transform. XY input must have unique, uniformly spaced X values. "
-            "Exponential weighting can amplify roundoff; use a moderate sigma range.")
-        self.note.setWordWrap(True)
-        layout.addWidget(self.note)
-        self.estimate = QtWidgets.QLabel()
-        self.estimate.setWordWrap(True)
-        layout.addWidget(self.estimate)
-        persistence = QtWidgets.QLabel("NPY / MAT / CSV / TXT exports save values only. After reloading, enter the inverse parameters manually.")
-        persistence.setWordWrap(True)
-        layout.addWidget(persistence)
-        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        for field in (self.row, self.inverse_sigma, self.omega_spacing, self.output_count,
+                      self.origin, self.inverse_unit, self.centered):
+            form.setRowVisible(field, self.inverse)
+        for field in (self.range_selector, self.spacing, self.unit, self.auto_sigma, self.sigma_min,
+                      self.sigma_max, self.sigma_count, self.fft_size, self.bounds, self.fill_zero, self.single):
+            form.setRowVisible(field, not self.inverse)
+        form.setRowVisible(self.component, not self.inverse and document.is_complex)
+        if self.paired and record is not None:
+            self.omega_spacing.setText(f"{2 * np.pi / (record.fft_size * record.time_grid.spacing):.15g}")
+            self.output_count.setValue(record.input_count)
+            self.origin.setText(f"{record.time_grid.origin:.15g}")
+            self.inverse_unit.setText(record.time_grid.unit)
+            for widget in (self.inverse_sigma, self.omega_spacing, self.output_count, self.origin, self.inverse_unit, self.centered):
+                widget.setEnabled(False)
+        self.note.setText(("Recorded plane: sampling and length are restored automatically. " if self.paired else
+                     "External plane: enter the original spectrum parameters. An arbitrary complex matrix cannot supply them automatically. ") +
+                    "Inversion uses one complete sigma row; other rows are not averaged. "
+                    "Columns must cover the full uniform DFT angular-frequency grid, with normalization dt × FFT. "
+                    "A row nearer sigma = 0 usually reduces numerical error. Cropping and value bounds are ignored."
+                    if self.inverse else
+                    "Output: rows = sigma, columns = omega (rad / time unit). Input representation is shown below. "
+                    "Kernel time starts at the first selected sample; its original coordinate is restored by inversion. "
+                    "This computes a finite-record numerical Laplace transform. XY input must have unique, uniformly spaced X values. "
+                    "Exponential weighting can amplify roundoff; use a moderate sigma range.")
         self.generate = self.buttons.addButton("Generate matrix", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Cancel).setDefault(True)
         self.generate.clicked.connect(self._generate)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
         self.range_selector.currentIndexChanged.connect(self._summary)
         for widget in (self.spacing, self.omega_spacing, self.inverse_sigma):
             widget.textChanged.connect(self._summary)

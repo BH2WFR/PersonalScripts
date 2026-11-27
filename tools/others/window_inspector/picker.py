@@ -65,16 +65,14 @@ class Finder(QLabel):
     message = Signal(str)
     started = Signal()
 
-    def __init__(self, backend: Backend, outline: Outline) -> None:
-        super().__init__()
-        self.backend, self.outline = backend, outline
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
         self.dragging = False
         self.hovered: Window | None = None
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFixedWidth(34)
-        self.setMinimumHeight(30)
-        self.setToolTip("Drag the finder onto a window. Release to inspect it, or press Esc to cancel.")
-        self.setAccessibleName("Window finder")
+
+    def configure(self, backend: Backend, outline: Outline) -> None:
+        """Bind the native window lookup and outline before the inspector is shown."""
+        self.backend, self.outline = backend, outline
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)

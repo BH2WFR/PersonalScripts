@@ -28,12 +28,20 @@ from .workspace import RenderLayer
 from .value_markers import MarkerStyle, nonfinite_mask
 from .coordinates import AxisMap
 from .render_style import DEFAULT_POINT_SIZE, ImageStyle
+from .ui_image_view import Ui_ImageView
 
 PLOT_CONTENT_MARGIN = 2
 IMAGE_FIT_PADDING = 0.02
 
 
-class ImageView(QtWidgets.QWidget):
+def _color_map(name: str, *, source: str | None = None) -> pg.ColorMap:
+    color_map = pg.colormap.get(name, source=source)
+    if color_map is None:
+        raise ValueError(f"Unavailable colormap: {name}")
+    return color_map
+
+
+class ImageView(QtWidgets.QWidget, Ui_ImageView):
     """Zoomable row-major image; x is column and y is row, starting at zero.
 
     Args:
@@ -42,6 +50,7 @@ class ImageView(QtWidgets.QWidget):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.frame: Frame | None = None
         self._independent_axes = False
         self._equal_xy_override: bool | None = None
@@ -53,25 +62,19 @@ class ImageView(QtWidgets.QWidget):
         self._point_key: tuple[object, ...] = ()
         self._style = ImageStyle.IMAGE
         self._point_size = DEFAULT_POINT_SIZE
-        self._cmap = "viridis"
+        self._cmap = _color_map("viridis")
         self._levels = (0.0, 1.0)
         self.extrema_generation = 0
         self._extrema_key: tuple[int, ...] = ()
         self.clip_color = QtGui.QColor(DEFAULT_CLIP_COLOR)
         self.marker_style = MarkerStyle()
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.readout = QtWidgets.QLabel("Move over the image to inspect a pixel")
-        self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        layout = self.form_layout
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.readout.setWordWrap(True)
-        header = QtWidgets.QHBoxLayout()
+        header = self.form_header
         self.color_range_label = RangeLabel("Color range")
-        header.addWidget(self.color_range_label)
-        header.addWidget(self.readout, 1)
-        layout.addLayout(header)
+        header.insertWidget(header.count() - 1, self.color_range_label)
         self.graphics = pg.GraphicsLayoutWidget()
-        self.graphics.ci.layout.setContentsMargins(*(PLOT_CONTENT_MARGIN,) * 4)
+        self.graphics.ci.setContentsMargins(*(PLOT_CONTENT_MARGIN,) * 4)
         native_view = pyside_graphics_view(self.graphics)
         # Transparent layers and a moving InfiniteLine need their old pixels
         # repainted together. This is event-driven; cached images are reused.
@@ -98,7 +101,7 @@ class ImageView(QtWidgets.QWidget):
         self.clip_overlay = pg.ImageItem(axisOrder="row-major")
         self.clip_overlay.setOpts(autoDownsample=False)
         self.plot.addItem(self.clip_overlay)
-        self.bar = pg.ColorBarItem(values=(0, 1), colorMap=pg.colormap.get("viridis"), interactive=False)
+        self.bar = pg.ColorBarItem(values=(0, 1), colorMap=self._cmap, interactive=False)
         self.bar.setImageItem(self.item, insert_in=self.plot)
         self.color_axis = EndpointAxis("right")
         self.bar.setAxisItems({"right": self.color_axis})
@@ -130,7 +133,7 @@ class ImageView(QtWidgets.QWidget):
         """
         self._clear_layers()
         self._invalidate_extrema((id(frame),))
-        self._style, self._point_size, self._cmap, self._levels = style, point_size, cmap, levels
+        self._style, self._point_size, self._levels = style, point_size, levels
         self.item.setVisible(style == ImageStyle.IMAGE)
         self.points.setVisible(style == ImageStyle.POINTS)
         self.frame = frame
@@ -141,7 +144,6 @@ class ImageView(QtWidgets.QWidget):
         h, w = frame.scalar.shape
         self.item.setRect(frame.x_mapping.forward(frame.x_start - 0.5), frame.y_mapping.forward(frame.y_start - 0.5),
                           w * frame.x_mapping.scale, h * frame.y_mapping.scale)
-        self._update_clip_overlay()
         self.bar.setVisible(not frame.composite)
         self.color_range_label.set_limits(None if frame.composite else levels)
         if frame.composite:
@@ -150,9 +152,10 @@ class ImageView(QtWidgets.QWidget):
             # the first RGB(A) image is not saturated into an all-white preview.
             self.item.setOpts(lut=None, levels=(0, 255))
         else:
-            self.bar.setColorMap(pg.colormap.get(cmap, source="matplotlib"))
+            self._cmap = _color_map(cmap, source="matplotlib")
+            self.bar.setColorMap(self._cmap)
             self.bar.setLevels(levels)
-        self._update_points()
+        self._update_clip_overlay()
         if reset:
             self.reset_view()
 
@@ -197,7 +200,7 @@ class ImageView(QtWidgets.QWidget):
             May expand a visible axis range to maintain equal unit lengths.
         """
         self._equal_xy_override = enabled
-        self.view_box.setAspectLocked(enabled, ratio=1.0)
+        self.view_box.setAspectLocked(enabled, ratio=1)
 
     def set_layers(self, layers: tuple[RenderLayer, ...], reset: bool = False) -> None:
         """Overlay scalar matrices using fixed RGB colors and value-based opacity.
@@ -355,8 +358,9 @@ class ImageView(QtWidgets.QWidget):
         else:
             low, high = self._levels
             values = np.clip((frame.display_scalar[rows, columns].astype(np.float64) - low) / (high - low), 0, 1)
-            palette = pg.colormap.get(self._cmap, source="matplotlib").getLookupTable(0, 1, 256, alpha=True)
-            colors = np.asarray(palette[np.asarray(values * 255, dtype=np.uint8)], dtype=np.uint8)
+            table = self._cmap.getLookupTable(0, 1, 256, alpha=True, mode=pg.ColorMap.BYTE)
+            palette = np.asarray(table, dtype=np.uint8)
+            colors = palette[np.asarray(values * 255, dtype=np.uint8)]
         self._point_clip_colors(colors, frame, self.marker_style, self.clip_color)
         self._set_points(self.points, frame, colors, self._point_size)
         self._point_key = key

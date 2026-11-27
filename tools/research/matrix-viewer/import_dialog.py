@@ -10,11 +10,12 @@ from dataclasses import replace
 from PySide6 import QtCore, QtWidgets
 
 from .import_catalog import ImportCatalog, ImportChoice, ImportMember, SplitAxis
-from .qt_widgets import NoWheelComboBox, NoWheelSpinBox
 from .table_data import HeaderMode, TableRange
+from .ui_import_dialog import Ui_ImportDialog
+from .ui_split_array_dialog import Ui_SplitArrayDialog
 
 
-class ImportDialog(QtWidgets.QDialog):
+class ImportDialog(QtWidgets.QDialog, Ui_ImportDialog):
     """Checkbox list with source dimensions and independently editable ranges.
 
     Args:
@@ -27,34 +28,19 @@ class ImportDialog(QtWidgets.QDialog):
 
     def __init__(self, catalog: ImportCatalog, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.catalog = catalog
         self._current = -1
         self._choices = [ImportChoice(item.key, delimiter=catalog.delimiter) for item in catalog.members]
-        self.setWindowTitle("Choose matrices / input range")
         self.setModal(True)
         self.resize(780, 690 if catalog.tabular else 400)
-        layout = QtWidgets.QVBoxLayout(self)
-        source = QtWidgets.QLabel(str(catalog.path))
+        source = self.form_source
+        source.setText(str(catalog.path))
         source.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        source.setWordWrap(True)
-        layout.addWidget(source)
-        self.include_file_prefix = QtWidgets.QCheckBox("Include NPZ filename in matrix names")
         self.include_file_prefix.setChecked(True)
         self.include_file_prefix.setVisible(catalog.path.suffix.lower() == ".npz")
-        self.include_file_prefix.setToolTip(
-            "Checked: archive.npz :: member. Unchecked: member only. "
-            "Applies to all selected matrices, including split channels. The full source stays in tooltips.")
-        layout.addWidget(self.include_file_prefix)
-        bar = QtWidgets.QHBoxLayout()
-        self.select_all = QtWidgets.QPushButton("Select all")
-        self.select_none = QtWidgets.QPushButton("Select none")
         self.select_all.clicked.connect(lambda: self._check_all(True))
         self.select_none.clicked.connect(lambda: self._check_all(False))
-        bar.addWidget(self.select_all)
-        bar.addWidget(self.select_none)
-        bar.addStretch()
-        layout.addLayout(bar)
-        self.members = QtWidgets.QTreeWidget()
         self.members.setRootIsDecorated(False)
         self.members.setColumnCount(4)
         self.members.setHeaderLabels(["Matrix / worksheet", "Rows", "Columns", "Type / status"])
@@ -80,11 +66,6 @@ class ImportDialog(QtWidgets.QDialog):
                 checked = catalog.preferred_key is None or member.key == catalog.preferred_key
                 item.setCheckState(0, QtCore.Qt.CheckState.Checked if checked else QtCore.Qt.CheckState.Unchecked)
             self.members.addTopLevelItem(item)
-        layout.addWidget(self.members, 1)
-        self.range_box = QtWidgets.QGroupBox("Input range for the highlighted table (1-based, inclusive)")
-        self.form = QtWidgets.QFormLayout(self.range_box)
-        self.start_row, self.start_column = NoWheelSpinBox(), NoWheelSpinBox()
-        self.end_row, self.end_column = NoWheelSpinBox(), NoWheelSpinBox()
         for field in (self.start_row, self.start_column, self.end_row, self.end_column):
             field.setMaximum(2_147_483_647)
             field.setKeyboardTracking(False)
@@ -92,48 +73,28 @@ class ImportDialog(QtWidgets.QDialog):
             field.setMinimum(1)
         for field in (self.end_row, self.end_column):
             field.setSpecialValueText("Last")
-        for label, start, end in (("Rows", self.start_row, self.end_row), ("Columns", self.start_column, self.end_column)):
-            fields = QtWidgets.QHBoxLayout()
-            fields.addWidget(start)
-            fields.addWidget(QtWidgets.QLabel("to"))
-            fields.addWidget(end)
-            self.form.addRow(label, fields)
-        self.header = NoWheelComboBox()
         for mode in HeaderMode:
             self.header.addItem(mode.value, mode)
-        self.form.addRow("Header", self.header)
-        self.delimiter = NoWheelComboBox()
         for label, value in (("Automatic", None), ("Comma", ","), ("Semicolon", ";"), ("Tab", "\t")):
             self.delimiter.addItem(label, value)
-        self.form.addRow("Text delimiter", self.delimiter)
         self.form.setRowVisible(self.delimiter, catalog.text)
         self.range_box.setVisible(catalog.tabular)
-        layout.addWidget(self.range_box)
-        self.preview_box = QtWidgets.QGroupBox("Original top-left cells (preview only)")
-        preview_layout = QtWidgets.QVBoxLayout(self.preview_box)
-        self.preview = QtWidgets.QTableWidget()
         self.preview.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.preview.horizontalHeader().setDefaultSectionSize(78)
-        self.preview.setMaximumHeight(180)
-        preview_layout.addWidget(self.preview)
         self.preview_box.setVisible(catalog.tabular)
-        layout.addWidget(self.preview_box)
-        self.note = QtWidgets.QLabel(
-            "Each worksheet has its own range. Dimensions include headings/notes and may include formatted empty cells. "
-            "Only checked items are loaded. Excel formulas need saved numeric results. "
-            "For CSV/TXT, row numbers count parsed records (including blanks); columns depend on the selected delimiter."
-            if catalog.tabular else "Only checked matrices are loaded. Unsupported members are disabled; hover over the status for details.")
-        self.note.setWordWrap(True)
-        layout.addWidget(self.note)
-        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Open | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        self.note.setText("Each worksheet has its own range. Dimensions include headings/notes and may include formatted empty cells. "
+                    "Only checked items are loaded. Excel formulas need saved numeric results. "
+                    "For CSV/TXT, row numbers count parsed records (including blanks); columns depend on the selected delimiter."
+                    if catalog.tabular else "Only checked matrices are loaded. Unsupported members are disabled; hover over the status for details.")
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
         self.members.currentItemChanged.connect(self._current_changed)
         self.members.itemChanged.connect(self._update_open)
         initial = next((index for index, member in enumerate(catalog.members)
                         if not member.error and (catalog.preferred_key is None or member.key == catalog.preferred_key)), 0)
-        self.members.setCurrentItem(self.members.topLevelItem(initial))
+        initial_item = self.members.topLevelItem(initial)
+        if initial_item is not None:
+            self.members.setCurrentItem(initial_item)
         self._update_open()
 
     def _store_current(self) -> None:
@@ -199,7 +160,7 @@ class ImportDialog(QtWidgets.QDialog):
         super().accept()
 
 
-class SplitArrayDialog(QtWidgets.QDialog):
+class SplitArrayDialog(QtWidgets.QDialog, Ui_SplitArrayDialog):
     """Choose the channel axis of a numeric 3D array, or skip that member.
 
     Args:
@@ -215,38 +176,19 @@ class SplitArrayDialog(QtWidgets.QDialog):
 
     def __init__(self, source: str, member: ImportMember, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.skipped_explicitly = False
         if len(member.shape) != 3 or any(size <= 0 for size in member.shape):
             raise ValueError("Channel splitting requires a nonempty 3D array.")
-        self.setWindowTitle("Open 3D array")
         self.setModal(True)
-        layout = QtWidgets.QVBoxLayout(self)
-        label = QtWidgets.QLabel(f"{source}\n{member.label}\nShape: {member.shape} · {member.kind}")
+        label = self.form_label
+        label.setText(f"{source}\n{member.label}\nShape: {member.shape} · {member.kind}")
         label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        label.setWordWrap(True)
-        layout.addWidget(label)
-        layout.addWidget(QtWidgets.QLabel("Choose a channel axis to split into separate 2D matrices."))
-        self.channel_axis = NoWheelComboBox()
         for axis in SplitAxis:
             rows, columns = tuple(size for index, size in enumerate(member.shape) if index != axis)
             self.channel_axis.addItem(f"Axis {axis.value}: {member.shape[axis]} channels → {rows} × {columns} each", axis)
         default = min(SplitAxis, key=lambda axis: (member.shape[axis], -axis.value))
         self.channel_axis.setCurrentIndex(int(default))
-        layout.addWidget(self.channel_axis)
-        note = QtWidgets.QLabel("All channels on this axis will be opened. Original values and dtype are preserved. "
-                               "Axis and channel indices start at 0. Don't open skips this array; "
-                               "check the option below to also skip later matching arrays.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.apply_matching = QtWidgets.QCheckBox("Apply to matching arrays in this import")
-        self.apply_matching.setToolTip(
-            "Remember Split and open or Don't open for later 3D arrays with the same "
-            "length on the selected axis. Other dimensions may differ. Escape/window close "
-            "skips only this array. A new import resets this choice.")
-        layout.addWidget(self.apply_matching)
-        self.match_description = QtWidgets.QLabel()
-        self.match_description.setWordWrap(True)
-        layout.addWidget(self.match_description)
 
         def update_match_description() -> None:
             axis = self.axis()
@@ -255,12 +197,11 @@ class SplitArrayDialog(QtWidgets.QDialog):
 
         self.channel_axis.currentIndexChanged.connect(update_match_description)
         update_match_description()
-        buttons = QtWidgets.QDialogButtonBox()
+        buttons = self.form_buttons
         self.split_button = buttons.addButton("Split and open", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
         self.skip_button = buttons.addButton("Don't open", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole)
         buttons.accepted.connect(self.accept)
         self.skip_button.clicked.connect(self._skip)
-        layout.addWidget(buttons)
 
     def _skip(self) -> None:
         """Distinguish an explicit batch skip from Escape or window close."""

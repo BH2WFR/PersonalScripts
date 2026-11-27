@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ValueMarkers</class>
+ <widget class="QGroupBox" name="ValueMarkers">
+  <layout class="QFormLayout" name="markers">
+   <item row="0" column="0" colspan="2">
+    <layout class="QHBoxLayout" name="highlight_row">
+     <item>
+      <widget class="QCheckBox" name="highlight_clipped">
+       <property name="text">
+        <string>Highlight clipped values</string>
+       </property>
+       <property name="toolTip">
+        <string>Emphasize clamped samples in 1D, 2D and 3D. Turning this off keeps value clamping active.</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="clip_color_button">
+       <property name="text">
+        <string>Clipping color</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QCheckBox" name="show_nonfinite">
+     <property name="text">
+      <string>Show Inf / -Inf / NaN markers (1D / 2D)</string>
+     </property>
+     <property name="toolTip">
+      <string>1D: Inf at the visible finite maximum, -Inf at the minimum, NaN at zero. No finite samples: use zero. 2D: color the original pixel. Source values and derivatives are unchanged.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0" colspan="2">
+    <widget class="QWidget" name="nonfinite_color_row" native="true">
+     <layout class="QHBoxLayout" name="nonfinite_colors">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+     </layout>
+    </widget>
+   </item>
+   <item row="3" column="0">
+    <widget class="QLabel" name="field_1d_nonfinite_marker_size_label">
+     <property name="text">
+      <string>1D nonfinite marker size</string>
+     </property>
+     <property name="buddy">
+      <cstring>nonfinite_size</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="1">
+    <widget class="NoWheelDoubleSpinBox" name="nonfinite_size">
+     <property name="toolTip">
+      <string>Inf / -Inf / NaN dot diameter in 1D plots, including slices. 2D retains whole-pixel coloring.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="0" colspan="2">
+    <widget class="QLabel" name="marker_hint">
+     <property name="text">
+      <string>1D: Inf at the finite maximum, -Inf at the minimum, NaN at zero. 2D: color the original pixel. Derivatives exclude these samples.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+  </layout>
+  <property name="title">
+   <string>Value markers</string>
+  </property>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

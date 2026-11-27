@@ -1,0 +1,1015 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsPanel</class>
+ <widget class="QTabWidget" name="SettingsPanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>384</width>
+    <height>609</height>
+   </rect>
+  </property>
+  <property name="currentIndex">
+   <number>1</number>
+  </property>
+  <widget class="QScrollArea" name="text_scroll">
+   <property name="widgetResizable">
+    <bool>true</bool>
+   </property>
+   <attribute name="title">
+    <string>Text</string>
+   </attribute>
+   <widget class="QWidget" name="text_page">
+    <property name="geometry">
+     <rect>
+      <x>0</x>
+      <y>0</y>
+      <width>376</width>
+      <height>578</height>
+     </rect>
+    </property>
+    <layout class="QVBoxLayout" name="text_layout">
+     <property name="spacing">
+      <number>5</number>
+     </property>
+     <property name="leftMargin">
+      <number>4</number>
+     </property>
+     <property name="topMargin">
+      <number>4</number>
+     </property>
+     <property name="rightMargin">
+      <number>4</number>
+     </property>
+     <property name="bottomMargin">
+      <number>4</number>
+     </property>
+     <item>
+      <widget class="QGroupBox" name="dpi_group">
+       <property name="title">
+        <string>Resolution</string>
+       </property>
+       <layout class="QFormLayout" name="dpi_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0">
+         <widget class="QLabel" name="dpi_label">
+          <property name="text">
+           <string>Sampling target (DPI)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelSpinBox" name="dpi_editor"/>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="dpi_policy_label">
+          <property name="text">
+           <string>Below-target image sampling</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelComboBox" name="dpi_policy_editor"/>
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="upscale_label">
+          <property name="text">
+           <string>Lanczos text enlargement</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelSpinBox" name="upscale_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="mode_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="mode_group">
+       <property name="title">
+        <string>Binarization</string>
+       </property>
+       <layout class="QFormLayout" name="mode_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0">
+         <widget class="QLabel" name="mode_label">
+          <property name="text">
+           <string>Method</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="mode_editor"/>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="threshold_label">
+          <property name="text">
+           <string>Threshold</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QWidget" name="threshold_row" native="true">
+          <layout class="QHBoxLayout" name="threshold_layout" stretch="1,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QSlider" name="threshold_slider">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="NoWheelSpinBox" name="threshold_editor"/>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="window_label">
+          <property name="text">
+           <string>Sauvola window (odd)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelSpinBox" name="window_editor"/>
+        </item>
+        <item row="3" column="0">
+         <widget class="QLabel" name="k_label">
+          <property name="text">
+           <string>Sauvola k</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="k_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="levels_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="levels_group">
+       <property name="title">
+        <string>Black / white points</string>
+       </property>
+       <layout class="QFormLayout" name="levels_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="levels_editor">
+          <property name="text">
+           <string>Adjust black/white points</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="black_point_label">
+          <property name="text">
+           <string>Black point</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelSpinBox" name="black_point_editor"/>
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="white_point_label">
+          <property name="text">
+           <string>White point</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelSpinBox" name="white_point_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="sharpen_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="sharpen_group">
+       <property name="title">
+        <string>Sharpening</string>
+       </property>
+       <layout class="QFormLayout" name="sharpen_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="sharpen_editor">
+          <property name="text">
+           <string>Unsharp mask</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="sharpen_radius_label">
+          <property name="text">
+           <string>Sharpen radius</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="sharpen_radius_editor"/>
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="sharpen_percent_label">
+          <property name="text">
+           <string>Sharpen amount (%)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelSpinBox" name="sharpen_percent_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <spacer name="text_stretch">
+       <property name="orientation">
+        <enum>Qt::Orientation::Vertical</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QScrollArea" name="images_scroll">
+   <property name="widgetResizable">
+    <bool>true</bool>
+   </property>
+   <attribute name="title">
+    <string>Images</string>
+   </attribute>
+   <widget class="QWidget" name="images_page">
+    <property name="geometry">
+     <rect>
+      <x>0</x>
+      <y>-121</y>
+      <width>359</width>
+      <height>699</height>
+     </rect>
+    </property>
+    <layout class="QVBoxLayout" name="images_layout">
+     <property name="spacing">
+      <number>5</number>
+     </property>
+     <property name="leftMargin">
+      <number>4</number>
+     </property>
+     <property name="topMargin">
+      <number>4</number>
+     </property>
+     <property name="rightMargin">
+      <number>4</number>
+     </property>
+     <property name="bottomMargin">
+      <number>4</number>
+     </property>
+     <item>
+      <widget class="QGroupBox" name="regions_enabled_group">
+       <property name="title">
+        <string>Region detection</string>
+       </property>
+       <layout class="QFormLayout" name="regions_enabled_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="regions_enabled_editor">
+          <property name="text">
+           <string>Protect illustrations automatically</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="regions_profile_label">
+          <property name="text">
+           <string>Detection preset</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelComboBox" name="regions_profile_editor"/>
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="regions_threshold_label">
+          <property name="text">
+           <string>Detection threshold</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="regions_threshold_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="regions_mode_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="regions_mode_group">
+       <property name="title">
+        <string>Protected image appearance</string>
+       </property>
+       <layout class="QFormLayout" name="regions_mode_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0">
+         <widget class="QLabel" name="regions_mode_label">
+          <property name="text">
+           <string>Protected image mode</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="regions_mode_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="regions_codec_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="regions_codec_group">
+       <property name="title">
+        <string>Compression</string>
+       </property>
+       <layout class="QFormLayout" name="regions_codec_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0">
+         <widget class="QLabel" name="regions_codec_label">
+          <property name="text">
+           <string>Crop compression</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="regions_codec_editor"/>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="regions_quality_label">
+          <property name="text">
+           <string>JPEG quality</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QWidget" name="regions_quality_row" native="true">
+          <layout class="QHBoxLayout" name="regions_quality_layout" stretch="1,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QSlider" name="regions_quality_slider">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="NoWheelSpinBox" name="regions_quality_editor"/>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="regions_dither_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="regions_dither_group">
+       <property name="title">
+        <string>Tone reproduction</string>
+       </property>
+       <layout class="QFormLayout" name="regions_dither_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0">
+         <widget class="QLabel" name="regions_dither_label">
+          <property name="text">
+           <string>Dithering</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="regions_dither_editor"/>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="regions_contrast_label">
+          <property name="text">
+           <string>Crop contrast (1 = off)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="regions_contrast_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="regions_whiten_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="regions_whiten_group">
+       <property name="title">
+        <string>Image background</string>
+       </property>
+       <layout class="QFormLayout" name="regions_whiten_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="regions_whiten_editor">
+          <property name="text">
+           <string>Whiten image crop background</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="regions_white_point_label">
+          <property name="text">
+           <string>Image crop white point</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QWidget" name="regions_white_point_row" native="true">
+          <layout class="QHBoxLayout" name="regions_white_point_layout" stretch="1,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QSlider" name="regions_white_point_slider">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="NoWheelSpinBox" name="regions_white_point_editor"/>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="regions_color_text_mode_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="regions_color_text_mode_group">
+       <property name="title">
+        <string>Colored text</string>
+       </property>
+       <layout class="QFormLayout" name="regions_color_text_mode_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0">
+         <widget class="QLabel" name="regions_color_text_mode_label">
+          <property name="text">
+           <string>Colored text mode</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="regions_color_text_mode_editor"/>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="regions_color_text_contrast_label">
+          <property name="text">
+           <string>Text crop contrast (1 = off)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="regions_color_text_contrast_editor"/>
+        </item>
+        <item row="2" column="0" colspan="2">
+         <widget class="QCheckBox" name="regions_color_text_whiten_editor">
+          <property name="text">
+           <string>Whiten text crop background</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="0">
+         <widget class="QLabel" name="regions_color_text_white_point_label">
+          <property name="text">
+           <string>Text crop white point</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="1">
+         <widget class="QWidget" name="regions_color_text_white_point_row" native="true">
+          <layout class="QHBoxLayout" name="regions_color_text_white_point_layout" stretch="1,0">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QSlider" name="regions_color_text_white_point_slider">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="NoWheelSpinBox" name="regions_color_text_white_point_editor"/>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="4" column="0" colspan="2">
+         <widget class="QLabel" name="image_hint">
+          <property name="text">
+           <string>Text backgrounds always use lossless CCITT Group 4.
+Low-depth crops use lossless Flate.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <spacer name="images_stretch">
+       <property name="orientation">
+        <enum>Qt::Orientation::Vertical</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QScrollArea" name="cleanup_scroll">
+   <property name="widgetResizable">
+    <bool>true</bool>
+   </property>
+   <attribute name="title">
+    <string>Cleanup</string>
+   </attribute>
+   <widget class="QWidget" name="cleanup_page">
+    <property name="geometry">
+     <rect>
+      <x>0</x>
+      <y>0</y>
+      <width>376</width>
+      <height>578</height>
+     </rect>
+    </property>
+    <layout class="QVBoxLayout" name="cleanup_layout">
+     <property name="spacing">
+      <number>5</number>
+     </property>
+     <property name="leftMargin">
+      <number>4</number>
+     </property>
+     <property name="topMargin">
+      <number>4</number>
+     </property>
+     <property name="rightMargin">
+      <number>4</number>
+     </property>
+     <property name="bottomMargin">
+      <number>4</number>
+     </property>
+     <item>
+      <widget class="QGroupBox" name="regions_denoise_group">
+       <property name="title">
+        <string>Binary speck removal</string>
+       </property>
+       <layout class="QFormLayout" name="regions_denoise_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="regions_denoise_editor">
+          <property name="text">
+           <string>Remove isolated binary specks</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="regions_denoise_area_label">
+          <property name="text">
+           <string>Maximum speck area at 240 DPI</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelSpinBox" name="regions_denoise_area_editor"/>
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="regions_denoise_distance_label">
+          <property name="text">
+           <string>Distance from other ink</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelSpinBox" name="regions_denoise_distance_editor"/>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="regions_clean_background_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="regions_clean_background_group">
+       <property name="title">
+        <string>Shaded text</string>
+       </property>
+       <layout class="QFormLayout" name="regions_clean_background_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="regions_clean_background_editor">
+          <property name="text">
+           <string>Clean shaded text (Sauvola)</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="vectors_line">
+       <property name="frameShape">
+        <enum>QFrame::Shape::HLine</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="vectors_group">
+       <property name="title">
+        <string>Vector graphics</string>
+       </property>
+       <layout class="QFormLayout" name="vectors_form">
+        <property name="fieldGrowthPolicy">
+         <enum>QFormLayout::FieldGrowthPolicy::AllNonFixedFieldsGrow</enum>
+        </property>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::RowWrapPolicy::WrapLongRows</enum>
+        </property>
+        <property name="leftMargin">
+         <number>7</number>
+        </property>
+        <property name="topMargin">
+         <number>8</number>
+        </property>
+        <property name="rightMargin">
+         <number>7</number>
+        </property>
+        <property name="bottomMargin">
+         <number>7</number>
+        </property>
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="vectors_editor">
+          <property name="text">
+           <string>Vector colors: non-white to black</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0" colspan="2">
+         <widget class="QLabel" name="error">
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <spacer name="cleanup_stretch">
+       <property name="orientation">
+        <enum>Qt::Orientation::Vertical</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

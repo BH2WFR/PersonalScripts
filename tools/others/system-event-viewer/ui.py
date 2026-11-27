@@ -10,7 +10,6 @@ import threading
 from typing import cast
 import xml.etree.ElementTree as ET
 from .models import (
-    DEFAULT_SIZE,
     DEFAULT_UNCHECKED_EVENT_KINDS,
     EventKind,
     EVENT_FILTER_GROUPS,
@@ -55,7 +54,8 @@ def _json_evidence(event: PowerEvent) -> list[tuple[str, object]]:
 def _launch_gui() -> int:
     """Load the Qt GUI after CLI help/dependency checks and run its event loop."""
     from PySide6 import QtCore, QtGui, QtWidgets
-    from utils.qt_widgets import NoWheelComboBox, configure_qt_application
+    from utils.qt_widgets import configure_qt_application
+    from .ui_mainwindow import Ui_PowerEventsWindow
 
     class QueryWorker(QtCore.QThread):
         """Run log collection off the GUI thread and deliver results via Qt signals."""
@@ -137,13 +137,11 @@ def _launch_gui() -> int:
             """Include a row when its event type is enabled."""
             return self.events_model.events[source_row].kind in self.allowed
 
-    class PowerEventsWindow(QtWidgets.QMainWindow):
+    class PowerEventsWindow(QtWidgets.QMainWindow, Ui_PowerEventsWindow):
         """System history browser with cancellable queries, compact filters and evidence detail."""
 
         def __init__(self) -> None:
             super().__init__()
-            self.setWindowTitle("System Event Viewer")
-            self.resize(*DEFAULT_SIZE)
             self.settings = QtCore.QSettings(
                 QtCore.QSettings.defaultFormat(), QtCore.QSettings.Scope.UserScope,
                 "PersonalScripts", "PowerEvents",
@@ -168,75 +166,17 @@ def _launch_gui() -> int:
 
         def _build_ui(self) -> None:
             """Build native Qt controls and connect query/filter/export actions."""
-            central = QtWidgets.QWidget(self)
-            layout = QtWidgets.QVBoxLayout(central)
-            layout.setContentsMargins(6, 6, 6, 4)
-            layout.setSpacing(4)
-            self.setCentralWidget(central)
-
-            # ── time range and query controls ───────────
-            bar = QtWidgets.QHBoxLayout()
-            bar.setSpacing(4)
-            self.range_box = NoWheelComboBox()
+            self.setupUi(self)
             self.range_box.addItems([value.value for value in TimeRange])
             self.range_box.currentIndexChanged.connect(self._apply_range)
-            self.start_edit = QtWidgets.QDateTimeEdit()
-            self.end_edit = QtWidgets.QDateTimeEdit()
-            for editor in (self.start_edit, self.end_edit):
-                editor.setCalendarPopup(True)
-                editor.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-                editor.setMinimumWidth(180)
-            self.query_button = QtWidgets.QPushButton("Query / Refresh")
             self.query_button.clicked.connect(self._query)
-            self.query_button.setToolTip("Query / Refresh (F5)")
             self.refresh_shortcut = QtGui.QShortcut(QtGui.QKeySequence("F5"), self)
             self.refresh_shortcut.setAutoRepeat(False)
             self.refresh_shortcut.activated.connect(self.query_button.click)
-            self.cancel_button = QtWidgets.QPushButton("Cancel")
-            self.cancel_button.setEnabled(False)
             self.cancel_button.clicked.connect(self._cancel)
-            for text, widget in (("Range", self.range_box), ("From", self.start_edit), ("Until", self.end_edit)):
-                label = QtWidgets.QLabel(text)
-                label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-                bar.addWidget(label)
-                bar.addWidget(widget)
-            bar.addSpacing(8)
-            divider = QtWidgets.QFrame()
-            divider.setFrameShape(QtWidgets.QFrame.Shape.VLine)
-            divider.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
-            bar.addWidget(divider)
-            bar.addSpacing(8)
-            bar.addWidget(self.query_button)
-            bar.addWidget(self.cancel_button)
-            layout.addLayout(bar)
-            self.start_edit.setToolTip("Local time; inclusive start.")
-            self.end_edit.setToolTip("Local time; exclusive end.")
-
-            # ── event visibility controls ───────────────
-            filter_bar = QtWidgets.QHBoxLayout()
-            filter_bar.setSpacing(3)
-            filter_title = QtWidgets.QLabel("Show events")
-            filter_title.setToolTip("Changing event selections refreshes history automatically.")
-            filter_bar.addWidget(filter_title)
-            self.select_all_button = QtWidgets.QToolButton()
-            self.select_none_button = QtWidgets.QToolButton()
-            self.reset_types_button = QtWidgets.QToolButton()
-            for button, label in ((self.select_all_button, "All"), (self.select_none_button, "None"),
-                                  (self.reset_types_button, "Reset")):
-                button.setText(label)
-                filter_bar.addWidget(button)
             self.select_all_button.clicked.connect(lambda: self._select_types(True))
             self.select_none_button.clicked.connect(lambda: self._select_types(False))
             self.reset_types_button.clicked.connect(self._reset_types)
-            self.reset_types_button.setToolTip("Restore default event filters; retain dates and layout.")
-            filter_bar.addStretch(1)
-            layout.addLayout(filter_bar)
-            self.filter_panel = QtWidgets.QWidget()
-            self.filter_panel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-            self.filter_grid = QtWidgets.QGridLayout(self.filter_panel)
-            self.filter_grid.setContentsMargins(2, 0, 2, 0)
-            self.filter_grid.setHorizontalSpacing(6)
-            self.filter_grid.setVerticalSpacing(1)
             self.filter_columns = 0
             for kind, members in EVENT_FILTER_GROUPS.items():
                 checkbox = QtWidgets.QCheckBox(EVENT_FILTER_LABELS.get(kind, kind.value))
@@ -250,22 +190,15 @@ def _launch_gui() -> int:
                     checkbox.setToolTip("Includes: " + ", ".join(value.value for value in EventKind if value in available))
                 checkbox.toggled.connect(self._types_changed)
                 self.checkboxes[kind] = checkbox
-            layout.addWidget(self.filter_panel)
             self._layout_filters()
 
             # ── event table and evidence tabs ───────────
             self.model = EventsModel(self)
             self.proxy = EventFilter(self.model, self)
-            self.table = QtWidgets.QTableView()
             self.table.setModel(self.proxy)
-            self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-            self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-            self.table.setAlternatingRowColors(True)
-            self.table.setWordWrap(False)
             self.table.setSortingEnabled(True)
             self.table.sortByColumn(0, QtCore.Qt.SortOrder.DescendingOrder)
             rows = self.table.verticalHeader()
-            rows.hide()
             row_height = self.table.fontMetrics().height() + 4
             rows.setMinimumSectionSize(row_height)
             rows.setDefaultSectionSize(row_height)
@@ -273,57 +206,14 @@ def _launch_gui() -> int:
             for index, width in enumerate((155, 380, 220, 160), start=1):
                 self.table.setColumnWidth(index, width)
             self.table.selectionModel().selectionChanged.connect(self._show_detail)
-            self.detail = QtWidgets.QPlainTextEdit()
-            self.detail.setReadOnly(True)
-            self.detail.setPlaceholderText("Select an event to inspect its original evidence.")
-            structured_page = QtWidgets.QWidget()
-            structured_layout = QtWidgets.QVBoxLayout(structured_page)
-            structured_layout.setContentsMargins(0, 0, 0, 0)
-            self.structured_notice = QtWidgets.QLabel("Select an event to inspect its XML or JSON.")
-            self.structured_notice.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            self.structured_notice.setWordWrap(True)
-            self.structured_tree = QtWidgets.QTreeWidget()
-            self.structured_tree.setHeaderLabels(["Node", "Value", "Attributes / Type"])
-            self.structured_tree.setAlternatingRowColors(True)
-            self.structured_tree.setUniformRowHeights(True)
             self.structured_tree.setColumnWidth(0, 240)
-            self.structured_tree.header().setStretchLastSection(False)
             self.structured_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
             self.structured_tree.hide()
-            structured_layout.addWidget(self.structured_notice)
-            structured_layout.addWidget(self.structured_tree, 1)
-            self.sources = QtWidgets.QPlainTextEdit()
-            self.sources.setReadOnly(True)
-            tabs = QtWidgets.QTabWidget()
-            tabs.addTab(self.detail, "Event details")
-            tabs.addTab(structured_page, "Structured view")
-            tabs.addTab(self.sources, "Sources and coverage")
-            splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-            splitter.addWidget(self.table)
-            splitter.addWidget(tabs)
-            splitter.setSizes([470, 170])
-            layout.addWidget(splitter, 1)
-            self.summary = QtWidgets.QLabel("Ready")
-            self.summary.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            self.summary.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
-            self.progress_bar = QtWidgets.QProgressBar()
+            self.splitter.setSizes([470, 170])
             self.progress_bar.setRange(0, 1)
             self.progress_bar.setValue(0)
-            self.progress_bar.setTextVisible(False)
-            self.progress_bar.setFixedWidth(140)
-            self.progress_bar.setAccessibleName("Query progress")
-            self.export_button = QtWidgets.QPushButton("Export CSV...")
-            self.export_button.setEnabled(False)
             self.export_button.clicked.connect(lambda: self._export(".csv"))
-            self.export_json_button = QtWidgets.QPushButton("Export JSON...")
-            self.export_json_button.setEnabled(False)
             self.export_json_button.clicked.connect(lambda: self._export(".json"))
-            footer = QtWidgets.QHBoxLayout()
-            footer.addWidget(self.summary, 1)
-            footer.addWidget(self.progress_bar)
-            footer.addWidget(self.export_button)
-            footer.addWidget(self.export_json_button)
-            layout.addLayout(footer)
 
         def _layout_filters(self) -> None:
             """Fit as many complete checkbox columns as the current window can display."""
@@ -710,4 +600,3 @@ def _launch_gui() -> int:
     # Keep a reference when embedded in another Qt session (also used by GUI tests).
     application.setProperty("powerEventsWindow", window)
     return application.exec() if owns_application else 0
-

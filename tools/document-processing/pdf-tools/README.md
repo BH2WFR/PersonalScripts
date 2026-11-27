@@ -1,5 +1,25 @@
 # PDF desktop tools
 
+## Editing the Qt forms
+
+Open the tool's main window form in Qt Creator. The settings panels and larger dialogs have their own forms.
+
+| Tool | Main window | Other forms |
+| --- | --- | --- |
+| Binarizer | [mainwindow.ui](binarize/mainwindow.ui) | [Profile settings](binarize/settings.ui), [output settings](binarize/output.ui) |
+| Bookmark editor | [mainwindow.ui](bookmarks/mainwindow.ui) | [Shared API settings](common/api_form.ui) |
+| Font replacer | [mainwindow.ui](font_replace/mainwindow.ui) | [Replacement rules](font_replace/settings.ui) |
+| Metadata editor | [mainwindow.ui](metadata/mainwindow.ui) | [Properties](metadata/properties.ui), [output settings](metadata/output_options.ui), [multilingual titles](metadata/titles.ui) |
+| PDF OCR | [pdf_mainwindow.ui](ocr/pdf_mainwindow.ui) | [OCR settings](ocr/settings.ui), [model manager](ocr/models.ui) |
+| Image to Text and Formula | [image_mainwindow.ui](ocr/image_mainwindow.ui) | [OCR settings](ocr/settings.ui), [model manager](ocr/models.ui), [shared API settings](common/api_form.ui) |
+| Page splitter | [mainwindow.ui](split_pages/mainwindow.ui) | [Split and crop settings](split_pages/settings.ui) |
+
+In the two OCR main windows, select a promoted widget in Qt Creator to move or resize the whole component. To edit the controls inside OCR settings or API settings, open the corresponding form in the table.
+
+After saving a form, run `conda run -n base python _pyside6_uic.py` from the repository root to regenerate the Python modules. Commit both files together. Keep the object names referenced by the controller. Python connects signals, fills choices, sets numeric limits and binds the preview and job controls.
+
+## Shared behavior
+
 PDF tools share `config-pdf-tools.yaml` in the directory returned by
 `ConfigStore.directory()` (all platforms: `~/.config/PersonalScripts`).
 Open/save PDF directories are shared across tools; project, region and font
@@ -75,7 +95,11 @@ bookmark previews retain one latest rotation per page within 512 MiB / 100 pages
 `utils.Pdf` owns bounded RGB rendering and generic bookmark/page-label operations.
 `utils.Llm` owns cloud/local model presets, payloads, context-image limits and a lazily created Qt API client;
 the bookmark package retains only its TOC prompt and book-context construction.
-All four GUIs share focus-scoped PgUp/Left/Up and PgDn/Right/Down page shortcuts
+The five PDF preview windows share `PageToolbar` for page navigation and zoom.
+The forms promote a `QToolBar` to `PageToolbar` inside `PreviewPane` and bind the
+viewer at startup. Tools with extra options have a separate `PreviewOptionsToolbar`
+on the right with a theme-aware divider. Each toolbar can expand in a narrow window.
+The windows share focus-scoped PgUp/Left/Up and PgDn/Right/Down page shortcuts
 in both the viewer and **Pages**. Navigation selects and reveals the current
 page in Pages. Plain page keys replace a batch selection with the destination;
 Ctrl/Shift retains normal multi-selection without starting a preview. Rendering
@@ -110,8 +134,8 @@ tabs. The two-column profile list displays names and assigned page ranges, with
 twice the previous height (four to twelve visible rows), then scrolls. Its action
 buttons sit above the list. Settings use group boxes and separators; hover over
 parameter labels for their purpose, tuning direction and suggested starting values.
-One right toolbar groups compact page arrows, a page field/count, zoom controls
-and the original checkbox with vertical separators. Enter or focus loss jumps pages.
+The shared page toolbar groups compact page arrows, a page field/count and zoom
+controls. A second toolbar on its right holds **Show original** and **Red boxes**. Enter or focus loss jumps pages.
 Preview/navigation fill the remaining height; status and export share one bottom row.
 Progress appears during export; Pause/Resume and Stop remain visible, disabled when idle.
 Drag in one PDF or project JSON,
@@ -256,6 +280,7 @@ be overwritten. These shared save-dialog rules live in `common/file_actions.py`.
 | Module | Responsibility |
 | --- | --- |
 | `common/viewer.py` | Raster display, zoom, focus-scoped page keys and red/blue overlays |
+| `common/page_toolbar.py` | Page arrows, physical page number and count, zoom, and separated tool-specific controls |
 | `common/navigation.py` | Reusable physical-page, bookmark and image trees |
 | `common/pdf_images.py` | Read displayed image placements, encoding and effective DPI |
 | `common/bookmark_editor.py` | Optional batch outline editing, hierarchy modes and subtree dragging; `show_level=True` adds a derived middle Level column; `set_editing_enabled(False)` locks mutations while preserving scrolling, selection and navigation |
@@ -268,7 +293,7 @@ be overwritten. These shared save-dialog rules live in `common/file_actions.py`.
 | `common/protocol.py` | JSON value types, with no Qt dependency |
 | `binarize/app.py` | Desktop window, project actions and lazy preview scheduling |
 | `binarize/preview_cache.py` | Bounded GUI cache, latest per-page views and settings/region matching |
-| `binarize/panel.py` | Extensible settings field table and commit rules |
+| `binarize/panel.py` | Profile field bindings, validation and commit rules |
 | `binarize/project.py` | Pure configuration/profile model and JSON persistence |
 | `binarize/worker.py` | PDF inspection, clean previews and profile-aware export |
 | `binarize/workflow.py` | Conversion/preview orchestration and shared review output |

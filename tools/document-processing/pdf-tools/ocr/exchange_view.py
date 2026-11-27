@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from utils.qt_styles import set_text_style
 from utils.qt_widgets import NoWheelComboBox
 
 
@@ -21,9 +22,10 @@ class Exchange:
 class ExchangeView(QtWidgets.QWidget):
     """Keep large request bodies in the image queue's private temporary directory."""
 
-    def __init__(self, scratch: Path) -> None:
-        super().__init__()
-        self.scratch = scratch
+    scratch: Path
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
         self._by_image: dict[str | None, Exchange] = {}
         self._serial = 0
         self._active: Exchange | None = None
@@ -122,7 +124,7 @@ class ExchangeView(QtWidgets.QWidget):
         self.copy.setEnabled(bool(heading))
         missing = f"No HTTP {part} captured." if entry.error else f"No HTTP {part} captured yet."
         self.body.setPlaceholderText(f"The HTTP {part} body is empty." if heading else "")
-        self.status.setStyleSheet("color: #c02020;" if entry.error else "")
+        set_text_style(self.status, "red" if entry.error else None)
         self.status.setText("\n".join(filter(None, [heading or missing, entry.error])))
         if not heading:
             self.body.clear()

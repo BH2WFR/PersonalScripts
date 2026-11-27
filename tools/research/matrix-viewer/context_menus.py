@@ -551,8 +551,9 @@ class WorkspaceMenus(QtCore.QObject):
             camera = menu.addMenu("Camera")
             camera.setEnabled(ready)
             canvas = window.surface_view.canvas
-            for text, callback in (("Isometric", canvas.view_isometric), ("XY / top", canvas.view_xy),
-                                   ("XZ / front", canvas.view_xz), ("YZ / side", canvas.view_yz)):
+            renderer = canvas.renderer
+            for text, callback in (("Isometric", renderer.view_isometric), ("XY / top", renderer.view_xy),
+                                   ("XZ / front", renderer.view_xz), ("YZ / side", renderer.view_yz)):
                 self._add(camera, text, partial(self._camera_view, callback))
             camera.addSeparator()
             self._add(camera, "Parallel projection", self._projection, checked=bool(canvas.camera.GetParallelProjection()))

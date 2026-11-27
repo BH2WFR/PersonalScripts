@@ -19,8 +19,11 @@ LEVEL_COLUMN = 1
 class _LevelDelegate(QtWidgets.QStyledItemDelegate):
     """Keep the hierarchy-derived level column read-only."""
 
-    def createEditor(self, parent: QtWidgets.QWidget, option: QtWidgets.QStyleOptionViewItem,
-                     index: QtCore.QModelIndex | QtCore.QPersistentModelIndex) -> QtWidgets.QWidget | None:
+    # Qt treats a null editor as read-only. Some PySide6 stubs omit this return value.
+    def createEditor(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, parent: QtWidgets.QWidget, option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
+    ) -> None:
         return None
 
 
@@ -205,6 +208,8 @@ class BookmarkEditor(QtWidgets.QWidget):
         def visit(parent: QtWidgets.QTreeWidgetItem, level: int) -> None:
             for i in range(parent.childCount()):
                 item = parent.child(i)
+                if item is None:
+                    continue
                 page = int(item.text(self.page_column))
                 title = item.text(0).strip()
                 if not title:
@@ -343,7 +348,8 @@ class BookmarkEditor(QtWidgets.QWidget):
             parent = item.parent() or self.tree.invisibleRootItem()
             index = parent.indexOfChild(item)
             neighbor = index + delta
-            if 0 <= neighbor < parent.childCount() and str(parent.child(neighbor).data(0, IDENTITY_ROLE)) not in selected:
+            sibling = parent.child(neighbor)
+            if sibling is not None and str(sibling.data(0, IDENTITY_ROLE)) not in selected:
                 parent.takeChild(index)
                 parent.insertChild(neighbor, item)
                 item.setSelected(True)
@@ -444,8 +450,7 @@ class BookmarkEditor(QtWidgets.QWidget):
 
     def _restore_selection(self, identities: set[str], current: QtWidgets.QTreeWidgetItem | None) -> None:
         iterator = QtWidgets.QTreeWidgetItemIterator(self.tree)
-        while iterator.value() is not None:
-            item = iterator.value()
+        while (item := iterator.value()) is not None:
             item.setSelected(str(item.data(0, IDENTITY_ROLE)) in identities)
             iterator += 1
         if current is not None:
@@ -460,6 +465,8 @@ class BookmarkEditor(QtWidgets.QWidget):
         def visit(parent: QtWidgets.QTreeWidgetItem) -> None:
             for index in range(parent.childCount()):
                 item = parent.child(index)
+                if item is None:
+                    continue
                 if str(item.data(0, IDENTITY_ROLE)) in selected:
                     result.append(item)
                 else:

@@ -40,6 +40,17 @@ class KeyboardTests(unittest.TestCase):
         self.state.press(name)
         self.state.release()
 
+    def test_key_groups_and_lock_states_remain_distinct_in_both_themes(self) -> None:
+        for dark in (False, True):
+            groups = [self.state.colors(key, dark=dark) for key in ("a", "1", "Up", "End", "LShift")]
+            self.assertEqual(len(set(groups)), len(groups))
+            for key in ("CapsLock", "NumLock", "ScrollLock"):
+                self.state.lock_states[key] = False
+                unlocked = self.state.colors(key, dark=dark)
+                self.state.lock_states[key] = True
+                self.assertNotEqual(self.state.colors(key, dark=dark), unlocked)
+        self.assertNotEqual(self.state.colors("a"), self.state.colors("a", dark=True))
+
     def test_native_caps_and_separate_platform_preferences(self) -> None:
         self.click("Layer")
         self.output.key_down.assert_called_once_with("CapsLock", [])

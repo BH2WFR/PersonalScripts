@@ -29,6 +29,14 @@ def page_key_step(event: QtGui.QKeyEvent) -> int:
     return 0
 
 
+def pixmap_from_png(png: bytes) -> QtGui.QPixmap:
+    """Decode a worker preview, raising ValueError for invalid PNG data."""
+    pixmap = QtGui.QPixmap()
+    if not png.startswith(b"\x89PNG\r\n\x1a\n") or not pixmap.loadFromData(png):
+        raise ValueError("The preview worker returned an invalid image.")
+    return pixmap
+
+
 class ViewMode(StrEnum):
     PAGE = "page"
     WIDTH = "width"
@@ -74,10 +82,7 @@ class PageViewer(QtWidgets.QGraphicsView):
 
     def set_image(self, png: bytes, token: object) -> None:
         """Show encoded PNG bytes; retain zoom/position when comparing the same page."""
-        pixmap = QtGui.QPixmap()
-        if not pixmap.loadFromData(png, b"PNG"):
-            raise ValueError("The preview worker returned an invalid image.")
-        self.set_pixmap(pixmap, token)
+        self.set_pixmap(pixmap_from_png(png), token)
 
     def set_pixmap(self, pixmap: QtGui.QPixmap, token: object) -> None:
         """Show detached image pixels; a changed token identifies a page turn."""

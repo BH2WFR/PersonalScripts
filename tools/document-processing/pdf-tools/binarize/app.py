@@ -12,9 +12,11 @@ import sys
 from typing import Callable, cast
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from utils.qt_widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, configure_qt_application
+from utils.qt_styles import set_button_style, set_text_style
+from utils.qt_widgets import configure_qt_application
 
 from utils import *
+from ..common.page_toolbar import TOOLBAR_STYLE, set_preview_tab_order
 from ..common.jobs import JobRunner
 from ..common.task_buttons import TaskButtons
 from ..common.file_drop import FileDropFilter
@@ -22,22 +24,21 @@ from ..common.file_actions import choose_pdf_output
 from ..common.preferences import choose_open_file, choose_save_file, remember_directory
 from ..common.tooltips import TooltipFilter
 from ..common.range_input import PageRangeDialog
-from ..common.navigation import NavigationPane
 from ..common.pdf_images import ImageElement
 from ..common.protocol import Json
 from ..common.preview_buffer import PreviewBuffer
-from ..common.viewer import MAX_SCALE, MIN_SCALE, PageViewer, ViewMode
-from .panel import SettingsPanel
+from ..common.viewer import ViewMode, pixmap_from_png
 from .preview_cache import PreviewCache, PreviewFrame, PreviewState, Rectangle
 from .project import BUILTIN_IDS, DEFAULT_ID, SKIP_ID, Config, Project
 from .settings import MAX_WORKERS
+from .ui_mainwindow import Ui_BinarizeWindow
+from .ui_output import Ui_OutputTab
 
 PREVIEW_DELAY_MS = 300
 PROFILE_ROLE = QtCore.Qt.ItemDataRole.UserRole
 ADMIN_DROP_HINT = ("Windows blocks Explorer drops into administrator windows. "
                    "Use Open PDF, or restart this app without administrator rights.")
 PROFILE_VISIBLE_ROWS = 6
-TOOLBAR_STYLE = "QToolBar::separator { background: palette(mid); width: 1px; margin: 4px 6px; }"
 
 
 class Operation(StrEnum):
@@ -48,17 +49,7 @@ class Operation(StrEnum):
     EXPORT_PAGE = "export-page"
 
 
-class ProfileTree(QtWidgets.QTreeWidget):
-    """Two-column profile list; right-click actions do not assign a profile."""
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.MouseButton.RightButton:
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-
-class BinarizeWindow(QtWidgets.QMainWindow):
+class BinarizeWindow(QtWidgets.QMainWindow, Ui_BinarizeWindow):
     """Own the editable project and orchestrate one outstanding PDF operation.
 
     Args:
@@ -106,9 +97,6 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.preview_timer = QtCore.QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self._start_preview)
-        self.setWindowTitle("PDF Binarizer [Administrator]" if self._elevated else "PDF Binarizer")
-        self.resize(1440, 900)
-        self.setMinimumSize(980, 600)
         self.setAcceptDrops(True)
         self._build()
         self.tooltips = TooltipFilter(self)
@@ -131,15 +119,11 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             if self._preview_requested and not self.runner.busy and not self.preview_timer.isActive():
                 self._schedule_preview(remaining)
 
-    def _build(self) -> None:
-        # ── independent left column ──
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        self.setCentralWidget(splitter)
-        self.left = QtWidgets.QWidget()
-        left_layout = QtWidgets.QVBoxLayout(self.left)
-        left_layout.setContentsMargins(6, 6, 6, 6)
-        left_layout.setSpacing(4)
-        self.file_toolbar = QtWidgets.QToolBar()
+    def _build(self, *, preserve_size: bool = False) -> None:
+        size = self.size()
+        self.setupUi(self)
+        if preserve_size:
+            self.resize(size)
         self.file_toolbar.setStyleSheet(TOOLBAR_STYLE)
         self.open_pdf_button = self._button("Open PDF", self._choose_pdf, compact=True)
         self.open_project_button = self._button("Open project", self._choose_project, compact=True)
@@ -155,131 +139,57 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             self.file_toolbar.addWidget(button)
         self.file_toolbar.addSeparator()
         self.file_toolbar.addWidget(self.close_pdf_button)
-        left_layout.addWidget(self.file_toolbar)
-        self.profiles_box = QtWidgets.QGroupBox("Profiles")
-        profile_layout = QtWidgets.QVBoxLayout(self.profiles_box)
-        profile_layout.setContentsMargins(6, 6, 6, 6)
-        profile_layout.setSpacing(4)
-        self.profile_list = ProfileTree()
-        self.profile_list.setHeaderLabels(["Profile", "Pages"])
-        self.profile_list.setRootIsDecorated(False)
-        self.profile_list.setUniformRowHeights(True)
         self.profile_list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.profile_list.customContextMenuRequested.connect(self._profile_menu)
         self._resize_profile_list()
         self.profile_list.currentItemChanged.connect(self._profile_selected)
         # Clicking the already-current profile must also apply it to a selection.
         self.profile_list.itemClicked.connect(lambda item, column: self._profile_selected(item, None))
-        profile_actions = QtWidgets.QHBoxLayout()
-        self.add_profile_button = self._button("Add copy", self._add_profile)
-        self.apply_profile_button = self._button("Apply to pages…", self._apply_profile_pages)
-        profile_actions.addWidget(self.add_profile_button)
-        profile_actions.addWidget(self.apply_profile_button)
-        profile_actions.addStretch()
-        profile_layout.addLayout(profile_actions)
-        profile_layout.addWidget(self.profile_list)
-        left_layout.addWidget(self.profiles_box)
-        self.settings = SettingsPanel()
+        self.add_profile_button.clicked.connect(lambda: self._invoke(self._add_profile))
+        self.apply_profile_button.clicked.connect(lambda: self._invoke(self._apply_profile_pages))
         self.settings.configChanged.connect(self._settings_changed)
         self.settings.validityChanged.connect(self._validity_changed)
         self.settings.interactionFinished.connect(self._resume_preview)
         self.output_tab = self._build_output()
         self.settings.addTab(self.output_tab, "Output")
-        left_layout.addWidget(self.settings, 1)
-        self.left.setMinimumWidth(330)
-        splitter.addWidget(self.left)
-        # ── right column: controls, preview/navigation, status ──
-        right = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(right)
-        layout.setContentsMargins(4, 6, 6, 6)
-        layout.setSpacing(4)
-        self.view_toolbar = QtWidgets.QToolBar()
-        self.view_toolbar.setStyleSheet(TOOLBAR_STYLE)
-        self.previous_button = self._button("", lambda: self._step_page(-1), compact=True)
-        self.next_button = self._button("", lambda: self._step_page(1), compact=True)
-        for button, icon, label in ((self.previous_button, QtWidgets.QStyle.StandardPixmap.SP_ArrowLeft, "Previous page (PgUp)"),
-                                    (self.next_button, QtWidgets.QStyle.StandardPixmap.SP_ArrowRight, "Next page (PgDown)")):
-            button.setIcon(self.style().standardIcon(icon))
-            button.setFixedWidth(26)
-            button.setToolTip(label)
-            button.setAccessibleName(label)
-        self.page_number = NoWheelSpinBox()
-        self.page_number.setFixedWidth(48)
-        self.page_number.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        self.page_number.setAccessibleName("Physical page number")
-        self.page_number.setToolTip("Physical page number; press Enter or leave this field to jump")
-        self.page_number.setRange(1, 1)
-        self.page_number.setKeyboardTracking(False)
-        self.page_number.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.page_number.editingFinished.connect(self._jump_page)
-        self.page_total = QtWidgets.QLabel("/ 0")
-        self.page_total.setContentsMargins(4, 0, 4, 0)
+        self.view_toolbar.bind_viewer(self.viewer)
+        self.view_toolbar.stepRequested.connect(self._step_page)
+        self.view_toolbar.pageRequested.connect(lambda page: self.go_page(page - 1))
+        self.previous_button = self.view_toolbar.previous
+        self.next_button = self.view_toolbar.next
+        self.page_number = self.view_toolbar.page_number
+        self.page_total = self.view_toolbar.page_total
+        self.zoom = self.view_toolbar.zoom
+        self.auto_fit = self.view_toolbar.add_auto_fit(self._auto_fit_changed)
         self.original = QtWidgets.QCheckBox("Show original")
         self.original.toggled.connect(self._original_changed)
-        for widget in (self.previous_button, self.next_button, self.page_number, self.page_total):
-            self.view_toolbar.addWidget(widget)
-        self.view_toolbar.addSeparator()
-        self.viewer = PageViewer()
-        self.viewer.pageStepRequested.connect(self._step_page)
-        for label, handler in (("Fit page", self.viewer.fit_page), ("Fit width", self.viewer.fit_width),
-                               ("100%", self.viewer.actual_pixels)):
-            self.view_toolbar.addWidget(self._button(label, handler, compact=True))
-        self.zoom = NoWheelDoubleSpinBox()
-        self.zoom.setRange(MIN_SCALE * 100, MAX_SCALE * 100)
-        self.zoom.setDecimals(1)
-        self.zoom.setValue(100)
-        self.zoom.setSuffix(" %")
-        self.zoom.setFixedWidth(82)
-        self.zoom.setKeyboardTracking(False)
-        self.zoom.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.zoom.setToolTip("Zoom percentage; press Enter or leave this field to apply")
-        self.zoom.editingFinished.connect(lambda: self.viewer.set_zoom(self.zoom.value()))
-        self.viewer.zoomChanged.connect(self.zoom.setValue)
-        self.view_toolbar.addWidget(self.zoom)
-        self.auto_fit = QtWidgets.QCheckBox("Auto fit")
-        self.auto_fit.setChecked(True)
-        self.auto_fit.setToolTip("Automatically fit the whole page after every page turn")
-        self.auto_fit.toggled.connect(self._auto_fit_changed)
-        self.view_toolbar.addWidget(self.auto_fit)
-        self.view_toolbar.addSeparator()
-        self.view_toolbar.addWidget(self.original)
         self.show_regions = QtWidgets.QCheckBox("Red boxes")
         self.show_regions.setToolTip("Overlay detected image regions; exported PDFs never include these boxes")
         self.show_regions.toggled.connect(self._show_regions_changed)
-        self.view_toolbar.addWidget(self.show_regions)
-        layout.addWidget(self.view_toolbar)
-        content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        content.addWidget(self.viewer)
-        self.navigation = NavigationPane()
+        self.tool_toolbar.addWidget(self.original)
+        self.tool_toolbar.addWidget(self.show_regions)
         self.navigation.pageRequested.connect(self.go_page)
         self.navigation.imageSelected.connect(self.viewer.set_image_highlight)
         self.navigation.pages.itemSelectionChanged.connect(self._selection_summary)
-        content.addWidget(self.navigation)
-        content.setStretchFactor(0, 1)
-        content.setSizes([720, 240])
-        layout.addWidget(content, 1)
-        self.status = QtWidgets.QLabel("Ready. No PDF loaded." if not self._elevated
-                                      else "Administrator: Explorer drops blocked. Use Open PDF.")
-        self.status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
-        bottom = QtWidgets.QHBoxLayout()
-        self.progress_bar = QtWidgets.QProgressBar()
+        self.content.setStretchFactor(0, 1)
+        self.content.setSizes([720, 240])
+        if self._elevated:
+            self.setWindowTitle("PDF Binarizer [Administrator]")
+            self.status.setText("Administrator: Explorer drops blocked. Use Open PDF.")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFixedWidth(120)
         self.task_buttons = TaskButtons(self.runner)
         self.pause_button = self.task_buttons.pause_button
         self.cancel_button = self.task_buttons.stop_button
-        self.preview_export_button = self._button("Save shown page", lambda: self._export(True))
-        self.export_button = self._button("Export PDF", lambda: self._export(False))
-        bottom.addWidget(self.status, 1)
-        bottom.addWidget(self.progress_bar)
-        bottom.addWidget(self.task_buttons)
+        self.preview_export_button.clicked.connect(lambda: self._invoke(lambda: self._export(True)))
+        self.export_button.clicked.connect(lambda: self._invoke(lambda: self._export(False)))
+        self.task_slot.addWidget(self.task_buttons)
         for button in (self.preview_export_button, self.export_button):
-            bottom.addWidget(button)
-        layout.addLayout(bottom)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([390, 1050])
+            set_button_style(button, "blue")
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([390, 1050])
+        set_preview_tab_order(self.file_toolbar, self.left, self.view_toolbar, self.tool_toolbar, self.content,
+                              self.task_buttons, self.preview_export_button, self.export_button)
 
     def _resize_profile_list(self) -> None:
         """Double the former list height, bounded to four through twelve rows."""
@@ -288,47 +198,25 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.profile_list.setFixedHeight(rows * row_height + self.profile_list.header().sizeHint().height()
                                         + 2 * self.profile_list.frameWidth())
 
-    def _build_output(self) -> QtWidgets.QWidget:
-        body = QtWidgets.QWidget()
-        outer = QtWidgets.QVBoxLayout(body)
-        general = QtWidgets.QGroupBox("Export")
-        layout = QtWidgets.QFormLayout(general)
-        outer.addWidget(general)
-        self.workers = NoWheelSpinBox()
+    def _build_output(self) -> QtWidgets.QScrollArea:
+        scroll = QtWidgets.QScrollArea()
+        ui = Ui_OutputTab()
+        ui.setupUi(scroll)
+        self.workers = ui.workers
         self.workers.setRange(1, MAX_WORKERS)
         self.workers.setKeyboardTracking(False)
         self.workers.editingFinished.connect(self._output_changed)
-        layout.addRow("Image encoders", self.workers)
-        self.save_regions = QtWidgets.QCheckBox("Export region JSON")
-        self.save_annotations = QtWidgets.QCheckBox("Export box annotation PNGs")
-        self.open_saved_preview = QtWidgets.QCheckBox("Open saved page in external viewer")
+        self.save_regions = ui.save_regions
+        self.save_annotations = ui.save_annotations
+        self.open_saved_preview = ui.open_saved_preview
         self.open_saved_preview.setChecked(True)
-        layout.addRow(self.open_saved_preview)
-        line = QtWidgets.QFrame()
-        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        outer.addWidget(line)
-        review = QtWidgets.QGroupBox("Optional region review files")
-        layout = QtWidgets.QFormLayout(review)
-        outer.addWidget(review)
         for widget in (self.save_regions, self.save_annotations, self.open_saved_preview):
             widget.toggled.connect(self._output_changed)
-            if widget is not self.open_saved_preview:
-                layout.addRow(widget)
-        self.region_path = QtWidgets.QLineEdit()
+        self.region_path = ui.region_path
         self.region_path.setPlaceholderText("Optional region JSON")
         self.region_path.editingFinished.connect(self._output_changed)
-        layout.addRow("Region input", self.region_path)
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(self._button("Browse regions...", self._browse_regions))
-        row.addWidget(self._button("Clear", self._clear_regions))
-        layout.addRow(row)
-        note = QtWidgets.QLabel("These settings apply to the whole project.\nExport defaults to the source PDF folder.\nExisting outputs require overwrite confirmation; the source is protected.")
-        note.setWordWrap(True)
-        outer.addWidget(note)
-        outer.addStretch()
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(body)
+        ui.browse_regions.clicked.connect(lambda: self._invoke(self._browse_regions))
+        ui.clear_regions.clicked.connect(lambda: self._invoke(self._clear_regions))
         return scroll
 
     def _refresh_enabled(self) -> None:
@@ -338,7 +226,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.settings.setEnabled(loaded and idle)
         for button in (self.open_pdf_button, self.open_project_button):
             button.setEnabled(idle)
-        for widget in (self.save_project_button, self.save_as_button, self.page_number,
+        for widget in (self.save_project_button, self.save_as_button,
                        self.original, self.auto_fit, self.show_regions, self.navigation, self.close_pdf_button):
             widget.setEnabled(loaded and idle)
         for button in (self.preview_export_button, self.export_button):
@@ -347,12 +235,12 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self.progress_bar.setVisible(exporting)
         index = self.project.current_page if self.project else 0
         count = self.project.page_count if self.project else 0
-        self.previous_button.setEnabled(loaded and idle and index > 0)
-        self.next_button.setEnabled(loaded and idle and index + 1 < count)
-        self.viewer.navigation_enabled = loaded and idle
+        self.view_toolbar.set_navigation_enabled(loaded and idle, index + 1, count)
         identity = self.project.assignments[index] if self.project else SKIP_ID
         for tab in range(self.settings.count() - 1):
-            self.settings.widget(tab).setEnabled(loaded and idle and identity != SKIP_ID)
+            page = self.settings.widget(tab)
+            if page is not None:
+                page.setEnabled(loaded and idle and identity != SKIP_ID)
 
     def _busy_changed(self, busy: bool) -> None:
         working = busy and not self.runner.paused
@@ -480,7 +368,6 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         self._inflight_preview = None
         self._displayed_page = None
         self.open_pdf_button.setToolTip(f"{self.project.source}\n{ADMIN_DROP_HINT}" if self._elevated else str(self.project.source))
-        self.page_number.setRange(1, count)
         self._original_warning = False
         self._load_profiles()
         self._load_current_page()
@@ -511,14 +398,15 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             index = project.current_page
             identity = project.assignments[index]
             for row in range(self.profile_list.topLevelItemCount()):
-                if self.profile_list.topLevelItem(row).data(0, PROFILE_ROLE) == identity:
-                    self.profile_list.setCurrentItem(self.profile_list.topLevelItem(row))
+                item = self.profile_list.topLevelItem(row)
+                if item is not None and item.data(0, PROFILE_ROLE) == identity:
+                    self.profile_list.setCurrentItem(item)
                     break
             self.settings.imported_regions = project.output.region_input is not None
             self.settings.set_config(project.profiles[identity].config)
+            self.view_toolbar.set_page_count(project.page_count)
             self.page_number.setValue(index + 1)
             label = self.labels[index] if index < len(self.labels) else ""
-            self.page_total.setText(f"/ {project.page_count}")
             self.page_total.setToolTip(f"PDF page label: {label}" if label else "Physical page count")
             self.original.setChecked(project.show_original)
             self.auto_fit.setChecked(project.auto_fit)
@@ -547,6 +435,8 @@ class BinarizeWindow(QtWidgets.QMainWindow):
             return
         for row in range(self.profile_list.topLevelItemCount()):
             item = self.profile_list.topLevelItem(row)
+            if item is None:
+                continue
             identity = item.data(0, PROFILE_ROLE)
             pages = [index + 1 for index, value in enumerate(self.project.assignments) if value == identity]
             if identity == DEFAULT_ID:
@@ -687,7 +577,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         old = self.takeCentralWidget()
         if old:
             old.deleteLater()
-        self._build()
+        self._build(preserve_size=True)
         self.setWindowTitle("PDF Binarizer [Administrator]" if self._elevated else "PDF Binarizer")
         self._refresh_enabled()
 
@@ -753,9 +643,6 @@ class BinarizeWindow(QtWidgets.QMainWindow):
         if self.project is not None:
             self.go_page(self.project.current_page + delta)
 
-    def _jump_page(self) -> None:
-        self.go_page(self.page_number.value() - 1)
-
     def _original_changed(self, checked: bool) -> None:
         if self._loading or self.runner.busy or self.project is None:
             return
@@ -799,7 +686,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
     def _warning_style(self) -> None:
         skipped = bool(self.project and self.project.assignments[self.project.current_page] == SKIP_ID)
         warning = self.original.isChecked() and self._original_warning and not skipped
-        self.original.setStyleSheet("QCheckBox { color: #b06b00; font-weight: bold; }" if warning else "")
+        set_text_style(self.original, "orange" if warning else None, bold=True)
         self.original.setToolTip("This page uses no-processing; its original content is retained." if skipped
                                 else "Showing the original page. The processing changes are not displayed." if warning
                                 else "Show the unprocessed source page")
@@ -942,9 +829,7 @@ class BinarizeWindow(QtWidgets.QMainWindow):
                 if message.get("pixel_buffer"):
                     pixmap = self.preview_buffer.read(int(cast(int, message["width"])), int(cast(int, message["height"])))
                 else:
-                    pixmap = QtGui.QPixmap()
-                    if not pixmap.loadFromData(base64.b64decode(str(message["png"])), b"PNG"):
-                        raise ValueError("The preview worker returned an invalid image.")
+                    pixmap = pixmap_from_png(base64.b64decode(str(message["png"])))
                 boxes = tuple(cast(Rectangle, tuple(float(value) for value in row))
                               for row in cast(list[list[float]], message.get("regions", [])))
                 images = tuple(ImageElement.from_data(row) for row in

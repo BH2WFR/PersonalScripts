@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>RawDataView</class>
+ <widget class="QWidget" name="RawDataView">
+  <layout class="QVBoxLayout" name="form_layout">
+   <item>
+    <layout class="QHBoxLayout" name="form_heading" stretch="1,0,0,0">
+     <item>
+      <widget class="QLabel" name="note">
+       <property name="text">
+        <string>No data loaded</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="hex_checkbox">
+       <property name="text">
+        <string>Hexadecimal</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="form_matrix_inline">
+       <property name="text">
+        <string>Matrix</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="NoWheelComboBox" name="matrix_combo">
+       <property name="placeholderText">
+        <string>No matrices</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTableView" name="table">
+     <property name="wordWrap">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="form_bar" stretch="0,0,0,0,0,0,0,0,0,1">
+     <item>
+      <widget class="QLabel" name="row_label">
+       <property name="text">
+        <string>Row</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="NoWheelSpinBox" name="row" />
+     </item>
+     <item>
+      <widget class="QLabel" name="column_label">
+       <property name="text">
+        <string>Column</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="NoWheelSpinBox" name="column" />
+     </item>
+     <item>
+      <widget class="QPushButton" name="form_go">
+       <property name="text">
+        <string>Go to cell</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="form_copy">
+       <property name="text">
+        <string>Copy selection</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="VerticalSeparator" name="form_verticalseparator_inline" />
+     </item>
+     <item>
+      <widget class="QLabel" name="form_column_width_2_inline">
+       <property name="text">
+        <string>Column width</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="NoWheelSpinBox" name="column_width" />
+     </item>
+     <item>
+      <widget class="QSlider" name="width_slider">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>VerticalSeparator</class>
+   <extends>QFrame</extends>
+   <header>.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

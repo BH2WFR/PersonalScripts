@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>BackgroundControls</class>
+ <widget class="QWidget" name="BackgroundControls">
+  <layout class="QHBoxLayout" name="background">
+   <item>
+    <widget class="QLabel" name="background_all_views_inline">
+     <property name="text">
+      <string>Background (all views)</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="NoWheelComboBox" name="theme" />
+   </item>
+   <item>
+    <spacer name="background_spacer">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="sizeHint">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

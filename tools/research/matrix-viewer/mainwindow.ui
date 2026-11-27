@@ -1,0 +1,941 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ViewerWindow</class>
+ <widget class="QMainWindow" name="ViewerWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1400</width>
+    <height>930</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>980</width>
+    <height>680</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Matrix Viewer — NPY / NPZ / MAT / CSV / TXT / Images</string>
+  </property>
+  <widget class="QWidget" name="central_widget" native="true">
+   <layout class="QVBoxLayout" name="window_layout" stretch="0,1">
+    <property name="leftMargin">
+     <number>6</number>
+    </property>
+    <property name="topMargin">
+     <number>2</number>
+    </property>
+    <property name="rightMargin">
+     <number>6</number>
+    </property>
+    <property name="bottomMargin">
+     <number>6</number>
+    </property>
+    <item>
+     <widget class="QWidget" name="file_bar" native="true">
+      <layout class="QHBoxLayout" name="file_actions" stretch="0,1,0,0,0,0,0">
+       <item>
+        <widget class="QPushButton" name="open_file_button">
+         <property name="text">
+          <string>Open file…</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="path_label">
+         <property name="readOnly">
+          <bool>true</bool>
+         </property>
+         <property name="placeholderText">
+          <string>Drop an NPY, NPZ, MAT, CSV, TXT or image file here</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="archive_label">
+         <property name="text">
+          <string>Array</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="NoWheelComboBox" name="archive_key">
+         <property name="sizeAdjustPolicy">
+          <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+         </property>
+         <property name="minimumContentsLength">
+          <number>12</number>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="display_label">
+         <property name="text">
+          <string>Display</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="NoWheelComboBox" name="display_channel">
+         <property name="sizeAdjustPolicy">
+          <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+         </property>
+         <property name="minimumContentsLength">
+          <number>18</number>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="fit_views_button">
+         <property name="text">
+          <string>Fit views</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QSplitter" name="main_split">
+      <property name="orientation">
+       <enum>Qt::Horizontal</enum>
+      </property>
+      <widget class="QSplitter" name="workspace_split">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+       <property name="childrenCollapsible">
+        <bool>false</bool>
+       </property>
+       <widget class="QGroupBox" name="matrix_box">
+        <property name="title">
+         <string>Matrices / channels</string>
+        </property>
+        <layout class="QVBoxLayout" name="matrix_panel_layout">
+         <item>
+          <layout class="QHBoxLayout" name="matrix_panel_bar">
+           <item>
+            <widget class="QToolButton" name="add_overlay">
+             <property name="toolTip">
+              <string>Open one or more files, or choose Open and replace from the arrow menu. Files can also be dropped anywhere in the window.</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="fourier_button">
+             <property name="text">
+              <string>Transform…</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QRadioButton" name="single_matrix_mode">
+             <property name="text">
+              <string>Single matrix</string>
+             </property>
+             <property name="toolTip">
+              <string>Click a channel or single-channel matrix to show it exclusively. Click a multichannel matrix to expand its channels.</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QRadioButton" name="multiple_matrix_mode">
+             <property name="text">
+              <string>Multiple matrices</string>
+             </property>
+             <property name="toolTip">
+              <string>Use channel checkboxes to overlay compatible matrices/channels. Row clicks only choose the editing target.</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="matrix_panel_bar_spacer">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="matrix_panel_actions">
+           <item>
+            <widget class="QPushButton" name="none_visible">
+             <property name="text">
+              <string>Hide all</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QToolButton" name="remove_matrix">
+             <property name="toolTip">
+              <string>Close the selected matrix and its channels. The source file is unchanged.</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="ChannelTree" name="matrix_list">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>90</height>
+            </size>
+           </property>
+           <property name="indentation">
+            <number>14</number>
+           </property>
+           <property name="toolTip">
+            <string>Single matrix: click a channel or single-channel matrix to show it. Multichannel matrices expand without changing visibility. Multiple matrices: click rows to edit and use checkboxes to combine channels. F2 renames the matrix.</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+       <widget class="QScrollArea" name="control_scroll">
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>360</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="horizontalScrollBarPolicy">
+         <enum>Qt::ScrollBarAlwaysOff</enum>
+        </property>
+        <widget class="QWidget" name="controls" native="true">
+         <layout class="QVBoxLayout" name="viewer_controls_layout">
+          <item>
+           <widget class="QGroupBox" name="alignment_box">
+            <property name="title">
+             <string>Overlay alignment (active channel)</string>
+            </property>
+            <layout class="QFormLayout" name="overlay_alignment_form">
+             <item row="0" column="0">
+              <widget class="QLabel" name="overlay_alignment_align_relative_to_label">
+               <property name="text">
+                <string>Align relative to</string>
+               </property>
+               <property name="buddy">
+                <cstring>reference</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="NoWheelComboBox" name="reference">
+               <property name="toolTip">
+                <string>Shared reference for checked channels. Clicking matrix/channel rows does not change the reference.</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="overlay_alignment_x_alignment_label">
+               <property name="text">
+                <string>X alignment</string>
+               </property>
+               <property name="buddy">
+                <cstring>alignment_x</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="NoWheelComboBox" name="alignment_x" />
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="overlay_alignment_y_alignment_label">
+               <property name="text">
+                <string>Y alignment</string>
+               </property>
+               <property name="buddy">
+                <cstring>alignment_y</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="NoWheelComboBox" name="alignment_y" />
+             </item>
+             <item row="3" column="0">
+              <widget class="QLabel" name="overlay_alignment_z_alignment_3d_label">
+               <property name="text">
+                <string>Z alignment (3D)</string>
+               </property>
+               <property name="buddy">
+                <cstring>alignment_z</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="1">
+              <widget class="NoWheelComboBox" name="alignment_z">
+               <property name="toolTip">
+                <string>Align visible Z ranges to the reference after height scaling. Affects 3D geometry only; images, profiles and numeric exports keep source values.</string>
+               </property>
+              </widget>
+             </item>
+             <item row="4" column="0" colspan="2">
+              <widget class="QLabel" name="overlay_alignment_note">
+               <property name="text">
+                <string>X/Y alignment is included in visible-matrix exports. Z alignment and height scaling affect only 3D geometry. Data and derivatives retain source values. 2D values control opacity.</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="info">
+            <property name="text">
+             <string>No data loaded</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="viewer_controls_axes_box">
+            <property name="title">
+             <string>Data interpretation</string>
+            </property>
+            <layout class="QFormLayout" name="viewer_controls_form">
+             <item row="0" column="0">
+              <widget class="QLabel" name="viewer_controls_view_as_label">
+               <property name="text">
+                <string>View as</string>
+               </property>
+               <property name="buddy">
+                <cstring>mode</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="NoWheelComboBox" name="mode" />
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="viewer_controls_column_sample_axis_label">
+               <property name="text">
+                <string>Column / sample axis</string>
+               </property>
+               <property name="buddy">
+                <cstring>x_axis</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="NoWheelComboBox" name="x_axis" />
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="viewer_controls_row_axis_label">
+               <property name="text">
+                <string>Row axis</string>
+               </property>
+               <property name="buddy">
+                <cstring>y_axis</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="NoWheelComboBox" name="y_axis" />
+             </item>
+             <item row="3" column="0">
+              <widget class="QLabel" name="viewer_controls_channel_axis_2_label">
+               <property name="text">
+                <string>Channel axis</string>
+               </property>
+               <property name="buddy">
+                <cstring>channel_axis</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="1">
+              <widget class="NoWheelComboBox" name="channel_axis" />
+             </item>
+             <item row="4" column="0">
+              <widget class="QLabel" name="viewer_controls_channel_index_label">
+               <property name="text">
+                <string>Channel index</string>
+               </property>
+               <property name="buddy">
+                <cstring>channel</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="4" column="1">
+              <widget class="NoWheelSpinBox" name="channel" />
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="slice_box">
+            <property name="title">
+             <string>Other-axis slices</string>
+            </property>
+            <layout class="QFormLayout" name="slice_form" />
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="coordinate_box">
+            <property name="title">
+             <string>Coordinate layout</string>
+            </property>
+            <layout class="QFormLayout" name="viewer_controls_coordinate_form">
+             <item row="0" column="0">
+              <widget class="QLabel" name="viewer_controls_coordinates_stored_in_label">
+               <property name="text">
+                <string>Coordinates stored in</string>
+               </property>
+               <property name="buddy">
+                <cstring>coordinate_axis</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="NoWheelComboBox" name="coordinate_axis" />
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="coord_x_label">
+               <property name="text">
+                <string>X</string>
+               </property>
+               <property name="buddy">
+                <cstring>coord_x</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="NoWheelComboBox" name="coord_x" />
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="coord_y_label">
+               <property name="text">
+                <string>Y</string>
+               </property>
+               <property name="buddy">
+                <cstring>coord_y</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="NoWheelComboBox" name="coord_y" />
+             </item>
+             <item row="3" column="0">
+              <widget class="QLabel" name="coord_z_label">
+               <property name="text">
+                <string>Z</string>
+               </property>
+               <property name="buddy">
+                <cstring>coord_z</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="1">
+              <widget class="NoWheelComboBox" name="coord_z" />
+             </item>
+             <item row="4" column="0" colspan="2">
+              <widget class="QPushButton" name="viewer_controls_swap">
+               <property name="text">
+                <string>Swap X / Y</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="crop_box">
+            <property name="title">
+             <string>Crop by source index (inclusive)</string>
+            </property>
+            <layout class="QFormLayout" name="index_crop_form">
+             <item row="0" column="0">
+              <widget class="QLabel" name="crop_x_fields_label">
+               <property name="text">
+                <string>X range</string>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <layout class="QHBoxLayout" name="crop_x_fields">
+               <item>
+                <widget class="NoWheelSpinBox" name="crop_x_start" />
+               </item>
+               <item>
+                <widget class="QLabel" name="crop_x_to">
+                 <property name="text">
+                  <string>to</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="NoWheelSpinBox" name="crop_x_end" />
+               </item>
+              </layout>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="crop_y_fields_label">
+               <property name="text">
+                <string>Y range</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <layout class="QHBoxLayout" name="crop_y_fields">
+               <item>
+                <widget class="NoWheelSpinBox" name="crop_y_start" />
+               </item>
+               <item>
+                <widget class="QLabel" name="crop_y_to">
+                 <property name="text">
+                  <string>to</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="NoWheelSpinBox" name="crop_y_end" />
+               </item>
+              </layout>
+             </item>
+             <item row="2" column="0">
+              <widget class="QPushButton" name="crop_apply">
+               <property name="text">
+                <string>Apply crop</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="QPushButton" name="crop_reset">
+               <property name="text">
+                <string>Restore full range</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="0" colspan="2">
+              <widget class="QLabel" name="crop_info">
+               <property name="text">
+                <string>X: columns / samples; Y: rows. Source indices are retained.</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="viewer_controls_filter_box">
+            <property name="title">
+             <string>Crop by value bounds</string>
+            </property>
+            <property name="toolTip">
+             <string>Minimum and maximum are inclusive. Empty fields leave the corresponding bound open.</string>
+            </property>
+            <layout class="QFormLayout" name="viewer_controls_filters">
+             <item row="0" column="0" colspan="2">
+              <layout class="QHBoxLayout" name="viewer_controls_bounds_row" stretch="0,1,0,1">
+               <item>
+                <widget class="QLabel" name="viewer_controls_minimum_inline">
+                 <property name="text">
+                  <string>Minimum</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="filter_low">
+                 <property name="placeholderText">
+                  <string>No lower bound</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="viewer_controls_maximum_inline">
+                 <property name="text">
+                  <string>Maximum</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="filter_high">
+                 <property name="placeholderText">
+                  <string>No upper bound</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="viewer_controls_outside_bounds_label">
+               <property name="text">
+                <string>Outside bounds</string>
+               </property>
+               <property name="buddy">
+                <cstring>filter_mode</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="NoWheelComboBox" name="filter_mode" />
+             </item>
+             <item row="2" column="0" colspan="2">
+              <widget class="QLabel" name="viewer_controls_filter_hint">
+               <property name="text">
+                <string>Clamp retains boundary values. Highlighting is optional; nonfinite and clipped samples stay excluded from derivatives.</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="0" colspan="2">
+              <layout class="QHBoxLayout" name="viewer_controls_bounds_buttons">
+               <item>
+                <widget class="QPushButton" name="viewer_controls_apply_filter">
+                 <property name="text">
+                  <string>Apply</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="revert_value_bounds">
+                 <property name="text">
+                  <string>Revert</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>Clear minimum and maximum and restore values within the current X/Y crop.</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="magnitude_controls">
+            <property name="title">
+             <string>Magnitude (dB)</string>
+            </property>
+            <layout class="QFormLayout" name="viewer_controls_magnitude">
+             <item row="0" column="0">
+              <widget class="QLabel" name="viewer_controls_magnitude_floor_label">
+               <property name="text">
+                <string>Magnitude floor</string>
+               </property>
+               <property name="buddy">
+                <cstring>db_floor</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="NoWheelDoubleSpinBox" name="db_floor">
+               <property name="toolTip">
+                <string>Magnitude relative to the selected region's peak (0 dB). Source complex values are unchanged.</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="sampling_controls">
+            <property name="title">
+             <string>Display sampling</string>
+            </property>
+            <layout class="QFormLayout" name="viewer_controls_sampling">
+             <item row="0" column="0">
+              <widget class="QLabel" name="viewer_controls_maximum_grid_edge_label">
+               <property name="text">
+                <string>Maximum grid edge</string>
+               </property>
+               <property name="buddy">
+                <cstring>grid_sampling_controls</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QWidget" name="grid_sampling_controls" native="true">
+               <layout class="QHBoxLayout" name="viewer_controls_edge_row" stretch="1,0">
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <property name="spacing">
+                 <number>2</number>
+                </property>
+                <item>
+                 <widget class="NoWheelSpinBox" name="max_edge">
+                  <property name="toolTip">
+                   <string>Maximum samples along the longer grid edge; the shorter edge follows its aspect ratio.
+0 / All samples keeps every pixel. Source data and slice samples are unchanged.</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QToolButton" name="grid_sampling_presets">
+                  <property name="text">
+                   <string>Presets</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="viewer_controls_maximum_cloud_points_label">
+               <property name="text">
+                <string>Maximum cloud points</string>
+               </property>
+               <property name="buddy">
+                <cstring>max_points</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="NoWheelSpinBox" name="max_points" />
+             </item>
+             <item row="2" column="0" colspan="2">
+              <widget class="QLabel" name="viewer_controls_hint">
+               <property name="text">
+                <string>Grid size limits 2D points and 3D sampling. Set 0 for all samples. Image pixels, profiles and numeric exports retain full resolution.</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <spacer name="viewer_controls_layout_spacer">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeHint">
+             <size>
+              <width>0</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </widget>
+      </widget>
+      <widget class="QWidget" name="right_panel" native="true">
+       <layout class="QVBoxLayout" name="right_layout">
+        <property name="leftMargin">
+         <number>2</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <item>
+         <widget class="QSplitter" name="vertical">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="childrenCollapsible">
+           <bool>false</bool>
+          </property>
+          <widget class="QTabWidget" name="tabs">
+           <widget class="QStackedWidget" name="primary_view">
+            <attribute name="title">
+             <string>2D image</string>
+            </attribute>
+            <widget class="ImageView" name="image_view" />
+           </widget>
+           <widget class="QStackedWidget" name="secondary_view">
+            <attribute name="title">
+             <string>3D surface</string>
+            </attribute>
+            <widget class="SurfaceView" name="surface_view" />
+           </widget>
+           <widget class="RawDataView" name="raw_view">
+            <attribute name="title">
+             <string>Raw data</string>
+            </attribute>
+           </widget>
+          </widget>
+          <widget class="QWidget" name="profile_area" native="true">
+           <layout class="QVBoxLayout" name="profile_layout">
+            <property name="leftMargin">
+             <number>0</number>
+            </property>
+            <property name="topMargin">
+             <number>2</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+            <property name="bottomMargin">
+             <number>0</number>
+            </property>
+            <item>
+             <widget class="QWidget" name="profile_controls" native="true">
+              <layout class="QVBoxLayout" name="profile_selector_layout">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <layout class="QHBoxLayout" name="profile_selector_selector" stretch="0,0,0,1,0">
+                 <item>
+                  <widget class="QLabel" name="profile_selector_profile_inline">
+                   <property name="text">
+                    <string>Profile</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="NoWheelComboBox" name="profile_direction">
+                   <item>
+                    <property name="text">
+                     <string>Row</string>
+                    </property>
+                   </item>
+                   <item>
+                    <property name="text">
+                     <string>Column</string>
+                    </property>
+                   </item>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="OptionalIndexSpinBox" name="profile_index" />
+                 </item>
+                 <item>
+                  <widget class="QSlider" name="profile_slider">
+                   <property name="orientation">
+                    <enum>Qt::Horizontal</enum>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="profile_toggle">
+                   <property name="text">
+                    <string>Select current</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="ProfileView" name="profile_view" />
+            </item>
+            <item>
+             <widget class="OverlayProfile" name="overlay_profile" />
+            </item>
+           </layout>
+          </widget>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="hint">
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ImageView</class>
+   <extends>QWidget</extends>
+   <header>.image_view</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>ProfileView</class>
+   <extends>QWidget</extends>
+   <header>.profile_view</header>
+  </customwidget>
+  <customwidget>
+   <class>RawDataView</class>
+   <extends>QWidget</extends>
+   <header>.raw_view</header>
+  </customwidget>
+  <customwidget>
+   <class>SurfaceView</class>
+   <extends>QWidget</extends>
+   <header>.surface_view</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>OptionalIndexSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>ChannelTree</class>
+   <extends>QTreeWidget</extends>
+   <header>.channel_tree</header>
+  </customwidget>
+  <customwidget>
+   <class>OverlayProfile</class>
+   <extends>QWidget</extends>
+   <header>.overlay_profile</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

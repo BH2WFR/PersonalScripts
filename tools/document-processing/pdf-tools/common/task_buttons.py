@@ -7,14 +7,13 @@ from .jobs import JobRunner
 from .protocol import Json
 
 
-class TaskButtons(QtWidgets.QWidget):
+class TaskControls(QtWidgets.QWidget):
     """Keep button state tied to the runner, including pending pauses and errors."""
 
-    def __init__(self, runner: JobRunner, parent: QtWidgets.QWidget | None = None, *,
-                 with_progress: bool = False,
-                 external_pause: Callable[[], None] | None = None,
-                 external_stop: Callable[[], None] | None = None) -> None:
-        super().__init__(parent)
+    def bind_runner(self, runner: JobRunner, *, with_progress: bool = False,
+                    external_pause: Callable[[], None] | None = None,
+                    external_stop: Callable[[], None] | None = None) -> None:
+        """Initialize the controls once the window's worker is available."""
         self.runner = runner
         self._external_pause = external_pause
         self._external_stop = external_stop
@@ -92,3 +91,13 @@ class TaskButtons(QtWidgets.QWidget):
                                     if external else "Pause at the next safe step. A current page or PDF save may need to finish first.")
         self.pause_button.setEnabled(self._external_pausable if external else active and not self.runner.stopping)
         self.stop_button.setEnabled(self._external_stop is not None if external else active and not self.runner.stopping)
+
+
+class TaskButtons(TaskControls):
+    """Create task controls already bound to a worker."""
+
+    def __init__(self, runner: JobRunner, parent: QtWidgets.QWidget | None = None, *,
+                 with_progress: bool = False, external_pause: Callable[[], None] | None = None,
+                 external_stop: Callable[[], None] | None = None) -> None:
+        super().__init__(parent)
+        self.bind_runner(runner, with_progress=with_progress, external_pause=external_pause, external_stop=external_stop)

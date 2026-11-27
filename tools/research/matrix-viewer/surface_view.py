@@ -50,6 +50,7 @@ from .coordinates import AxisMap
 from .workspace import RenderLayer, profile_series
 from .render_style import DEFAULT_POINT_SIZE, SurfaceStyle
 from .plot_support import PAN_MARGIN_PIXELS, NavigationLimits, RangeLabel, minimum_axis_pixels
+from .ui_surface_view import Ui_SurfaceView
 
 HOVER_INTERVAL_MS = 35
 ROTATION_DEGREES_PER_PIXEL = 0.45
@@ -450,7 +451,7 @@ class SurfaceCanvas(QtInteractor):
         return (world[0] / self.axis_scale[0], world[1] / self.axis_scale[1], world[2] / self.axis_scale[2])
 
 
-class SurfaceView(QtWidgets.QWidget):
+class SurfaceView(QtWidgets.QWidget, Ui_SurfaceView):
     """Height field and linked profile marker with source-value coordinates.
 
     Args:
@@ -459,6 +460,7 @@ class SurfaceView(QtWidgets.QWidget):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.dark = True
         self.z_scale = 1.0
         self.equal_xy_locked = True
@@ -485,34 +487,22 @@ class SurfaceView(QtWidgets.QWidget):
         self._z_reference_uid: int | None = None
         self._layer_signature: tuple[tuple[object, ...], ...] = ()
         self._layer_profiles: list[vtkActor] = []
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.readout = QtWidgets.QLabel("Move over the surface to inspect a source sample")
-        self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        layout = self.form_layout
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.readout.setWordWrap(True)
-        header = QtWidgets.QHBoxLayout()
+        header = self.form_header
         self.color_range_label = RangeLabel("Color range")
-        header.addWidget(self.color_range_label)
-        header.addWidget(self.readout, 1)
-        layout.addLayout(header)
+        header.insertWidget(header.count() - 1, self.color_range_label)
         self.canvas = SurfaceCanvas(self)
         self.canvas.coordinate_changed.connect(self.readout.setText)
         self.canvas.fit_requested.connect(self.fit_camera)
-        layout.addWidget(self.canvas)
-        self.resolution = QtWidgets.QLabel("3D preview: no data")
-        self.resolution.setWordWrap(True)
-        footer = QtWidgets.QHBoxLayout()
+        layout.insertWidget(layout.count() - 1, self.canvas)
+        footer = self.form_footer
         self.z_range_label = RangeLabel("Value range")
         self.z_range_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        footer.addWidget(self.resolution, 1)
-        self.extrema_label = QtWidgets.QLabel()
         self.extrema_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.extrema_label.hide()
-        footer.addWidget(self.extrema_label)
         footer.addSpacing(8)
         footer.addWidget(self.z_range_label)
-        layout.addLayout(footer)
 
     def set_frame(self, frame: Frame, cmap: str, levels: tuple[float, float],
                   z_scale: float, reset: bool, point_size: float = DEFAULT_POINT_SIZE, *,

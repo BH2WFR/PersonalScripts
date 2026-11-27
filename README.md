@@ -176,6 +176,8 @@ Core utility package: `utils/` — shared console, environment, system, path, in
 
   > **Do not copy a utility script out of the project and run it by itself.** It will fail because the dependencies in `utils` cannot be found.
 
+- After editing a PySide6 form in Qt Creator, run `conda run -n base python _pyside6_uic.py` from the repository root. It compiles every `.ui` file under `tools/` into a `ui_<name>.py` module in the same directory. Commit the edited form and its generated module together.
+
 ### Using the Launcher
 
 ```bash

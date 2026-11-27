@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>FigureExportDialog</class>
+ <widget class="QDialog" name="FigureExportDialog">
+  <property name="windowTitle">
+   <string>Export figure</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1020</width>
+    <height>680</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_root" stretch="1,0,0">
+   <item>
+    <layout class="QHBoxLayout" name="form_body" stretch="0,1">
+     <item>
+      <widget class="QWidget" name="form_settings" native="true">
+       <property name="maximumSize">
+        <size>
+         <width>350</width>
+         <height>16777215</height>
+        </size>
+       </property>
+       <layout class="QFormLayout" name="form_form">
+        <item row="0" column="0">
+         <widget class="QLabel" name="form_view_label">
+          <property name="text">
+           <string>View</string>
+          </property>
+          <property name="buddy">
+           <cstring>view_selector</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="view_selector" />
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="form_format_label">
+          <property name="text">
+           <string>Format</string>
+          </property>
+          <property name="buddy">
+           <cstring>format_selector</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelComboBox" name="format_selector" />
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="form_image_width_label">
+          <property name="text">
+           <string>Image width</string>
+          </property>
+          <property name="buddy">
+           <cstring>pixel_width</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelSpinBox" name="pixel_width" />
+        </item>
+        <item row="3" column="0">
+         <widget class="QLabel" name="form_image_height_label">
+          <property name="text">
+           <string>Image height</string>
+          </property>
+          <property name="buddy">
+           <cstring>pixel_height</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="1">
+         <widget class="NoWheelSpinBox" name="pixel_height" />
+        </item>
+        <item row="4" column="0" colspan="2">
+         <widget class="QCheckBox" name="lock_aspect">
+          <property name="text">
+           <string>Lock original plot aspect ratio</string>
+          </property>
+          <property name="toolTip">
+           <string>Uncheck to set width and height independently. Both dimensions include the title and legend.</string>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="0">
+         <widget class="QLabel" name="form_dpi_2_label">
+          <property name="text">
+           <string>DPI</string>
+          </property>
+          <property name="buddy">
+           <cstring>dpi</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="1">
+         <widget class="NoWheelSpinBox" name="dpi" />
+        </item>
+        <item row="6" column="0" colspan="2">
+         <widget class="QCheckBox" name="transparent">
+          <property name="text">
+           <string>Transparent background</string>
+          </property>
+         </widget>
+        </item>
+        <item row="7" column="0">
+         <widget class="QLabel" name="form_title_2_label">
+          <property name="text">
+           <string>Title</string>
+          </property>
+          <property name="buddy">
+           <cstring>title</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="7" column="1">
+         <widget class="QLineEdit" name="title">
+          <property name="placeholderText">
+           <string>Optional title; leave empty to omit</string>
+          </property>
+         </widget>
+        </item>
+        <item row="8" column="0" colspan="2">
+         <widget class="QCheckBox" name="legend">
+          <property name="text">
+           <string>Include channel / matrix legend</string>
+          </property>
+         </widget>
+        </item>
+        <item row="9" column="0">
+         <widget class="QLabel" name="form_title_legend_size_label">
+          <property name="text">
+           <string>Title / legend size</string>
+          </property>
+          <property name="buddy">
+           <cstring>annotation_size</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="9" column="1">
+         <widget class="NoWheelSpinBox" name="annotation_size" />
+        </item>
+        <item row="10" column="0" colspan="2">
+         <widget class="QLabel" name="dimensions">
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="11" column="0" colspan="2">
+         <widget class="QLabel" name="form_note">
+          <property name="text">
+           <string>Unlock the aspect ratio to set width and height independently. Dimensions include the title and wrapped legend. Plots reflow to fit; a locked X:Y unit ratio is preserved by expanding the visible range. 3D renders into the new viewport. DPI sets print size.
+
+Axes and lines scale with the plot. Viewer controls and hover cursors are excluded. Image pixels and curves use full source detail; 2D points and 3D use the current grid sampling. Background and text colors follow the viewer theme. SVG keeps Qt plot text/curves as vectors and embeds 2D image pixels.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="12" column="0" colspan="2">
+         <widget class="QLabel" name="source_note">
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="ImagePreview" name="preview">
+       <property name="minimumSize">
+        <size>
+         <width>380</width>
+         <height>260</height>
+        </size>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="status">
+     <property name="text">
+      <string>Preparing preview…</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="form_buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Close</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ImagePreview</class>
+   <extends>QWidget</extends>
+   <header>.image_preview</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

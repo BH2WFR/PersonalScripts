@@ -1,8 +1,8 @@
 """Compact global/current-page group boxes; geometry edits commit on editingFinished."""
 
 from PySide6 import QtCore, QtWidgets
-from utils.qt_widgets import NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox
 from .model import Axis, Box, Settings, MAX_PIECES, dividers
+from .ui_settings import Ui_SplitPanel
 
 NUDGE_POINTS = 10.0
 MAX_PAGE_POINTS = 10_000_000.0
@@ -26,7 +26,7 @@ TIPS: dict[str, str] = {
 }
 
 
-class SplitPanel(QtWidgets.QWidget):
+class SplitPanel(QtWidgets.QWidget, Ui_SplitPanel):
     """Edit split rules without PDF access; the window validates and owns all changes.
 
     Signals report proposed changes, never mutate the session directly. Loading
@@ -41,119 +41,68 @@ class SplitPanel(QtWidgets.QWidget):
     selectionChanged = QtCore.Signal(int)
     moveRequested = QtCore.Signal(float, float, bool)
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
         self._loading = False
         self._width = 1.0
         self._height = 1.0
         self._boxes: tuple[Box, ...] = ()
         self._axis = Axis.LEFT_RIGHT
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.general = QtWidgets.QGroupBox("General")
-        form = QtWidgets.QFormLayout(self.general)
-        self.count = NoWheelSpinBox()
+        self.setupUi(self)
         self.count.setRange(1, MAX_PIECES)
         self.count.setKeyboardTracking(False)
         self.count.setValue(2)
         self.count.editingFinished.connect(self._global_commit)
-        form.addRow("Pieces per page", self.count)
-        self.axis = NoWheelComboBox()
         self.axis.addItem("Left / right", Axis.LEFT_RIGHT)
         self.axis.addItem("Top / bottom", Axis.TOP_BOTTOM)
         self.axis.currentIndexChanged.connect(self._global_commit)
-        form.addRow("Arrangement", self.axis)
-        self.order = QtWidgets.QLineEdit()
         self.order.setPlaceholderText("Automatic: 1,2,…")
         self.order.setToolTip("Spatial boxes are numbered from left/top. Enter each number exactly once, for example 2,1 or 3,1,2. Custom pages retain their saved order.")
         self.order.editingFinished.connect(self._global_commit)
-        form.addRow("Output order", self.order)
-        self.reverse = QtWidgets.QCheckBox("Reverse order")
         self.reverse.toggled.connect(self._global_commit)
-        form.addRow(self.reverse)
-        self.start = NoWheelSpinBox()
         self.start.setRange(1, 1)
-        self.end = NoWheelSpinBox()
         self.end.setRange(0, 1)
         self.end.setSpecialValueText("Last page")
-        for title, spin in (("First split page", self.start), ("Last split page", self.end)):
+        for spin in (self.start, self.end):
             spin.setKeyboardTracking(False)
             spin.editingFinished.connect(self._global_commit)
-            form.addRow(title, spin)
-        note = QtWidgets.QLabel("Outside this range: keep whole.\nCustom pages retain their own crops and order.")
-        note.setWordWrap(True)
-        form.addRow(note)
-        layout.addWidget(self.general)
 
-        self.current = QtWidgets.QGroupBox("Current page")
-        current_layout = QtWidgets.QVBoxLayout(self.current)
-        self.keep = QtWidgets.QCheckBox("No processing (keep whole)")
         self.keep.toggled.connect(self._keep_changed)
-        current_layout.addWidget(self.keep)
-        self.reset = QtWidgets.QPushButton("Reset to general settings")
         self.reset.clicked.connect(self.resetRequested)
-        current_layout.addWidget(self.reset)
-        self.geometry_controls = QtWidgets.QWidget()
-        controls = QtWidgets.QFormLayout(self.geometry_controls)
-        controls.setContentsMargins(0, 0, 0, 0)
-        self.selection = NoWheelComboBox()
         self.selection.currentIndexChanged.connect(self._select_box)
         self.selection.addItem("All")
-        controls.addRow("Crop", self.selection)
-        self.coordinates: list[QtWidgets.QDoubleSpinBox] = []
-        self.coordinate_buttons: list[tuple[QtWidgets.QPushButton, QtWidgets.QPushButton]] = []
-        for index, label in enumerate(("X", "Y", "Width", "Height")):
-            spin = self._point_spin()
+        self.coordinates = [self.crop_x, self.crop_y, self.crop_width, self.crop_height]
+        self.coordinate_buttons = [
+            (self.crop_x_minus, self.crop_x_plus), (self.crop_y_minus, self.crop_y_plus),
+            (self.crop_width_minus, self.crop_width_plus), (self.crop_height_minus, self.crop_height_plus),
+        ]
+        coordinate_labels = (self.crop_x_row_label, self.crop_y_row_label, self.crop_width_row_label, self.crop_height_row_label)
+        for index, (label, spin, pair) in enumerate(zip(("X", "Y", "Width", "Height"), self.coordinates, self.coordinate_buttons)):
+            self._configure_point_spin(spin)
             if index < 2:
                 spin.setMinimum(-MAX_PAGE_POINTS)
             spin.editingFinished.connect(lambda i=index: self._box_commit(i))
-            self.coordinates.append(spin)
-            row = QtWidgets.QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(spin, 1)
-            buttons: list[QtWidgets.QPushButton] = []
-            for step in (-NUDGE_POINTS, NUDGE_POINTS):
-                button = QtWidgets.QPushButton(f"{step:+.0f}")
-                button.setFixedWidth(40)
+            for button, step in zip(pair, (-NUDGE_POINTS, NUDGE_POINTS)):
                 button.setToolTip(f"Adjust {label} by {step:+.0f} pt for All crops or the selected numbered crop.\n{TIPS[label]}")
                 button.clicked.connect(lambda checked=False, i=index, delta=step: self._nudge_box(i, delta))
-                row.addWidget(button)
-                buttons.append(button)
-            self.coordinate_buttons.append((buttons[0], buttons[1]))
-            controls.addRow(label, row)
             spin.setToolTip(TIPS[label])
-            self._label_tip(controls, row, TIPS[label])
-        self.divider = NoWheelComboBox()
+            coordinate_labels[index].setToolTip(TIPS[label])
         self.divider.currentIndexChanged.connect(self._select_divider)
-        controls.addRow("Shared divider", self.divider)
-        row = QtWidgets.QHBoxLayout()
-        self.position = self._point_spin()
+        self._configure_point_spin(self.position)
         self.position.setMinimum(-MAX_PAGE_POINTS)
         self.position.editingFinished.connect(self._divider_commit)
-        row.addWidget(self.position, 1)
-        self.divider_buttons: list[QtWidgets.QPushButton] = []
-        for step in (-NUDGE_POINTS, NUDGE_POINTS):
-            button = QtWidgets.QPushButton(f"{step:+.0f}")
-            button.setFixedWidth(40)
+        self.divider_buttons = [self.position_minus, self.position_plus]
+        for button, step in zip(self.divider_buttons, (-NUDGE_POINTS, NUDGE_POINTS)):
             button.setToolTip(f"Move the chosen divider by {step:+.0f} pt.\n{TIPS['position']}")
             button.clicked.connect(lambda checked=False, delta=step: self._nudge_divider(delta))
-            row.addWidget(button)
-            self.divider_buttons.append(button)
-        controls.addRow("Divider position", row)
-        self._label_tip(controls, row, TIPS["position"])
-        note = QtWidgets.QLabel("Coordinates: top-left origin, in pt (1/72 inch).\nOutside the source: blank. Smaller crops: centered on the same paper size.")
-        note.setWordWrap(True)
-        controls.addRow(note)
-        current_layout.addWidget(self.geometry_controls)
-        layout.addWidget(self.current)
-        layout.addStretch(1)
+        self._label_tip(self.crop_form, self.position_row, TIPS["position"])
         for key, editor in (("count", self.count), ("axis", self.axis), ("order", self.order),
                             ("reverse", self.reverse), ("start", self.start), ("end", self.end)):
             editor.setToolTip(TIPS[key])
-            self._label_tip(form, editor, TIPS[key])
+            self._label_tip(self.general_form, editor, TIPS[key])
         for key, editor in (("selection", self.selection), ("divider", self.divider)):
             editor.setToolTip(TIPS[key])
-            self._label_tip(controls, editor, TIPS[key])
+            self._label_tip(self.crop_form, editor, TIPS[key])
         self.keep.setToolTip(TIPS["keep"])
         self.reset.setToolTip(TIPS["reset"])
         self.position.setToolTip(TIPS["position"])
@@ -169,15 +118,12 @@ class SplitPanel(QtWidgets.QWidget):
         return self.selection.currentIndex() - 1
 
     @staticmethod
-    def _point_spin() -> QtWidgets.QDoubleSpinBox:
-        spin = NoWheelDoubleSpinBox()
+    def _configure_point_spin(spin: QtWidgets.QDoubleSpinBox) -> None:
         spin.setRange(0, MAX_PAGE_POINTS)
         spin.setDecimals(3)
         spin.setSingleStep(1)
         spin.setSuffix(" pt")
         spin.setKeyboardTracking(False)
-        spin.setMinimumWidth(70)
-        return spin
 
     def read_settings(self) -> Settings:
         """Read a proposed global configuration; validation belongs to the window."""

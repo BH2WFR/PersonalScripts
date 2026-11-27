@@ -1,6 +1,5 @@
 """Batch image OCR window using the PDF tool's recognition settings and model cache."""
 
-from collections.abc import Callable
 from pathlib import Path
 import tempfile
 
@@ -8,31 +7,27 @@ from PIL import Image
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import Console, System, Llm
 from utils.qt_images import copy_image_to_clipboard, qimage_from_pillow, save_png
-from utils.qt_widgets import NoWheelComboBox, configure_qt_application
+from utils.qt_styles import on_theme_change, set_button_style, theme_text_color
+from utils.qt_widgets import configure_qt_application
 from ..common.llm_window import LlmWindow
 from .vision import OUTPUTS, SYSTEM_PROMPT, VisionTask, batch_results, document_source, vision_request
-from .vision_panel import VisionPanel
-from .formula_preview import FormulaPreview, preview_resources
-from .exchange_view import ExchangeView
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
 from ..common.preferences import read_preferences, save_preferences, choose_save_file, dialog_directory, remember_directory
-from ..common.task_buttons import TaskButtons
-from ..common.viewer import PageViewer, install_preview_menu
+from ..common.viewer import install_preview_menu
 from .image_batch import FORMATS, SUFFIXES, image_rgb, read_image
 from . import local_formula
 from .model import Settings
 from .model_dialog import ModelDialog
-from .panel import SettingsPanel
+from .ui_image_mainwindow import Ui_ImageWindow
 
 
-class ImageWindow(LlmWindow):
+class ImageWindow(LlmWindow, Ui_ImageWindow):
     """Apply one recognition profile to the queue and retain text for each source."""
 
     def __init__(self, entry: Path) -> None:
         super().__init__()
-        self.setWindowTitle("Image to Text and Formula")
-        self.resize(1160, 780)
+        self.setupUi(self)
         self._loading = self._closing = self._close_when_idle = self._running = False
         self._init_api_state()
         self._init_api_clients()
@@ -58,115 +53,60 @@ class ImageWindow(LlmWindow):
             settings = Settings.from_data(preferences.get("settings", {}))
         except (TypeError, ValueError):
             settings = Settings()
-        split = QtWidgets.QSplitter()
-        self.setCentralWidget(split)
-        self.panel = SettingsPanel(settings, images=True)
+        self.panel.configure(settings, images=True)
         self.settings = self.panel.settings()
         self.panel.recognitionChanged.connect(self._settings_changed)
         self.panel.manageModelsRequested.connect(self._models)
-        left = QtWidgets.QWidget()
-        controls = QtWidgets.QVBoxLayout(left)
-        self.mode = NoWheelComboBox()
         self.mode.addItems(["Local OCR", "Vision API — text", "Vision API — formulas / documents",
                             "Local formula — PaddleOCR"])
-        controls.addWidget(self.mode)
-        self.delimiter = NoWheelComboBox()
         self.delimiter.addItem("Display math: $$ … $$")
         self.delimiter.addItem(r"Display math: \[ … \]")
-        controls.addWidget(self.delimiter)
         self.formula_ready = False
         self.formula_present = False
         self.formula_action = ""
-        self.formula_controls = QtWidgets.QWidget()
-        formula_buttons = QtWidgets.QHBoxLayout(self.formula_controls)
-        formula_buttons.setContentsMargins(0, 0, 0, 0)
-        self.formula_install = actions_button(formula_buttons, "Install model (99 MiB)", lambda: self._change_formula_model("download"))
-        self.formula_remove = actions_button(formula_buttons, "Uninstall model", lambda: self._change_formula_model("delete"))
-        controls.addWidget(self.formula_controls)
-        self.formula_hint = QtWidgets.QLabel()
-        self.formula_hint.setWordWrap(True)
-        controls.addWidget(self.formula_hint)
-        self.api_form = self._api_form(SYSTEM_PROMPT)
-        self.vision_options = VisionPanel(preferences.get("vision"))
+        self.formula_install.clicked.connect(lambda: self._change_formula_model("download"))
+        self.formula_remove.clicked.connect(lambda: self._change_formula_model("delete"))
+        self._bind_api_form(self.api_form, SYSTEM_PROMPT)
+        self.vision_options.load_modes(preferences.get("vision"))
         for page in (self.vision_options.text_page, self.vision_options.formula_page):
             page.clearRequested.connect(self._clear_context)
             page.reset_each.toggled.connect(self._reset_changed)
             page.output.currentIndexChanged.connect(self._sync_preview_tab)
         self.saved_vision = self.vision_options.to_data()
-        self.api_tabs = QtWidgets.QTabWidget()
-        self.api_tabs.addTab(self.vision_options, "Recognition")
-        self.api_tabs.addTab(self.api_form, "API settings")
-        controls.addWidget(self.panel, 1)
-        controls.addWidget(self.api_tabs, 1)
-        self.balance_summary = QtWidgets.QLabel()
+        self.balance_summary = QtWidgets.QLabel(self.left)
         self.balance_summary.hide()
-        self.balance_summary.setParent(left)
         self.mode.currentIndexChanged.connect(self._mode_changed)
-        split.addWidget(left)
-        body = QtWidgets.QWidget()
-        split.addWidget(body)
-        split.setSizes([350, 810])
-        layout = QtWidgets.QVBoxLayout(body)
-        actions = QtWidgets.QHBoxLayout()
-        layout.addLayout(actions)
-        self.open_button = actions_button(actions, "Add images...", self._open)
-        self.paste_button = actions_button(actions, "Paste image", self._paste)
+        self.splitter.setSizes([350, 810])
+        self.open_button.clicked.connect(self._open)
+        self.paste_button.clicked.connect(self._paste)
         self.paste_button.setShortcut(QtGui.QKeySequence.StandardKey.Paste)
-        self.remove_button = actions_button(actions, "Remove selected", self._remove)
-        self.current_button = actions_button(actions, "Recognize current", self._run_current)
-        self.run_button = actions_button(actions, "Recognize all", self._run)
-        self.list = QtWidgets.QTreeWidget()
-        self.list.setHeaderLabels(["Image", "Pixels", "File size", "Status"])
-        self.list.setRootIsDecorated(False)
-        self.list.setAlternatingRowColors(True)
-        self.list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.remove_button.clicked.connect(self._remove)
+        self.current_button.clicked.connect(self._run_current)
+        self.run_button.clicked.connect(self._run)
+        on_theme_change(self.list, self._refresh_status_colors)
         self.list.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.list.header().setStretchLastSection(False)
         self.list.currentItemChanged.connect(self._show)
-        self.list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._list_menu)
-        layout.addWidget(self.list, 1)
-        self.tabs = QtWidgets.QTabWidget()
-        self.text = QtWidgets.QPlainTextEdit()
-        self.text.setReadOnly(True)
-        self.tabs.addTab(self.text, "Recognized text")
-        self.viewer = PageViewer()
         install_preview_menu(self.viewer, reset=self.viewer.fit_page,
                              fit=self.viewer.fit_page, original=self._original_image_size)
         self.copy_image = self.viewer.addAction("Copy image", lambda: self._export_source(False))
         self.save_image = self.viewer.addAction("Save image...", lambda: self._export_source(True))
-        self.tabs.addTab(self.viewer, "Image preview")
-        assets, preview_hint = preview_resources()
-        self.rendered = FormulaPreview(assets) if assets else None
+        self.rendered = self.preview_tab if self.preview_tab.root is not None else None
         if self.rendered is not None:
             self.rendered.imageReady.connect(lambda image, save: self._output_image(image, save, Path("formula.png")))
             self.rendered.exportFailed.connect(self._image_error)
-            preview_tab = self.rendered
-        else:
-            preview_tab = QtWidgets.QLabel(preview_hint)
-            preview_tab.setStyleSheet("color: #c02020;")
-            preview_tab.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            preview_tab.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-            preview_tab.setWordWrap(True)
-        self.preview_index = self.tabs.addTab(preview_tab, "Formula preview")
-        self.api_log = ExchangeView(Path(self.scratch.name))
+        self.preview_index = self.tabs.indexOf(self.preview_tab)
+        self.api_log.scratch = Path(self.scratch.name)
         self.list.itemClicked.connect(lambda: self.api_log.select_image(self._current_key()))
-        self.tabs.addTab(self.api_log, "API exchange")
         self.client.exchangePart.connect(self.api_log.record)
         self.tabs.currentChanged.connect(self._show)
-        layout.addWidget(self.tabs, 2)
-        output = QtWidgets.QHBoxLayout()
-        layout.addLayout(output)
-        self.copy = actions_button(output, "Copy current", lambda: self._copy(self._current_text()))
-        self.copy_all = actions_button(output, "Copy all", lambda: self._copy(self._all_text()))
-        self.save = actions_button(output, "Save all as TXT...", self._save)
-        footer = QtWidgets.QHBoxLayout()
-        layout.addLayout(footer)
-        self.status = QtWidgets.QLabel("Add or drop images, or paste from the clipboard.")
-        self.status.setWordWrap(True)
-        footer.addWidget(self.status, 1)
-        self.tasks = TaskButtons(self.runner, with_progress=True, external_stop=self._stop_vision)
-        footer.addWidget(self.tasks)
+        self.copy.clicked.connect(lambda: self._copy(self._current_text()))
+        self.copy_all.clicked.connect(lambda: self._copy(self._all_text()))
+        for button in (self.copy, self.copy_all):
+            set_button_style(button, "blue")
+        self.save.clicked.connect(self._save)
+        self.tasks.bind_runner(self.runner, with_progress=True, external_stop=self._stop_vision)
         self.drop_filter = FileDropFilter(self, self.add_file, lambda: not self.runner.busy and not self._api_busy,
                                           suffixes=SUFFIXES, multiple=True)
         self.runner.progress.connect(self._progress)
@@ -388,13 +328,16 @@ class ImageWindow(LlmWindow):
             if ok and name.strip():
                 item.setText(0, name.strip())
 
-    @staticmethod
-    def _set_row_status(item: QtWidgets.QTreeWidgetItem, status: str) -> None:
-        color = {"Recognized": "#188038", "Failed": "#c02020"}.get(status)
+    def _refresh_status_colors(self) -> None:
+        for item in self.rows.values():
+            self._set_row_status(item, item.text(3))
+
+    def _set_row_status(self, item: QtWidgets.QTreeWidgetItem, status: str) -> None:
+        color = "green" if status == "Recognized" else "red" if status == "Failed" else None
         font = item.font(3)
         font.setBold(color is not None)
         item.setFont(3, font)
-        item.setForeground(3, QtGui.QBrush(QtGui.QColor(color)) if color else QtGui.QBrush())
+        item.setForeground(3, QtGui.QBrush(theme_text_color(color, self.list)) if color else QtGui.QBrush())
         item.setText(3, status)
 
     def _run(self) -> None:
@@ -721,13 +664,6 @@ class ImageWindow(LlmWindow):
         self.histories.clear()
         self.scratch.cleanup()
         event.accept()
-
-
-def actions_button(layout: QtWidgets.QHBoxLayout, title: str, callback: Callable[[], None]) -> QtWidgets.QPushButton:
-    button = QtWidgets.QPushButton(title)
-    button.clicked.connect(callback)
-    layout.addWidget(button)
-    return button
 
 
 def main(entry: Path) -> int:

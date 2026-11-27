@@ -14,6 +14,8 @@ import pymupdf
 from test_pdf_ocr import ROOT, RESULT
 from personal_pdf_tools.ocr.app import OcrWindow
 from personal_pdf_tools.common.navigation import PAGE_ROLE
+from personal_pdf_tools.common.page_toolbar import PageToolbar
+from utils.qt_styles import button_stylesheet
 from utils import Pdf
 
 ENTRY = ROOT / "tools/document-processing/pdf-ocr.py"
@@ -99,6 +101,25 @@ class OcrGuiTests(unittest.TestCase):
 
     def settled(self) -> None:
         wait_for(lambda: not self.window.runner.busy and not self.window.timer.isActive())
+
+    def test_page_toolbar_separates_original_control_and_navigates(self) -> None:
+        window = self.window
+        toolbar = window.toolbar
+        self.assertIsInstance(toolbar, PageToolbar)
+        options = window.tool_toolbar
+        self.assertIs(toolbar.parentWidget(), options.parentWidget())
+        self.assertEqual(toolbar.y(), options.y())
+        self.assertLess(toolbar.geometry().right(), options.x())
+        self.assertFalse(toolbar.isAncestorOf(window.original))
+        self.assertIs(options.widgetForAction(options.actions()[0]), window.original)
+        self.assertFalse(toolbar.previous.isEnabled())
+        self.assertEqual(toolbar.page_total.text(), "/ 3")
+        toolbar.next.click()
+        self.settled()
+        self.assertEqual(window.current_page, 2)
+        self.assertEqual(toolbar.page_number.value(), 2)
+        self.assertTrue(toolbar.previous.isEnabled())
+        self.assertEqual(window.export_button.styleSheet(), button_stylesheet("blue", window.export_button))
 
     def test_debounce_original_text_tab_and_cache_invalidation(self) -> None:
         window = self.window

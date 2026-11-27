@@ -52,11 +52,14 @@ from .data_model import (DEFAULT_CLIP_COLOR, FloatArray, ImageMember, Limits, Re
 from .clipping import ClippedCurve, clip_curve
 from .derivatives import DerivativeResult, differentiate
 from .plot_support import EndpointAxis, NavigationViewBox, PlotBounds, RangeNotes, compact_axis, graphics_scene, pyside_graphics_view
-from .profile_legend import ProfileLegend
 from .qt_widgets import NoWheelComboBox, NoWheelDoubleSpinBox, VerticalSeparator
 from .value_markers import MarkerStyle, curve_markers
 from .render_style import (DASH_PRESETS, DEFAULT_DASH_SCALE, DEFAULT_POINT_SIZE, MIN_POINT_SIZE, MAX_POINT_SIZE, CurveStyle, LineStyle, PointShape,
                            DEFAULT_LINE_COLOR, DEFAULT_LINE_WIDTH, MIN_LINE_WIDTH, MAX_LINE_WIDTH)
+from .ui_curve_actions import Ui_CurveActions
+from .ui_curve_appearance import Ui_CurveAppearance
+from .ui_curve_header import Ui_CurveHeader
+from .ui_profile_view import Ui_ProfileView
 
 WHEEL_ZOOM_FACTOR = 1.15
 DERIVATIVE_DELAY_MS = 70
@@ -171,7 +174,7 @@ class ProfileViewBox(NavigationViewBox):
         """Use cached full curve bounds even when clipToView draws a small subset."""
         rects = [rect for item in self.addedItems if isinstance(item, pg.PlotDataItem) and item.isVisible()
                  and (rect := item.dataRect()) is not None
-                 and all(math.isfinite(v) for v in rect.getRect())]
+                 and all(math.isfinite(v) for v in (rect.left(), rect.right(), rect.top(), rect.bottom()))]
         if not rects:
             return None
         low, high = min(r.top() for r in rects), max(r.bottom() for r in rects)
@@ -184,7 +187,8 @@ class ProfileViewBox(NavigationViewBox):
     def enableAutoRange(self, axis: int | str | None = None, enable: bool | float = True,
                         x: bool | float | None = None, y: bool | float | None = None) -> None:
         """Keep Y data fitting active while its expanding-range guard is enabled."""
-        super().enableAutoRange(axis=axis, enable=enable, x=x, y=y)
+        # PyQtGraph also accepts a fractional data range for enable, despite its bool default.
+        super().enableAutoRange(axis=axis, enable=enable, x=x, y=y)  # pyright: ignore[reportArgumentType]
         if self.y_range_lock.enabled and not self.signalsBlocked() and self.state["autoRange"][1] is False:
             super().enableAutoRange(axis=ViewBox.YAxis, enable=True)
 
@@ -349,7 +353,7 @@ class CurvePane(QtWidgets.QWidget):
         """
         y = np.where(valid, values, np.nan)
         self.range_notes.show()
-        ordered = x_values is None or bool(np.all(np.isfinite(x_values)) and np.all(x_values[1:] >= x_values[:-1]))
+        ordered = x_values is None or bool(np.all(np.isfinite(x_values)) and np.all(np.greater_equal(x_values[1:], x_values[:-1])))
         curve = self.curve if channel is None else self.channel_curves[channel]
         outlined = self._dark and channel == ImageMember.MONO
         pen = profile_pen(color, line_width, line_style, dash_scale) if mode != CurveStyle.POINTS else None
@@ -418,7 +422,7 @@ class CurvePane(QtWidgets.QWidget):
             self.plot_item.getAxis(name).setTextPen("#dce5f2" if dark else "#263247")
 
 
-class ProfileView(QtWidgets.QWidget):
+class ProfileView(QtWidgets.QWidget, Ui_ProfileView):
     """Signal and derivative tabs sharing source samples and appearance controls.
 
     Args:
@@ -427,6 +431,7 @@ class ProfileView(QtWidgets.QWidget):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setupUi(self)
         self.values: RealArray | None = None
         self.valid: BoolArray | None = None
         self.x_start = 0
@@ -455,104 +460,72 @@ class ProfileView(QtWidgets.QWidget):
         self._derivative_timer.setSingleShot(True)
         self._derivative_timer.setInterval(DERIVATIVE_DELAY_MS)
         self._derivative_timer.timeout.connect(self._ensure_derivative)
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
         self.info_bar = QtWidgets.QWidget()
-        bar = QtWidgets.QHBoxLayout(self.info_bar)
-        bar.setContentsMargins(2, 0, 2, 0)
-        self.title = QtWidgets.QLabel("Signal / profile")
+        curve_header_ui = Ui_CurveHeader()
+        curve_header_ui.setupUi(self.info_bar)
+        bar = curve_header_ui.bar
+        self.title = curve_header_ui.title
         title_font = self.title.font()
         title_font.setPointSizeF(QtGui.QFontInfo(title_font).pointSizeF() + PROFILE_TITLE_POINT_INCREMENT)
-        title_font.setBold(True)
         self.title.setFont(title_font)
-        self.title.setMinimumWidth(55)
-        self.title.setMaximumWidth(170)
-        self.title.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Preferred)
-        bar.addWidget(self.title)
-        self.legend_bar = ProfileLegend()
-        bar.addWidget(self.legend_bar, 1)
-        self.style_selector = NoWheelComboBox()
+        self.legend_bar = curve_header_ui.legend_bar
+        self.appearance_controls = QtWidgets.QWidget(self)
+        curve_appearance_ui = Ui_CurveAppearance()
+        curve_appearance_ui.setupUi(self.appearance_controls)
+        self.style_selector = curve_appearance_ui.style_selector
         self.style_selector.addItems([style.label for style in CurveStyle])
         self.style_selector.currentIndexChanged.connect(self._redraw)
-        self.appearance_controls = QtWidgets.QWidget(self)
-        self.appearance_form = QtWidgets.QFormLayout(self.appearance_controls)
-        self.appearance_form.addRow("Style", self.style_selector)
-        self.line_style = NoWheelComboBox()
+        self.appearance_form = curve_appearance_ui.appearance_form
+        self.line_style = curve_appearance_ui.line_style
         for style in LineStyle:
             self.line_style.addItem(style.label, style.value)
-        self.line_style.setToolTip("Line pattern for this signal/slice and its derivative.")
         self.line_style.currentIndexChanged.connect(self._redraw)
-        self.appearance_form.addRow("Line style", self.line_style)
-        self.dash_scale = NoWheelDoubleSpinBox()
+        self.dash_scale = curve_appearance_ui.dash_scale
         self.dash_scale.setRange(0.25, 8.0)
         self.dash_scale.setSingleStep(0.25)
         self.dash_scale.setValue(DEFAULT_DASH_SCALE)
         self.dash_scale.setSuffix("×")
         self.dash_scale.setKeyboardTracking(False)
-        self.dash_scale.setToolTip("Multiply dash and gap lengths for this curve. 1× uses the original pattern.")
         self.dash_scale.valueChanged.connect(self._redraw)
-        self.appearance_form.addRow("Dash scale", self.dash_scale)
         self.line_style.currentIndexChanged.connect(self.sync_dash_control)
         self.style_selector.currentIndexChanged.connect(self.sync_dash_control)
         self.sync_dash_control()
-        self.point_shape = NoWheelComboBox()
+        self.point_shape = curve_appearance_ui.point_shape
         for shape in PointShape:
             self.point_shape.addItem(shape.label, shape.value)
-        self.point_shape.setToolTip("Sample symbol for Points and Line + points; also applies to the derivative.")
         self.point_shape.currentIndexChanged.connect(self._redraw)
-        self.appearance_form.addRow("Point shape", self.point_shape)
         self.appearance_controls.hide()
-        self.line_width = NoWheelDoubleSpinBox()
+        self.line_width = curve_appearance_ui.line_width
         self.line_width.setRange(MIN_LINE_WIDTH, MAX_LINE_WIDTH)
         self.line_width.setSingleStep(0.5)
         self.line_width.setValue(DEFAULT_LINE_WIDTH)
         self.line_width.setSuffix(" px")
         self.line_width.setKeyboardTracking(False)
-        self.line_width.setToolTip("Line width for this signal/slice and its derivative. Applies to Line and Line + points.")
         self.line_width.valueChanged.connect(self._redraw)
-        self.appearance_form.addRow("Line width", self.line_width)
-        self.point_size = NoWheelDoubleSpinBox()
+        self.point_size = curve_appearance_ui.point_size
         self.point_size.setRange(MIN_POINT_SIZE, MAX_POINT_SIZE)
         self.point_size.setSingleStep(0.5)
         self.point_size.setValue(DEFAULT_POINT_SIZE)
         self.point_size.setSuffix(" px")
         self.point_size.setKeyboardTracking(False)
-        self.point_size.setToolTip("Sample diameter for this signal/slice and its derivative. Select Points or Line + points to see samples.")
         self.point_size.valueChanged.connect(self._redraw)
-        self.appearance_form.addRow("Point size", self.point_size)
-        self.color_button = QtWidgets.QPushButton("Line color")
+        self.color_button = curve_appearance_ui.color_button
         self.color_button.clicked.connect(self._choose_color)
-        self.appearance_form.addRow("Color", self.color_button)
-        self.settings_button = QtWidgets.QPushButton("View settings…")
-        self.settings_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
-        self.settings_button.setToolTip("Signal / derivative style, colors and value markers.")
         self.tab_actions = QtWidgets.QWidget()
-        actions_layout = QtWidgets.QHBoxLayout(self.tab_actions)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(2)
-        self.extrema_button = QtWidgets.QPushButton("Calculate extrema")
-        actions_layout.addWidget(self.extrema_button)
-        actions_layout.addWidget(VerticalSeparator())
-        self.y_lock_button = QtWidgets.QPushButton("Lock Y range")
-        actions_layout.addWidget(self.y_lock_button)
-        fit = QtWidgets.QPushButton("Fit curve")
-        fit.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+        curve_actions_ui = Ui_CurveActions()
+        curve_actions_ui.setupUi(self.tab_actions)
+        self.settings_button = curve_actions_ui.settings_button
+        self.extrema_button = curve_actions_ui.extrema_button
+        self.y_lock_button = curve_actions_ui.y_lock_button
+        fit = curve_actions_ui.fit
         fit.clicked.connect(self.reset_view)
-        actions_layout.addWidget(fit)
-        actions_layout.addWidget(self.settings_button)
-        self.readout = QtWidgets.QLabel("Move over the curve to inspect a sample")
-        self.readout.setMinimumWidth(120)
+        self.readout = curve_header_ui.readout
         self.readout.setFixedHeight(self.readout.fontMetrics().lineSpacing())
-        self.readout.setWordWrap(False)
-        self.readout.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
-        self.readout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.readout.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        bar.addWidget(self.readout, 1)
-        self.tabs = QtWidgets.QTabWidget()
         self.tabs.setCornerWidget(self.tab_actions, QtCore.Qt.Corner.TopRightCorner)
         self.signal_pane = CurvePane("Value (y)")
         self._signal_layout = self.signal_pane.layout()
-        self.tabs.addTab(self.signal_pane, "Signal")
+        self.signal_layout.addWidget(self.signal_pane)
         # Keep the signal canvas accessible to linked views and coordinate probes.
         self.view_box, self.plot_item = self.signal_pane.view_box, self.signal_pane.plot_item
         self.plot, self.curve = self.signal_pane.plot, self.signal_pane.curve
@@ -567,10 +540,8 @@ class ProfileView(QtWidgets.QWidget):
         graphics_scene(self.signal_pane.native_view).sigMouseMoved.connect(self._hover)
 
         # ── derivative settings and lazy canvas ────────────
-        page = QtWidgets.QWidget()
-        derivative_layout = QtWidgets.QVBoxLayout(page)
+        derivative_layout = self.form_derivative_layout
         self._derivative_layout = derivative_layout
-        derivative_layout.setContentsMargins(0, 0, 0, 0)
         self.derivative_controls = QtWidgets.QWidget()
         settings = QtWidgets.QHBoxLayout(self.derivative_controls)
         settings.setContentsMargins(0, 0, 0, 0)
@@ -614,12 +585,10 @@ class ProfileView(QtWidgets.QWidget):
         bar.insertWidget(1, self.derivative_note)
         self.derivative_separator = VerticalSeparator()
         bar.insertWidget(1, self.derivative_separator)
-        self.tabs.addTab(page, "Derivative")
         self.tabs.currentChanged.connect(self._move_info_bar)
         self.tabs.currentChanged.connect(self._tab_changed)
         self.jump_mode.currentIndexChanged.connect(self._jump_mode_changed)
         self.jump_threshold.valueChanged.connect(self._invalidate_derivative)
-        layout.addWidget(self.tabs)
         self._move_info_bar()
 
     def _move_info_bar(self) -> None:

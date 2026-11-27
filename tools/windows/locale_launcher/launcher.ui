@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Launcher</class>
+ <widget class="QWidget" name="Launcher">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>704</width><height>298</height></rect></property>
+  <property name="windowTitle"><string>Locale Launcher</string></property>
+  <layout class="QVBoxLayout" name="main_layout">
+   <item>
+    <layout class="QHBoxLayout" name="target_row" stretch="1,0,0">
+     <item>
+      <widget class="QLineEdit" name="path">
+       <property name="placeholderText"><string>Drop an .exe or .com here</string></property>
+       <property name="accessibleName"><string>Target executable</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="open_button">
+       <property name="text"><string>Open…</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="paste_button">
+       <property name="text"><string>Paste</string></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="arguments_row" stretch="0,1">
+     <item>
+      <widget class="QLabel" name="arguments_label">
+       <property name="text"><string>Arguments</string></property>
+       <property name="buddy"><cstring>arguments</cstring></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLineEdit" name="arguments">
+       <property name="placeholderText"><string>Optional command-line arguments</string></property>
+       <property name="accessibleName"><string>Arguments</string></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="directory_row" stretch="0,1,0">
+     <item>
+      <widget class="QLabel" name="directory_label">
+       <property name="text"><string>Start in</string></property>
+       <property name="buddy"><cstring>directory</cstring></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLineEdit" name="directory">
+       <property name="accessibleName"><string>Working directory</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="folder_button">
+       <property name="text"><string>Open folder…</string></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QGridLayout" name="fields" columnstretch="0,3,0,2">
+     <item row="1" column="1">
+      <widget class="QLabel" name="launch_heading">
+       <property name="text"><string>Launch settings</string></property>
+      </widget>
+     </item>
+     <item row="1" column="3">
+      <widget class="QLabel" name="host_heading">
+       <property name="text"><string>This computer</string></property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="region_label">
+       <property name="text"><string>Region</string></property>
+       <property name="buddy"><cstring>region</cstring></property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="NoWheelComboBox" name="region">
+       <property name="accessibleName"><string>Region</string></property>
+       <property name="sizeAdjustPolicy"><enum>QComboBox::SizeAdjustPolicy::AdjustToMinimumContentsLengthWithIcon</enum></property>
+       <property name="minimumContentsLength"><number>27</number></property>
+      </widget>
+     </item>
+     <item row="2" column="3">
+      <widget class="QLabel" name="host_region">
+       <property name="wordWrap"><bool>true</bool></property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="page_label">
+       <property name="text"><string>Code page</string></property>
+       <property name="buddy"><cstring>page</cstring></property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="NoWheelComboBox" name="page">
+       <property name="accessibleName"><string>Code page</string></property>
+       <property name="sizeAdjustPolicy"><enum>QComboBox::SizeAdjustPolicy::AdjustToMinimumContentsLengthWithIcon</enum></property>
+       <property name="minimumContentsLength"><number>27</number></property>
+      </widget>
+     </item>
+     <item row="3" column="3">
+      <widget class="QLabel" name="host_page">
+       <property name="wordWrap"><bool>true</bool></property>
+      </widget>
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="language_label">
+       <property name="text"><string>UI language</string></property>
+       <property name="buddy"><cstring>language</cstring></property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="NoWheelComboBox" name="language">
+       <property name="accessibleName"><string>UI language</string></property>
+       <property name="sizeAdjustPolicy"><enum>QComboBox::SizeAdjustPolicy::AdjustToMinimumContentsLengthWithIcon</enum></property>
+       <property name="minimumContentsLength"><number>27</number></property>
+      </widget>
+     </item>
+     <item row="4" column="3">
+      <widget class="QLabel" name="host_language">
+       <property name="wordWrap"><bool>true</bool></property>
+      </widget>
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="zone_label">
+       <property name="text"><string>Time zone</string></property>
+       <property name="buddy"><cstring>zone</cstring></property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="NoWheelComboBox" name="zone">
+       <property name="accessibleName"><string>Time zone</string></property>
+       <property name="sizeAdjustPolicy"><enum>QComboBox::SizeAdjustPolicy::AdjustToMinimumContentsLengthWithIcon</enum></property>
+       <property name="minimumContentsLength"><number>27</number></property>
+      </widget>
+     </item>
+     <item row="5" column="3">
+      <widget class="QLabel" name="host_zone">
+       <property name="wordWrap"><bool>true</bool></property>
+      </widget>
+     </item>
+     <item row="0" column="2" rowspan="6">
+      <widget class="QFrame" name="divider">
+       <property name="frameShape"><enum>QFrame::Shape::VLine</enum></property>
+       <property name="frameShadow"><enum>QFrame::Shadow::Sunken</enum></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="button_row">
+     <item>
+      <spacer name="button_spacer">
+       <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+       <property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="admin_button">
+       <property name="text"><string>Run as administrator</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="run_button">
+       <property name="text"><string>Run</string></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

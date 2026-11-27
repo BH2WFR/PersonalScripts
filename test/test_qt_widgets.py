@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import runpy
 import sys
 import unittest
 from unittest.mock import patch
@@ -9,9 +10,11 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from utils.gui_colors import BUTTON_COLORS, button_fills, text_hex
+from utils.qt_styles import button_stylesheet, is_dark_theme, set_button_style, set_text_style, text_stylesheet
 from utils.qt_widgets import (
     NoWheelComboBox, NoWheelSpinBox, NoWheelDoubleSpinBox, install_no_wheel_controls,
-    configure_qt_application, monospace_ui_font, with_cjk_fallbacks,
+    configure_qt_application, monospace_ui_font, set_bold, with_cjk_fallbacks,
 )
 
 
@@ -32,6 +35,141 @@ class QtWidgetTests(unittest.TestCase):
                                  QtCore.Qt.KeyboardModifier.NoModifier, QtCore.Qt.ScrollPhase.NoScrollPhase, False)
         QtWidgets.QApplication.sendEvent(widget, event)
         return event
+
+    def test_theme_styles_follow_live_palette_and_clear(self) -> None:
+        app = self.application
+        self.enterContext(patch.object(QtGui.QStyleHints, "colorScheme", return_value=QtCore.Qt.ColorScheme.Unknown))
+        original = app.palette()
+        self.addCleanup(app.setPalette, original)
+        window = QtWidgets.QWidget()
+        label, action = QtWidgets.QLabel("Status", window), QtWidgets.QPushButton("Run", window)
+        set_text_style(label, "red")
+        set_button_style(action, "blue")
+        action.resize(120, 36)
+        native = QtWidgets.QPushButton(action.text(), window)
+        set_bold(native)
+        native.resize(action.size())
+        native.setEnabled(False)
+        role = QtGui.QPalette.ColorRole
+        for dark in (False, True, False):
+            palette = QtGui.QPalette(original)
+            palette.setColor(role.Window, QtGui.QColor("#252525" if dark else "#fafafa"))
+            palette.setColor(role.WindowText, QtGui.QColor("white" if dark else "black"))
+            app.setPalette(palette)
+            app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+            self.assertEqual(is_dark_theme(), dark)
+            self.assertEqual(label.styleSheet(), text_stylesheet("red"))
+            self.assertIn(text_hex("red", dark=dark), label.styleSheet())
+            for accent in BUTTON_COLORS:
+                set_button_style(action, accent)
+                self.assertEqual(action.styleSheet(), button_stylesheet(accent))
+                normal, hover, pressed = button_fills(accent, dark=dark)
+                self.assertEqual(action.grab().toImage().pixelColor(8, 18).name(), normal)
+                option = QtWidgets.QStyleOptionButton()
+                action.initStyleOption(option)
+                option.state |= QtWidgets.QStyle.StateFlag.State_MouseOver | QtWidgets.QStyle.StateFlag.State_HasFocus
+                pixmap = QtGui.QPixmap(action.size())
+                painter = QtGui.QPainter(pixmap)
+                action.style().drawControl(QtWidgets.QStyle.ControlElement.CE_PushButton, option, painter, action)
+                painter.end()
+                self.assertEqual(pixmap.toImage().pixelColor(8, 18).name(), hover)
+                self.assertEqual(pixmap.toImage().pixelColor(60, 0).name(), "#a6cfff" if dark else "#071a37")
+                self.assertGreater(QtGui.qGray(QtGui.QColor(hover).rgb()), QtGui.qGray(QtGui.QColor(normal).rgb()))
+                option.state |= QtWidgets.QStyle.StateFlag.State_On
+                painter = QtGui.QPainter(pixmap)
+                action.style().drawControl(QtWidgets.QStyle.ControlElement.CE_PushButton, option, painter, action)
+                painter.end()
+                self.assertEqual(pixmap.toImage().pixelColor(8, 18).name(), pressed)
+                self.assertEqual(pixmap.toImage().pixelColor(60, 0).name(), "#a6cfff")
+                self.assertLess(QtGui.qGray(QtGui.QColor(pressed).rgb()), QtGui.qGray(QtGui.QColor(normal).rgb()))
+                action.setDown(True)
+                self.assertEqual(action.grab().toImage().pixelColor(8, 18).name(), pressed)
+                action.setDown(False)
+                action.setEnabled(False)
+                self.assertEqual(action.grab().toImage(), native.grab().toImage())
+                self.assertTrue(action.font().bold())
+                action.setEnabled(True)
+        set_text_style(label, None)
+        self.assertEqual(label.styleSheet(), "")
+
+    def test_system_scheme_precedes_window_fallback_and_follows_reparent(self) -> None:
+        app = self.application
+        scheme = QtCore.Qt.ColorScheme
+        hint = self.enterContext(patch.object(QtGui.QStyleHints, "colorScheme", return_value=scheme.Unknown))
+        white, black = QtWidgets.QWidget(), QtWidgets.QWidget()
+        role = QtGui.QPalette.ColorRole
+        for window, color in ((white, "white"), (black, "black")):
+            palette = window.palette()
+            palette.setColor(role.Window, QtGui.QColor(color))
+            window.setPalette(palette)
+        label = QtWidgets.QLabel("State", white)
+        palette = label.palette()
+        palette.setColor(role.Window, QtGui.QColor("black"))
+        palette.setColor(role.Base, QtGui.QColor("black"))
+        label.setPalette(palette)
+        set_text_style(label, "cyan")
+        self.assertFalse(is_dark_theme(label))
+        for current, dark in ((scheme.Dark, True), (scheme.Light, False), (scheme.Unknown, False)):
+            hint.return_value = current
+            app.styleHints().colorSchemeChanged.emit(current)
+            app.processEvents()
+            self.assertEqual(is_dark_theme(label), dark)
+            self.assertIn(text_hex("cyan", dark=dark), label.styleSheet())
+            if current != scheme.Unknown:
+                self.assertEqual(is_dark_theme(black), dark)
+        label.setParent(black)
+        app.processEvents()
+        self.assertIn(text_hex("cyan", dark=True), label.styleSheet())
+        black.setPalette(white.palette())
+        app.processEvents()
+        self.assertIn(text_hex("cyan", dark=False), label.styleSheet())
+
+    def test_preview_switches_both_themes_without_changing_other_windows(self) -> None:
+        root = Path(__file__).resolve().parent
+        app = self.application
+        self.enterContext(patch.object(QtGui.QStyleHints, "colorScheme", return_value=QtCore.Qt.ColorScheme.Light))
+        other = QtWidgets.QWidget()
+        window = runpy.run_path(str(root / "qt-style-preview.py"))["build_preview"]()
+        window.show()
+        self.addCleanup(window.close)
+        buttons = window.findChildren(QtWidgets.QPushButton)
+        switch = next(b for b in buttons if b.text() == "Switch to dark mode")
+        blue = next(b for b in buttons if b.text() == "Blue" and b.isEnabled() and not b.isCheckable())
+        disabled = next(b for b in buttons if b.text() == "Blue" and not b.isEnabled())
+        reference = QtWidgets.QPushButton(disabled.text(), window)
+        set_bold(reference)
+        reference.setEnabled(False)
+        field = window.findChild(QtWidgets.QLineEdit)
+        field.setText("Edited")
+        for dark in (True, False, True, False):
+            switch.click()
+            app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+            self.assertEqual(is_dark_theme(blue), dark)
+            self.assertFalse(is_dark_theme(other))
+            self.assertEqual(switch.text(), "Switch to light mode" if dark else "Switch to dark mode")
+            self.assertEqual(blue.styleSheet(), button_stylesheet("blue", window))
+            self.assertEqual(blue.grab().toImage().pixelColor(8, blue.height() // 2).name(),
+                             button_fills("blue", dark=dark)[0])
+            switch.setFocus()
+            QtTest.QTest.keyClick(switch, QtCore.Qt.Key.Key_Tab)
+            self.assertTrue(blue.hasFocus())
+            focused = blue.grab().toImage()
+            self.assertEqual(focused.pixelColor(focused.width() // 2, 0).name(), "#a6cfff" if dark else "#071a37")
+            blue.setDown(True)
+            pressed = blue.grab().toImage()
+            self.assertEqual(pressed.pixelColor(pressed.width() // 2, 0).name(), "#a6cfff")
+            blue.setDown(False)
+            QtTest.QTest.keyClick(blue, QtCore.Qt.Key.Key_Tab)
+            self.assertFalse(blue.hasFocus())
+            unfocused = blue.grab().toImage()
+            self.assertEqual(unfocused.pixelColor(unfocused.width() // 2, 0), unfocused.pixelColor(8, 8))
+            reference.resize(disabled.size())
+            self.assertEqual(disabled.grab().toImage(), reference.grab().toImage())
+            self.assertEqual(field.text(), "Edited")
+            for name in ("Default", "Bold"):
+                sample = next(b for b in buttons if b.text() == name)
+                self.assertEqual(sample.styleSheet(), "")
+                self.assertEqual(sample.font().bold(), name == "Bold")
 
     def test_cjk_fallback_order_and_font_attributes(self) -> None:
         original = QtGui.QFont("Editor", 13)

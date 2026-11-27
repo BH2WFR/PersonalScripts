@@ -35,7 +35,7 @@ def run(request: dict[str, Json], progress: Callable[[dict[str, Json]], None]) -
                     marker = "unreadable XMP"
                 return cast(dict[str, Json], {
                     "kind": "opened", "pages": document.page_count, "identity": fingerprint, "size": stat.st_size,
-                    "format": document.metadata["format"], "protected": protected, "marker": marker,
+                    "format": (document.metadata or {}).get("format") or "PDF", "protected": protected, "marker": marker,
                     "xml": xml, "rows": rows, "common": common_values(rows, xml),
                 })
             if request["operation"] != "export":
@@ -68,7 +68,7 @@ def main() -> int:
     for line in sys.stdin:
         try:
             with redirect_stdout(sys.stderr):
-                reply = run(json.loads(line), send)
+                reply: dict[str, Json] = run(json.loads(line), send)
         except Cancelled as exc:
             reply = {"kind": "cancelled", "message": str(exc)}
         except Exception as exc:

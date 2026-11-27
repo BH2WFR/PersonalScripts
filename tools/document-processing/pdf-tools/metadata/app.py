@@ -3,10 +3,10 @@
 from pathlib import Path
 from typing import cast
 
-from pymupdf import mupdf
 from PySide6 import QtCore, QtGui, QtWidgets
 from utils import *
-from utils.qt_widgets import NoWheelComboBox, configure_qt_application, monospace_ui_font
+from utils.qt_styles import set_button_style
+from utils.qt_widgets import configure_qt_application, monospace_ui_font
 from ..common.file_actions import choose_pdf_output
 from ..common.file_drop import FileDropFilter
 from ..common.jobs import JobRunner
@@ -15,207 +15,11 @@ from ..common.protocol import Json
 from ..common.task_buttons import TaskButtons
 from .engine import Property
 from .titles import TitleDialog
-from .xmp import FIELDS, PROFILES, Packet
+from .xmp import FIELDS, Packet
+from .ui_mainwindow import Ui_MetadataWindow
 
 
-class Properties(QtWidgets.QWidget):
-    """Edit the Info dictionary. Keep original row identity across key renames."""
-
-    changed = QtCore.Signal()
-
-    def __init__(self) -> None:
-        super().__init__()
-        layout = QtWidgets.QVBoxLayout(self)
-        form = QtWidgets.QFormLayout()
-        layout.addLayout(form)
-        self.fields: dict[str, QtWidgets.QLineEdit] = {}
-        for name in FIELDS:
-            field = QtWidgets.QLineEdit()
-            field.setMaxLength(2**31 - 1)
-            field.textEdited.connect(self.changed)
-            self.fields[name] = field
-            if name == "Title":
-                title_row = QtWidgets.QHBoxLayout()
-                title_row.addWidget(field)
-                self.edit_titles = QtWidgets.QPushButton("Multilingual…")
-                title_row.addWidget(self.edit_titles)
-                form.addRow(name, title_row)
-            else:
-                form.addRow(name, field)
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.addWidget(QtWidgets.QLabel("Additional document properties"))
-        buttons.addStretch()
-        self.add = QtWidgets.QPushButton("Add property")
-        self.remove = QtWidgets.QPushButton("Remove")
-        buttons.addWidget(self.add)
-        buttons.addWidget(self.remove)
-        layout.addLayout(buttons)
-        self.table = QtWidgets.QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Property", "Format", "Value"])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().hide()
-        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._menu)
-        self.table.itemChanged.connect(self.changed)
-        self.add.clicked.connect(self._add)
-        self.remove.clicked.connect(self._remove)
-        layout.addWidget(self.table)
-
-    def append(self, row: Property) -> None:
-        """Add an editable row with its original name and PDF value format."""
-        index = self.table.rowCount()
-        self.table.insertRow(index)
-        key = QtWidgets.QTableWidgetItem(row["key"])
-        key.setData(QtCore.Qt.ItemDataRole.UserRole, row["original"])
-        kind = QtWidgets.QTableWidgetItem("PDF syntax" if row["raw"] else "Text")
-        kind.setFlags(kind.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-        self.table.setItem(index, 0, key)
-        self.table.setItem(index, 1, kind)
-        self.table.setItem(index, 2, QtWidgets.QTableWidgetItem(row["value"]))
-
-    def rows(self) -> list[Property]:
-        """Collect the current table in display order."""
-        rows: list[Property] = []
-        for i in range(self.table.rowCount()):
-            key = self._cell(i, 0)
-            rows.append(Property(key=key.text(), original=key.data(QtCore.Qt.ItemDataRole.UserRole),
-                                 value=self._cell(i, 2).text(), raw=self._cell(i, 1).text() == "PDF syntax"))
-        return rows
-
-    def _cell(self, row: int, column: int) -> QtWidgets.QTableWidgetItem:
-        item = self.table.item(row, column)
-        assert item is not None
-        return item
-
-    def _add(self) -> None:
-        keys = {row["key"] for row in self.rows()}
-        choices = ["", *(name for name in ("CreationDate", "ModDate", "Trapped") if name not in keys)]
-        key, accepted = QtWidgets.QInputDialog.getItem(self, "Add property", "Property name", choices, 0, True)
-        if not accepted:
-            return
-        if not key or key in keys or key in FIELDS:
-            QtWidgets.QMessageBox.warning(self, "Property name", "Choose a new, nonempty property name.")
-            return
-        self.append(Property(original="", key=key, value="/Unknown" if key == "Trapped" else "", raw=key == "Trapped"))
-        self.table.setCurrentCell(self.table.rowCount() - 1, 2)
-        self.table.editItem(self._cell(self.table.currentRow(), 2))
-
-    def _remove(self) -> None:
-        if self.table.currentRow() >= 0:
-            self.table.removeRow(self.table.currentRow())
-            self.changed.emit()
-
-    def _menu(self, point: QtCore.QPoint) -> None:
-        item = self.table.itemAt(point)
-        menu = QtWidgets.QMenu()
-        menu.addAction("Add property", self._add)
-        if item is not None:
-            self.table.setCurrentItem(item)
-            menu.addAction("Rename", lambda: self.table.editItem(self._cell(item.row(), 0)))
-            menu.addAction("Edit value", lambda: self.table.editItem(self._cell(item.row(), 2)))
-            kind = self._cell(item.row(), 1)
-            target = "Text" if kind.text() == "PDF syntax" else "PDF syntax"
-            menu.addAction(f"Use {target.lower()}", lambda: kind.setText(target))
-            menu.addAction("Remove", self._remove)
-        menu.exec(self.table.viewport().mapToGlobal(point))
-
-
-class OutputOptions(QtWidgets.QWidget):
-    """Select archival identification or AES-256 security for the new file."""
-
-    changed = QtCore.Signal()
-
-    def __init__(self) -> None:
-        super().__init__()
-        layout = QtWidgets.QFormLayout(self)
-        self.marker = NoWheelComboBox()
-        self.marker.addItem("Keep identification from XMP", "keep")
-        self.marker.addItem("Remove identification", "remove")
-        for profile in PROFILES:
-            self.marker.addItem("PDF/A-" + profile, profile)
-        layout.addRow("PDF/A identification", self.marker)
-        note = QtWidgets.QLabel("Writing identification alone does not establish PDF/A conformance.")
-        note.setWordWrap(True)
-        layout.addRow(note)
-        self.mode = NoWheelComboBox()
-        self.mode.addItems(["Unprotected", "Restrict permissions", "Require an opening password"])
-        layout.addRow("Output security", self.mode)
-        self.owner = QtWidgets.QLineEdit()
-        self.owner.setToolTip("Required to restrict permissions. Optional when an opening password allows all actions.")
-        self.user = QtWidgets.QLineEdit()
-        for label, field in (("Owner password", self.owner), ("Opening password", self.user)):
-            field.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-            field.textEdited.connect(self.changed)
-            layout.addRow(label, field)
-        group = QtWidgets.QGroupBox("Allowed actions")
-        grid = QtWidgets.QGridLayout(group)
-        self.permissions: dict[int, QtWidgets.QCheckBox] = {}
-        for i, (name, flag) in enumerate((
-            ("Print", mupdf.PDF_PERM_PRINT), ("High-quality printing", mupdf.PDF_PERM_PRINT_HQ),
-            ("Copy text and images", mupdf.PDF_PERM_COPY), ("Accessibility", mupdf.PDF_PERM_ACCESSIBILITY),
-            ("Modify content", mupdf.PDF_PERM_MODIFY), ("Add annotations", mupdf.PDF_PERM_ANNOTATE),
-            ("Fill forms", mupdf.PDF_PERM_FORM), ("Assemble pages", mupdf.PDF_PERM_ASSEMBLE),
-        )):
-            box = QtWidgets.QCheckBox(name)
-            box.toggled.connect(self.changed)
-            box.clicked.connect(self._permissions_edited)
-            self.permissions[flag] = box
-            grid.addWidget(box, i // 2, i % 2)
-        self.group = group
-        layout.addRow(group)
-        self.marker.currentIndexChanged.connect(self.changed)
-        self.mode.currentIndexChanged.connect(self._mode_changed)
-        self._previous_marker = 0
-        self._custom_permissions = False
-        self.reset()
-
-    def reset(self) -> None:
-        """Clear all previous passwords and restore ordinary output defaults."""
-        self.mode.setCurrentIndex(0)
-        self.marker.setCurrentIndex(0)
-        self._previous_marker = 0
-        self.owner.clear()
-        self.user.clear()
-        self._custom_permissions = False
-        self._mode_changed()
-
-    def _permissions_edited(self) -> None:
-        self._custom_permissions = True
-
-    def _mode_changed(self) -> None:
-        mode = self.mode.currentIndex()
-        if mode and self.marker.isEnabledTo(self):
-            self._previous_marker = self.marker.currentIndex()
-            self.marker.setCurrentIndex(1)
-        elif not mode and not self.marker.isEnabledTo(self):
-            self.marker.setCurrentIndex(self._previous_marker)
-        self.marker.setEnabled(not mode)
-        self.owner.setEnabled(bool(mode))
-        self.group.setEnabled(bool(mode))
-        self.user.setEnabled(mode == 2)
-        if not self._custom_permissions:
-            for flag, box in self.permissions.items():
-                box.setChecked(mode == 2 or flag in (mupdf.PDF_PERM_PRINT, mupdf.PDF_PERM_ACCESSIBILITY))
-        self.changed.emit()
-
-    def options(self) -> dict[str, Json]:
-        """Validate requested passwords before selecting a destination."""
-        mode = self.mode.currentIndex()
-        if not mode:
-            return {"marker": self.marker.currentData(), "protect": False}
-        user = self.user.text() if mode == 2 else ""
-        if mode == 2 and not user:
-            raise ValueError("Enter an opening password.")
-        allowed = [flag for flag, box in self.permissions.items() if box.isChecked()]
-        permissions = -1 if len(allowed) == len(self.permissions) else sum(allowed)
-        security = PdfProtection(self.owner.text(), user, permissions)
-        return {"marker": "remove", "protect": True, "owner": security.owner_password, "user": user,
-                "permissions": security.permissions}
-
-
-class MetadataWindow(QtWidgets.QWidget):
+class MetadataWindow(QtWidgets.QWidget, Ui_MetadataWindow):
     """Keep a draft in memory and publish only complete, separately named exports."""
 
     def __init__(self, entry: Path) -> None:
@@ -229,40 +33,20 @@ class MetadataWindow(QtWidgets.QWidget):
         self._dialog_title: str | None = None
         self._keep_plain_title = False
         self.dirty = False
-        self.setWindowTitle("PDF Metadata Editor")
-        self.resize(760, 600)
-        layout = QtWidgets.QVBoxLayout(self)
-        self.open_button = QtWidgets.QPushButton("Open PDF…")
+        self.setupUi(self)
         self.open_button.clicked.connect(self._choose)
-        self.info = QtWidgets.QLabel("Open a PDF to edit its document properties.")
         self.info.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.info.setWordWrap(True)
-        layout.addWidget(self.open_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(self.info)
-        self.tabs = QtWidgets.QTabWidget()
-        self.properties = Properties()
         self.properties.edit_titles.clicked.connect(self._edit_titles)
-        self.xml = QtWidgets.QPlainTextEdit()
         self.xml.setFont(monospace_ui_font())
         self.xml.setPlaceholderText("Enter an XMP packet in RDF/XML.")
-        self.options = OutputOptions()
-        self.tabs.addTab(self.properties, "Document properties")
-        self.tabs.addTab(self.xml, "XMP (XML)")
-        self.tabs.addTab(self.options, "Output settings")
         self.tabs.setTabToolTip(1, "Edit any XMP property, including translations, arrays and custom namespaces. "
                                "Changed common fields and output identification are applied after these edits.")
-        layout.addWidget(self.tabs)
-        self.status = QtWidgets.QLabel()
         self.status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-        footer = QtWidgets.QHBoxLayout()
-        footer.addStretch()
-        footer.addWidget(TaskButtons(self.runner, self, with_progress=True))
-        self.save = QtWidgets.QPushButton("Save as…")
+        task_buttons = TaskButtons(self.runner, self, with_progress=True)
+        self.task_slot.addWidget(task_buttons)
+        self.setTabOrder(task_buttons.stop_button, self.save)
+        set_button_style(self.save, "blue")
         self.save.clicked.connect(self._save)
-        footer.addWidget(self.save)
-        layout.addLayout(footer)
         self.runner.busyChanged.connect(self._enable)
         self.runner.completed.connect(self._reply)
         self.runner.controlStatus.connect(self.status.setText)

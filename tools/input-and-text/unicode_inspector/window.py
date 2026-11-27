@@ -2,26 +2,26 @@
 
 import os
 import sys
+from typing import cast
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QResizeEvent, QShortcut
-from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QPushButton, QTableView, QVBoxLayout, QWidget,
-)
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtWidgets import QApplication, QHeaderView, QWidget
 
 from utils import System, UnicodeReport, UnicodeText
+from utils.gui_colors import TextColor
+from utils.qt_styles import on_theme_change, set_button_style, theme_text_color
 from utils.qt_widgets import configure_qt_application
-from .editor import OriginalEditor, mime_text, text_mime
+from .editor import mime_text, text_mime
+from .ui_mainwindow import Ui_UnicodeInspector
 
 
 class CharacterModel(QAbstractTableModel):
     """Read visible cells directly from the most recent analysis."""
 
-    COLORS = {tag: QColor(color) for tag, color in (
-        ("control", "#b71c1c"), ("special", "#267333"),
-        ("non_ascii", "#1565c0"), ("non_bmp", "#875020"),
-    )}
+    COLORS: dict[str, TextColor] = {
+        "control": "red", "special": "green", "non_ascii": "blue", "non_bmp": "brown",
+    }
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -32,20 +32,21 @@ class CharacterModel(QAbstractTableModel):
         self.report = report
         self.endResetModel()
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.report.characters)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(UnicodeText.COLUMNS)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> str | QColor | None:
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> str | QColor | None:
         if not index.isValid():
             return None
         row = self.report.characters[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return row.columns()[index.column()]
         if role == Qt.ItemDataRole.ForegroundRole:
-            return self.COLORS.get(row.style)
+            color = self.COLORS.get(row.style)
+            return theme_text_color(color, cast(QWidget, self.parent())) if color else None
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation,
@@ -55,114 +56,40 @@ class CharacterModel(QAbstractTableModel):
         return None
 
 
-class CharacterTable(QTableView):
-    """Keep columns draggable and share spare width among the three text columns."""
-
-    copyRequested = Signal()
-    FLEX_COLUMNS = (1, 5, 6)
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.matches(QKeySequence.StandardKey.Copy):
-            self.copyRequested.emit()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        super().resizeEvent(event)
-        header = self.horizontalHeader()
-        if header.count() != len(UnicodeText.COLUMNS):
-            return
-        remaining = self.viewport().width() - header.length()
-        for i, column in enumerate(self.FLEX_COLUMNS):
-            width = header.sectionSize(column)
-            target = max(header.minimumSectionSize(), width + round(remaining / (len(self.FLEX_COLUMNS) - i)))
-            header.resizeSection(column, target)
-            remaining -= target - width
-
-
-class UnicodeInspector(QWidget):
+class UnicodeInspector(QWidget, Ui_UnicodeInspector):
     """Edit source text, inspect its code points and copy reports."""
 
     def __init__(self, text: str) -> None:
         super().__init__()
-        self.setWindowTitle("Unicode Inspector")
-        self.resize(1100, 720)
-        self.setMinimumSize(800, 500)
-        body = QVBoxLayout(self)
-        body.setContentsMargins(12, 12, 12, 12)
-        body.setSpacing(0)
-        header = QHBoxLayout()
-        header.setSpacing(8)
-        body.addLayout(header)
-        header.addWidget(QLabel("Text to inspect"), 1)
-        for label, action in (("Paste", self.paste), ("Clear", lambda: self.set_text("")), ("Analyze", self.analyze)):
-            button = QPushButton(label)
-            if label in ("Paste", "Analyze"):
-                font = button.font()
-                font.setBold(True)
-                button.setFont(font)
-            button.clicked.connect(action)
-            header.addWidget(button)
-
-        self.original = OriginalEditor()
-        self.original.setAccessibleName("Text to inspect")
+        self.setupUi(self)
+        self.paste_button.clicked.connect(self.paste)
+        self.clear_button.clicked.connect(lambda: self.set_text(""))
+        self.analyze_button.clicked.connect(self.analyze)
+        set_button_style(self.analyze_button, "blue")
         self.original.setFixedHeight(self.original.fontMetrics().lineSpacing() * 6
                                      + 2 * (self.original.frameWidth() + int(self.original.document().documentMargin())))
-        self.original.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.original.setTabChangesFocus(False)
-        body.addSpacing(6)
-        body.addWidget(self.original)
 
         self.model = CharacterModel(self)
-        self.statistics: dict[str, QLineEdit] = {}
-        summary = QHBoxLayout()
-        summary.setSpacing(5)
-        for label, _ in self.model.report.statistics.items():
-            summary.addWidget(QLabel(label))
-            value = QLineEdit()
-            value.setReadOnly(True)
-            value.setAccessibleName(label)
-            value.setAlignment(Qt.AlignmentFlag.AlignRight)
-            value.setFixedWidth(value.fontMetrics().horizontalAdvance("0" * 9) + 8)
-            self.statistics[label] = value
-            summary.addWidget(value)
-            summary.addSpacing(9)
-        summary.addStretch()
-        body.addSpacing(12)
-        body.addLayout(summary)
+        self.statistics = {
+            "Characters": self.character_count,
+            "UTF-8 bytes": self.utf8_bytes,
+            "UTF-16 bytes": self.utf16_bytes,
+            "Words": self.word_count,
+            "Lines": self.line_count,
+        }
+        for field in self.statistics.values():
+            field.setFixedWidth(field.fontMetrics().horizontalAdvance("0" * 9) + 8)
 
-        self.table = CharacterTable()
         self.table.setModel(self.model)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.table.setShowGrid(False)
-        self.table.setWordWrap(False)
-        self.table.verticalHeader().hide()
+        on_theme_change(self.table, self.table.viewport().update)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(max(20, self.table.fontMetrics().lineSpacing() + 6))
-        self.table.horizontalHeader().setMinimumSectionSize(50)
         for column, width in enumerate((60, 150, 95, 80, 120, 180, 330)):
             self.table.setColumnWidth(column, width)
         self.table.copyRequested.connect(self.copy_rows)
-        body.addSpacing(12)
-        body.addWidget(self.table, 1)
-
-        footer = QHBoxLayout()
-        footer.setSpacing(8)
-        self.status = QLabel()
-        self.status.setWordWrap(True)
-        footer.addWidget(self.status, 1)
-        for label, action in (("Copy Original", self.copy_original), ("Copy Selected Rows", self.copy_rows),
-                              ("Copy Full Report", self.copy_report)):
-            button = QPushButton(label)
-            button.clicked.connect(action)
-            footer.addWidget(button)
-        body.addSpacing(10)
-        body.addLayout(footer)
+        self.copy_original_button.clicked.connect(self.copy_original)
+        self.copy_rows_button.clicked.connect(self.copy_rows)
+        self.copy_report_button.clicked.connect(self.copy_report)
 
         for key, action in (("Ctrl+Return", self.analyze), ("Ctrl+Enter", self.analyze),
                             ("Ctrl+W", self.close), ("Escape", self.close)):

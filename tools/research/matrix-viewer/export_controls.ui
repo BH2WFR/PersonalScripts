@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ExportControls</class>
+ <widget class="QGroupBox" name="ExportControls">
+  <layout class="QFormLayout" name="export_form">
+   <item row="0" column="0">
+    <widget class="QLabel" name="data_label">
+     <property name="text">
+      <string>Data</string>
+     </property>
+     <property name="buddy">
+      <cstring>export_target</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="NoWheelComboBox" name="export_target" />
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QCheckBox" name="export_xy">
+     <property name="text">
+      <string>Apply X / Y crop</string>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0" colspan="2">
+    <widget class="QCheckBox" name="export_z">
+     <property name="text">
+      <string>Apply value bounds (Z / signal Y)</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="0" colspan="2">
+    <widget class="QCheckBox" name="export_complex">
+     <property name="text">
+      <string>Export complex matrix (real + imaginary)</string>
+     </property>
+     <property name="toolTip">
+      <string>Checked: preserve both source components, with optional XY crop/slice. Unchecked: export only the displayed component. Ordered value bounds require a real display component.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="0">
+    <widget class="QLabel" name="layout_label">
+     <property name="text">
+      <string>Layout</string>
+     </property>
+     <property name="buddy">
+      <cstring>export_layout</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="1">
+    <widget class="NoWheelComboBox" name="export_layout" />
+   </item>
+   <item row="5" column="0">
+    <widget class="QLabel" name="format_label">
+     <property name="text">
+      <string>Format</string>
+     </property>
+     <property name="buddy">
+      <cstring>export_format</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="1">
+    <widget class="NoWheelComboBox" name="export_format" />
+   </item>
+   <item row="6" column="0" colspan="2">
+    <widget class="QLabel" name="export_hint">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="7" column="0" colspan="2">
+    <widget class="QPushButton" name="export_save">
+     <property name="text">
+      <string>Export…</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+  <property name="title">
+   <string>Export</string>
+  </property>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

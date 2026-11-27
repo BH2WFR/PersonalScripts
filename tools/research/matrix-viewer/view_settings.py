@@ -22,6 +22,7 @@ from PySide6 import QtCore, QtWidgets
 
 from .data_model import ViewMode
 from .figure_export import FigureView
+from .ui_view_settings_dialog import Ui_ViewSettingsDialog
 
 if TYPE_CHECKING:
     from .workspace_window import WorkspaceWindow
@@ -37,7 +38,7 @@ class AppearancePage(IntEnum):
     MARKERS = 4
 
 
-class ViewSettingsDialog(QtWidgets.QDialog):
+class ViewSettingsDialog(QtWidgets.QDialog, Ui_ViewSettingsDialog):
     """Edit appearance with a single discoverable entry beside each viewer.
 
     Args:
@@ -47,82 +48,40 @@ class ViewSettingsDialog(QtWidgets.QDialog):
 
     def __init__(self, window: "WorkspaceWindow") -> None:
         super().__init__(window)
+        self.setupUi(self)
         self.workspace = window
-        self.setWindowTitle("View settings")
         self.setModal(True)
-        self.resize(570, 570)
-        self.setMinimumSize(460, 420)
-        layout = QtWidgets.QVBoxLayout(self)
-        self.source = QtWidgets.QLabel()
         self.source.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.source.setWordWrap(True)
-        layout.addWidget(self.source)
-        note = QtWidgets.QLabel("Unlock appearance to restore each matrix's styles. Colors can be locked in single matrix mode; ranges stay independent. Background, slice markers and axes options are shared.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.tabs = QtWidgets.QTabWidget()
-        layout.addWidget(self.tabs, 1)
-        self.profile_stack = QtWidgets.QStackedWidget()
-        self.profile_stack.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
         for profile in (window.profile_view, window.overlay_profile):
             self.profile_stack.addWidget(profile.appearance_controls)
-        axes = QtWidgets.QGroupBox("Axes")
-        axes_layout = QtWidgets.QVBoxLayout(axes)
-        self.signal_grid = QtWidgets.QCheckBox("Signal grid")
-        self.derivative_grid = QtWidgets.QCheckBox("Derivative grid")
         self.signal_grid.toggled.connect(lambda enabled: self._grid(False, enabled))
         self.derivative_grid.toggled.connect(lambda enabled: self._grid(True, enabled))
-        self.auto_y = QtWidgets.QCheckBox("Auto Y on slice change")
         self.auto_y.toggled.connect(window._set_profile_auto_y)
-        self.y_lock = QtWidgets.QCheckBox("Lock Y range (expand only)")
-        self.y_lock.setToolTip("Shared across slices and 1D matrices. Signal and derivative have separate histories. Overrides Auto Y until unlocked.")
         self.y_lock.toggled.connect(window.scaling.set_y_range_lock)
-        for checkbox in (self.signal_grid, self.derivative_grid, self.y_lock, self.auto_y):
-            axes_layout.addWidget(checkbox)
-        self.scaling_buttons: dict[FigureView, QtWidgets.QPushButton] = {}
-        self.profile_scope = QtWidgets.QLabel("Multiple matrices: line width and point size apply to all. Rendering, line style, dash scale, point shape and color apply to the active matrix/channel.")
-        self.profile_scope.setWordWrap(True)
-        self._page("1D", window.appearance_locks[AppearancePage.SIGNAL],
-                   self.profile_scope, self._scaling_group(FigureView.SIGNAL, FigureView.DERIVATIVE), self.profile_stack, axes)
-        self._page("2D", window.appearance_locks[AppearancePage.IMAGE], self._scaling_group(FigureView.IMAGE), window.image_controls)
-        self.z_lock = QtWidgets.QCheckBox("Lock Z range (expand only)")
-        self.z_lock.setToolTip("3D geometry only; independent of the shared 2D/3D color range lock.")
         self.z_lock.toggled.connect(window.scaling.set_z_range_lock)
-        self._page("3D", window.appearance_locks[AppearancePage.SURFACE], self._scaling_group(FigureView.SURFACE),
-                   self.z_lock, window.surface_controls, window.slice_appearance)
-        self._page("Colors", window.appearance_locks[AppearancePage.COLORS], window.display_box, window.overlay_appearance)
-        self._page("Markers", window.appearance_locks[AppearancePage.MARKERS], window.marker_controls)
-        layout.addWidget(window.background_controls)
-        window.background_controls.show()
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _scaling_group(self, *views: FigureView) -> QtWidgets.QGroupBox:
-        """Expose viewport scaling separately from active-matrix appearance."""
-        group = QtWidgets.QGroupBox("Scaling (all visible matrices)")
-        layout = QtWidgets.QHBoxLayout(group)
-        for view in views:
-            button = QtWidgets.QPushButton(f"{view.value} scaling…")
-            button.clicked.connect(partial(self.workspace.scaling.show_for, view))
-            button.setToolTip("Open the corresponding plot first. Adjust ranges, individual axes or equal-unit presets; data values stay unchanged.")
-            self.scaling_buttons[view] = button
-            layout.addWidget(button)
-        return group
-
-    def _page(self, title: str, *widgets: QtWidgets.QWidget) -> None:
-        """Host a scrollable page so high-DPI/small screens retain every field."""
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        content = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(content)
-        for widget in widgets:
-            layout.addWidget(widget)
-            widget.show()
-        layout.addStretch()
-        scroll.setWidget(content)
-        self.tabs.addTab(scroll, title)
+        self.scaling_buttons = {
+            FigureView.SIGNAL: self.signal_scaling_button, FigureView.DERIVATIVE: self.derivative_scaling_button,
+            FigureView.IMAGE: self.image_scaling_button, FigureView.SURFACE: self.surface_scaling_button,
+        }
+        for view, button in self.scaling_buttons.items():
+            button.clicked.connect(partial(window.scaling.show_for, view))
+        for layout, control in (
+            (self.signal_lock_slot, window.appearance_locks[AppearancePage.SIGNAL]),
+            (self.image_lock_slot, window.appearance_locks[AppearancePage.IMAGE]),
+            (self.image_controls_slot, window.image_controls),
+            (self.surface_lock_slot, window.appearance_locks[AppearancePage.SURFACE]),
+            (self.surface_controls_slot, window.surface_controls),
+            (self.slice_appearance_slot, window.slice_appearance),
+            (self.colors_lock_slot, window.appearance_locks[AppearancePage.COLORS]),
+            (self.display_box_slot, window.display_box),
+            (self.overlay_appearance_slot, window.overlay_appearance),
+            (self.markers_lock_slot, window.appearance_locks[AppearancePage.MARKERS]),
+            (self.marker_controls_slot, window.marker_controls),
+            (self.background_slot, window.background_controls),
+        ):
+            layout.addWidget(control)
+            control.show()
+        self.form_buttons.rejected.connect(self.reject)
 
     def _ready(self) -> bool:
         entry = self.workspace._entry()

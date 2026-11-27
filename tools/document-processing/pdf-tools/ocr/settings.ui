@@ -1,0 +1,567 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsPanel</class>
+ <widget class="QTabWidget" name="SettingsPanel">
+  <widget class="QScrollArea" name="ocr_scroll">
+   <property name="widgetResizable">
+    <bool>true</bool>
+   </property>
+   <property name="frameShape">
+    <enum>QFrame::NoFrame</enum>
+   </property>
+   <widget class="QWidget" name="ocr_page" native="true">
+    <layout class="QVBoxLayout" name="ocr_layout" stretch="0,1">
+     <item>
+      <layout class="QFormLayout" name="ocr_form">
+       <item row="0" column="0" colspan="2">
+        <widget class="QLabel" name="ignore_heading">
+         <property name="text">
+          <string>Ignore pages</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0" colspan="2">
+        <widget class="QTreeWidget" name="ignored_list">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>90</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>16777215</width>
+           <height>150</height>
+          </size>
+         </property>
+         <property name="rootIsDecorated">
+          <bool>false</bool>
+         </property>
+         <property name="alternatingRowColors">
+          <bool>true</bool>
+         </property>
+         <column>
+          <property name="text">
+           <string>Page</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>Title</string>
+          </property>
+         </column>
+        </widget>
+       </item>
+       <item row="2" column="0" colspan="2">
+        <layout class="QGridLayout" name="page_actions">
+         <item row="0" column="0">
+          <widget class="QPushButton" name="add_pages">
+           <property name="text">
+            <string>Add pages</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QPushButton" name="add_current">
+           <property name="text">
+            <string>Add current</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QPushButton" name="remove_pages">
+           <property name="text">
+            <string>Remove</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QPushButton" name="clear_pages">
+           <property name="text">
+            <string>Clear</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item row="3" column="0" colspan="2">
+        <widget class="QFrame" name="separator">
+         <property name="frameShape">
+          <enum>QFrame::HLine</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Sunken</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="language_list_label">
+         <property name="text">
+          <string>Languages</string>
+         </property>
+         <property name="buddy">
+          <cstring>language_list</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QListWidget" name="language_list" />
+       </item>
+       <item row="5" column="0" colspan="2">
+        <widget class="QPushButton" name="manage_models">
+         <property name="text">
+          <string>Manage models...</string>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="0" colspan="2">
+        <widget class="QGroupBox" name="recognition_group">
+         <property name="title">
+          <string>Recognition</string>
+         </property>
+         <layout class="QFormLayout" name="recognition_form">
+          <item row="0" column="0">
+           <widget class="QLabel" name="dpi_label">
+            <property name="text">
+             <string>Render DPI</string>
+            </property>
+            <property name="buddy">
+             <cstring>dpi</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="NoWheelSpinBox" name="dpi" />
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="side_label">
+            <property name="text">
+             <string>Detector max side</string>
+            </property>
+            <property name="buddy">
+             <cstring>side</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="NoWheelSpinBox" name="side" />
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="threads_label">
+            <property name="text">
+             <string>CPU threads</string>
+            </property>
+            <property name="buddy">
+             <cstring>threads</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="NoWheelSpinBox" name="threads" />
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="threshold_label">
+            <property name="text">
+             <string>Pixel threshold</string>
+            </property>
+            <property name="buddy">
+             <cstring>threshold</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="NoWheelDoubleSpinBox" name="threshold" />
+          </item>
+          <item row="4" column="0">
+           <widget class="QLabel" name="box_threshold_label">
+            <property name="text">
+             <string>Box threshold</string>
+            </property>
+            <property name="buddy">
+             <cstring>box_threshold</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="1">
+           <widget class="NoWheelDoubleSpinBox" name="box_threshold" />
+          </item>
+          <item row="5" column="0">
+           <widget class="QLabel" name="unclip_label">
+            <property name="text">
+             <string>Box expansion</string>
+            </property>
+            <property name="buddy">
+             <cstring>unclip</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="1">
+           <widget class="NoWheelDoubleSpinBox" name="unclip" />
+          </item>
+          <item row="6" column="0">
+           <widget class="QLabel" name="score_label">
+            <property name="text">
+             <string>Minimum text score</string>
+            </property>
+            <property name="buddy">
+             <cstring>score</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="1">
+           <widget class="NoWheelDoubleSpinBox" name="score" />
+          </item>
+          <item row="7" column="0" colspan="2">
+           <widget class="QCheckBox" name="angle">
+            <property name="text">
+             <string>Text angle classification</string>
+            </property>
+           </widget>
+          </item>
+          <property name="rowWrapPolicy">
+           <enum>QFormLayout::WrapLongRows</enum>
+          </property>
+         </layout>
+        </widget>
+       </item>
+       <item row="7" column="0" colspan="2">
+        <widget class="QLabel" name="ocr_note">
+         <property name="text">
+          <string>Existing text is retained. OCR adds invisible text only.
+Recognition and preprocessing changes clear results; anchor margins and preview appearance do not.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <property name="rowWrapPolicy">
+        <enum>QFormLayout::WrapLongRows</enum>
+       </property>
+       <property name="formAlignment">
+        <set>Qt::AlignTop</set>
+       </property>
+       <property name="fieldGrowthPolicy">
+        <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+       </property>
+      </layout>
+     </item>
+     <item>
+      <spacer name="ocr_stretch">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </widget>
+   <attribute name="title">
+    <string>OCR</string>
+   </attribute>
+  </widget>
+  <widget class="QScrollArea" name="layout_scroll">
+   <property name="widgetResizable">
+    <bool>true</bool>
+   </property>
+   <property name="frameShape">
+    <enum>QFrame::NoFrame</enum>
+   </property>
+   <widget class="QWidget" name="layout_page" native="true">
+    <layout class="QVBoxLayout" name="layout_layout">
+     <item>
+      <widget class="QGroupBox" name="tiling_group">
+       <property name="title">
+        <string>Tiled recognition</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <layout class="QFormLayout" name="tiling_form">
+        <item row="0" column="0">
+         <widget class="QLabel" name="tile_size_label">
+          <property name="text">
+           <string>Tile side (px)</string>
+          </property>
+          <property name="buddy">
+           <cstring>tile_size</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelSpinBox" name="tile_size" />
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="tile_overlap_label">
+          <property name="text">
+           <string>Overlap (%)</string>
+          </property>
+          <property name="buddy">
+           <cstring>tile_overlap</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelSpinBox" name="tile_overlap" />
+        </item>
+        <item row="2" column="0" colspan="2">
+         <widget class="QLabel" name="tile_note">
+          <property name="text">
+           <string>Useful for large pages and small text. Seam duplicates are removed; long words may need more overlap.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::WrapLongRows</enum>
+        </property>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="anchors_group">
+       <property name="title">
+        <string>Text anchors</string>
+       </property>
+       <layout class="QFormLayout" name="anchors_form">
+        <item row="0" column="0">
+         <widget class="QLabel" name="english_label">
+          <property name="text">
+           <string>English positions</string>
+          </property>
+          <property name="buddy">
+           <cstring>english</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="english" />
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="margin_x_label">
+          <property name="text">
+           <string>Horizontal margin</string>
+          </property>
+          <property name="buddy">
+           <cstring>margin_x</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="margin_x" />
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="margin_y_label">
+          <property name="text">
+           <string>Vertical margin</string>
+          </property>
+          <property name="buddy">
+           <cstring>margin_y</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="margin_y" />
+        </item>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::WrapLongRows</enum>
+        </property>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <spacer name="layout_stretch">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </widget>
+   <attribute name="title">
+    <string>Layout</string>
+   </attribute>
+  </widget>
+  <widget class="QScrollArea" name="preprocess_scroll">
+   <property name="widgetResizable">
+    <bool>true</bool>
+   </property>
+   <property name="frameShape">
+    <enum>QFrame::NoFrame</enum>
+   </property>
+   <widget class="QWidget" name="preprocess_page" native="true">
+    <layout class="QVBoxLayout" name="preprocess_layout">
+     <item>
+      <widget class="QGroupBox" name="color_group">
+       <property name="title">
+        <string>Color and contrast</string>
+       </property>
+       <layout class="QFormLayout" name="color_form">
+        <item row="0" column="0" colspan="2">
+         <widget class="QCheckBox" name="grayscale">
+          <property name="text">
+           <string>Convert input to grayscale</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="contrast_label">
+          <property name="text">
+           <string>Contrast</string>
+          </property>
+          <property name="buddy">
+           <cstring>contrast</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="NoWheelComboBox" name="contrast" />
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="contrast_clip_label">
+          <property name="text">
+           <string>Local contrast limit</string>
+          </property>
+          <property name="buddy">
+           <cstring>contrast_clip</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="NoWheelDoubleSpinBox" name="contrast_clip" />
+        </item>
+        <property name="rowWrapPolicy">
+         <enum>QFormLayout::WrapLongRows</enum>
+        </property>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="noise_group">
+       <property name="title">
+        <string>Noise reduction</string>
+       </property>
+       <layout class="QFormLayout" name="noise_form">
+        <item row="0" column="0">
+         <widget class="QLabel" name="denoise_label">
+          <property name="text">
+           <string>Filter</string>
+          </property>
+          <property name="buddy">
+           <cstring>denoise</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="denoise" />
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="preprocessing_note">
+       <property name="text">
+        <string>Applied only to OCR input, before splitting into tiles. Original PDF images and colored overlay backgrounds remain unchanged. All preprocessing is off by default.</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="preprocess_stretch">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+       <property name="sizeHint">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </widget>
+   <attribute name="title">
+    <string>Preprocess</string>
+   </attribute>
+  </widget>
+  <widget class="QWidget" name="appearance" native="true">
+   <layout class="QVBoxLayout" name="display">
+    <item>
+     <widget class="QPushButton" name="color_button">
+      <property name="text">
+       <string />
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QPushButton" name="font_button">
+      <property name="text">
+       <string />
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="preview_note">
+      <property name="text">
+       <string>These settings affect colored text in the preview only. The exported text layer is always invisible.</string>
+      </property>
+      <property name="wordWrap">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <spacer name="preview_stretch">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+      </property>
+      <property name="sizeHint">
+       <size>
+        <width>0</width>
+        <height>0</height>
+       </size>
+      </property>
+     </spacer>
+    </item>
+   </layout>
+   <attribute name="title">
+    <string>Preview</string>
+   </attribute>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>NoWheelSpinBox</class>
+   <extends>QSpinBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

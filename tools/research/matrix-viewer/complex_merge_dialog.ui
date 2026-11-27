@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ComplexMergeDialog</class>
+ <widget class="QDialog" name="ComplexMergeDialog">
+  <property name="windowTitle">
+   <string>Complex matrix merge</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>720</width>
+    <height>470</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout">
+   <item>
+    <widget class="QWidget" name="settings" native="true">
+     <layout class="QVBoxLayout" name="form_settings_layout">
+      <item>
+       <layout class="QFormLayout" name="form_form">
+        <item row="0" column="0">
+         <widget class="QLabel" name="form_combine_label">
+          <property name="text">
+           <string>Combine</string>
+          </property>
+          <property name="buddy">
+           <cstring>mode_selector</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="mode_selector" />
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="first_input">
+        <property name="title">
+         <string>First input</string>
+        </property>
+        <layout class="QFormLayout" name="first_form">
+         <item row="0" column="0">
+          <widget class="QLabel" name="first_matrix_label">
+           <property name="text">
+            <string>Matrix</string>
+           </property>
+           <property name="buddy">
+            <cstring>first_matrix</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="NoWheelComboBox" name="first_matrix">
+           <property name="sizeAdjustPolicy">
+            <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+           </property>
+           <property name="minimumContentsLength">
+            <number>28</number>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="first_channel_label">
+           <property name="text">
+            <string>Channel</string>
+           </property>
+           <property name="buddy">
+            <cstring>first_channel</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="NoWheelComboBox" name="first_channel">
+           <property name="sizeAdjustPolicy">
+            <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+           </property>
+           <property name="minimumContentsLength">
+            <number>28</number>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0" colspan="2">
+          <widget class="QLabel" name="first_detail">
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="second_input">
+        <property name="title">
+         <string>Second input</string>
+        </property>
+        <layout class="QFormLayout" name="second_form">
+         <item row="0" column="0">
+          <widget class="QLabel" name="second_matrix_label">
+           <property name="text">
+            <string>Matrix</string>
+           </property>
+           <property name="buddy">
+            <cstring>second_matrix</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="NoWheelComboBox" name="second_matrix">
+           <property name="sizeAdjustPolicy">
+            <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+           </property>
+           <property name="minimumContentsLength">
+            <number>28</number>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="second_channel_label">
+           <property name="text">
+            <string>Channel</string>
+           </property>
+           <property name="buddy">
+            <cstring>second_channel</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="NoWheelComboBox" name="second_channel">
+           <property name="sizeAdjustPolicy">
+            <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+           </property>
+           <property name="minimumContentsLength">
+            <number>28</number>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0" colspan="2">
+          <widget class="QLabel" name="second_detail">
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <layout class="QFormLayout" name="form_bottom">
+        <item row="0" column="0">
+         <widget class="QLabel" name="form_phase_unit_polar_mode_label">
+          <property name="text">
+           <string>Phase unit (polar mode)</string>
+          </property>
+          <property name="buddy">
+           <cstring>phase_unit</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="NoWheelComboBox" name="phase_unit" />
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="form_result_name_2_label">
+          <property name="text">
+           <string>Result name</string>
+          </property>
+          <property name="buddy">
+           <cstring>result_name</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QLineEdit" name="result_name">
+          <property name="placeholderText">
+           <string>Automatic: Complex merge · first source + second source</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="note">
+     <property name="text">
+      <string>Uses complete numeric channels before display crop, value bounds or overlay alignment. Shapes and sample coordinates must match; no broadcasting or resampling. XY signals require the same unique, uniform X grid. Color composites use their numeric grayscale fusion channels. Polar magnitude must be linear and nonnegative. NaN / Inf remain gaps. The result is a new complex matrix; source arrays are unchanged.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

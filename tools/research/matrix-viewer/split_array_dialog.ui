@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SplitArrayDialog</class>
+ <widget class="QDialog" name="SplitArrayDialog">
+  <property name="windowTitle">
+   <string>Open 3D array</string>
+  </property>
+  <layout class="QVBoxLayout" name="form_layout">
+   <item>
+    <widget class="QLabel" name="form_label">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="form_choose_a_channel_axis_to_split_i_inline">
+     <property name="text">
+      <string>Choose a channel axis to split into separate 2D matrices.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="NoWheelComboBox" name="channel_axis" />
+   </item>
+   <item>
+    <widget class="QLabel" name="form_note">
+     <property name="text">
+      <string>All channels on this axis will be opened. Original values and dtype are preserved. Axis and channel indices start at 0. Don't open skips this array; check the option below to also skip later matching arrays.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="apply_matching">
+     <property name="text">
+      <string>Apply to matching arrays in this import</string>
+     </property>
+     <property name="toolTip">
+      <string>Remember Split and open or Don't open for later 3D arrays with the same length on the selected axis. Other dimensions may differ. Escape/window close skips only this array. A new import resets this choice.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="match_description">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="form_buttons" />
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>NoWheelComboBox</class>
+   <extends>QComboBox</extends>
+   <header>utils.qt_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>
