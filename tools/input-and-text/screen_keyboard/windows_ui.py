@@ -8,7 +8,7 @@ from utils import System, TkDpi
 from .layout import (DEFAULT_SIZE, EXTRA_HEIGHT, EXTENDED_KEYS, MINIMUM_SIZE, NUMPAD_KEYS, ROWS, TOOLBAR,
                      TOOLBAR_DIVIDERS, TOOLBAR_TIPS, WINDOW_TITLE, frames, panel_width)
 from .state import KeyboardState, LeftKeyMode, WindowLayout, hover_color
-from .window import NonactivatingWindow, reopen_signal
+from .window import NonactivatingWindow, prepare_hidden_window, reopen_signal
 from .windows import WindowsOutput
 
 
@@ -19,8 +19,7 @@ class ScreenKeyboard:
         System.enable_dpi_awareness()
         pointer = NonactivatingWindow.cursor_position()
         self.window = root = tk.Tk()
-        root.withdraw()
-        root.attributes("-disabled", True, "-alpha", 0.0, "-topmost", True)
+        prepare_hidden_window(root)
         root.title(WINDOW_TITLE)
         root.configure(background="#f1f3f5")
         self.dpi = TkDpi(root)

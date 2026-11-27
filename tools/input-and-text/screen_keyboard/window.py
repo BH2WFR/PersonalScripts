@@ -99,6 +99,7 @@ def _reopen_event(payload: mmap.mmap, force_layer: LeftKeyMode | None) -> Iterat
 U.GetAncestor.argtypes = [W.HWND, W.UINT]
 U.GetAncestor.restype = W.HWND
 U.GetForegroundWindow.restype = W.HWND
+U.SetForegroundWindow.argtypes = [W.HWND]
 U.CreateWindowExW.argtypes = [W.DWORD, W.LPCWSTR, W.LPCWSTR, W.DWORD, C.c_int, C.c_int, C.c_int, C.c_int,
                               W.HWND, W.HMENU, W.HINSTANCE, C.c_void_p]
 U.CreateWindowExW.restype = W.HWND
@@ -123,6 +124,19 @@ U.SetWindowLongW.restype = W.LONG
 U.MonitorFromRect.argtypes = [C.POINTER(W.RECT), W.DWORD]
 U.MonitorFromRect.restype = W.HANDLE
 U.RedrawWindow.argtypes = [W.HWND, C.POINTER(W.RECT), W.HANDLE, W.UINT]
+
+
+def prepare_hidden_window(root: tk.Tk) -> None:
+    """Create the transparent keyboard wrapper and preserve the input target."""
+    root.withdraw()
+    root.attributes("-disabled", True, "-alpha", 0.0, "-topmost", True)
+
+    # Tk activates its first native wrapper even if it is still withdrawn.
+    target = U.GetForegroundWindow()
+    root.update_idletasks()
+    hwnd = U.GetAncestor(root.winfo_id(), GA_ROOT)
+    if target and U.GetForegroundWindow() == hwnd:
+        U.SetForegroundWindow(target)
 
 
 class NonactivatingWindow:
